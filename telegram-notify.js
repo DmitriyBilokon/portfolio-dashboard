@@ -106,8 +106,18 @@ export default {
       if(text) await sendTelegram(env, text);
     })());
   },
-  // Manual trigger / test — open the Worker URL in a browser
+  // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
+  // GET with no query             → run the alert report now (manual test).
   async fetch(request, env){
+    const url = new URL(request.url);
+    const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, OPTIONS', 'Content-Type':'application/json; charset=utf-8' };
+    if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    if(url.searchParams.has('symbols')){
+      const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
+      const out = {};
+      await Promise.all(syms.map(async s => { const q = await yahoo(s); out[s] = q ? q.price : null; }));
+      return new Response(JSON.stringify(out), { headers: CORS });
+    }
     try{
       const text = await buildReport(env);
       if(text){ await sendTelegram(env, text); return new Response('Sent ✓\n\n' + text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }

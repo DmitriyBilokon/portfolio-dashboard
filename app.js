@@ -2502,7 +2502,7 @@ function initTheme(){
    reads Yahoo Finance server-side, covering US + Nordic/EU (.ST/.OL/.DE/.CO).
    Paste your deployed Worker URL into PRICE_PROXY below.
    Fallback (PRICE_PROXY blank): Finnhub free tier — US tickers only. */
-const PRICE_PROXY = '';   // e.g. 'https://dashboard-prices.<you>.workers.dev'
+const PRICE_PROXY = 'https://telegram-notify-abc.dmitriy-bilokon.workers.dev';   // Worker serves live prices (US + Nordic/EU via Yahoo)
 
 // Map a dashboard ticker + currency to a Yahoo/Finnhub exchange symbol.
 // Overrides handle tickers whose dashboard form differs from the exchange symbol.

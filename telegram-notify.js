@@ -114,26 +114,36 @@ const TARGET_FIRMS = new Set([
   'barclays','summit insights group',
 ].map(s => s.toLowerCase()));
 
-// Average of analyst targets published in the last 90 days for one symbol.
-// Returns { avg, count } or null. Uses FMP's per-analyst price-target feed.
+const round2 = n => Math.round(n * 100) / 100;
+// Average analyst target for one symbol (FMP "stable" API). Returns { avg, count } or null.
+//  • default: FMP's pre-computed last-quarter (~3-month) average (price-target-summary)
+//  • RESTRICT_FIRMS=1: average per-analyst targets from the last 90 days, whitelisted firms only
 async function fmpTarget(symbol, env){
   try{
-    const r = await fetch(`https://financialmodelingprep.com/api/v4/price-target?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
+    if(env.RESTRICT_FIRMS === '1'){
+      const r = await fetch(`https://financialmodelingprep.com/stable/price-target-news?symbol=${encodeURIComponent(symbol)}&page=0&limit=100&apikey=${env.FMP_KEY}`);
+      if(!r.ok) return null;
+      const arr = await r.json();
+      if(!Array.isArray(arr)) return null;
+      const cutoff = Date.now() - 90 * 24 * 3600 * 1000, vals = [];
+      for(const x of arr){
+        const t = Date.parse(x.publishedDate || x.date);
+        if(isNaN(t) || t < cutoff) continue;
+        if(!TARGET_FIRMS.has(String(x.analystCompany || '').toLowerCase())) continue;
+        if(typeof x.priceTarget === 'number' && x.priceTarget > 0) vals.push(x.priceTarget);
+      }
+      return vals.length ? { avg: round2(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length } : null;
+    }
+    const r = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
     if(!r.ok) return null;
     const arr = await r.json();
-    if(!Array.isArray(arr) || !arr.length) return null;
-    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
-    const restrict = env.RESTRICT_FIRMS === '1';
-    const vals = [];
-    for(const x of arr){
-      const d = Date.parse(x.publishedDate);
-      if(isNaN(d) || d < cutoff) continue;                                  // only last 3 months
-      if(restrict && !TARGET_FIRMS.has(String(x.analystCompany || '').toLowerCase())) continue;
-      const pt = x.adjPriceTarget || x.priceTarget;
-      if(typeof pt === 'number' && pt > 0) vals.push(pt);
-    }
-    if(!vals.length) return null;
-    return { avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100, count: vals.length };
+    const d = Array.isArray(arr) ? arr[0] : arr;
+    if(!d) return null;
+    if(typeof d.lastQuarterAvgPriceTarget === 'number' && d.lastQuarterAvgPriceTarget > 0)
+      return { avg: round2(d.lastQuarterAvgPriceTarget), count: d.lastQuarter ?? d.lastQuarterCount ?? 0 };
+    if(typeof d.lastMonthAvgPriceTarget === 'number' && d.lastMonthAvgPriceTarget > 0)
+      return { avg: round2(d.lastMonthAvgPriceTarget), count: d.lastMonth ?? d.lastMonthCount ?? 0 };
+    return null;
   }catch(e){ return null; }
 }
 async function loadRow(env){
@@ -185,6 +195,11 @@ export default {
     const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, OPTIONS', 'Content-Type':'application/json; charset=utf-8' };
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if(url.searchParams.get('action') === 'targets'){
+      const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
+      if(dbg){
+        const fr = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(dbg)}&apikey=${env.FMP_KEY}`);
+        return new Response(`FMP HTTP ${fr.status}\n\n` + await fr.text(), { headers: { 'Content-Type':'text/plain; charset=utf-8' } });
+      }
       try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }

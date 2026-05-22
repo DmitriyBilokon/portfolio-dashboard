@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Stock Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0c0a;
+    --bg-elev: #15130f;
+    --bg-card: #1a1814;
+    --line: #2a2620;
+    --line-strong: #3a342a;
+    --text: #f0ebe1;
+    --text-dim: #948c7e;
+    --text-faint: #5a5448;
+    --accent: #d4a574;
+    --up: #6ec19a;
+    --down: #d97a6c;
+    --warn: #d4a574;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', -apple-system, sans-serif;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(212, 165, 116, 0.04), transparent 50%),
+      radial-gradient(circle at 80% 100%, rgba(110, 193, 154, 0.03), transparent 50%);
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .brand h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 48px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .brand h1 em {
+    color: var(--accent);
+    font-style: italic;
+  }
+
+  .brand .tagline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-top: 6px;
+  }
+
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .meta .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--up);
+    display: inline-block;
+    margin-right: 6px;
+    box-shadow: 0 0 8px var(--up);
+  }
+
+  .meta .dot.stale {
+    background: var(--text-faint);
+    box-shadow: none;
+  }
+
+  button.refresh {
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    color: var(--text);
+    padding: 8px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  button.refresh:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button.refresh:disabled { opacity: 0.4; cursor: wait; }
+
+  /* API KEY BANNER */
+  .api-banner {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    padding: 24px;
+    margin-bottom: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .api-banner.hidden { display: none; }
+
+  .api-banner h2 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 22px;
+    font-weight: 400;
+  }
+
+  .api-banner p {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  .api-banner a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent); }
+  .api-banner a:hover { color: var(--text); border-color: var(--text); }
+
+  .api-input-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  input[type="text"], input[type="password"], input[type="number"] {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    flex: 1;
+    min-width: 140px;
+    outline: none;
+    transition: border-color 0.2s ease;
+  }
+  input:focus { border-color: var(--accent); }
+
+  button.primary {
+    background: var(--accent);
+    color: var(--bg);
+    border: 1px solid var(--accent);
+    padding: 10px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 600;
+  }
+  button.primary:hover { background: var(--text); border-color: var(--text); }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 32px;
+  }
+
+  .tab {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 14px 28px 14px 0;
+    margin-right: 32px;
+    font-family: 'Instrument Serif', serif;
+    font-size: 26px;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s ease;
+    letter-spacing: -0.01em;
+  }
+
+  .tab .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    vertical-align: super;
+    margin-left: 4px;
+  }
+
+  .tab.active { color: var(--text); }
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 32px;
+    height: 1px;
+    background: var(--accent);
+  }
+  .tab:hover { color: var(--text); }
+
+  .panel { display: none; }
+  .panel.active { display: block; animation: fade 0.3s ease; }
+
+  @keyframes fade {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ADD FORM */
+  .add-form {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .add-form input { flex: 1; }
+
+  /* TABLE */
+  .table-wrap {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th {
+    text-align: right;
+    padding: 14px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    border-bottom: 1px solid var(--line);
+    font-weight: 400;
+  }
+  th:first-child { text-align: left; }
+
+  td {
+    padding: 18px 16px;
+    text-align: right;
+    border-bottom: 1px solid var(--line);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+  }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { text-align: left; }
+
+  .ticker {
+    font-family: 'Instrument Serif', serif;
+    font-size: 22px;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+
+  .price { font-size: 15px; color: var(--text); font-weight: 500; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  .neutral { color: var(--text-dim); }
+
+  .change-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid;
+    border-radius: 2px;
+  }
+
+  .change-pill.up { border-color: var(--up); background: rgba(110, 193, 154, 0.08); }
+  .change-pill.down { border-color: var(--down); background: rgba(217, 122, 108, 0.08); }
+  .change-pill.neutral { border-color: var(--line-strong); }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 8px;
+    transition: color 0.2s ease;
+  }
+  .remove-btn:hover { color: var(--down); }
+
+  .empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-faint);
+    font-family: 'Instrument Serif', serif;
+    font-style: italic;
+    font-size: 18px;
+  }
+
+  .loading-row td {
+    color: var(--text-faint);
+    font-style: italic;
+  }
+
+  .error-row td { color: var(--down); }
+
+  /* PORTFOLIO SUMMARY */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-bottom: 24px;
+  }
+
+  .summary-cell {
+    background: var(--bg-elev);
+    padding: 20px 22px;
+  }
+
+  .summary-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 8px;
+  }
+
+  .summary-value {
+    font-family: 'Instrument Serif', serif;
+    font-size: 28px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .summary-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
+  /* SETTINGS / FOOTER */
+  footer {
+    margin-top: 60px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  footer button {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+  }
+  footer button:hover { color: var(--text); }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(120%);
+    background: var(--bg-card);
+    border: 1px solid var(--line-strong);
+    padding: 12px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    transition: transform 0.3s ease;
+    z-index: 100;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.error { border-color: var(--down); color: var(--down); }
+
+  @media (max-width: 640px) {
+    .container { padding: 24px 16px 60px; }
+    .brand h1 { font-size: 36px; }
+    .tab { font-size: 20px; padding: 12px 0; margin-right: 20px; }
+    th, td { padding: 12px 10px; font-size: 12px; }
+    .ticker { font-size: 18px; }
+    th { font-size: 9px; }
+    .summary-value { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <header>
+    <div class="brand">
+      <h1>Ledger<em>.</em></h1>
+      <div class="tagline">Personal Equities Tracker · v1.0</div>
+    </div>
+    <div class="meta">
+      <span id="status"><span class="dot stale"></span><span id="status-text">Not connected</span></span>
+      <button class="refresh" id="refreshBtn" onclick="refreshAll()">↻ Refresh</button>
+    </div>
+  </header>
+
+  <!-- API key setup -->
+  <div class="api-banner" id="apiBanner">
+    <h2>Connect a data source</h2>
+    <p>
+      Ledger uses <a href="https://finnhub.io/register" target="_blank" rel="noopener">Finnhub</a> for live stock data — free tier gives you 60 API calls per minute, plenty for personal tracking. Sign up, copy your API key from the dashboard, and paste it below. The key is stored only in your browser.
+    </p>
+    <div class="api-input-row">
+      <input type="password" id="apiKeyInput" placeholder="Paste your Finnhub API key here...">
+      <button class="primary" onclick="saveApiKey()">Save Key</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('watchlist')" id="tab-watchlist">
+      Watchlist<span class="num" id="watchlist-count">00</span>
+    </button>
+    <button class="tab" onclick="switchTab('portfolio')" id="tab-portfolio">
+      Portfolio<span class="num" id="portfolio-count">00</span>
+    </button>
+  </div>
+
+  <!-- Watchlist -->
+  <div class="panel active" id="panel-watchlist">
+    <form class="add-form" onsubmit="addWatchlistItem(event)">
+      <input type="text" id="watchTicker" placeholder="Ticker symbol (e.g. AAPL, MSFT, TSLA)" autocomplete="off">
+      <button class="primary" type="submit">Add to Watchlist</button>
+    </form>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th>Day Change</th>
+            <th>Change %</th>
+            <th>Day High</th>
+            <th>Day Low</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="watchlistBody">
+          <tr><td colspan="7" class="empty">— Your watchlist is empty —</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Portfolio -->
+  <div class="panel" id="panel-portfolio">
+    <div class="summary" id="portfolioSummary" style="display:none;">
+      <div class="summary-cell">
+        <div class="summary-label">Market Value</div>
+        <div class="summary-value" id="sumValue">—</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-label">Total Cost</div>
+        <div class="summary-value" id="sumCost">—</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-label">Profit / Loss</div>
+        <div class="summary-value" id="sumPL">—</div>
+        <div class="summary-sub" id="sumPLPct">—</div>
+      </div>
+    </div>
+
+    <form class="add-form" onsubmit="addPortfolioItem(event)">
+      <input type="text" id="pfTicker" placeholder="Ticker (e.g. AAPL)" autocomplete="off" style="flex:1;">
+      <input type="number" id="pfShares" placeholder="Shares" min="0" step="any" style="flex:0.5;">
+      <input type="number" id="pfBuyPrice" placeholder="Buy price" min="0" step="any" style="flex:0.6;">
+      <button class="primary" type="submit">Add Position</button>
+    </form>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Shares</th>
+            <th>Buy Price</th>
+            <th>Current</th>
+            <th>Value</th>
+            <th>P/L</th>
+            <th>P/L %</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="portfolioBody">
+          <tr><td colspan="8" class="empty">— No positions yet —</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    <div id="lastUpdate">Never updated</div>
+    <div>
+      <button onclick="clearAll()">Reset all data</button>
+      &nbsp;·&nbsp;
+      <button onclick="resetApiKey()">Change API key</button>
+    </div>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============ STATE ============
+let state = {
+  apiKey: localStorage.getItem('ledger_apiKey') || '',
+  watchlist: JSON.parse(localStorage.getItem('ledger_watchlist') || '[]'),
+  portfolio: JSON.parse(localStorage.getItem('ledger_portfolio') || '[]'),
+  quotes: {}, // cache: { TICKER: {c, d, dp, h, l, pc} }
+};
+
+// ============ INIT ============
+function init() {
+  if (state.apiKey) {
+    document.getElementById('apiBanner').classList.add('hidden');
+    setStatus(true, 'Ready');
+  } else {
+    setStatus(false, 'API key needed');
+  }
+  renderWatchlist();
+  renderPortfolio();
+  updateCounts();
+  if (state.apiKey && (state.watchlist.length || state.portfolio.length)) {
+    refreshAll();
+  }
+}
+
+// ============ STORAGE ============
+function save() {
+  localStorage.setItem('ledger_apiKey', state.apiKey);
+  localStorage.setItem('ledger_watchlist', JSON.stringify(state.watchlist));
+  localStorage.setItem('ledger_portfolio', JSON.stringify(state.portfolio));
+}
+
+// ============ API KEY ============
+function saveApiKey() {
+  const k = document.getElementById('apiKeyInput').value.trim();
+  if (!k) { toast('Please paste your API key', true); return; }
+  state.apiKey = k;
+  save();
+  document.getElementById('apiBanner').classList.add('hidden');
+  setStatus(true, 'Ready');
+  toast('API key saved');
+  refreshAll();
+}
+
+function resetApiKey() {
+  if (!confirm('Remove your API key? You will need to enter it again.')) return;
+  state.apiKey = '';
+  save();
+  document.getElementById('apiBanner').classList.remove('hidden');
+  document.getElementById('apiKeyInput').value = '';
+  setStatus(false, 'API key needed');
+}
+
+// ============ TABS ============
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+// ============ WATCHLIST ============
+function addWatchlistItem(e) {
+  e.preventDefault();
+  const t = document.getElementById('watchTicker').value.trim().toUpperCase();
+  if (!t) return;
+  if (state.watchlist.includes(t)) { toast(t + ' is already on your watchlist', true); return; }
+  state.watchlist.push(t);
+  save();
+  document.getElementById('watchTicker').value = '';
+  renderWatchlist();
+  updateCounts();
+  if (state.apiKey) fetchQuote(t).then(renderWatchlist);
+}
+
+function removeWatchlistItem(t) {
+  state.watchlist = state.watchlist.filter(x => x !== t);
+  save();
+  renderWatchlist();
+  updateCounts();
+}
+
+function renderWatchlist() {
+  const tbody = document.getElementById('watchlistBody');
+  if (state.watchlist.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">— Your watchlist is empty —</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.watchlist.map(t => {
+    const q = state.quotes[t];
+    if (!q) return `<tr class="loading-row"><td><span class="ticker">${t}</span></td><td colspan="5">loading…</td><td><button class="remove-btn" onclick="removeWatchlistItem('${t}')">×</button></td></tr>`;
+    if (q.error) return `<tr class="error-row"><td><span class="ticker">${t}</span></td><td colspan="5">${q.error}</td><td><button class="remove-btn" onclick="removeWatchlistItem('${t}')">×</button></td></tr>`;
+    const dir = q.d > 0 ? 'up' : q.d < 0 ? 'down' : 'neutral';
+    const sign = q.d > 0 ? '+' : '';
+    return `
+      <tr>
+        <td><span class="ticker">${t}</span></td>
+        <td class="price">${fmtMoney(q.c)}</td>
+        <td class="${dir}">${sign}${fmtMoney(q.d)}</td>
+        <td><span class="change-pill ${dir}">${sign}${q.dp.toFixed(2)}%</span></td>
+        <td class="neutral">${fmtMoney(q.h)}</td>
+        <td class="neutral">${fmtMoney(q.l)}</td>
+        <td><button class="remove-btn" onclick="removeWatchlistItem('${t}')">×</button></td>
+      </tr>`;
+  }).join('');
+}
+
+// ============ PORTFOLIO ============
+function addPortfolioItem(e) {
+  e.preventDefault();
+  const t = document.getElementById('pfTicker').value.trim().toUpperCase();
+  const shares = parseFloat(document.getElementById('pfShares').value);
+  const buyPrice = parseFloat(document.getElementById('pfBuyPrice').value);
+  if (!t || isNaN(shares) || isNaN(buyPrice) || shares <= 0 || buyPrice <= 0) {
+    toast('Fill in ticker, shares, and buy price', true);
+    return;
+  }
+  state.portfolio.push({ id: Date.now(), ticker: t, shares, buyPrice });
+  save();
+  document.getElementById('pfTicker').value = '';
+  document.getElementById('pfShares').value = '';
+  document.getElementById('pfBuyPrice').value = '';
+  renderPortfolio();
+  updateCounts();
+  if (state.apiKey) fetchQuote(t).then(renderPortfolio);
+}
+
+function removePortfolioItem(id) {
+  state.portfolio = state.portfolio.filter(p => p.id !== id);
+  save();
+  renderPortfolio();
+  updateCounts();
+}
+
+function renderPortfolio() {
+  const tbody = document.getElementById('portfolioBody');
+  const summary = document.getElementById('portfolioSummary');
+
+  if (state.portfolio.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">— No positions yet —</td></tr>';
+    summary.style.display = 'none';
+    return;
+  }
+
+  summary.style.display = 'grid';
+
+  let totalValue = 0, totalCost = 0, hasAllPrices = true;
+
+  tbody.innerHTML = state.portfolio.map(p => {
+    const q = state.quotes[p.ticker];
+    const cost = p.shares * p.buyPrice;
+    totalCost += cost;
+    if (!q || q.error) {
+      hasAllPrices = false;
+      const msg = q && q.error ? q.error : 'loading…';
+      return `
+        <tr class="${q && q.error ? 'error-row' : 'loading-row'}">
+          <td><span class="ticker">${p.ticker}</span></td>
+          <td>${fmtNum(p.shares)}</td>
+          <td>${fmtMoney(p.buyPrice)}</td>
+          <td colspan="4">${msg}</td>
+          <td><button class="remove-btn" onclick="removePortfolioItem(${p.id})">×</button></td>
+        </tr>`;
+    }
+    const value = p.shares * q.c;
+    const pl = value - cost;
+    const plPct = (pl / cost) * 100;
+    totalValue += value;
+    const dir = pl > 0 ? 'up' : pl < 0 ? 'down' : 'neutral';
+    const sign = pl > 0 ? '+' : '';
+    return `
+      <tr>
+        <td><span class="ticker">${p.ticker}</span></td>
+        <td>${fmtNum(p.shares)}</td>
+        <td class="neutral">${fmtMoney(p.buyPrice)}</td>
+        <td class="price">${fmtMoney(q.c)}</td>
+        <td class="price">${fmtMoney(value)}</td>
+        <td class="${dir}">${sign}${fmtMoney(pl)}</td>
+        <td><span class="change-pill ${dir}">${sign}${plPct.toFixed(2)}%</span></td>
+        <td><button class="remove-btn" onclick="removePortfolioItem(${p.id})">×</button></td>
+      </tr>`;
+  }).join('');
+
+  if (hasAllPrices) {
+    const totalPL = totalValue - totalCost;
+    const totalPLPct = (totalPL / totalCost) * 100;
+    const dir = totalPL > 0 ? 'up' : totalPL < 0 ? 'down' : 'neutral';
+    const sign = totalPL > 0 ? '+' : '';
+    document.getElementById('sumValue').textContent = fmtMoney(totalValue);
+    document.getElementById('sumCost').textContent = fmtMoney(totalCost);
+    const plEl = document.getElementById('sumPL');
+    plEl.textContent = sign + fmtMoney(totalPL);
+    plEl.className = 'summary-value ' + dir;
+    const pctEl = document.getElementById('sumPLPct');
+    pctEl.textContent = sign + totalPLPct.toFixed(2) + '%';
+    pctEl.className = 'summary-sub ' + dir;
+  } else {
+    document.getElementById('sumValue').textContent = '—';
+    document.getElementById('sumCost').textContent = fmtMoney(totalCost);
+    document.getElementById('sumPL').textContent = '—';
+    document.getElementById('sumPLPct').textContent = '—';
+  }
+}
+
+// ============ DATA FETCHING ============
+async function fetchQuote(ticker) {
+  if (!state.apiKey) return;
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${encodeURIComponent(state.apiKey)}`);
+    if (!r.ok) {
+      const errText = r.status === 401 ? 'invalid API key' : `error ${r.status}`;
+      state.quotes[ticker] = { error: errText };
+      return;
+    }
+    const data = await r.json();
+    if (data.c === 0 && data.pc === 0) {
+      state.quotes[ticker] = { error: 'symbol not found' };
+    } else {
+      state.quotes[ticker] = data;
+    }
+  } catch (err) {
+    state.quotes[ticker] = { error: 'network error' };
+  }
+}
+
+async function refreshAll() {
+  if (!state.apiKey) { toast('Add your API key first', true); return; }
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '↻ Loading…';
+  setStatus(true, 'Fetching…');
+
+  const tickers = new Set([
+    ...state.watchlist,
+    ...state.portfolio.map(p => p.ticker)
+  ]);
+
+  // sequential to respect rate limits gently
+  for (const t of tickers) {
+    await fetchQuote(t);
+    renderWatchlist();
+    renderPortfolio();
+  }
+
+  const now = new Date();
+  document.getElementById('lastUpdate').textContent =
+    'Last updated · ' + now.toLocaleString();
+  setStatus(true, 'Live');
+  btn.disabled = false;
+  btn.textContent = '↻ Refresh';
+}
+
+// ============ HELPERS ============
+function fmtMoney(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtNum(n) {
+  return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+function updateCounts() {
+  document.getElementById('watchlist-count').textContent =
+    String(state.watchlist.length).padStart(2, '0');
+  document.getElementById('portfolio-count').textContent =
+    String(state.portfolio.length).padStart(2, '0');
+}
+function setStatus(ok, text) {
+  const dot = document.querySelector('#status .dot');
+  document.getElementById('status-text').textContent = text;
+  if (ok) dot.classList.remove('stale'); else dot.classList.add('stale');
+}
+function toast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(() => t.className = 'toast', 2600);
+}
+function clearAll() {
+  if (!confirm('Erase your watchlist and portfolio? This cannot be undone.')) return;
+  state.watchlist = [];
+  state.portfolio = [];
+  state.quotes = {};
+  save();
+  renderWatchlist();
+  renderPortfolio();
+  updateCounts();
+  toast('All data cleared');
+}
+
+init();
+</script>
+
+</body>
+</html>

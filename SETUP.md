@@ -42,8 +42,16 @@ alter publication supabase_realtime add table public.ledger_state;
 
 ## 3. Add your keys to the app
 
-1. In Supabase: **Project Settings → API**.
-2. Copy the **Project URL** and the **anon public** key.
+1. In your project, click **Connect** in the top bar — the panel shows your
+   **Project URL** and a copyable **API key**. (Or via the sidebar: the gear
+   **Project Settings → Data API** for the URL, and **→ API Keys** for the key.)
+2. Grab two values:
+   - the **Project URL** (`https://xxxx.supabase.co`), and
+   - the public client key, labeled **`anon` `public`** (a long `eyJ…` token) or,
+     on newer projects, the **publishable key** (`sb_publishable_…`). Either works.
+
+   ⚠️ Do **not** use the `service_role` / secret key — it bypasses Row-Level
+   Security and must never appear in frontend code.
 3. Open `index.html`, find this block near the top of the `<script>`, and paste them in:
 
    ```js

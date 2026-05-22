@@ -423,7 +423,7 @@
   <div class="api-banner" id="apiBanner">
     <h2>Connect a data source</h2>
     <p>
-      Ledger uses <a href="https://finnhub.io/register" target="_blank" rel="noopener">Finnhub</a> for live stock data (free tier: 60 calls/min) and <a href="https://www.frankfurter.app/" target="_blank" rel="noopener">Frankfurter</a> for ECB exchange rates (no key needed). Paste your Finnhub key below — it stays in your browser only.
+      Ledger uses <a href="https://finnhub.io/register" target="_blank" rel="noopener">Finnhub</a> for live stock data (free tier: 60 calls/min) and <a href="https://frankfurter.dev/" target="_blank" rel="noopener">Frankfurter</a> for ECB exchange rates (no key needed). Paste your Finnhub key below — it stays in your browser only.
     </p>
     <div class="api-input-row">
       <input type="password" id="apiKeyInput" placeholder="Paste your Finnhub API key here...">
@@ -765,9 +765,10 @@ function renderPortfolio() {
 
 async function fetchFxRates() {
   try {
-    const r = await fetch('https://api.frankfurter.app/latest?from=SEK&to=USD,EUR,NOK');
-    if (!r.ok) throw new Error('FX fetch failed');
+    const r = await fetch('https://api.frankfurter.dev/v1/latest?base=SEK&symbols=USD,EUR,NOK');
+    if (!r.ok) throw new Error('FX fetch returned ' + r.status);
     const data = await r.json();
+    if (!data.rates) throw new Error('FX response missing rates');
     state.fxRates = {
       SEK: 1,
       USD: 1 / data.rates.USD,
@@ -779,6 +780,7 @@ async function fetchFxRates() {
     updateFxBar();
   } catch (err) {
     console.warn('FX rates fetch failed', err);
+    toast('Could not load FX rates: ' + err.message, true);
   }
 }
 

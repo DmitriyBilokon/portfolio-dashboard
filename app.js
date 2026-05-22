@@ -2506,7 +2506,7 @@ const PRICE_PROXY = 'https://telegram-notify-abc.dmitriy-bilokon.workers.dev';  
 
 // Map a dashboard ticker + currency to a Yahoo/Finnhub exchange symbol.
 // Overrides handle tickers whose dashboard form differs from the exchange symbol.
-const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE' };
+const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 function exSymbol(ticker, ccy){
   const t = String(ticker||'').trim().toUpperCase().replace(/\s+/g,'-');
   if(SYMBOL_OVERRIDES[t]) return SYMBOL_OVERRIDES[t];

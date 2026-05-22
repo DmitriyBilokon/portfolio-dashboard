@@ -138,6 +138,7 @@ function renderAll(){
   document.getElementById('divcalArea').style.display=curSub==='divcal'?'':'none';
   document.getElementById('historyArea').style.display=curSub==='history'?'':'none';
   document.getElementById('toolbarEl').style.display=curSub==='table'?'':'none';
+  document.getElementById('addPos').style.display=(isPF()&&curSub==='table')?'':'none';
   document.getElementById('statsBar').style.display=curSub==='table'&&!isPF()?'':'none';
   if(curSub==='table')renderTable();
   else if(curSub==='ranking')renderRanking();
@@ -2611,6 +2612,31 @@ function toggleCol(ci){
 function showAllCols(){
   hiddenCols[curIdx] = []; scheduleSave(); renderTable();
   const m = document.getElementById('colsMenu'); if(m) m.remove();
+}
+
+/* ===== Add a portfolio position ===== */
+function addPosition(e){
+  if(e) e.preventDefault();
+  if(!isPF()) return;
+  const t = document.getElementById('apTicker').value.trim().toUpperCase();
+  const shares = parseFloat(document.getElementById('apShares').value);
+  const buy = parseFloat(document.getElementById('apBuy').value);
+  const ccy = document.getElementById('apCcy').value;
+  if(!t || !(shares > 0) || !(buy > 0)){ toast('Заполните тикер, кол-во и цену покупки', true); return; }
+  const flag = {USD:'🇺🇸',EUR:'🇪🇺',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰'}[ccy] || '';
+  const d = DATA[curIdx];
+  // schema: #,Компания,Тикер,Страна,Сектор,Тип,Кол-во,Цена,Валюта,Покупка,1д%,Прибыль,От покупки%,Стоимость,X-dag,Выплата,SMA50,SMA100,SMA200,Целевая,Цель%,Действие
+  // current price starts at the buy price (P/L 0) — run 🔄 Цены to fetch the live price.
+  d.rows.push([d.rows.length+1, t, t, flag, '—', '—', shares, buy, ccy, buy, 0, 0, 0, 0, '—','—','—','—','—',0,0,'⚪ Держать']);
+  recalcPF(d.rows.length-1);
+  d.count = d.rows.length;
+  document.getElementById('apTicker').value = '';
+  document.getElementById('apShares').value = '';
+  document.getElementById('apBuy').value = '';
+  scheduleSave();
+  init();
+  document.getElementById('apTicker').focus();
+  toast(t + ' добавлен');
 }
 
 boot();

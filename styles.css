@@ -70,7 +70,34 @@ tbody tr{border-bottom:1px solid var(--border);transition:background .1s}tbody t
 .rb-proj{display:flex;gap:8px;padding:8px 0;flex-wrap:wrap}
 .rb-proj-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;flex:1;min-width:140px;text-align:center}
 .rb-proj-label{font-size:9px;color:var(--text3);text-transform:uppercase;font-family:'JetBrains Mono',monospace}.rb-proj-val{font-size:18px;font-weight:700;margin-top:2px}
-#contentArea{padding:0 16px}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}@media(max-width:768px){.tabs,.sub-tabs,.toolbar,.stats,.sma-banner,.pf-summary,.fx-bar{padding-left:8px;padding-right:8px}}
+#contentArea{padding:0 16px}::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}/* ===== Tablet ===== */
+@media(max-width:768px){
+  .tabs,.sub-tabs,.toolbar,.stats,.sma-banner,.pf-summary,.fx-bar{padding-left:8px;padding-right:8px}
+  .header{padding:12px 14px;gap:8px}
+  .header h1{font-size:16px}
+  /* sub-tabs are many (Таблица … 2040 … История) — let them scroll, not overflow the page */
+  .sub-tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .sub-tab{flex:0 0 auto;white-space:nowrap}
+  .table-wrap{padding:0 8px 24px;-webkit-overflow-scrolling:touch}
+  th,td{padding:8px 7px}
+}
+/* ===== Phone ===== */
+@media(max-width:560px){
+  .header-sub{display:none}                 /* free up the header row on small phones */
+  .header h1{font-size:15px}
+  .tab{font-size:11px;padding:7px 10px}
+  .toolbar{gap:6px;row-gap:6px}
+  .index-info{flex-basis:100%;order:5;min-width:0}
+  .search-box{flex:1 1 auto;width:auto;min-width:0}
+  .btn{padding:5px 8px;font-size:10px}
+  .pf-card,.stat-card{flex:1 1 calc(50% - 8px);min-width:0;padding:10px 12px}  /* 2-up cards */
+  .pf-card-val{font-size:16px}
+  .stat-value{font-size:14px}
+  th,td{padding:6px 5px;font-size:10px}
+  .c-comment{max-width:150px}
+  .cols-menu{min-width:160px;max-width:calc(100vw - 16px)}
+  .toast{font-size:11px;padding:9px 14px}
+}
 
 /* Target progress bar */
 .tgt-bar{display:flex;align-items:center;gap:6px;min-width:150px}

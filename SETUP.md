@@ -114,6 +114,43 @@ instead and prompts once for a free API key (then saved + synced). Finnhub's fre
 tier only covers **US tickers**; EU/Nordic rows keep their manual price. The toast
 reports how many updated vs. stayed manual.
 
+## Telegram notifications (optional)
+
+[telegram-notify.js](telegram-notify.js) is a second Cloudflare Worker that runs
+on a schedule (even when the site is closed), reads your portfolio from Supabase,
+checks live prices, and sends a Telegram digest of **big daily movers**, holdings
+that **reached their target value**, and holdings whose **action** is Buy/Sell/Trim.
+It stays silent when there's nothing to report.
+
+**1. Create the bot & find your chat id**
+- Message **@BotFather** → `/newbot` → copy the **token**.
+- Message **@userinfobot** → copy your numeric **Id** (chat id).
+
+**2. Get your Supabase service key**
+- Project Settings → API → **`service_role`** key (this is secret — it's only ever
+  used inside the Worker, never in the browser).
+
+**3. Deploy the Worker**
+- <https://dash.cloudflare.com> → **Workers & Pages → Create → Worker** → paste
+  `telegram-notify.js` → **Deploy**.
+- **Settings → Variables and Secrets**, add:
+  | Name | Type | Value |
+  |------|------|-------|
+  | `BOT_TOKEN` | Secret | from @BotFather |
+  | `SUPABASE_SERVICE_KEY` | Secret | service_role key |
+  | `CHAT_ID` | Text | your chat id |
+  | `SUPABASE_URL` | Text | `https://<project>.supabase.co` |
+  | `MOVER_THRESHOLD` | Text | optional, % (default `5`) |
+- **Settings → Triggers → Cron Triggers** → add e.g. `30 17 * * 1-5`
+  (weekdays 17:30 UTC). Adjust to taste.
+
+**4. Test:** open the Worker's URL in a browser — it runs the check immediately and
+either sends the digest or replies "Nothing to report".
+
+> All config lives in the Worker (secrets stay server-side). To make the chat id
+> or threshold editable from the app later, we can move them into your synced
+> settings — ask and I'll wire a small panel.
+
 ## How sync behaves
 
 - **Edits push automatically** (debounced ~0.8s) after any cell edit, delete,

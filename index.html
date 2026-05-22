@@ -607,8 +607,8 @@
 // 3. Paste them below. Both values are safe to expose in frontend code;
 //    your data is protected by login + Row-Level Security, not by hiding these.
 // Until you fill these in, Ledger runs exactly as before (local-only, no sync).
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const SUPABASE_URL = 'https://fvrebkwczqmeorytujbn.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_9CIG7HU54hfBcexS4qr3rQ_HQygVVJC';
 
 const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20;
 const sb = SYNC_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;

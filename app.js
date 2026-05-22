@@ -96,11 +96,20 @@ const SEC_COLORS={'tech':['#dbeafe','#1e40af'],'software':['#c7d2fe','#3730a3'],
 function getSC(s){s=(s||'').toLowerCase();for(const[k,[b,f]] of Object.entries(SEC_COLORS)){if(s.includes(k))return[b,f]}return['#f1f5f9','#475569']}
 let curIdx='OMXS30',curSub='table',sortCol=-1,sortDir=0,searchTerm='',selected=new Set(),colOrders={},hiddenCols={},dragSrc=-1;
 const isPF=()=>curIdx.startsWith('💼');
-function getOrd(){if(!colOrders[curIdx])colOrders[curIdx]=DATA[curIdx].headers.map((_,i)=>i);return colOrders[curIdx]}
+function getOrd(){const n=DATA[curIdx].headers.length;if(!colOrders[curIdx])colOrders[curIdx]=DATA[curIdx].headers.map((_,i)=>i);else for(let i=0;i<n;i++)if(!colOrders[curIdx].includes(i))colOrders[curIdx].push(i);return colOrders[curIdx]}
 function recalcPF(i){const d=DATA[curIdx],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0}
 function recalcAllPF(){DATA[curIdx].rows.forEach((_,i)=>recalcPF(i))}
 
-function init(){const t=document.getElementById('tabs');t.innerHTML='';Object.keys(DATA).forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+// Ensure the portfolio has the analyst-target column (added by a feature update).
+function migratePortfolio(){
+  const pf = DATA['💼 Портфель 2.0']; if(!pf) return;
+  if(pf.headers.indexOf('Аналит. таргет') === -1){
+    pf.headers.push('Аналит. таргет');
+    pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
+    if(!applyingRemote) scheduleSave();
+  }
+}
+function init(){migratePortfolio();const t=document.getElementById('tabs');t.innerHTML='';Object.keys(DATA).forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
 
 function renderAll(){
   document.querySelectorAll('.tab').forEach((t,i)=>{t.className='tab'+(Object.keys(DATA)[i]===curIdx?' active':'')});

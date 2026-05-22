@@ -18,6 +18,8 @@
 //     CHAT_ID               (Text)    – your Telegram chat id
 //     SUPABASE_URL          (Text)    – https://<project>.supabase.co
 //     MOVER_THRESHOLD       (Text)    – optional, percent (default 5)
+//     FMP_KEY               (Secret)  – Financial Modeling Prep API key (analyst targets)
+//     RESTRICT_FIRMS        (Text)    – optional, set "1" to only average the whitelisted firms
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
@@ -98,10 +100,80 @@ async function buildReport(env){
   return parts.length ? ('📈 <b>Index Portfolio Dashboard</b>\n\n' + parts.join('\n\n')) : null;
 }
 
+// ── Analyst target prices (Financial Modeling Prep) ────────────────────────
+const TARGET_COL = 'Аналит. таргет';
+// Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
+// Off by default: restricting to these would blank most Nordic/EU holdings.
+const TARGET_FIRMS = new Set([
+  'kgi securities','fubon securities','gf securities','loop capital markets','evercore isi',
+  'itau bba securities','oppenheimer','president capital management','craig-hallum','susquehanna',
+  'new street research','benchmark co','bnp paribas','huatai research','aletheia capital',
+  'ctbc securities','melius research','edgewater research','goldman sachs','d.a. davidson',
+  'truist securities','jefferies','wedbush','keybanc capital markets','raymond james','banco safra',
+  'cantor fitzgerald','mizuho securities','stifel','wells fargo','td cowen','seaport global',
+  'barclays','summit insights group',
+].map(s => s.toLowerCase()));
+
+// Average of analyst targets published in the last 90 days for one symbol.
+// Returns { avg, count } or null. Uses FMP's per-analyst price-target feed.
+async function fmpTarget(symbol, env){
+  try{
+    const r = await fetch(`https://financialmodelingprep.com/api/v4/price-target?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
+    if(!r.ok) return null;
+    const arr = await r.json();
+    if(!Array.isArray(arr) || !arr.length) return null;
+    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+    const restrict = env.RESTRICT_FIRMS === '1';
+    const vals = [];
+    for(const x of arr){
+      const d = Date.parse(x.publishedDate);
+      if(isNaN(d) || d < cutoff) continue;                                  // only last 3 months
+      if(restrict && !TARGET_FIRMS.has(String(x.analystCompany || '').toLowerCase())) continue;
+      const pt = x.adjPriceTarget || x.priceTarget;
+      if(typeof pt === 'number' && pt > 0) vals.push(pt);
+    }
+    if(!vals.length) return null;
+    return { avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100, count: vals.length };
+  }catch(e){ return null; }
+}
+async function loadRow(env){
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&order=updated_at.desc&limit=1`,
+    { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+  if(!r.ok) throw new Error('Supabase read failed: ' + r.status);
+  const row = (await r.json())?.[0];
+  return row ? { userId: row.user_id, snap: row.data } : null;
+}
+async function writeRow(env, userId, snap){
+  const KEY = env.SUPABASE_SERVICE_KEY;
+  await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?user_id=eq.${userId}`, {
+    method: 'PATCH',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ data: snap, updated_at: new Date().toISOString() }),
+  });
+}
+// Add the target column if missing, fill it from Yahoo, and persist back to Supabase.
+async function updateTargets(env){
+  const row = await loadRow(env);
+  const pf = row && row.snap && row.snap.data && row.snap.data[PF_KEY];
+  if(!pf) return { updated: 0, total: 0 };
+  let ti = pf.headers.indexOf(TARGET_COL);
+  const addedCol = ti === -1;
+  if(addedCol){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; }
+  pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
+  let updated = 0;
+  for(const r of pf.rows){
+    const res = await fmpTarget(exSymbol(r[2], r[8]), env);
+    if(res){ r[ti] = res.avg; updated++; }
+  }
+  if(addedCol || updated > 0) await writeRow(env, row.userId, row.snap);
+  return { updated, total: pf.rows.length };
+}
+
 export default {
-  // Cron trigger
+  // Cron trigger — refresh analyst targets, then send the alert digest.
   async scheduled(event, env, ctx){
     ctx.waitUntil((async () => {
+      try{ await updateTargets(env); }catch(e){ /* targets are best-effort */ }
       const text = await buildReport(env);
       if(text) await sendTelegram(env, text);
     })());
@@ -112,6 +184,10 @@ export default {
     const url = new URL(request.url);
     const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, OPTIONS', 'Content-Type':'application/json; charset=utf-8' };
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    if(url.searchParams.get('action') === 'targets'){
+      try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
+      catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+    }
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};

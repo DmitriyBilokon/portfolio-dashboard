@@ -141,6 +141,15 @@ It stays silent when there's nothing to report.
   | `CHAT_ID` | Text | your chat id |
   | `SUPABASE_URL` | Text | `https://<project>.supabase.co` |
   | `MOVER_THRESHOLD` | Text | optional, % (default `5`) |
+  | `FMP_KEY` | Secret | [Financial Modeling Prep](https://site.financialmodelingprep.com) API key — fills the **Аналит. таргет** column |
+  | `RESTRICT_FIRMS` | Text | optional, set `1` to average only the whitelisted analyst firms |
+
+  **Analyst targets:** with `FMP_KEY` set, each cron run also fills the portfolio's
+  **Аналит. таргет** column with the *average analyst price target from the last
+  90 days* (per stock), via FMP's per-analyst feed. Needs an FMP plan that includes
+  the Price Target endpoint. Coverage is strongest for US names; many Nordic/EU
+  holdings may stay blank (and are editable by hand). Test: open the Worker URL with
+  `?action=targets` → it replies `Targets updated: N/total`.
 - **Settings → Triggers → Cron Triggers** → add e.g. `30 17 * * 1-5`
   (weekdays 17:30 UTC). Adjust to taste.
 

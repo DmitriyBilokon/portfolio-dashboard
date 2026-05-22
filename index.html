@@ -394,6 +394,56 @@
   .toast.show { transform: translateX(-50%) translateY(0); }
   .toast.error { border-color: var(--down); color: var(--down); }
 
+  .auth-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(212, 165, 116, 0.05), transparent 50%),
+      radial-gradient(circle at 80% 100%, rgba(110, 193, 154, 0.04), transparent 50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 24px;
+  }
+  .auth-overlay.hidden { display: none; }
+  .auth-card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    padding: 40px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .auth-card h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 44px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .auth-card h1 em { color: var(--accent); font-style: italic; }
+  .auth-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 8px;
+  }
+  .auth-card input { width: 100%; flex: none; }
+  .auth-card button { width: 100%; padding: 12px; }
+  .auth-error {
+    color: var(--down);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    min-height: 14px;
+    line-height: 1.4;
+  }
+
   @media (max-width: 640px) {
     .container { padding: 24px 16px 60px; }
     .brand h1 { font-size: 36px; }
@@ -406,6 +456,17 @@
 </style>
 </head>
 <body>
+
+<div class="auth-overlay hidden" id="authOverlay">
+  <form class="auth-card" onsubmit="handleLogin(event)">
+    <h1>Ledger<em>.</em></h1>
+    <div class="auth-sub">Sign in to sync across your devices</div>
+    <input type="email" id="authEmail" placeholder="Email" autocomplete="username" required>
+    <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="authBtn">Sign in</button>
+    <div class="auth-error" id="authError"></div>
+  </form>
+</div>
 
 <div class="container">
 
@@ -527,6 +588,7 @@
   <footer>
     <div id="lastUpdate">Never updated</div>
     <div>
+      <span id="acct"></span>
       <button onclick="clearAll()">Reset all data</button>
       &nbsp;·&nbsp;
       <button onclick="resetApiKey()">Change API key</button>
@@ -537,7 +599,25 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+// ─── Supabase sync config ───────────────────────────────────────────────
+// 1. Create a free project at https://supabase.com
+// 2. Project Settings → API → copy the "Project URL" and the "anon public" key
+// 3. Paste them below. Both values are safe to expose in frontend code;
+//    your data is protected by login + Row-Level Security, not by hiding these.
+// Until you fill these in, Ledger runs exactly as before (local-only, no sync).
+const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+
+const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20;
+const sb = SYNC_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+let currentUser = null;       // logged-in Supabase user, or null in local-only mode
+let realtimeChannel = null;   // live cross-device update subscription
+let pushTimer = null;         // debounce handle for cloud writes
+let applyingRemote = false;   // guard: don't re-push state we just pulled
+
 let state = {
   apiKey: localStorage.getItem('ledger_apiKey') || '',
   watchlist: JSON.parse(localStorage.getItem('ledger_watchlist') || '[]'),
@@ -551,13 +631,134 @@ let state = {
 // Migrate v1 entries that lack buyCurrency
 state.portfolio.forEach(p => { if (!p.buyCurrency) p.buyCurrency = 'USD'; });
 
-function save() {
+function saveLocal() {
   localStorage.setItem('ledger_apiKey', state.apiKey);
   localStorage.setItem('ledger_watchlist', JSON.stringify(state.watchlist));
   localStorage.setItem('ledger_portfolio', JSON.stringify(state.portfolio));
   localStorage.setItem('ledger_stockCcy', JSON.stringify(state.stockCcy));
   localStorage.setItem('ledger_fxRates', JSON.stringify(state.fxRates));
   if (state.fxUpdated) localStorage.setItem('ledger_fxUpdated', state.fxUpdated);
+}
+
+// save() = write the offline cache, then sync up (unless we're mid-pull).
+function save() {
+  saveLocal();
+  if (currentUser && !applyingRemote) schedulePush();
+}
+
+// ─── Cloud sync ─────────────────────────────────────────────────────────
+function schedulePush() {
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushState, 600);
+}
+
+async function pushState() {
+  if (!currentUser) return;
+  const payload = {
+    apiKey: state.apiKey,
+    watchlist: state.watchlist,
+    portfolio: state.portfolio,
+    stockCcy: state.stockCcy,
+    fxRates: state.fxRates,
+    fxUpdated: state.fxUpdated,
+  };
+  const { error } = await sb.from('ledger_state')
+    .upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() });
+  if (error) { console.warn('Sync push failed', error); toast('Sync failed — saved locally', true); }
+}
+
+async function pullState() {
+  if (!currentUser) return;
+  const { data, error } = await sb.from('ledger_state')
+    .select('data').eq('user_id', currentUser.id).maybeSingle();
+  if (error) { console.warn('Sync pull failed', error); return; }
+  if (data && data.data && Object.keys(data.data).length) {
+    applyRemoteState(data.data);
+  } else {
+    // Nothing stored in the cloud yet — seed it with whatever this device has.
+    pushState();
+  }
+}
+
+function applyRemoteState(d) {
+  applyingRemote = true;
+  if (typeof d.apiKey === 'string') state.apiKey = d.apiKey;
+  state.watchlist = Array.isArray(d.watchlist) ? d.watchlist : [];
+  state.portfolio = Array.isArray(d.portfolio) ? d.portfolio : [];
+  state.stockCcy  = d.stockCcy || {};
+  state.fxRates   = d.fxRates || { SEK: 1 };
+  state.fxUpdated = d.fxUpdated || null;
+  state.portfolio.forEach(p => { if (!p.buyCurrency) p.buyCurrency = 'USD'; });
+  saveLocal();
+  applyingRemote = false;
+  if (state.apiKey) document.getElementById('apiBanner').classList.add('hidden');
+  updateFxBar();
+  renderWatchlist();
+  renderPortfolio();
+  updateCounts();
+}
+
+// Stream changes made on other devices into this one, live.
+function subscribeRealtime() {
+  if (realtimeChannel) sb.removeChannel(realtimeChannel);
+  realtimeChannel = sb.channel('ledger_state_' + currentUser.id)
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'ledger_state', filter: 'user_id=eq.' + currentUser.id },
+        payload => { if (payload.new && payload.new.data) applyRemoteState(payload.new.data); })
+    .subscribe();
+}
+
+// ─── Auth ───────────────────────────────────────────────────────────────
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const btn = document.getElementById('authBtn');
+  const errEl = document.getElementById('authError');
+  errEl.textContent = '';
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if (error) { errEl.textContent = error.message; return; }
+  currentUser = data.user;
+  document.getElementById('authPassword').value = '';
+  await startApp();
+}
+
+async function handleLogout() {
+  if (realtimeChannel) { sb.removeChannel(realtimeChannel); realtimeChannel = null; }
+  await sb.auth.signOut();
+  currentUser = null;
+  document.getElementById('authOverlay').classList.remove('hidden');
+}
+
+async function startApp() {
+  document.getElementById('authOverlay').classList.add('hidden');
+  document.getElementById('acct').innerHTML =
+    '<span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--up);margin-right:6px;"></span>' +
+    'Synced · ' + currentUser.email +
+    ' · <button onclick="handleLogout()">Sign out</button> &nbsp;·&nbsp; ';
+  await pullState();
+  subscribeRealtime();
+  init();
+}
+
+// On load: enter the app if a session exists, otherwise show the login screen.
+// If Supabase keys aren't configured yet, run local-only (original behavior).
+async function boot() {
+  if (!SYNC_ENABLED) {
+    document.getElementById('acct').innerHTML =
+      '<span style="color:var(--down)">Sync off — add Supabase keys in index.html</span> &nbsp;·&nbsp; ';
+    init();
+    return;
+  }
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    await startApp();
+  } else {
+    document.getElementById('authOverlay').classList.remove('hidden');
+  }
 }
 
 function init() {
@@ -905,7 +1106,7 @@ function clearAll() {
   toast('All data cleared');
 }
 
-init();
+boot();
 </script>
 
 </body>

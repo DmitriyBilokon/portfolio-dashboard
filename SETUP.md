@@ -52,7 +52,7 @@ alter publication supabase_realtime add table public.ledger_state;
 
    ⚠️ Do **not** use the `service_role` / secret key — it bypasses Row-Level
    Security and must never appear in frontend code.
-3. Open `index.html`, find this block near the top of the `<script>`, and paste them in:
+3. Open `app.js`, find this block at the very top, and paste them in:
 
    ```js
    const SUPABASE_URL = 'https://xxxxxxxx.supabase.co';

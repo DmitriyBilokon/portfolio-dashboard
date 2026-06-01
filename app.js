@@ -81,24 +81,54 @@ async function startApp(){
   const lo=document.getElementById('logoutBtn'); if(lo){ lo.style.display=''; lo.title='Выйти ('+currentUser.email+')'; }
   await pullState();
   subscribeRealtime();
+  refreshFX();   // override synced rates with live USD/EUR/NOK→SEK (non-blocking)
 }
 async function boot(){
   initTheme();
   init();                         // paint with bundled data first
-  if(!SYNC_ENABLED) return;
+  if(!SYNC_ENABLED){ refreshFX(); return; }
   const { data:{ session } } = await sb.auth.getSession();
   if(session){ currentUser=session.user; await startApp(); }
   else { document.getElementById('authOverlay').classList.remove('hidden'); }
 }
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴','💼 Портфель 2.0':'💼'};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375};
+// ===== Live exchange rates (official mid-market, ≈ what Google shows) =====
+// Base currency is SEK; FX[ccy] = how many SEK per 1 unit of ccy.
+// Sources return "1 SEK = rates[ccy] ccy", so SEK-per-ccy = 1/rates[ccy].
+// Tried in order; on total failure we keep whatever rates are already loaded.
+const FX_CCYS=['USD','EUR','NOK'];
+async function fetchRatesSEK(){
+  const sources=[
+    async()=>(await(await fetch('https://api.frankfurter.app/latest?from=SEK&to='+FX_CCYS.join(','))).json()).rates,            // ECB official reference rates
+    async()=>{const j=await(await fetch('https://open.er-api.com/v6/latest/SEK')).json();return j&&j.result==='success'?j.rates:null;} // fallback
+  ];
+  for(const src of sources){
+    try{
+      const r=await src();
+      if(r&&FX_CCYS.every(c=>typeof r[c]==='number'&&r[c]>0)){
+        const out={};FX_CCYS.forEach(c=>out[c]=parseFloat((1/r[c]).toFixed(4)));return out;
+      }
+    }catch(e){}
+  }
+  return null;
+}
+async function refreshFX(){
+  const live=await fetchRatesSEK();
+  if(!live)return;                                  // network/source down → keep existing rates
+  FX={...FX,SEK:1,...live};                          // override USD/EUR/NOK, preserve any other keys
+  const pfKey=Object.keys(DATA).find(k=>k.startsWith('💼'));
+  if(pfKey)recalcAllPF(pfKey);                       // refresh stored portfolio values even if PF isn't the open tab
+  if(isPF()){renderPFSummary();if(curSub==='table'){renderTable();renderFX();}}
+  scheduleSave();                                    // persist live rates so the cloud + Telegram worker see them
+}
 const SEC_COLORS={'tech':['#dbeafe','#1e40af'],'software':['#c7d2fe','#3730a3'],'ai':['#c7d2fe','#3730a3'],'gpu':['#c7d2fe','#3730a3'],'semis':['#e0e7ff','#4338ca'],'information':['#dbeafe','#1e40af'],'health':['#dcfce7','#166534'],'pharma':['#dcfce7','#166534'],'biotech':['#d1fae5','#065f46'],'med':['#dcfce7','#166534'],'financ':['#fef3c7','#92400e'],'bank':['#fef3c7','#92400e'],'insurance':['#fef9c3','#854d0e'],'pe fund':['#fef3c7','#92400e'],'energy':['#ffedd5','#9a3412'],'oil':['#ffedd5','#9a3412'],'utilit':['#ecfccb','#3f6212'],'consumer':['#fce7f3','#9d174d'],'food':['#fce7f3','#9d174d'],'luxury':['#fdf2f8','#831843'],'industrial':['#e0f2fe','#075985'],'construction':['#e0f2fe','#075985'],'defense':['#fee2e2','#991b1b'],'naval':['#fee2e2','#991b1b'],'security':['#fee2e2','#991b1b'],'telecom':['#f3e8ff','#6b21a8'],'media':['#f3e8ff','#6b21a8'],'material':['#ccfbf1','#134e4a'],'gaming':['#ede9fe','#5b21b6'],'salmon':['#cffafe','#155e75'],'auto':['#f1f5f9','#334155'],'ship':['#e0f2fe','#075985']};
 function getSC(s){s=(s||'').toLowerCase();for(const[k,[b,f]] of Object.entries(SEC_COLORS)){if(s.includes(k))return[b,f]}return['#f1f5f9','#475569']}
 let curIdx='OMXS30',curSub='table',sortCol=-1,sortDir=0,searchTerm='',selected=new Set(),colOrders={},hiddenCols={},dragSrc=-1;
 const isPF=()=>curIdx.startsWith('💼');
 function getOrd(){const n=DATA[curIdx].headers.length;if(!colOrders[curIdx])colOrders[curIdx]=DATA[curIdx].headers.map((_,i)=>i);else for(let i=0;i<n;i++)if(!colOrders[curIdx].includes(i))colOrders[curIdx].push(i);return colOrders[curIdx]}
-function recalcPF(i){const d=DATA[curIdx],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0}
-function recalcAllPF(){DATA[curIdx].rows.forEach((_,i)=>recalcPF(i))}
+function recalcPF(i,idx){const d=DATA[idx||curIdx],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0}
+function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
 
 // Ensure the portfolio has the analyst-target column (added by a feature update).
 function migratePortfolio(){

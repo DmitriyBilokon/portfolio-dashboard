@@ -25,6 +25,26 @@
 
 const PF_KEY = '💼 Портфель 2.0';
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
+const FX_CCYS = ['USD','EUR','NOK'];
+
+// Live official mid-market rates (≈ Google), as SEK per 1 unit of ccy.
+// Sources give "1 SEK = rates[ccy] ccy" → SEK-per-ccy = 1/rates[ccy].
+// Returns null on failure so callers fall back to the synced/default rates.
+async function fetchRatesSEK(){
+  const sources = [
+    async () => (await (await fetch('https://api.frankfurter.app/latest?from=SEK&to=' + FX_CCYS.join(','))).json()).rates,           // ECB official reference rates
+    async () => { const j = await (await fetch('https://open.er-api.com/v6/latest/SEK')).json(); return j && j.result === 'success' ? j.rates : null; },
+  ];
+  for(const src of sources){
+    try{
+      const r = await src();
+      if(r && FX_CCYS.every(c => typeof r[c] === 'number' && r[c] > 0)){
+        const out = {}; FX_CCYS.forEach(c => out[c] = Math.round(1 / r[c] * 1e4) / 1e4); return out;
+      }
+    }catch(e){}
+  }
+  return null;
+}
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 
 function exSymbol(ticker, ccy){
@@ -74,6 +94,8 @@ async function sendTelegram(env, text){
 async function buildReport(env){
   const pf = await loadPortfolio(env);
   if(!pf) return null;
+  const live = await fetchRatesSEK();
+  if(live) pf.fx = { ...pf.fx, SEK:1, ...live };   // prefer live USD/EUR/NOK over synced rates
   const thr = parseFloat(env.MOVER_THRESHOLD || '5');
   const movers = [], targets = [], actions = [];
 
@@ -115,16 +137,18 @@ const TARGET_FIRMS = new Set([
 ].map(s => s.toLowerCase()));
 
 const round2 = n => Math.round(n * 100) / 100;
-// Average analyst target for one symbol (FMP "stable" API). Returns { avg, count } or null.
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+// Average analyst target for one symbol (FMP "stable" API).
+// Returns { avg, count } on success, or { err } describing why it couldn't.
 //  • default: FMP's pre-computed last-quarter (~3-month) average (price-target-summary)
 //  • RESTRICT_FIRMS=1: average per-analyst targets from the last 90 days, whitelisted firms only
 async function fmpTarget(symbol, env){
   try{
     if(env.RESTRICT_FIRMS === '1'){
       const r = await fetch(`https://financialmodelingprep.com/stable/price-target-news?symbol=${encodeURIComponent(symbol)}&page=0&limit=100&apikey=${env.FMP_KEY}`);
-      if(!r.ok) return null;
+      if(!r.ok) return { err: 'http ' + r.status };
       const arr = await r.json();
-      if(!Array.isArray(arr)) return null;
+      if(!Array.isArray(arr)) return { err: 'bad json' };
       const cutoff = Date.now() - 90 * 24 * 3600 * 1000, vals = [];
       for(const x of arr){
         const t = Date.parse(x.publishedDate || x.date);
@@ -132,19 +156,19 @@ async function fmpTarget(symbol, env){
         if(!TARGET_FIRMS.has(String(x.analystCompany || '').toLowerCase())) continue;
         if(typeof x.priceTarget === 'number' && x.priceTarget > 0) vals.push(x.priceTarget);
       }
-      return vals.length ? { avg: round2(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length } : null;
+      return vals.length ? { avg: round2(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length } : { err: 'no recent (firms)' };
     }
     const r = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
-    if(!r.ok) return null;
+    if(!r.ok) return { err: 'http ' + r.status };
     const arr = await r.json();
     const d = Array.isArray(arr) ? arr[0] : arr;
-    if(!d) return null;
+    if(!d) return { err: 'no data' };
     if(typeof d.lastQuarterAvgPriceTarget === 'number' && d.lastQuarterAvgPriceTarget > 0)
       return { avg: round2(d.lastQuarterAvgPriceTarget), count: d.lastQuarter ?? d.lastQuarterCount ?? 0 };
     if(typeof d.lastMonthAvgPriceTarget === 'number' && d.lastMonthAvgPriceTarget > 0)
       return { avg: round2(d.lastMonthAvgPriceTarget), count: d.lastMonth ?? d.lastMonthCount ?? 0 };
-    return null;
-  }catch(e){ return null; }
+    return { err: 'no recent target' };
+  }catch(e){ return { err: 'exc ' + String(e.message || '').slice(0, 24) }; }
 }
 async function loadRow(env){
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&order=updated_at.desc&limit=1`,
@@ -171,12 +195,16 @@ async function updateTargets(env){
   if(addedCol){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; }
   pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
   let updated = 0;
+  const details = [];
   for(const r of pf.rows){
-    const res = await fmpTarget(exSymbol(r[2], r[8]), env);
-    if(res){ r[ti] = res.avg; updated++; }
+    const sym = exSymbol(r[2], r[8]);
+    const res = await fmpTarget(sym, env);
+    if(res && typeof res.avg === 'number'){ r[ti] = res.avg; updated++; details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.`); }
+    else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
+    await sleep(250);   // stay under FMP's burst rate limit
   }
   if(addedCol || updated > 0) await writeRow(env, row.userId, row.snap);
-  return { updated, total: pf.rows.length };
+  return { updated, total: pf.rows.length, details };
 }
 
 export default {
@@ -200,7 +228,7 @@ export default {
         const fr = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(dbg)}&apikey=${env.FMP_KEY}`);
         return new Response(`FMP HTTP ${fr.status}\n\n` + await fr.text(), { headers: { 'Content-Type':'text/plain; charset=utf-8' } });
       }
-      try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
+      try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }
     if(url.searchParams.has('symbols')){

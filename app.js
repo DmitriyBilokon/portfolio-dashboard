@@ -2572,7 +2572,7 @@ async function fetchFinnhub(symbol){
   const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(finnhubKey)}`);
   if(!r.ok) return null;
   const d = await r.json();
-  return (d && typeof d.c === 'number' && d.c > 0) ? d.c : null;
+  return (d && typeof d.c === 'number' && d.c > 0) ? { price: d.c, pct: (typeof d.dp === 'number' ? d.dp : null) } : null;
 }
 
 async function refreshLivePrices(){
@@ -2597,7 +2597,12 @@ async function refreshLivePrices(){
     }
     d.rows.forEach((row, i) => {
       const p = prices[exSymbol(row[2], row[8])];
-      if(p != null){ row[7] = p; updated++; } else { manual++; manualPriceRows.add(i); }
+      const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
+      if(price != null){
+        row[7] = price;
+        if(p && typeof p === 'object' && typeof p.pct === 'number') row[10] = Math.round(p.pct * 100) / 100;   // 1д %
+        updated++;
+      } else { manual++; manualPriceRows.add(i); }
     });
   } else {
     // Fallback: Finnhub free tier (US only).
@@ -2608,9 +2613,9 @@ async function refreshLivePrices(){
     }
     for(let i = 0; i < d.rows.length; i++){
       const row = d.rows[i];
-      let p = null;
-      try{ p = await fetchFinnhub(exSymbol(row[2], row[8])); }catch(e){ p = null; }
-      if(p != null){ row[7] = p; updated++; } else { manual++; manualPriceRows.add(i); }
+      let q = null;
+      try{ q = await fetchFinnhub(exSymbol(row[2], row[8])); }catch(e){ q = null; }
+      if(q != null){ row[7] = q.price; if(typeof q.pct === 'number') row[10] = Math.round(q.pct * 100) / 100; updated++; } else { manual++; manualPriceRows.add(i); }
     }
   }
 

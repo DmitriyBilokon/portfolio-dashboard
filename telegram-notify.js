@@ -234,7 +234,7 @@ export default {
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
-      await Promise.all(syms.map(async s => { const q = await yahoo(s); out[s] = q ? q.price : null; }));
+      await Promise.all(syms.map(async s => { const q = await yahoo(s); out[s] = q ? { price: q.price, pct: q.pct } : null; }));
       return new Response(JSON.stringify(out), { headers: CORS });
     }
     try{

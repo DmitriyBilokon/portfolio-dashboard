@@ -341,6 +341,26 @@ export default {
       try{ const ok = await sendChartMU(env); return new Response(ok ? `Chart sent ✓ (${CHART_TICKER})` : `No chart (${CHART_TICKER} not in portfolio or render failed)`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }
+    if(url.searchParams.get('action') === 'chartdebug'){
+      // Full pipeline trace: png size, chat id, and Telegram's raw reply.
+      try{
+        const pf = await loadPortfolio(env);
+        const row = pf && pf.rows.find(r => String(r[2] || '').trim().toUpperCase() === CHART_TICKER);
+        if(!row) return new Response('no MU row in portfolio', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        const sym = exSymbol(row[2], row[8]);
+        const q = await yahoo(sym);
+        const png = await chartPng(sym, String(row[1] || CHART_TICKER), q && q.support, q && q.resistance);
+        let tg = '(no png)';
+        if(png){
+          const form = new FormData();
+          form.append('chat_id', String(env.CHAT_ID));
+          form.append('photo', new Blob([png], { type: 'image/png' }), 'chart.png');
+          const tr = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, { method: 'POST', body: form });
+          tg = `HTTP ${tr.status} — ${await tr.text()}`;
+        }
+        return new Response(`sym=${sym}\npngBytes=${png ? png.byteLength : 0}\nchatId=${env.CHAT_ID}\ntoken=${env.BOT_TOKEN ? 'set' : 'MISSING'}\ntg=${tg}`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }catch(e){ return new Response('debug err: ' + (e.message || e), { status: 500 }); }
+    }
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};

@@ -4,8 +4,8 @@
 //   1. Reads your portfolio from Supabase (the synced ledger_state row).
 //   2. Fetches live prices + technical levels (SMA 50/100/200, support, resistance) from Yahoo.
 //   3. Sends one Telegram digest listing holdings whose price is within
-//      ±NEAR_THRESHOLD% of any of those levels.
-//   It stays silent when nothing is close.
+//      ±NEAR_THRESHOLD% of any of those levels (silent when nothing is close),
+//      then a chart image (price + SMA 50/100/200 + support/resistance) for CHART_TICKER.
 //
 // ── Setup (≈10 min, free) ───────────────────────────────────────────────
 //  Bot:   message @BotFather → /newbot → copy the token.
@@ -24,6 +24,7 @@
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
 const PF_KEY = '💼 Портфель 2.0';
+const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 
@@ -88,6 +89,20 @@ async function weeklySMA(sym){
   }catch(e){ return null; }
 }
 
+// 2 years of daily closes for one symbol → { t:[unix secs], c:[closes] } (or null).
+async function dailyHistory(sym){
+  try{
+    const hr = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`,
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+    if(!hr.ok) return null;
+    const res = (await hr.json())?.chart?.result?.[0];
+    const ts = res?.timestamp || [], cl = res?.indicators?.quote?.[0]?.close || [];
+    const t = [], c = [];
+    for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(Math.round(cl[i] * 100) / 100); } }
+    return c.length ? { t, c } : null;
+  }catch(e){ return null; }
+}
+
 async function loadPortfolio(env){
   const r = await fetch(
     `${env.SUPABASE_URL}/rest/v1/ledger_state?select=data&order=updated_at.desc&limit=1`,
@@ -106,6 +121,58 @@ async function sendTelegram(env, text){
     body: JSON.stringify({ chat_id: env.CHAT_ID, text, parse_mode: 'HTML', disable_web_page_preview: true }),
   });
   if(!r.ok) throw new Error('Telegram send failed: ' + r.status + ' ' + (await r.text()));
+}
+
+async function sendPhoto(env, photoUrl, caption){
+  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: env.CHAT_ID, photo: photoUrl, caption: caption || '', parse_mode: 'HTML' }),
+  });
+  if(!r.ok) throw new Error('Telegram photo failed: ' + r.status + ' ' + (await r.text()));
+}
+
+// Render a price + SMA 50/100/200 + support/resistance chart via QuickChart, return a short PNG URL.
+async function chartUrl(sym, name, support, resistance){
+  const h = await dailyHistory(sym);
+  if(!h) return null;
+  const smaArr = (a, n) => { const o = new Array(a.length).fill(null); let s = 0; for(let i = 0; i < a.length; i++){ s += a[i]; if(i >= n) s -= a[i - n]; if(i >= n - 1) o[i] = Math.round(s / n * 100) / 100; } return o; };
+  const WIN = Math.min(252, h.c.length), st = h.c.length - WIN, sl = a => a.slice(st);
+  const C = sl(h.c), A = sl(smaArr(h.c, 50)), B = sl(smaArr(h.c, 100)), D = sl(smaArr(h.c, 200)), T = sl(h.t);
+  const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const labels = T.map(x => { const d = new Date(x * 1000); return `${MO[d.getUTCMonth()]} ${d.getUTCDate()}`; });
+  const flat = v => (typeof v === 'number' && isFinite(v)) ? new Array(WIN).fill(v) : null;
+  const ds = (label, data, color, dash) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: dash ? 1.5 : 2, pointRadius: 0, fill: false, ...(dash ? { borderDash: [6, 4] } : {}) });
+  const datasets = [ ds('Price', C, '#111827'), ds('SMA 50', A, '#2563eb'), ds('SMA 100', B, '#f59e0b'), ds('SMA 200', D, '#7c3aed') ];
+  if(flat(support)) datasets.push(ds('Support', flat(support), '#16a34a', true));
+  if(flat(resistance)) datasets.push(ds('Resistance', flat(resistance), '#dc2626', true));
+  const config = { type: 'line', data: { labels, datasets },
+    options: { plugins: { title: { display: true, text: name }, legend: { position: 'bottom' } },
+               scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } }, elements: { line: { tension: 0.1 } } } };
+  try{
+    const r = await fetch('https://quickchart.io/chart/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chart: config, width: 820, height: 440, backgroundColor: 'white', format: 'png' }),
+    });
+    if(!r.ok) return null;
+    const j = await r.json();
+    return (j && j.success) ? j.url : null;
+  }catch(e){ return null; }
+}
+
+// Test mode: send a chart photo for CHART_TICKER (live support/resistance from yahoo()).
+async function sendChartMU(env){
+  const pf = await loadPortfolio(env);
+  if(!pf) return false;
+  const row = pf.rows.find(r => String(r[2] || '').trim().toUpperCase() === CHART_TICKER);
+  if(!row) return false;
+  const sym = exSymbol(row[2], row[8]), ccy = row[8] || '';
+  const q = await yahoo(sym);
+  const url = await chartUrl(sym, String(row[1] || CHART_TICKER), q && q.support, q && q.resistance);
+  if(!url) return false;
+  const px = q && typeof q.price === 'number' ? ` — ${q.price} ${ccy}` : '';
+  await sendPhoto(env, url, `📈 <b>${esc(String(row[1] || CHART_TICKER))}</b> (${CHART_TICKER})${px}`);
+  return true;
 }
 
 // Portfolio row schema (indices): 1 name · 2 ticker · 8 ccy
@@ -240,9 +307,12 @@ export default {
       try{ await updateTargets(env); }catch(e){ /* targets are best-effort */ }
       const text = await buildReport(env);
       if(text) await sendTelegram(env, text);
+      try{ await sendChartMU(env); }catch(e){ /* chart is best-effort */ }
     })());
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
+  // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
+  // GET ?action=chart            → send the CHART_TICKER chart photo to Telegram now (manual test).
   // GET with no query             → run the alert report now (manual test).
   async fetch(request, env){
     const url = new URL(request.url);
@@ -259,17 +329,13 @@ export default {
     }
     if(url.searchParams.has('history')){
       // Daily close series (2y) for one symbol → powers the dashboard's stock chart popup.
-      const sym = url.searchParams.get('history').trim();
-      try{
-        const hr = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`,
-          { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
-        if(!hr.ok) return new Response(JSON.stringify({ error: 'http ' + hr.status }), { headers: CORS });
-        const res = (await hr.json())?.chart?.result?.[0];
-        const ts = res?.timestamp || [], cl = res?.indicators?.quote?.[0]?.close || [];
-        const t = [], c = [];
-        for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(Math.round(cl[i] * 100) / 100); } }
-        return new Response(JSON.stringify({ t, c }), { headers: CORS });
-      }catch(e){ return new Response(JSON.stringify({ error: String(e.message || e) }), { headers: CORS }); }
+      const h = await dailyHistory(url.searchParams.get('history').trim());
+      return new Response(JSON.stringify(h || { t: [], c: [] }), { headers: CORS });
+    }
+    if(url.searchParams.get('action') === 'chart'){
+      // Manual test: send the CHART_TICKER chart photo to Telegram now.
+      try{ const ok = await sendChartMU(env); return new Response(ok ? `Chart sent ✓ (${CHART_TICKER})` : `No chart (${CHART_TICKER} not in portfolio or render failed)`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }
+      catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);

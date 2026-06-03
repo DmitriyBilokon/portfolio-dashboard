@@ -97,7 +97,7 @@ async function buildReport(env){
   const pf = await loadPortfolio(env);
   if(!pf) return null;
   const nearPct = parseFloat(env.NEAR_THRESHOLD || '10');
-  const lines = [];
+  const blocks = [];
 
   for(const row of pf.rows){
     const name = esc(row[1]), ticker = row[2], ccy = row[8];
@@ -111,17 +111,23 @@ async function buildReport(env){
     const near = [];
     for(const [label, val] of levels){
       if(typeof val !== 'number' || val <= 0) continue;
-      const dist = (price - val) / val * 100;   // % of price above (+) / below (−) the level
-      if(Math.abs(dist) <= nearPct)
-        near.push(`   • ${label}: ${val} ${ccy} (${dist >= 0 ? '+' : ''}${dist.toFixed(1)}%)`);
+      const dist = (price - val) / val * 100;   // price above (+) / below (−) the level
+      if(Math.abs(dist) <= nearPct) near.push({ label, val, dist });
     }
-    if(near.length)
-      lines.push(`📐 <b>${name}</b> — ${price} ${ccy}\n` + near.join('\n'));
+    if(!near.length) continue;
+    near.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));   // nearest level first
+    const lines = near.map(n => {
+      const dot = n.dist >= 0 ? '🟢' : '🔴';                    // above level / below level
+      const arrow = n.dist >= 0 ? '▲' : '▼';
+      return `${dot} ${n.label} <code>${n.val}</code> ${arrow} <b>${Math.abs(n.dist).toFixed(1)}%</b>`;
+    });
+    blocks.push(`🏢 <b>${name}</b> · <b>${price}</b> ${ccy}\n` + lines.join('\n'));
   }
 
-  return lines.length
-    ? (`📈 <b>Index Portfolio Dashboard</b>\n\n<b>Цена рядом с уровнями (±${nearPct}%)</b>\n\n` + lines.join('\n\n'))
-    : null;
+  if(!blocks.length) return null;
+  return `📈 <b>Цена рядом с уровнями</b>  ±${nearPct}%\n`
+       + `<i>🟢 цена выше уровня · 🔴 цена ниже уровня</i>\n\n`
+       + blocks.join('\n\n');
 }
 
 // ── Analyst target prices (Financial Modeling Prep) ────────────────────────

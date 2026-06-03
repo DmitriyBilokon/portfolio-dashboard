@@ -2,10 +2,10 @@
 //
 // What it does (on a cron, even when the site is closed):
 //   1. Reads your portfolio from Supabase (the synced ledger_state row).
-//   2. Fetches live prices + day change from Yahoo Finance.
-//   3. Sends one Telegram digest with: big daily movers, holdings that reached
-//      their target value, and holdings whose action is Buy/Sell/Trim.
-//   It stays silent when there's nothing to report.
+//   2. Fetches live prices + technical levels (SMA 50/100/200, support, resistance) from Yahoo.
+//   3. Sends one Telegram digest listing holdings whose price is within
+//      ±NEAR_THRESHOLD% of any of those levels.
+//   It stays silent when nothing is close.
 //
 // ── Setup (≈10 min, free) ───────────────────────────────────────────────
 //  Bot:   message @BotFather → /newbot → copy the token.
@@ -17,7 +17,7 @@
 //     SUPABASE_SERVICE_KEY  (Secret)  – service_role key
 //     CHAT_ID               (Text)    – your Telegram chat id
 //     SUPABASE_URL          (Text)    – https://<project>.supabase.co
-//     MOVER_THRESHOLD       (Text)    – optional, percent (default 5)
+//     NEAR_THRESHOLD        (Text)    – optional, percent proximity to a level (default 10)
 //     FMP_KEY               (Secret)  – Financial Modeling Prep API key (analyst targets)
 //     RESTRICT_FIRMS        (Text)    – optional, set "1" to only average the whitelisted firms
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
@@ -25,26 +25,6 @@
 
 const PF_KEY = '💼 Портфель 2.0';
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
-const FX_CCYS = ['USD','EUR','NOK'];
-
-// Live official mid-market rates (≈ Google), as SEK per 1 unit of ccy.
-// Sources give "1 SEK = rates[ccy] ccy" → SEK-per-ccy = 1/rates[ccy].
-// Returns null on failure so callers fall back to the synced/default rates.
-async function fetchRatesSEK(){
-  const sources = [
-    async () => (await (await fetch('https://api.frankfurter.app/latest?from=SEK&to=' + FX_CCYS.join(','))).json()).rates,           // ECB official reference rates
-    async () => { const j = await (await fetch('https://open.er-api.com/v6/latest/SEK')).json(); return j && j.result === 'success' ? j.rates : null; },
-  ];
-  for(const src of sources){
-    try{
-      const r = await src();
-      if(r && FX_CCYS.every(c => typeof r[c] === 'number' && r[c] > 0)){
-        const out = {}; FX_CCYS.forEach(c => out[c] = Math.round(1 / r[c] * 1e4) / 1e4); return out;
-      }
-    }catch(e){}
-  }
-  return null;
-}
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 
 function exSymbol(ticker, ccy){
@@ -110,37 +90,38 @@ async function sendTelegram(env, text){
   if(!r.ok) throw new Error('Telegram send failed: ' + r.status + ' ' + (await r.text()));
 }
 
-// Portfolio row schema (indices):
-// 1 name · 2 ticker · 6 qty · 7 price · 8 ccy · 10 day% · 19 targetKr · 21 action
+// Portfolio row schema (indices): 1 name · 2 ticker · 8 ccy
+// Alert when the live price is within ±NEAR_THRESHOLD% of any technical level
+// (SMA 50/100/200, support, resistance). Silent when nothing is close.
 async function buildReport(env){
   const pf = await loadPortfolio(env);
   if(!pf) return null;
-  const live = await fetchRatesSEK();
-  if(live) pf.fx = { ...pf.fx, SEK:1, ...live };   // prefer live USD/EUR/NOK over synced rates
-  const thr = parseFloat(env.MOVER_THRESHOLD || '5');
-  const movers = [], targets = [], actions = [];
+  const nearPct = parseFloat(env.NEAR_THRESHOLD || '10');
+  const lines = [];
 
   for(const row of pf.rows){
-    const name = esc(row[1]), ticker = row[2], qty = +row[6] || 0;
-    const ccy = row[8], fx = pf.fx[ccy] || 1;
-    const targetKr = +row[19] || 0, action = String(row[21] || '');
+    const name = esc(row[1]), ticker = row[2], ccy = row[8];
     const q = await yahoo(exSymbol(ticker, ccy));
-    const price = q ? q.price : (+row[7] || 0);
-    const valueKr = Math.round(qty * price * fx);
-
-    if(q && q.pct != null && Math.abs(q.pct) >= thr)
-      movers.push(`${q.pct >= 0 ? '🟢' : '🔴'} <b>${name}</b> ${q.pct >= 0 ? '+' : ''}${q.pct.toFixed(1)}%  ·  ${price} ${ccy}`);
-    if(targetKr > 0 && valueKr >= targetKr)
-      targets.push(`🎯 <b>${name}</b> — ${valueKr.toLocaleString()} ≥ ${targetKr.toLocaleString()} kr`);
-    if(/Прод|Сократ|Купить/i.test(action))
-      actions.push(`${esc(action)} — <b>${name}</b>`);
+    if(!q || typeof q.price !== 'number' || q.price <= 0) continue;
+    const price = q.price;
+    const levels = [
+      ['SMA 50', q.sma50], ['SMA 100', q.sma100], ['SMA 200', q.sma200],
+      ['Поддержка', q.support], ['Сопротивление', q.resistance],
+    ];
+    const near = [];
+    for(const [label, val] of levels){
+      if(typeof val !== 'number' || val <= 0) continue;
+      const dist = (price - val) / val * 100;   // % of price above (+) / below (−) the level
+      if(Math.abs(dist) <= nearPct)
+        near.push(`   • ${label}: ${val} ${ccy} (${dist >= 0 ? '+' : ''}${dist.toFixed(1)}%)`);
+    }
+    if(near.length)
+      lines.push(`📐 <b>${name}</b> — ${price} ${ccy}\n` + near.join('\n'));
   }
 
-  const parts = [];
-  if(movers.length)  parts.push(`<b>📊 Движения дня (±${thr}%)</b>\n` + movers.join('\n'));
-  if(targets.length) parts.push('<b>🎯 Достигнута цель</b>\n' + targets.join('\n'));
-  if(actions.length) parts.push('<b>⚡ Действия</b>\n' + actions.join('\n'));
-  return parts.length ? ('📈 <b>Index Portfolio Dashboard</b>\n\n' + parts.join('\n\n')) : null;
+  return lines.length
+    ? (`📈 <b>Index Portfolio Dashboard</b>\n\n<b>Цена рядом с уровнями (±${nearPct}%)</b>\n\n` + lines.join('\n\n'))
+    : null;
 }
 
 // ── Analyst target prices (Financial Modeling Prep) ────────────────────────
@@ -261,7 +242,7 @@ export default {
     try{
       const text = await buildReport(env);
       if(text){ await sendTelegram(env, text); return new Response('Sent ✓\n\n' + text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }
-      return new Response('Nothing to report right now (no movers / targets / actions).', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      return new Response('Nothing to report right now (no holding is near a level).', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }catch(e){
       return new Response('Error: ' + e.message, { status: 500 });
     }

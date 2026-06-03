@@ -140,10 +140,13 @@ async function chartPng(sym, name, support, resistance){
   if(!h) return null;
   const smaArr = (a, n) => { const o = new Array(a.length).fill(null); let s = 0; for(let i = 0; i < a.length; i++){ s += a[i]; if(i >= n) s -= a[i - n]; if(i >= n - 1) o[i] = Math.round(s / n * 100) / 100; } return o; };
   const WIN = Math.min(252, h.c.length), st = h.c.length - WIN, sl = a => a.slice(st);
-  const C = sl(h.c), A = sl(smaArr(h.c, 50)), B = sl(smaArr(h.c, 100)), D = sl(smaArr(h.c, 200)), T = sl(h.t);
+  // Downsample to ≤~80 points — QuickChart's free endpoint 400s on very large configs.
+  const step = Math.max(1, Math.ceil(WIN / 80)), dn = a => a.filter((_, i) => i % step === 0);
+  const C = dn(sl(h.c)), A = dn(sl(smaArr(h.c, 50))), B = dn(sl(smaArr(h.c, 100))), D = dn(sl(smaArr(h.c, 200))), T = dn(sl(h.t));
+  const N = C.length;
   const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const labels = T.map(x => { const d = new Date(x * 1000); return `${MO[d.getUTCMonth()]} ${d.getUTCDate()}`; });
-  const flat = v => (typeof v === 'number' && isFinite(v)) ? new Array(WIN).fill(v) : null;
+  const flat = v => (typeof v === 'number' && isFinite(v)) ? new Array(N).fill(v) : null;
   const ds = (label, data, color, dash) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: dash ? 1.5 : 2, pointRadius: 0, fill: false, ...(dash ? { borderDash: [6, 4] } : {}) });
   const datasets = [ ds('Price', C, '#111827'), ds('SMA 50', A, '#2563eb'), ds('SMA 100', B, '#f59e0b'), ds('SMA 200', D, '#7c3aed') ];
   if(flat(support)) datasets.push(ds('Support', flat(support), '#16a34a', true));

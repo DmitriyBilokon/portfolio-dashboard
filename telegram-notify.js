@@ -54,18 +54,29 @@ function exSymbol(ticker, ccy){
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+// One year of daily candles → current price, day change %, and SMA 50/100/200.
+// SMAs use the last N daily closes (native currency, matching the price column);
+// returns null for any SMA when there isn't enough history.
 async function yahoo(sym){
   try{
     const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2d`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1y`,
       { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } }
     );
     if(!r.ok) return null;
-    const m = (await r.json())?.chart?.result?.[0]?.meta;
+    const res = (await r.json())?.chart?.result?.[0];
+    const m = res?.meta;
     if(!m || typeof m.regularMarketPrice !== 'number') return null;
-    const prev = m.chartPreviousClose || m.previousClose;
-    const pct = (prev && prev > 0) ? (m.regularMarketPrice - prev) / prev * 100 : null;
-    return { price: m.regularMarketPrice, pct };
+    const closes = (res?.indicators?.quote?.[0]?.close || []).filter(v => typeof v === 'number' && v > 0);
+    const price = m.regularMarketPrice;
+    const prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
+    const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
+    const sma = n => {
+      if(closes.length < n) return null;
+      let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i];
+      return Math.round(s / n * 100) / 100;
+    };
+    return { price, pct, sma50: sma(50), sma100: sma(100), sma200: sma(200) };
   }catch(e){ return null; }
 }
 
@@ -234,7 +245,7 @@ export default {
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
-      await Promise.all(syms.map(async s => { const q = await yahoo(s); out[s] = q ? { price: q.price, pct: q.pct } : null; }));
+      await Promise.all(syms.map(async s => { out[s] = await yahoo(s); }));   // {price, pct, sma50, sma100, sma200} | null
       return new Response(JSON.stringify(out), { headers: CORS });
     }
     try{

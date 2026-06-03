@@ -2600,7 +2600,12 @@ async function refreshLivePrices(){
       const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
       if(price != null){
         row[7] = price;
-        if(p && typeof p === 'object' && typeof p.pct === 'number') row[10] = Math.round(p.pct * 100) / 100;   // 1д %
+        if(p && typeof p === 'object'){
+          if(typeof p.pct === 'number') row[10] = Math.round(p.pct * 100) / 100;        // 1д %
+          if(typeof p.sma50 === 'number') row[16] = p.sma50;                            // SMA 50
+          if(typeof p.sma100 === 'number') row[17] = p.sma100;                          // SMA 100
+          if(typeof p.sma200 === 'number') row[18] = p.sma200;                          // SMA 200
+        }
         updated++;
       } else { manual++; manualPriceRows.add(i); }
     });

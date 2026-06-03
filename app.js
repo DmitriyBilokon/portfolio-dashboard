@@ -98,6 +98,7 @@ let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375};
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
 let SMA_TF={};
 const SMA_TF_COL='Период SMA';
+const CHART_TEST_TICKER='MU';   // test mode: only this stock's name opens the chart popup
 // ===== Live exchange rates (official mid-market, ≈ what Google shows) =====
 // Base currency is SEK; FX[ccy] = how many SEK per 1 unit of ccy.
 // Sources return "1 SEK = rates[ccy] ccy", so SEK-per-ccy = 1/rates[ccy].
@@ -2436,6 +2437,7 @@ function renderTable(){
   rows.forEach(row=>{const oi=row._idx,tr=document.createElement('tr');if(selected.has(oi))tr.className='selected';const tdD=document.createElement('td');tdD.style.cssText='padding:3px;text-align:center';const isPlanned=parseInt(row.data[6])===0;if(isPlanned){tr.style.background='rgba(234,179,8,0.06)';tr.style.borderLeft='3px solid var(--gold)'}const btn=document.createElement('button');btn.className='del-btn';btn.textContent='✕';btn.onclick=e=>{e.stopPropagation();if(selected.has(oi))selected.delete(oi);else selected.add(oi);updateDelBtn();tr.className=selected.has(oi)?'selected':''};tdD.appendChild(btn);tr.appendChild(tdD);const price=priceC>=0?parseFloat(row.data[priceC]):0;
   ord.forEach(ci=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const val=row.data[ci],td=document.createElement('td');
   if(ci===tfC){td.style.textAlign='center';const tk=String(row.data[2]||'');const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';const mk=(m,l)=>`<button class="tf-btn${mode===m?' tf-on':''}" onclick="setSmaTF(${oi},'${m}')">${l}</button>`;td.innerHTML=`<span class="tf-wrap">${mk('1Y','1Г')}${mk('3Y','3Г')}</span>`;tr.appendChild(td);return}
+  if((ci===1||(h[ci]||'').toLowerCase().includes('компани'))&&String(row.data[2]||'').toUpperCase()===CHART_TEST_TICKER){td.className='c-company';td.style.cursor='pointer';td.title='Открыть график';td.innerHTML=`<span style="text-decoration:underline dotted">${val??''}</span> 📈`;td.onclick=()=>openStockChart(String(row.data[2]));tr.appendChild(td);return}
   td.contentEditable='true';td.spellcheck=false;const hdr=(h[ci]||'').toLowerCase();const isSec=hdr.includes('сектор')||hdr.includes('отрасль');const isSma=(ci===s50||ci===s100||ci===s200);const isLevel=isSma||ci===supC||ci===resC;
   if(isSec){const[bg,fg]=getSC(String(val));td.innerHTML=`<span class="sec-tag" style="background:${bg};color:${fg}">${val||''}</span>`}
   else if(isLevel&&price>0){const lv=parseFloat(val);if(!isNaN(lv)&&lv>0){const pct=(price-lv)/price*100;const ord=(ci===resC)?'X':(ci===supC)?'Y':(pct>=0?'X':'Y');const col=lvlPctColor(Math.abs(pct),ord);const vTxt=isSma?lv.toFixed(0):lv;td.innerHTML=`${vTxt} <span class="lvl-pct" style="color:${col}">(${pct>=0?'+':'−'}${Math.abs(pct).toFixed(1)}%)</span>`;if(isSma)td.className=price>lv?'c-sma-above':'c-sma-below'}else td.textContent=val??''}
@@ -2625,6 +2627,52 @@ function lvlPctColor(absPct, ord){
   const Y=['var(--green)','#38bdf8','var(--text3)','var(--yellow)','var(--red)'];
   const b=absPct<=10?0:absPct<=25?1:absPct<=50?2:absPct<=75?3:4;
   return (ord==='X'?X:Y)[b];
+}
+// ===== Stock chart popup (test mode) =====
+// Rolling simple moving average series; out[i] is null until enough history.
+function smaSeries(arr,n){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=n)sum-=arr[i-n];if(i>=n-1)out[i]=sum/n}return out}
+function closeStockChart(){const ov=document.getElementById('chartOverlay');if(ov)ov.style.display='none'}
+async function openStockChart(ticker){
+  const d=DATA[curIdx],row=d.rows.find(r=>String(r[2]||'').toUpperCase()===String(ticker).toUpperCase());
+  if(!row){toast('Нет данных по '+ticker,true);return}
+  const ccy=row[8]||'',name=row[1]||ticker;
+  let ov=document.getElementById('chartOverlay');
+  if(!ov){ov=document.createElement('div');ov.id='chartOverlay';ov.className='chart-overlay';document.body.appendChild(ov);ov.addEventListener('click',e=>{if(e.target===ov)closeStockChart()})}
+  ov.innerHTML=`<div class="chart-card"><div class="chart-hd"><span><b>${name}</b> · ${ticker} ${ccy}</span><button class="chart-x" onclick="closeStockChart()">✕</button></div><div class="chart-body" id="chartBody">Загрузка графика…</div></div>`;
+  ov.style.display='flex';
+  if(!PRICE_PROXY){document.getElementById('chartBody').textContent='PRICE_PROXY не задан';return}
+  try{
+    const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy)));
+    const j=await r.json();
+    const body=document.getElementById('chartBody');if(!body)return;
+    if(!j||!Array.isArray(j.c)||!j.c.length){body.textContent='Нет исторических данных';return}
+    body.innerHTML=buildChartSVG(j,row,ccy);
+  }catch(e){const body=document.getElementById('chartBody');if(body)body.textContent='Ошибка загрузки: '+(e.message||e)}
+}
+// Hand-rolled SVG: price + SMA 50/100/200 curves and support/resistance/current-price lines.
+function buildChartSVG(hist,row,ccy){
+  const closes=hist.c,ts=hist.t||[];
+  const W=860,H=380,padT=16,padB=26,padR=78,padL=8;
+  const x0=padL,x1=W-padR,y0=padT,y1=H-padB,pw=x1-x0,ph=y1-y0;
+  const s50=smaSeries(closes,50),s100=smaSeries(closes,100),s200=smaSeries(closes,200);
+  const WIN=Math.min(252,closes.length),st=closes.length-WIN,sl=a=>a.slice(st);
+  const P=sl(closes),A=sl(s50),B=sl(s100),C=sl(s200),T=sl(ts);
+  const cur=parseFloat(row[7])||P[P.length-1];
+  const supC=DATA[curIdx].headers.indexOf('Поддержка'),resC=DATA[curIdx].headers.indexOf('Сопротивление');
+  const support=supC>=0?parseFloat(row[supC]):NaN,resistance=resC>=0?parseFloat(row[resC]):NaN;
+  const all=[...P,...A,...B,...C,cur,support,resistance].filter(v=>typeof v==='number'&&isFinite(v));
+  let lo=Math.min(...all),hi=Math.max(...all);const pd=(hi-lo)*0.06||1;lo-=pd;hi+=pd;
+  const X=i=>x0+(WIN<=1?0:i/(WIN-1)*pw),Y=v=>y0+(1-(v-lo)/(hi-lo))*ph;
+  const poly=(a,col,w)=>{let pts='';for(let i=0;i<a.length;i++){if(typeof a[i]==='number'&&isFinite(a[i]))pts+=`${X(i).toFixed(1)},${Y(a[i]).toFixed(1)} `}return pts?`<polyline points="${pts.trim()}" style="fill:none;stroke:${col};stroke-width:${w}"/>`:''};
+  const hline=(v,col)=>{if(!isFinite(v))return'';const y=Y(v).toFixed(1);return `<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="${col}" stroke-width="1" stroke-dasharray="4 3" opacity=".85"/><rect x="${x1+2}" y="${(+y-8).toFixed(1)}" width="${padR-4}" height="16" rx="3" fill="${col}"/><text x="${x1+padR/2}" y="${(+y+4).toFixed(1)}" fill="#fff" font-size="10" text-anchor="middle">${v.toFixed(1)}</text>`};
+  let grid='';for(let k=0;k<=5;k++){const v=lo+(hi-lo)*k/5,y=Y(v).toFixed(1);grid+=`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" style="stroke:var(--border);stroke-width:.5"/><text x="${x0+2}" y="${(+y-2).toFixed(1)}" style="fill:var(--text3)" font-size="9">${v.toFixed(0)}</text>`}
+  const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];let xlab='',lastMo=-1;
+  for(let i=0;i<T.length;i++){const mo=new Date((T[i]||0)*1000).getMonth();if(mo!==lastMo){lastMo=mo;const x=X(i).toFixed(1);xlab+=`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}" style="stroke:var(--border);stroke-width:.5"/><text x="${x}" y="${H-8}" style="fill:var(--text3)" font-size="9" text-anchor="middle">${MO[mo]}</text>`}}
+  const lines=poly(C,'#7c3aed',1.4)+poly(B,'#f59e0b',1.4)+poly(A,'#2563eb',1.4)+poly(P,'var(--text)',1.8);
+  const levels=hline(support,'#16a34a')+hline(resistance,'#dc2626')+hline(cur,'#b45309');
+  const svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">${grid}${xlab}${lines}${levels}</svg>`;
+  const lg=(c,l,v)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${(v!=null&&isFinite(v))?` <b>${(+v).toFixed(1)} ${ccy}</b>`:''}</span>`;
+  return svg+`<div class="chart-legend">${lg('var(--text)','Цена',cur)}${lg('#2563eb','SMA 50',A[A.length-1])}${lg('#f59e0b','SMA 100',B[B.length-1])}${lg('#7c3aed','SMA 200',C[C.length-1])}${lg('#16a34a','Поддержка',support)}${lg('#dc2626','Сопротивление',resistance)}</div>`;
 }
 async function refreshLivePrices(){
   if(!isPF()){ toast('Обновление цен доступно на вкладке 💼 Портфель'); return; }

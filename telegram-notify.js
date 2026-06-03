@@ -257,6 +257,20 @@ export default {
       try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }
+    if(url.searchParams.has('history')){
+      // Daily close series (2y) for one symbol → powers the dashboard's stock chart popup.
+      const sym = url.searchParams.get('history').trim();
+      try{
+        const hr = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`,
+          { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
+        if(!hr.ok) return new Response(JSON.stringify({ error: 'http ' + hr.status }), { headers: CORS });
+        const res = (await hr.json())?.chart?.result?.[0];
+        const ts = res?.timestamp || [], cl = res?.indicators?.quote?.[0]?.close || [];
+        const t = [], c = [];
+        for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(Math.round(cl[i] * 100) / 100); } }
+        return new Response(JSON.stringify({ t, c }), { headers: CORS });
+      }catch(e){ return new Response(JSON.stringify({ error: String(e.message || e) }), { headers: CORS }); }
+    }
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};

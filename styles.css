@@ -152,3 +152,15 @@ td.price-manual::after{content:' ✎';font-size:9px;opacity:.7}
 
 /* % distance from current price to a level (SMA / support / resistance) */
 .lvl-pct{font-size:9px;color:var(--text3);font-weight:400}
+
+/* Stock chart popup */
+.chart-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
+.chart-card{background:var(--bg1);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.35);width:min(920px,96vw);max-height:92vh;overflow:auto;padding:14px 16px}
+.chart-hd{display:flex;justify-content:space-between;align-items:center;font-size:14px;margin-bottom:8px;color:var(--text)}
+.chart-x{background:none;border:none;font-size:16px;cursor:pointer;color:var(--text2);line-height:1}
+.chart-x:hover{color:var(--red)}
+.chart-body{min-height:220px;color:var(--text2);font-size:12px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:11px;color:var(--text2)}
+.cl-item{display:inline-flex;align-items:center;gap:5px}
+.cl-item i{width:14px;height:3px;border-radius:2px;display:inline-block}
+.cl-item b{color:var(--text)}

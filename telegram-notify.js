@@ -34,6 +34,21 @@ function exSymbol(ticker, ccy){
   return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE' })[String(ccy||'').toUpperCase()] || t;
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const round2 = n => Math.round(n * 100) / 100;
+const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
+
+// Fetch a Yahoo Finance chart and return chart.result[0] (or null on any failure).
+const YH_HEADERS = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
+async function yChart(sym, interval, range){
+  try{
+    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${interval}&range=${range}`, { headers: YH_HEADERS });
+    if(!r.ok) return null;
+    return (await r.json())?.chart?.result?.[0] || null;
+  }catch(e){ return null; }
+}
+// Simple moving averages over a close series.
+const smaLast = (closes, n) => { if(closes.length < n) return null; let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i]; return round2(s / n); };                                    // average of the last n
+const smaSeries = (closes, n) => { const o = new Array(closes.length).fill(null); let s = 0; for(let i = 0; i < closes.length; i++){ s += closes[i]; if(i >= n) s -= closes[i - n]; if(i >= n - 1) o[i] = round2(s / n); } return o; };   // rolling, aligned with closes
 
 // One year of daily candles → current price, day change %, SMA 50/100/200,
 // and support / resistance (rolling 3-month low/high). All in native currency,
@@ -41,12 +56,7 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 const SR_WINDOW = 60;   // trading days (~3 months) for support/resistance
 async function yahoo(sym){
   try{
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1y`,
-      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } }
-    );
-    if(!r.ok) return null;
-    const res = (await r.json())?.chart?.result?.[0];
+    const res = await yChart(sym, '1d', '1y');
     const m = res?.meta;
     if(!m || typeof m.regularMarketPrice !== 'number') return null;
     const q = res?.indicators?.quote?.[0] || {};
@@ -56,51 +66,31 @@ async function yahoo(sym){
     const price = m.regularMarketPrice;
     const prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
     const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
-    const sma = n => {
-      if(closes.length < n) return null;
-      let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i];
-      return Math.round(s / n * 100) / 100;
-    };
-    const r2 = n => Math.round(n * 100) / 100;
     return {
       price, pct,
-      sma50: sma(50), sma100: sma(100), sma200: sma(200),
-      support: lows.length ? r2(Math.min(...lows)) : null,
-      resistance: highs.length ? r2(Math.max(...highs)) : null,
+      sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
+      support: lows.length ? round2(Math.min(...lows)) : null,
+      resistance: highs.length ? round2(Math.max(...highs)) : null,
     };
   }catch(e){ return null; }
 }
 
 // Weekly-bar SMA 50/100/200 (~1yr / 2yr / 3.8yr) — powers the dashboard's 3-year SMA view.
 async function weeklySMA(sym){
-  try{
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1wk&range=5y`,
-      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } }
-    );
-    if(!r.ok) return null;
-    const closes = ((await r.json())?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(v => typeof v === 'number' && v > 0);
-    const sma = n => {
-      if(closes.length < n) return null;
-      let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i];
-      return Math.round(s / n * 100) / 100;
-    };
-    return { sma50w: sma(50), sma100w: sma(100), sma200w: sma(200) };
-  }catch(e){ return null; }
+  const res = await yChart(sym, '1wk', '5y');
+  if(!res) return null;
+  const closes = (res.indicators?.quote?.[0]?.close || []).filter(v => typeof v === 'number' && v > 0);
+  return { sma50w: smaLast(closes, 50), sma100w: smaLast(closes, 100), sma200w: smaLast(closes, 200) };
 }
 
 // 2 years of daily closes for one symbol → { t:[unix secs], c:[closes] } (or null).
 async function dailyHistory(sym){
-  try{
-    const hr = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`,
-      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
-    if(!hr.ok) return null;
-    const res = (await hr.json())?.chart?.result?.[0];
-    const ts = res?.timestamp || [], cl = res?.indicators?.quote?.[0]?.close || [];
-    const t = [], c = [];
-    for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(Math.round(cl[i] * 100) / 100); } }
-    return c.length ? { t, c } : null;
-  }catch(e){ return null; }
+  const res = await yChart(sym, '1d', '2y');
+  if(!res) return null;
+  const ts = res.timestamp || [], cl = res.indicators?.quote?.[0]?.close || [];
+  const t = [], c = [];
+  for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(round2(cl[i])); } }
+  return c.length ? { t, c } : null;
 }
 
 async function loadPortfolio(env){
@@ -115,7 +105,7 @@ async function loadPortfolio(env){
 }
 
 async function sendTelegram(env, text){
-  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
+  const r = await fetch(tgApi(env, 'sendMessage'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: env.CHAT_ID, text, parse_mode: 'HTML', disable_web_page_preview: true }),
@@ -130,7 +120,7 @@ async function sendPhoto(env, bytes, caption){
   form.append('chat_id', String(env.CHAT_ID));
   if(caption){ form.append('caption', caption); form.append('parse_mode', 'HTML'); }
   form.append('photo', new Blob([bytes], { type: 'image/png' }), 'chart.png');
-  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, { method: 'POST', body: form });
+  const r = await fetch(tgApi(env, 'sendPhoto'), { method: 'POST', body: form });
   if(!r.ok) throw new Error('Telegram photo failed: ' + r.status + ' ' + (await r.text()));
 }
 
@@ -138,11 +128,10 @@ async function sendPhoto(env, bytes, caption){
 async function chartPng(sym, name, support, resistance){
   const h = await dailyHistory(sym);
   if(!h) return null;
-  const smaArr = (a, n) => { const o = new Array(a.length).fill(null); let s = 0; for(let i = 0; i < a.length; i++){ s += a[i]; if(i >= n) s -= a[i - n]; if(i >= n - 1) o[i] = Math.round(s / n * 100) / 100; } return o; };
   const WIN = Math.min(252, h.c.length), st = h.c.length - WIN, sl = a => a.slice(st);
   // Downsample to ≤~80 points — QuickChart's free endpoint 400s on very large configs.
   const step = Math.max(1, Math.ceil(WIN / 80)), dn = a => a.filter((_, i) => i % step === 0);
-  const C = dn(sl(h.c)), A = dn(sl(smaArr(h.c, 50))), B = dn(sl(smaArr(h.c, 100))), D = dn(sl(smaArr(h.c, 200))), T = dn(sl(h.t));
+  const C = dn(sl(h.c)), A = dn(sl(smaSeries(h.c, 50))), B = dn(sl(smaSeries(h.c, 100))), D = dn(sl(smaSeries(h.c, 200))), T = dn(sl(h.t));
   const N = C.length;
   const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const labels = T.map(x => { const d = new Date(x * 1000); return `${MO[d.getUTCMonth()]} ${d.getUTCDate()}`; });
@@ -233,7 +222,6 @@ const TARGET_FIRMS = new Set([
   'barclays','summit insights group',
 ].map(s => s.toLowerCase()));
 
-const round2 = n => Math.round(n * 100) / 100;
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 // Average analyst target for one symbol (FMP "stable" API).
 // Returns { avg, count } on success, or { err } describing why it couldn't.

@@ -83,9 +83,9 @@ async function weeklySMA(sym){
   return { sma50w: smaLast(closes, 50), sma100w: smaLast(closes, 100), sma200w: smaLast(closes, 200) };
 }
 
-// 2 years of daily closes for one symbol → { t:[unix secs], c:[closes] } (or null).
-async function dailyHistory(sym){
-  const res = await yChart(sym, '1d', '2y');
+// Daily closes for one symbol over `range` → { t:[unix secs], c:[closes] } (or null).
+async function dailyHistory(sym, range = '2y'){
+  const res = await yChart(sym, '1d', range);
   if(!res) return null;
   const ts = res.timestamp || [], cl = res.indicators?.quote?.[0]?.close || [];
   const t = [], c = [];
@@ -320,8 +320,10 @@ export default {
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
     }
     if(url.searchParams.has('history')){
-      // Daily close series (2y) for one symbol → powers the dashboard's stock chart popup.
-      const h = await dailyHistory(url.searchParams.get('history').trim());
+      // Daily close series for one symbol → powers the dashboard's stock chart popup.
+      // Optional &range= (e.g. 2y, 5y); defaults to 2y.
+      const range = (url.searchParams.get('range') || '2y').trim();
+      const h = await dailyHistory(url.searchParams.get('history').trim(), range);
       return new Response(JSON.stringify(h || { t: [], c: [] }), { headers: CORS });
     }
     if(url.searchParams.get('action') === 'chart'){

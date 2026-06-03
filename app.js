@@ -2631,48 +2631,72 @@ function lvlPctColor(absPct, ord){
 // ===== Stock chart popup (test mode) =====
 // Rolling simple moving average series; out[i] is null until enough history.
 function smaSeries(arr,n){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=n)sum-=arr[i-n];if(i>=n-1)out[i]=sum/n}return out}
-function closeStockChart(){const ov=document.getElementById('chartOverlay');if(ov)ov.style.display='none'}
+let _chartState=null,_lwcPromise=null;
+// Load TradingView Lightweight Charts from CDN once.
+function loadLWC(){
+  if(window.LightweightCharts) return Promise.resolve();
+  if(_lwcPromise) return _lwcPromise;
+  _lwcPromise=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';s.onload=res;s.onerror=()=>rej(new Error('не удалось загрузить библиотеку графика'));document.head.appendChild(s)});
+  return _lwcPromise;
+}
+function closeStockChart(){if(_chartState&&_chartState.chart){try{_chartState.chart.remove()}catch(e){}_chartState.chart=null}const ov=document.getElementById('chartOverlay');if(ov)ov.style.display='none'}
+function setChartYears(y){if(!_chartState)return;_chartState.years=y;['1','3'].forEach(n=>{const b=document.getElementById('cy'+n);if(b)b.classList.toggle('tf-on',+n===y)});drawChart()}
 async function openStockChart(ticker){
   const d=DATA[curIdx],row=d.rows.find(r=>String(r[2]||'').toUpperCase()===String(ticker).toUpperCase());
   if(!row){toast('Нет данных по '+ticker,true);return}
   const ccy=row[8]||'',name=row[1]||ticker;
+  _chartState={ticker,row,ccy,name,years:1,chart:null};
   let ov=document.getElementById('chartOverlay');
   if(!ov){ov=document.createElement('div');ov.id='chartOverlay';ov.className='chart-overlay';document.body.appendChild(ov);ov.addEventListener('click',e=>{if(e.target===ov)closeStockChart()})}
-  ov.innerHTML=`<div class="chart-card"><div class="chart-hd"><span><b>${name}</b> · ${ticker} ${ccy}</span><button class="chart-x" onclick="closeStockChart()">✕</button></div><div class="chart-body" id="chartBody">Загрузка графика…</div></div>`;
+  ov.innerHTML=`<div class="chart-card"><div class="chart-hd"><span><b>${name}</b> · ${ticker} ${ccy}</span><span class="chart-tools"><button class="tf-btn tf-on" id="cy1" onclick="setChartYears(1)">1Г</button><button class="tf-btn" id="cy3" onclick="setChartYears(3)">3Г</button><button class="chart-x" onclick="closeStockChart()">✕</button></span></div><div id="chartBox" class="chart-box"></div><div class="chart-legend" id="chartLegend"></div></div>`;
   ov.style.display='flex';
-  if(!PRICE_PROXY){document.getElementById('chartBody').textContent='PRICE_PROXY не задан';return}
-  try{
-    const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy)));
-    const j=await r.json();
-    const body=document.getElementById('chartBody');if(!body)return;
-    if(!j||!Array.isArray(j.c)||!j.c.length){body.textContent='Нет исторических данных';return}
-    body.innerHTML=buildChartSVG(j,row,ccy);
-  }catch(e){const body=document.getElementById('chartBody');if(body)body.textContent='Ошибка загрузки: '+(e.message||e)}
+  drawChart();
 }
-// Hand-rolled SVG: price + SMA 50/100/200 curves and support/resistance/current-price lines.
-function buildChartSVG(hist,row,ccy){
-  const closes=hist.c,ts=hist.t||[];
-  const W=860,H=380,padT=16,padB=26,padR=78,padL=8;
-  const x0=padL,x1=W-padR,y0=padT,y1=H-padB,pw=x1-x0,ph=y1-y0;
-  const s50=smaSeries(closes,50),s100=smaSeries(closes,100),s200=smaSeries(closes,200);
-  const WIN=Math.min(252,closes.length),st=closes.length-WIN,sl=a=>a.slice(st);
-  const P=sl(closes),A=sl(s50),B=sl(s100),C=sl(s200),T=sl(ts);
-  const cur=parseFloat(row[7])||P[P.length-1];
+// (Re)draw the chart for the current ticker + timeframe using Lightweight Charts.
+async function drawChart(){
+  const box=document.getElementById('chartBox'),legend=document.getElementById('chartLegend');
+  if(!box||!_chartState)return;
+  const {row,ccy,years}=_chartState;
+  if(!PRICE_PROXY){box.textContent='PRICE_PROXY не задан';return}
+  box.textContent='Загрузка графика…';
+  let j;
+  try{
+    await loadLWC();
+    const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y'));
+    j=await r.json();
+  }catch(e){box.textContent='Ошибка загрузки: '+(e.message||e);return}
+  if(!j||!Array.isArray(j.c)||!j.c.length){box.textContent='Нет исторических данных';return}
+  if(_chartState.chart){try{_chartState.chart.remove()}catch(e){}_chartState.chart=null}
+  box.innerHTML='';
+  const LWC=window.LightweightCharts,closes=j.c,ts=j.t||[];
+  const DISP=years===3?756:252,start=Math.max(0,closes.length-DISP);
+  const series=arr=>{const o=[];for(let i=start;i<arr.length;i++){const v=arr[i];if(typeof v==='number'&&isFinite(v))o.push({time:ts[i],value:Math.round(v*100)/100})}return o};
+  const P=series(closes),A=series(smaSeries(closes,50)),B=series(smaSeries(closes,100)),C=series(smaSeries(closes,200));
+  const dark=document.documentElement.dataset.theme==='dark';
+  const txt=dark?'#e8eaed':'#1a1f2e',grd=dark?'#2a2f3a':'#e8ebf0',priceCol=dark?'#e8eaed':'#111827';
+  const chart=LWC.createChart(box,{width:box.clientWidth||820,height:380,
+    layout:{background:{type:'solid',color:'transparent'},textColor:txt},
+    grid:{vertLines:{color:grd},horzLines:{color:grd}},
+    rightPriceScale:{borderColor:grd},timeScale:{borderColor:grd},
+    crosshair:{mode:LWC.CrosshairMode.Normal},
+    handleScale:{axisPressedMouseMove:true,mouseWheel:true,pinch:true},
+    localization:{priceFormatter:p=>p.toFixed(2)}});
+  _chartState.chart=chart;
+  const mk=(color,title,lw)=>chart.addLineSeries({color,lineWidth:lw,title,priceLineVisible:false,lastValueVisible:true});
+  const ps=mk(priceCol,'Цена',2),s50=mk('#2563eb','SMA 50',1),s100=mk('#f59e0b','SMA 100',1),s200=mk('#7c3aed','SMA 200',1);
+  ps.setData(P);s50.setData(A);s100.setData(B);s200.setData(C);
   const supC=DATA[curIdx].headers.indexOf('Поддержка'),resC=DATA[curIdx].headers.indexOf('Сопротивление');
   const support=supC>=0?parseFloat(row[supC]):NaN,resistance=resC>=0?parseFloat(row[resC]):NaN;
-  const all=[...P,...A,...B,...C,cur,support,resistance].filter(v=>typeof v==='number'&&isFinite(v));
-  let lo=Math.min(...all),hi=Math.max(...all);const pd=(hi-lo)*0.06||1;lo-=pd;hi+=pd;
-  const X=i=>x0+(WIN<=1?0:i/(WIN-1)*pw),Y=v=>y0+(1-(v-lo)/(hi-lo))*ph;
-  const poly=(a,col,w)=>{let pts='';for(let i=0;i<a.length;i++){if(typeof a[i]==='number'&&isFinite(a[i]))pts+=`${X(i).toFixed(1)},${Y(a[i]).toFixed(1)} `}return pts?`<polyline points="${pts.trim()}" style="fill:none;stroke:${col};stroke-width:${w}"/>`:''};
-  const hline=(v,col)=>{if(!isFinite(v))return'';const y=Y(v).toFixed(1);return `<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="${col}" stroke-width="1" stroke-dasharray="4 3" opacity=".85"/><rect x="${x1+2}" y="${(+y-8).toFixed(1)}" width="${padR-4}" height="16" rx="3" fill="${col}"/><text x="${x1+padR/2}" y="${(+y+4).toFixed(1)}" fill="#fff" font-size="10" text-anchor="middle">${v.toFixed(1)}</text>`};
-  let grid='';for(let k=0;k<=5;k++){const v=lo+(hi-lo)*k/5,y=Y(v).toFixed(1);grid+=`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" style="stroke:var(--border);stroke-width:.5"/><text x="${x0+2}" y="${(+y-2).toFixed(1)}" style="fill:var(--text3)" font-size="9">${v.toFixed(0)}</text>`}
-  const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];let xlab='',lastMo=-1;
-  for(let i=0;i<T.length;i++){const mo=new Date((T[i]||0)*1000).getMonth();if(mo!==lastMo){lastMo=mo;const x=X(i).toFixed(1);xlab+=`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}" style="stroke:var(--border);stroke-width:.5"/><text x="${x}" y="${H-8}" style="fill:var(--text3)" font-size="9" text-anchor="middle">${MO[mo]}</text>`}}
-  const lines=poly(C,'#7c3aed',1.4)+poly(B,'#f59e0b',1.4)+poly(A,'#2563eb',1.4)+poly(P,'var(--text)',1.8);
-  const levels=hline(support,'#16a34a')+hline(resistance,'#dc2626')+hline(cur,'#b45309');
-  const svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">${grid}${xlab}${lines}${levels}</svg>`;
-  const lg=(c,l,v)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${(v!=null&&isFinite(v))?` <b>${(+v).toFixed(1)} ${ccy}</b>`:''}</span>`;
-  return svg+`<div class="chart-legend">${lg('var(--text)','Цена',cur)}${lg('#2563eb','SMA 50',A[A.length-1])}${lg('#f59e0b','SMA 100',B[B.length-1])}${lg('#7c3aed','SMA 200',C[C.length-1])}${lg('#16a34a','Поддержка',support)}${lg('#dc2626','Сопротивление',resistance)}</div>`;
+  if(isFinite(support))ps.createPriceLine({price:support,color:'#16a34a',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Поддержка'});
+  if(isFinite(resistance))ps.createPriceLine({price:resistance,color:'#dc2626',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Сопротивление'});
+  chart.timeScale().fitContent();
+  // Legend: hovered values when the crosshair moves, last values otherwise.
+  const defs=[['Цена',ps,priceCol],['SMA 50',s50,'#2563eb'],['SMA 100',s100,'#f59e0b'],['SMA 200',s200,'#7c3aed']];
+  const last=[P,A,B,C].map(a=>a.length?a[a.length-1].value:null);
+  const paint=vals=>{legend.innerHTML=defs.map(([l,,c],i)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${vals[i]!=null?` <b>${vals[i].toFixed(2)} ${ccy}</b>`:''}</span>`).join('')};
+  paint(last);
+  chart.subscribeCrosshairMove(param=>{if(!param||!param.time||!param.seriesData){paint(last);return}paint(defs.map(([,s])=>{const dp=param.seriesData.get(s);return dp&&typeof dp.value==='number'?dp.value:null}))});
+  if(!_chartState._resize){_chartState._resize=()=>{if(_chartState&&_chartState.chart&&box.clientWidth)_chartState.chart.applyOptions({width:box.clientWidth})};window.addEventListener('resize',_chartState._resize)}
 }
 async function refreshLivePrices(){
   if(!isPF()){ toast('Обновление цен доступно на вкладке 💼 Портфель'); return; }

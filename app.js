@@ -2575,9 +2575,20 @@ async function fetchFinnhub(symbol){
   return (d && typeof d.c === 'number' && d.c > 0) ? { price: d.c, pct: (typeof d.dp === 'number' ? d.dp : null) } : null;
 }
 
+// Ensure a column named `name` exists on tab `d`; append + pad rows if missing. Returns its index.
+function ensurePFCol(d, name){
+  let idx = d.headers.indexOf(name);
+  if(idx === -1){
+    d.headers.push(name); idx = d.headers.length - 1;
+    d.rows.forEach(r => { while(r.length < d.headers.length) r.push(''); });
+  }
+  return idx;
+}
 async function refreshLivePrices(){
   if(!isPF()){ toast('Обновление цен доступно на вкладке 💼 Портфель'); return; }
   const d = DATA[curIdx];
+  const supIdx = ensurePFCol(d, 'Поддержка');        // Support level (rolling 3-month low)
+  const resIdx = ensurePFCol(d, 'Сопротивление');    // Resistance level (rolling 3-month high)
   const btn = document.getElementById('refreshPricesBtn');
   if(btn){ btn.disabled = true; btn.textContent = '⏳ …'; }
   let updated = 0, manual = 0;
@@ -2605,6 +2616,8 @@ async function refreshLivePrices(){
           if(typeof p.sma50 === 'number') row[16] = p.sma50;                            // SMA 50
           if(typeof p.sma100 === 'number') row[17] = p.sma100;                          // SMA 100
           if(typeof p.sma200 === 'number') row[18] = p.sma200;                          // SMA 200
+          if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
+          if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
         }
         updated++;
       } else { manual++; manualPriceRows.add(i); }

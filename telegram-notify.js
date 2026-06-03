@@ -54,9 +54,10 @@ function exSymbol(ticker, ccy){
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-// One year of daily candles → current price, day change %, and SMA 50/100/200.
-// SMAs use the last N daily closes (native currency, matching the price column);
-// returns null for any SMA when there isn't enough history.
+// One year of daily candles → current price, day change %, SMA 50/100/200,
+// and support / resistance (rolling 3-month low/high). All in native currency,
+// matching the price column; fields are null when there isn't enough history.
+const SR_WINDOW = 60;   // trading days (~3 months) for support/resistance
 async function yahoo(sym){
   try{
     const r = await fetch(
@@ -67,7 +68,10 @@ async function yahoo(sym){
     const res = (await r.json())?.chart?.result?.[0];
     const m = res?.meta;
     if(!m || typeof m.regularMarketPrice !== 'number') return null;
-    const closes = (res?.indicators?.quote?.[0]?.close || []).filter(v => typeof v === 'number' && v > 0);
+    const q = res?.indicators?.quote?.[0] || {};
+    const closes = (q.close || []).filter(v => typeof v === 'number' && v > 0);
+    const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
+    const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const price = m.regularMarketPrice;
     const prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
     const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
@@ -76,7 +80,13 @@ async function yahoo(sym){
       let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i];
       return Math.round(s / n * 100) / 100;
     };
-    return { price, pct, sma50: sma(50), sma100: sma(100), sma200: sma(200) };
+    const r2 = n => Math.round(n * 100) / 100;
+    return {
+      price, pct,
+      sma50: sma(50), sma100: sma(100), sma200: sma(200),
+      support: lows.length ? r2(Math.min(...lows)) : null,
+      resistance: highs.length ? r2(Math.max(...highs)) : null,
+    };
   }catch(e){ return null; }
 }
 

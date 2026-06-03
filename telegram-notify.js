@@ -123,17 +123,19 @@ async function sendTelegram(env, text){
   if(!r.ok) throw new Error('Telegram send failed: ' + r.status + ' ' + (await r.text()));
 }
 
-async function sendPhoto(env, photoUrl, caption){
-  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: env.CHAT_ID, photo: photoUrl, caption: caption || '', parse_mode: 'HTML' }),
-  });
+// Upload PNG bytes to Telegram (multipart). More reliable than passing a URL,
+// which Telegram has to fetch itself (and often fails on dynamic chart URLs).
+async function sendPhoto(env, bytes, caption){
+  const form = new FormData();
+  form.append('chat_id', String(env.CHAT_ID));
+  if(caption){ form.append('caption', caption); form.append('parse_mode', 'HTML'); }
+  form.append('photo', new Blob([bytes], { type: 'image/png' }), 'chart.png');
+  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendPhoto`, { method: 'POST', body: form });
   if(!r.ok) throw new Error('Telegram photo failed: ' + r.status + ' ' + (await r.text()));
 }
 
-// Render a price + SMA 50/100/200 + support/resistance chart via QuickChart, return a short PNG URL.
-async function chartUrl(sym, name, support, resistance){
+// Render a price + SMA 50/100/200 + support/resistance chart via QuickChart → PNG bytes (ArrayBuffer) or null.
+async function chartPng(sym, name, support, resistance){
   const h = await dailyHistory(sym);
   if(!h) return null;
   const smaArr = (a, n) => { const o = new Array(a.length).fill(null); let s = 0; for(let i = 0; i < a.length; i++){ s += a[i]; if(i >= n) s -= a[i - n]; if(i >= n - 1) o[i] = Math.round(s / n * 100) / 100; } return o; };
@@ -150,13 +152,12 @@ async function chartUrl(sym, name, support, resistance){
     options: { plugins: { title: { display: true, text: name }, legend: { position: 'bottom' } },
                scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } }, elements: { line: { tension: 0.1 } } } };
   try{
-    const r = await fetch('https://quickchart.io/chart/create', {
+    const r = await fetch('https://quickchart.io/chart', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chart: config, width: 820, height: 440, backgroundColor: 'white', format: 'png' }),
     });
     if(!r.ok) return null;
-    const j = await r.json();
-    return (j && j.success) ? j.url : null;
+    return await r.arrayBuffer();
   }catch(e){ return null; }
 }
 
@@ -168,10 +169,10 @@ async function sendChartMU(env){
   if(!row) return false;
   const sym = exSymbol(row[2], row[8]), ccy = row[8] || '';
   const q = await yahoo(sym);
-  const url = await chartUrl(sym, String(row[1] || CHART_TICKER), q && q.support, q && q.resistance);
-  if(!url) return false;
+  const png = await chartPng(sym, String(row[1] || CHART_TICKER), q && q.support, q && q.resistance);
+  if(!png) return false;
   const px = q && typeof q.price === 'number' ? ` — ${q.price} ${ccy}` : '';
-  await sendPhoto(env, url, `📈 <b>${esc(String(row[1] || CHART_TICKER))}</b> (${CHART_TICKER})${px}`);
+  await sendPhoto(env, png, `📈 <b>${esc(String(row[1] || CHART_TICKER))}</b> (${CHART_TICKER})${px}`);
   return true;
 }
 

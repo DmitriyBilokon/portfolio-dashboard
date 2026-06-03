@@ -149,3 +149,6 @@ td.price-manual::after{content:' ✎';font-size:9px;opacity:.7}
 .tf-btn{font:600 9px/1 inherit;padding:3px 7px;border:1px solid var(--border2);background:var(--bg2);color:var(--text2);border-radius:4px;cursor:pointer}
 .tf-btn:hover{border-color:var(--accent);color:var(--text)}
 .tf-btn.tf-on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* % distance from current price to a level (SMA / support / resistance) */
+.lvl-pct{font-size:9px;color:var(--text3);font-weight:400}

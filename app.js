@@ -16,7 +16,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols };
+           hiddenCols:hiddenCols, smaTf:SMA_TF };
 }
 function saveLocal(){ try{ localStorage.setItem('dash_state', JSON.stringify(snapshotState())); }catch(e){} }
 // Call after any edit: cache locally, then debounce-push to the cloud.
@@ -44,6 +44,7 @@ function applyRemoteState(s){
   if(s.fx) FX=s.fx;
   if(s.colOrders) colOrders=s.colOrders;
   if(s.hiddenCols) hiddenCols=s.hiddenCols;
+  if(s.smaTf) SMA_TF=s.smaTf;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -93,6 +94,10 @@ async function boot(){
 }
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴','💼 Портфель 2.0':'💼'};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375};
+// Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
+// The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
+let SMA_TF={};
+const SMA_TF_COL='Период SMA';
 // ===== Live exchange rates (official mid-market, ≈ what Google shows) =====
 // Base currency is SEK; FX[ccy] = how many SEK per 1 unit of ccy.
 // Sources return "1 SEK = rates[ccy] ccy", so SEK-per-ccy = 1/rates[ccy].
@@ -2421,7 +2426,7 @@ function renderTable(){
   const d=DATA[curIdx],h=d.headers,ord=getOrd(),rows=getFiltered();
   document.getElementById('indexInfo').textContent=d.subtitle||curIdx;
   if(!isPF())renderStats(rows,h);updateDelBtn();
-  const priceC=h.findIndex(x=>/^цена/i.test(x)),s50=h.findIndex(x=>/sma.?50/i.test(x)),s100=h.findIndex(x=>/sma.?100/i.test(x)),s200=h.findIndex(x=>/sma.?200/i.test(x));
+  const priceC=h.findIndex(x=>/^цена/i.test(x)),s50=h.findIndex(x=>/sma.?50/i.test(x)),s100=h.findIndex(x=>/sma.?100/i.test(x)),s200=h.findIndex(x=>/sma.?200/i.test(x)),tfC=h.indexOf(SMA_TF_COL);
   const thead=document.getElementById('thead');thead.innerHTML='';const tr=document.createElement('tr');
   const thD=document.createElement('th');thD.style.width='28px';tr.appendChild(thD);
   ord.forEach((ci,vi)=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const th=document.createElement('th');th.textContent=h[ci];th.draggable=true;th.dataset.vi=vi;if(ci===sortCol)th.className=sortDir===1?'sorted-asc':'sorted-desc';th.onclick=()=>toggleSort(ci);th.addEventListener('dragstart',()=>{dragSrc=vi;th.classList.add('dragging')});th.addEventListener('dragend',()=>{th.classList.remove('dragging');document.querySelectorAll('thead th').forEach(t=>t.classList.remove('drag-over'))});th.addEventListener('dragover',e=>{e.preventDefault();th.classList.add('drag-over')});th.addEventListener('dragleave',()=>th.classList.remove('drag-over'));th.addEventListener('drop',e=>{e.preventDefault();th.classList.remove('drag-over');const tgt=parseInt(th.dataset.vi);if(dragSrc!==tgt){const o=getOrd();const it=o.splice(dragSrc,1)[0];o.splice(tgt,0,it);renderAll();scheduleSave()}});tr.appendChild(th)});
@@ -2429,7 +2434,9 @@ function renderTable(){
   thead.appendChild(tr);
   const tbody=document.getElementById('tbody');tbody.innerHTML='';
   rows.forEach(row=>{const oi=row._idx,tr=document.createElement('tr');if(selected.has(oi))tr.className='selected';const tdD=document.createElement('td');tdD.style.cssText='padding:3px;text-align:center';const isPlanned=parseInt(row.data[6])===0;if(isPlanned){tr.style.background='rgba(234,179,8,0.06)';tr.style.borderLeft='3px solid var(--gold)'}const btn=document.createElement('button');btn.className='del-btn';btn.textContent='✕';btn.onclick=e=>{e.stopPropagation();if(selected.has(oi))selected.delete(oi);else selected.add(oi);updateDelBtn();tr.className=selected.has(oi)?'selected':''};tdD.appendChild(btn);tr.appendChild(tdD);const price=priceC>=0?parseFloat(row.data[priceC]):0;
-  ord.forEach(ci=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const val=row.data[ci],td=document.createElement('td');td.contentEditable='true';td.spellcheck=false;const hdr=(h[ci]||'').toLowerCase();const isSec=hdr.includes('сектор')||hdr.includes('отрасль');const isSma=(ci===s50||ci===s100||ci===s200);
+  ord.forEach(ci=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const val=row.data[ci],td=document.createElement('td');
+  if(ci===tfC){td.style.textAlign='center';const tk=String(row.data[2]||'');const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';const mk=(m,l)=>`<button class="tf-btn${mode===m?' tf-on':''}" onclick="setSmaTF(${oi},'${m}')">${l}</button>`;td.innerHTML=`<span class="tf-wrap">${mk('1Y','1Г')}${mk('3Y','3Г')}</span>`;tr.appendChild(td);return}
+  td.contentEditable='true';td.spellcheck=false;const hdr=(h[ci]||'').toLowerCase();const isSec=hdr.includes('сектор')||hdr.includes('отрасль');const isSma=(ci===s50||ci===s100||ci===s200);
   if(isSec){const[bg,fg]=getSC(String(val));td.innerHTML=`<span class="sec-tag" style="background:${bg};color:${fg}">${val||''}</span>`}
   else if(isSma&&price>0){const sv=parseFloat(val);if(!isNaN(sv)&&sv>0){td.textContent=sv.toFixed(0);td.className=price>sv?'c-sma-above':'c-sma-below'}else td.textContent=val??''}
   else{const isNum=typeof val==='number';if(hdr.includes('прибыль')||hdr.includes('стоимость')||hdr.includes('белайн')){td.textContent=isNum?Math.round(val).toLocaleString():(val??'');if(hdr.includes('прибыль')){const n=parseFloat(val);td.className=n>0?'c-pos':n<0?'c-neg':''}}else if(hdr.includes('курс')){td.textContent=isNum?val.toFixed(4):(val??'');td.style.fontFamily='"JetBrains Mono",monospace';td.style.fontSize='10px';td.style.color='var(--text2)'}else{td.textContent=val===null||val===undefined?'':val;if(ci<=1||hdr.includes('компани'))td.className='c-company';else if(ci===2||hdr.includes('тикер'))td.className='c-ticker';else if(hdr.includes('коммент'))td.className='c-comment';else if((hdr.includes('sma')||hdr.includes('позиц'))&&!isSma){const v=String(val);td.className=v.includes('🟢')?'c-sma-g':v.includes('🔴')?'c-sma-r':'c-sma-y'}else if(hdr.includes('потенц')||hdr.includes('от покупки')){const n=parseFloat(String(val));if(!isNaN(n))td.className=n>0?'c-pos':n<0?'c-neg':'c-neut'}else if(hdr.includes('1д')||hdr.includes('день')){const n=parseFloat(String(val));if(!isNaN(n))td.className=n>0?'c-pos':n<0?'c-neg':'c-neut'}else if(hdr.includes('див')){const n=parseFloat(String(val));if(!isNaN(n)&&n>=5)td.className='c-div-hi';else if(!isNaN(n)&&n>=3)td.className='c-div-mid'}else if(hdr.includes('валюта')){td.style.fontWeight='600';td.style.color='var(--accent)'}else if(hdr.includes('целевая')||hdr.includes('цель')){td.style.color='var(--gold)';td.style.fontWeight='600';if(hdr.includes('kr')){const n=parseFloat(String(val));if(!isNaN(n))td.textContent=Math.round(n).toLocaleString()}}}}
@@ -2584,11 +2591,41 @@ function ensurePFCol(d, name){
   }
   return idx;
 }
+// Data indices of the SMA 50/100/200 columns on tab `d` (regex on headers; -1 if absent).
+function smaIdx(d){const h=d.headers;return{s50:h.findIndex(x=>/sma.?50/i.test(x)),s100:h.findIndex(x=>/sma.?100/i.test(x)),s200:h.findIndex(x=>/sma.?200/i.test(x))};}
+// Copy the active timeframe's SMA triple into the visible SMA columns for one row.
+function applySmaTF(d, oi){
+  const row=d.rows[oi], rec=SMA_TF[String(row[2]||'')];
+  if(!rec) return;
+  const set = rec.mode==='3Y' ? rec.w : rec.d;
+  const {s50,s100,s200}=smaIdx(d);
+  if(s50>=0) row[s50]=(set&&set[0]!=null)?set[0]:'';
+  if(s100>=0) row[s100]=(set&&set[1]!=null)?set[1]:'';
+  if(s200>=0) row[s200]=(set&&set[2]!=null)?set[2]:'';
+}
+// Toggle handler (called from the per-row 1Г/3Г buttons). Switches one stock's SMA timeframe.
+function setSmaTF(oi, mode){
+  const d=DATA[curIdx], tk=String(d.rows[oi][2]||'');
+  const rec=SMA_TF[tk]||(SMA_TF[tk]={mode:'1Y',d:null,w:null});
+  rec.mode=mode;
+  applySmaTF(d, oi);
+  renderTable(); scheduleSave();
+}
+// Move column `colIdx` to just after the first header matching `afterRegex` in the display order.
+function positionAfter(d, colIdx, afterRegex){
+  const ord=getOrd(), afterData=d.headers.findIndex(x=>afterRegex.test(x));
+  const from=ord.indexOf(colIdx); if(from<0||afterData<0) return;
+  ord.splice(from,1);
+  ord.splice(ord.indexOf(afterData)+1,0,colIdx);
+}
 async function refreshLivePrices(){
   if(!isPF()){ toast('Обновление цен доступно на вкладке 💼 Портфель'); return; }
   const d = DATA[curIdx];
   const supIdx = ensurePFCol(d, 'Поддержка');        // Support level (rolling 3-month low)
   const resIdx = ensurePFCol(d, 'Сопротивление');    // Resistance level (rolling 3-month high)
+  const tfExisted = d.headers.includes(SMA_TF_COL);
+  ensurePFCol(d, SMA_TF_COL);                        // per-stock 1Г/3Г SMA timeframe toggle
+  if(!tfExisted) positionAfter(d, d.headers.indexOf(SMA_TF_COL), /sma.?200/i);   // place right after SMA 200
   const btn = document.getElementById('refreshPricesBtn');
   if(btn){ btn.disabled = true; btn.textContent = '⏳ …'; }
   let updated = 0, manual = 0;
@@ -2613,11 +2650,14 @@ async function refreshLivePrices(){
         row[7] = price;
         if(p && typeof p === 'object'){
           if(typeof p.pct === 'number') row[10] = Math.round(p.pct * 100) / 100;        // 1д %
-          if(typeof p.sma50 === 'number') row[16] = p.sma50;                            // SMA 50
-          if(typeof p.sma100 === 'number') row[17] = p.sma100;                          // SMA 100
-          if(typeof p.sma200 === 'number') row[18] = p.sma200;                          // SMA 200
           if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
           if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
+          // Store both daily (1Y) and weekly (3Y) SMA sets; show the one matching this stock's toggle.
+          const tk = String(row[2] || ''), mode = (SMA_TF[tk] && SMA_TF[tk].mode) || '1Y';
+          SMA_TF[tk] = { mode,
+            d: [p.sma50 ?? null, p.sma100 ?? null, p.sma200 ?? null],
+            w: [p.sma50w ?? null, p.sma100w ?? null, p.sma200w ?? null] };
+          applySmaTF(d, i);
         }
         updated++;
       } else { manual++; manualPriceRows.add(i); }

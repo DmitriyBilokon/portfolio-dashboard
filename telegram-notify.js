@@ -70,6 +70,24 @@ async function yahoo(sym){
   }catch(e){ return null; }
 }
 
+// Weekly-bar SMA 50/100/200 (~1yr / 2yr / 3.8yr) — powers the dashboard's 3-year SMA view.
+async function weeklySMA(sym){
+  try{
+    const r = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1wk&range=5y`,
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } }
+    );
+    if(!r.ok) return null;
+    const closes = ((await r.json())?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || []).filter(v => typeof v === 'number' && v > 0);
+    const sma = n => {
+      if(closes.length < n) return null;
+      let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i];
+      return Math.round(s / n * 100) / 100;
+    };
+    return { sma50w: sma(50), sma100w: sma(100), sma200w: sma(200) };
+  }catch(e){ return null; }
+}
+
 async function loadPortfolio(env){
   const r = await fetch(
     `${env.SUPABASE_URL}/rest/v1/ledger_state?select=data&order=updated_at.desc&limit=1`,
@@ -242,7 +260,11 @@ export default {
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
-      await Promise.all(syms.map(async s => { out[s] = await yahoo(s); }));   // {price, pct, sma50, sma100, sma200} | null
+      await Promise.all(syms.map(async s => {
+        const q = await yahoo(s);
+        if(q){ const w = await weeklySMA(s); if(w) Object.assign(q, w); }   // add sma50w/100w/200w (3-year view)
+        out[s] = q;   // {price, pct, sma50/100/200, support, resistance, sma50w/100w/200w} | null
+      }));
       return new Response(JSON.stringify(out), { headers: CORS });
     }
     try{

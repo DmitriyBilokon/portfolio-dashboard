@@ -131,6 +131,11 @@ const SEC_COLORS={'tech':['#dbeafe','#1e40af'],'software':['#c7d2fe','#3730a3'],
 function getSC(s){s=(s||'').toLowerCase();for(const[k,[b,f]] of Object.entries(SEC_COLORS)){if(s.includes(k))return[b,f]}return['#f1f5f9','#475569']}
 let curIdx='OMXS30',curSub='table',sortCol=-1,sortDir=0,searchTerm='',selected=new Set(),colOrders={},hiddenCols={},dragSrc=-1;
 const isPF=()=>curIdx.startsWith('💼');
+// Tabs that get the portfolio's interactive analysis tools (live prices, SMA toggle, support/resistance, chart).
+const ANALYSIS_IDX='Nasdaq 100';
+const isAnalysis=()=>isPF()||curIdx===ANALYSIS_IDX;
+// Currency for symbol resolution: the row's «Валюта» column if present, else USD (index tables like Nasdaq).
+function rowCcy(row){const ci=DATA[curIdx].headers.findIndex(x=>/валют/i.test(x));return ci>=0?(row[ci]||''):'USD'}
 function getOrd(){const n=DATA[curIdx].headers.length;if(!colOrders[curIdx])colOrders[curIdx]=DATA[curIdx].headers.map((_,i)=>i);else for(let i=0;i<n;i++)if(!colOrders[curIdx].includes(i))colOrders[curIdx].push(i);return colOrders[curIdx]}
 function recalcPF(i,idx){const d=DATA[idx||curIdx],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0}
 function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
@@ -149,7 +154,7 @@ function init(){migratePortfolio();const t=document.getElementById('tabs');t.inn
 function renderAll(){
   document.querySelectorAll('.tab').forEach((t,i)=>{t.className='tab'+(Object.keys(DATA)[i]===curIdx?' active':'')});
   const st=document.getElementById('subTabs');st.innerHTML='';
-  const subs=isPF()?[['📊 Таблица','table'],['🏆 Рейтинг','ranking'],['📅 Дивиденды','divcal'],['📈 План 2026','plan2026'],['📈 2027','plan2027'],['📈 2028','plan2028'],['📈 2029','plan2029'],['📈 2030','plan2030'],['📈 2031','plan2031'],['📈 2032','plan2032'],['📈 2033','plan2033'],['📈 2034','plan2034'],['📈 2035','plan2035'],['📈 2036','plan2036'],['📈 2037','plan2037'],['📈 2038','plan2038'],['📈 2039','plan2039'],['📈 2040','plan2040'],['📜 История','history']]:[['📊 Таблица','table'],['🏆 Рейтинг','ranking']];
+  const subs=isPF()?[['📊 Таблица','table'],['📅 Дивиденды','divcal']]:curIdx===ANALYSIS_IDX?[['📊 Таблица','table']]:[['📊 Таблица','table'],['🏆 Рейтинг','ranking']];
   subs.forEach(([l,k])=>{if(k==='ranking'&&!(RANK[curIdx]?.length))return;const b=document.createElement('div');b.className='sub-tab'+(curSub===k?' active':'');b.textContent=l;b.onclick=()=>{curSub=k;renderAll()};st.appendChild(b)});
   const smB=document.getElementById('smaBanner');smB.innerHTML='';smB.style.display=isPF()?'none':'';if(!isPF())renderSMA();
   const pfS=document.getElementById('pfSummary'),fxB=document.getElementById('fxBar');
@@ -2436,7 +2441,7 @@ function renderTable(){
   rows.forEach(row=>{const oi=row._idx,tr=document.createElement('tr');if(selected.has(oi))tr.className='selected';const tdD=document.createElement('td');tdD.style.cssText='padding:3px;text-align:center';const isPlanned=parseInt(row.data[6])===0;if(isPlanned){tr.style.background='rgba(234,179,8,0.06)';tr.style.borderLeft='3px solid var(--gold)'}const btn=document.createElement('button');btn.className='del-btn';btn.textContent='✕';btn.onclick=e=>{e.stopPropagation();if(selected.has(oi))selected.delete(oi);else selected.add(oi);updateDelBtn();tr.className=selected.has(oi)?'selected':''};tdD.appendChild(btn);tr.appendChild(tdD);const price=priceC>=0?parseFloat(row.data[priceC]):0;
   ord.forEach(ci=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const val=row.data[ci],td=document.createElement('td');
   if(ci===tfC){td.style.textAlign='center';const tk=String(row.data[2]||'');const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';const mk=(m,l)=>`<button class="tf-btn${mode===m?' tf-on':''}" onclick="setSmaTF(${oi},'${m}')">${l}</button>`;td.innerHTML=`<span class="tf-wrap">${mk('1Y','1Г')}${mk('3Y','3Г')}</span>`;tr.appendChild(td);return}
-  if((ci===1||(h[ci]||'').toLowerCase().includes('компани'))&&isPF()&&String(row.data[2]||'').trim()){td.className='c-company';td.style.cursor='pointer';td.title='Открыть график';td.innerHTML=`<span style="text-decoration:underline dotted">${val??''}</span> 📈`;td.onclick=()=>openStockChart(String(row.data[2]));tr.appendChild(td);return}
+  if((ci===1||(h[ci]||'').toLowerCase().includes('компани'))&&isAnalysis()&&String(row.data[2]||'').trim()){td.className='c-company';td.style.cursor='pointer';td.title='Открыть график';td.innerHTML=`<span style="text-decoration:underline dotted">${val??''}</span> 📈`;td.onclick=()=>openStockChart(String(row.data[2]));tr.appendChild(td);return}
   td.contentEditable='true';td.spellcheck=false;const hdr=(h[ci]||'').toLowerCase();const isSec=hdr.includes('сектор')||hdr.includes('отрасль');const isSma=(ci===s50||ci===s100||ci===s200);const isLevel=isSma||ci===supC||ci===resC;
   if(isSec){const[bg,fg]=getSC(String(val));td.innerHTML=`<span class="sec-tag" style="background:${bg};color:${fg}">${val||''}</span>`}
   else if(isLevel&&price>0){const lv=parseFloat(val);if(!isNaN(lv)&&lv>0){const pct=(price-lv)/price*100;const ord=(ci===resC)?'X':(ci===supC)?'Y':(pct>=0?'X':'Y');const col=lvlPctColor(Math.abs(pct),ord);const vTxt=isSma?lv.toFixed(0):lv;td.innerHTML=`${vTxt} <span class="lvl-pct" style="color:${col}">(${pct>=0?'+':'−'}${Math.abs(pct).toFixed(1)}%)</span>`;if(isSma)td.className=price>lv?'c-sma-above':'c-sma-below'}else td.textContent=val??''}
@@ -2643,7 +2648,7 @@ function setChartYears(y){if(!_chartState)return;_chartState.years=y;['1','3'].f
 async function openStockChart(ticker){
   const d=DATA[curIdx],row=d.rows.find(r=>String(r[2]||'').toUpperCase()===String(ticker).toUpperCase());
   if(!row){toast('Нет данных по '+ticker,true);return}
-  const ccy=row[8]||'',name=row[1]||ticker;
+  const ccy=rowCcy(row),name=row[1]||ticker;
   _chartState={ticker,row,ccy,name,years:1,chart:null};
   let ov=document.getElementById('chartOverlay');
   if(!ov){ov=document.createElement('div');ov.id='chartOverlay';ov.className='chart-overlay';document.body.appendChild(ov);ov.addEventListener('click',e=>{if(e.target===ov)closeStockChart()})}
@@ -2698,8 +2703,10 @@ async function drawChart(){
   if(!_chartState._resize){_chartState._resize=()=>{if(_chartState&&_chartState.chart&&box.clientWidth)_chartState.chart.applyOptions({width:box.clientWidth})};window.addEventListener('resize',_chartState._resize)}
 }
 async function refreshLivePrices(){
-  if(!isPF()){ toast('Обновление цен доступно на вкладке 💼 Портфель'); return; }
+  if(!isAnalysis()){ toast('Обновление цен доступно на вкладках 💼 Портфель и Nasdaq 100'); return; }
   const d = DATA[curIdx];
+  const priceC = d.headers.findIndex(x=>/^цена/i.test(x));   // price column (position varies by tab schema)
+  const dayC = d.headers.findIndex(x=>/1д|день/i.test(x));   // 1-day % column
   const supIdx = ensurePFCol(d, 'Поддержка');        // Support level (rolling 3-month low)
   const resIdx = ensurePFCol(d, 'Сопротивление');    // Resistance level (rolling 3-month high)
   const tfExisted = d.headers.includes(SMA_TF_COL);
@@ -2712,7 +2719,7 @@ async function refreshLivePrices(){
 
   if(PRICE_PROXY){
     // One batched request → covers US + Nordic/EU via Yahoo.
-    const symbols = [...new Set(d.rows.map(r => exSymbol(r[2], r[8])).filter(Boolean))];
+    const symbols = [...new Set(d.rows.map(r => exSymbol(r[2], rowCcy(r))).filter(Boolean))];
     let prices = {};
     try{
       const r = await fetch(PRICE_PROXY + '?symbols=' + encodeURIComponent(symbols.join(',')));
@@ -2723,12 +2730,12 @@ async function refreshLivePrices(){
       toast('Прокси цен недоступен — проверьте PRICE_PROXY', true); return;
     }
     d.rows.forEach((row, i) => {
-      const p = prices[exSymbol(row[2], row[8])];
+      const p = prices[exSymbol(row[2], rowCcy(row))];
       const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
       if(price != null){
-        row[7] = price;
+        if(priceC>=0) row[priceC] = price;
         if(p && typeof p === 'object'){
-          if(typeof p.pct === 'number') row[10] = Math.round(p.pct * 100) / 100;        // 1д %
+          if(dayC>=0 && typeof p.pct === 'number') row[dayC] = Math.round(p.pct * 100) / 100;   // 1д %
           if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
           if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
           // Store both daily (1Y) and weekly (3Y) SMA sets; show the one matching this stock's toggle.
@@ -2751,12 +2758,13 @@ async function refreshLivePrices(){
     for(let i = 0; i < d.rows.length; i++){
       const row = d.rows[i];
       let q = null;
-      try{ q = await fetchFinnhub(exSymbol(row[2], row[8])); }catch(e){ q = null; }
-      if(q != null){ row[7] = q.price; if(typeof q.pct === 'number') row[10] = Math.round(q.pct * 100) / 100; updated++; } else { manual++; manualPriceRows.add(i); }
+      try{ q = await fetchFinnhub(exSymbol(row[2], rowCcy(row))); }catch(e){ q = null; }
+      if(q != null){ if(priceC>=0) row[priceC] = q.price; if(dayC>=0 && typeof q.pct === 'number') row[dayC] = Math.round(q.pct * 100) / 100; updated++; } else { manual++; manualPriceRows.add(i); }
     }
   }
 
-  recalcAllPF(); renderPFSummary(); renderTable(); scheduleSave();
+  if(isPF()){ recalcAllPF(); renderPFSummary(); }   // value/profit recalc is portfolio-only
+  renderTable(); scheduleSave();
   if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
   toast(`🔄 ${updated} обновлено · ${manual} вручную` + (manual ? ' (выделены жёлтым)' : ''));
 }

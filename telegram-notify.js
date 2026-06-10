@@ -19,6 +19,7 @@
 //     SUPABASE_URL          (Text)    – https://<project>.supabase.co
 //     NEAR_THRESHOLD        (Text)    – optional, percent proximity to a level (default 10)
 //     FMP_KEY               (Secret)  – Financial Modeling Prep API key (analyst targets)
+//     ANTHROPIC_API_KEY     (Secret)  – Claude API key (AI Assistant) — console.anthropic.com
 //     RESTRICT_FIRMS        (Text)    – optional, set "1" to only average the whitelisted firms
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
@@ -322,6 +323,24 @@ async function yahooEarnings(sym){
   return (next || last) ? { next, last, ccy: lastH?.currency || null, source: 'yahoo' } : null;
 }
 
+// Next earnings date + dividend info for one symbol (Yahoo calendarEvents/summaryDetail).
+// Powers the Портфель 3.0 «Дивиденды и отчёты» sub-tab; dividendRate is annual per share
+// in the trading currency.
+async function calendarInfo(sym){
+  const qs = await yQuoteSummary(sym, 'calendarEvents,summaryDetail');
+  if(!qs) return null;
+  const ev = qs.calendarEvents || {};
+  const sd = qs.summaryDetail || {};
+  const e = ev.earnings || {};
+  return {
+    earnings: e.earningsDate?.[0]?.fmt || null,
+    exDiv: ev.exDividendDate?.fmt || null,
+    payDate: ev.dividendDate?.fmt || null,
+    divRate: yRaw(sd.dividendRate) ?? yRaw(sd.trailingAnnualDividendRate),
+    divYield: yRaw(sd.dividendYield),
+  };
+}
+
 // ── Fundamental health snapshot (FMP): balance sheet, cash flow, revenue growth ──
 // Powers the Портфель 3.0 «Здоровье бизнеса» cards. All fields null when unavailable.
 // period 'annual' (default): latest fiscal-year report.
@@ -417,6 +436,58 @@ async function earningsInfo(sym, env){
     }
   }catch(e){ out = null; }
   return out || await yahooEarnings(sym);   // EU/Nordic tickers → Yahoo calendar
+}
+
+// ── AI Assistant: portfolio analysis via the Claude API ─────────────────────
+// The dashboard POSTs a portfolio snapshot (positions with live prices, SMA
+// levels, support/resistance, analyst targets, cash/leverage); Claude returns a
+// structured markdown report with sell/add/new-position recommendations.
+const AI_SYSTEM = `Ты — опытный портфельный управляющий и аналитик. Тебе передают снапшот реального портфеля частного инвестора из Швеции (базовая валюта — шведская крона, kr) с живыми ценами, техническими уровнями (SMA 50/100/200, поддержка, сопротивление), консенсус-таргетами аналитиков, долями позиций и составом капитала (свободный кэш, кредитное плечо).
+
+Дай структурированный анализ на русском языке в markdown строго по разделам:
+
+## 📊 Ситуация в портфеле и на рынке
+2–4 предложения: общее состояние (тренды позиций относительно SMA, концентрация, доля кэша).
+
+## 🔴 Продать или сократить
+Конкретные позиции с обоснованием (цена у сопротивления, превышение разумной доли, слабый тренд, цена выше таргета). Если кандидатов нет — так и скажи одной строкой.
+
+## 🟢 Докупить
+Какие позиции, на каких уровнях (используй переданные SMA/поддержку), какими частями от свободного кэша.
+
+## ➕ Новые позиции
+2–4 конкретные идеи (компания, тикер, биржа, почему, какую долю выделить) с учётом недостающих секторов и географии портфеля.
+
+## ⚠️ Риски
+Главные 2–3 риска текущего портфеля.
+
+## ✅ План действий
+Нумерованный список конкретных шагов на ближайшие 2–4 недели с суммами в kr.
+
+Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; в конце одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»`;
+
+async function aiAnalyze(env, snapshot){
+  const today = new Date().toISOString().slice(0, 10);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 16000,
+      thinking: { type: 'adaptive' },
+      system: AI_SYSTEM,
+      messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот портфеля (JSON):\n${JSON.stringify(snapshot)}` }],
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  const j = await r.json();
+  const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if(!text) throw new Error('Пустой ответ модели');
+  return text;
 }
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
@@ -554,7 +625,7 @@ export default {
   // GET with no query             → run the alert report now (manual test).
   async fetch(request, env){
     const url = new URL(request.url);
-    const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, OPTIONS', 'Content-Type':'application/json; charset=utf-8' };
+    const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json; charset=utf-8' };
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -564,6 +635,18 @@ export default {
       }
       try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+    }
+    if(url.searchParams.get('action') === 'ai'){
+      // POST: portfolio snapshot JSON → Claude analysis → {text} (Портфель 3.0 «AI Assistant»).
+      if(!env.ANTHROPIC_API_KEY) return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }), { status: 500, headers: CORS });
+      if(request.method !== 'POST') return new Response(JSON.stringify({ error: 'POST required' }), { status: 405, headers: CORS });
+      try{
+        const snapshot = await request.json();
+        const text = await aiAnalyze(env, snapshot);
+        return new Response(JSON.stringify({ text }), { headers: CORS });
+      }catch(e){
+        return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500, headers: CORS });
+      }
     }
     if(url.searchParams.get('action') === 'ydebug'){
       // Step-by-step Yahoo auth diagnostics: ?action=ydebug&sym=RHM.DE
@@ -585,6 +668,24 @@ export default {
       const per = url.searchParams.get('period') === 'quarter' ? 'quarter' : 'annual';
       const f = await fundamentals(url.searchParams.get('fundamentals').trim().toUpperCase(), env, per);
       return new Response(JSON.stringify(f), { headers: CORS });
+    }
+    if(url.searchParams.has('profile')){
+      // Company profile (name + sector) → auto-fill when adding a stock in Портфель 3.0.
+      const qs = await yQuoteSummary(url.searchParams.get('profile').trim(), 'assetProfile,quoteType');
+      const out = qs ? {
+        name: qs.quoteType?.longName || qs.quoteType?.shortName || null,
+        sector: qs.assetProfile?.sector || null,
+        industry: qs.assetProfile?.industry || null,
+        country: qs.assetProfile?.country || null,
+      } : null;
+      return new Response(JSON.stringify(out || {}), { headers: CORS });
+    }
+    if(url.searchParams.has('calendar')){
+      // Batch: next earnings date + dividend info per symbol → «Дивиденды и отчёты».
+      const syms = url.searchParams.get('calendar').split(',').map(s => s.trim()).filter(Boolean);
+      const out = {};
+      await Promise.all(syms.map(async s => { out[s] = await calendarInfo(s); }));
+      return new Response(JSON.stringify(out), { headers: CORS });
     }
     if(url.searchParams.has('earnings')){
       // Next earnings date + consensus estimates (FMP) → Портфель 3.0 «Ближайший отчёт».

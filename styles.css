@@ -310,3 +310,125 @@ body.v3 .sub-tabs{display:none}
   .pf3-layout.open .pf3-row-val{display:flex}
   .pf3-detail{width:100%}
 }
+
+/* Портфель 3.0 — табличный список: шапка, страна/сектор/кол-во/покупка, добавление/удаление */
+.pf3-row,.pf3-lhead{display:grid;grid-template-columns:40px minmax(110px,1.4fr) 48px minmax(86px,1fr) 60px 76px 100px 96px 52px;gap:8px;align-items:center}
+.pf3-lhead{padding:0 16px;font:600 9px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)}
+.pf3-lhead .pf3-c-qty,.pf3-lhead .pf3-c-buy{text-align:right}
+.pf3-c{font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf3-c-ctry{font-size:15px;text-align:center}
+.pf3-c-qty,.pf3-c-buy{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--text1);text-align:right}
+.pf3-row-act{display:flex;align-items:center;gap:2px;justify-content:flex-end}
+.pf3-del{border:none;background:none;cursor:pointer;font-size:13px;opacity:.4;border-radius:6px;padding:3px 4px;transition:all .12s}
+.pf3-del:hover{opacity:1;background:var(--red-bg)}
+.pf3-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pf3-add input,.pf3-add select{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text1);font-size:13px;outline:none;flex:1;min-width:90px}
+.pf3-add input:focus{border-color:var(--v3-acc)}
+.pf3-add select{flex:0 0 86px;min-width:80px;cursor:pointer}
+.pf3-add .pf3-btn{flex:0 0 auto;padding:9px 16px;font-size:12.5px}
+/* compact list while a card is open: only logo + name + price + arrow */
+.pf3-layout.open .pf3-lhead,.pf3-layout.open .pf3-add{display:none}
+.pf3-layout.open .pf3-row{grid-template-columns:40px 1fr 96px 24px}
+.pf3-layout.open .pf3-c-ctry,.pf3-layout.open .pf3-c-sec,.pf3-layout.open .pf3-c-qty,.pf3-layout.open .pf3-c-buy,.pf3-layout.open .pf3-del{display:none}
+@media(max-width:900px){
+  .pf3-row,.pf3-lhead{grid-template-columns:40px 1fr 60px 100px 96px 52px}
+  .pf3-c-ctry,.pf3-c-sec,.pf3-c-buy{display:none}
+  .pf3-layout.open .pf3-row{grid-template-columns:40px 1fr 96px 96px 24px}
+  .pf3-layout.open .pf3-c-qty{display:none}
+}
+
+/* Портфель 3.0 — сводка портфеля + курсы валют */
+.pf3-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:12px}
+.pf3-sum-hero{background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(34,211,238,.06)),var(--bg2);border-color:rgba(99,102,241,.35)}
+.pf3-cash-input{width:120px;background:transparent;border:none;border-bottom:2px dashed var(--border2);color:var(--text1);font:800 21px 'JetBrains Mono',monospace;letter-spacing:-.5px;outline:none;text-align:right;padding:0 2px;cursor:text;-moz-appearance:textfield}
+.pf3-cash-input::-webkit-outer-spin-button,.pf3-cash-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pf3-cash-input:hover{border-bottom-color:var(--v3-acc)}
+.pf3-cash-input:focus{border-bottom-color:var(--v3-acc);border-bottom-style:solid}
+.pf3-fx{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 2px}
+.pf3-fx-l{font-weight:800;font-size:12px;color:var(--text1)}
+.pf3-fx .pf3-chip b{color:var(--text1);font-size:11px}
+.pf3-fx-note{font:600 10px 'JetBrains Mono',monospace;color:var(--text3);margin-left:auto}
+@media(max-width:560px){.pf3-fx-note{display:none}.pf3-summary{grid-template-columns:repeat(2,1fr)}}
+/* leverage value rendered in red, summary fits 6 cards */
+.pf3-cash-input.pf3-lev{color:var(--red-t)}
+.pf3-summary{grid-template-columns:repeat(auto-fit,minmax(175px,1fr))}
+
+/* Портфель 3.0 — колонка «Сигнал» (уровни покупки/докупки/продажи) */
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.3fr) 46px minmax(78px,0.9fr) 54px 70px 94px 90px 150px 52px}
+.pf3-c-sig{text-align:right;overflow:visible}
+.pf3-lhead .pf3-c-sig{text-align:right}
+.pf3-sig{font:700 10px 'JetBrains Mono',monospace;border-radius:999px;padding:4px 9px;white-space:nowrap;display:inline-block}
+.pf3-sig-buy{background:var(--green-bg);color:var(--green-t)}
+.pf3-sig-sell{background:var(--red-bg);color:var(--red-t)}
+.pf3-sig-wait{background:var(--bg3);color:var(--text2)}
+.pf3-sig-warn{background:var(--yellow-bg);color:var(--yellow-t)}
+.pf3-sig-none{color:var(--text3)}
+.pf3-layout.open .pf3-c-sig{display:none}
+@media(max-width:900px){
+  .pf3-row,.pf3-lhead{grid-template-columns:40px 1fr 94px 90px 130px 52px}
+  .pf3-c-qty{display:none}
+}
+
+/* Портфель 3.0 — саб-вкладки (Портфель / Дивиденды и отчёты) в v3-стиле */
+body.v3 .sub-tabs{display:flex;background:transparent;padding:2px 24px 8px;gap:6px}
+body.v3 .sub-tab{border-radius:999px;padding:8px 16px;font-size:12px;font-weight:600;background:var(--bg2);border:1px solid var(--border);color:var(--text2)}
+body.v3 .sub-tab:hover{border-color:var(--v3-acc);color:var(--text1)}
+body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);color:#fff;border-color:transparent}
+
+/* Календарь отчётов */
+.pf3-cal-grid{display:flex;flex-direction:column;gap:6px}
+.pf3-cal-row{display:grid;grid-template-columns:minmax(150px,1.6fr) 1fr 120px;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);font-size:12.5px}
+.pf3-cal-row b{color:var(--text1)}
+.pf3-cal-row.soon{border-color:var(--yellow);background:rgba(234,179,8,.07)}
+.pf3-cal-tk{font:600 10px 'JetBrains Mono',monospace;color:var(--text3)}
+.pf3-cal-date{font:700 12px 'JetBrains Mono',monospace;color:var(--text1)}
+.pf3-cal-days{font:600 11px 'JetBrains Mono',monospace;color:var(--text2);text-align:right}
+
+/* Дивидендная таблица */
+.pf3-divhead,.pf3-div-row{display:grid;grid-template-columns:minmax(150px,1.6fr) 96px 86px 120px 120px 100px;gap:10px;align-items:center}
+.pf3-divhead{font:600 9px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);padding:0 14px 6px}
+.pf3-div-row{padding:10px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);margin-bottom:6px;font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace}
+.pf3-div-row b{color:var(--text1);font-family:'DM Sans',sans-serif;font-size:12.5px}
+@media(max-width:760px){
+  .pf3-divhead{display:none}
+  .pf3-div-row{grid-template-columns:1fr 1fr;row-gap:4px}
+  .pf3-cal-row{grid-template-columns:1fr 110px}
+  .pf3-cal-days{grid-column:2}
+}
+
+/* Портфель 3.0 — страна в ячейке названия, сортируемые заголовки */
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(130px,1.5fr) minmax(80px,0.9fr) 54px 70px 96px 92px 150px 52px}
+.pf3-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.pf3-sort:hover{color:var(--v3-acc)}
+@media(max-width:900px){
+  .pf3-row,.pf3-lhead{grid-template-columns:40px 1fr 96px 92px 130px 52px}
+}
+
+/* Портфель 3.0 — колонка «Доля» (% позиции от стоимости акций) */
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(125px,1.5fr) minmax(76px,0.9fr) 52px 68px 94px 90px 54px 148px 52px}
+.pf3-c-share{font:600 11.5px 'JetBrains Mono',monospace;color:var(--text2);text-align:right}
+.pf3-layout.open .pf3-c-share{display:none}
+@media(max-width:900px){
+  .pf3-row,.pf3-lhead{grid-template-columns:40px 1fr 94px 90px 130px 52px}
+  .pf3-c-share{display:none}
+}
+
+/* Портфель 3.0 — «Состояние портфеля»: бары распределения + рекомендации */
+.pf3-bar-row{display:grid;grid-template-columns:minmax(95px,0.9fr) 1fr 52px;gap:10px;align-items:center;padding:5px 0}
+.pf3-bar-l{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pf3-bar-track{height:10px;border-radius:5px;background:var(--bg4);overflow:hidden}
+.pf3-bar-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--v3-acc),var(--v3-acc2));transition:width .3s ease}
+.pf3-bar-v{font:700 11px 'JetBrains Mono',monospace;color:var(--text1);text-align:right}
+.pf3-reco{padding:11px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);margin-bottom:6px;font-size:13px;color:var(--text1);line-height:1.55}
+.pf3-reco b{color:var(--text1)}
+
+/* Портфель 3.0 — AI Assistant */
+.pf3-ai-bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.pf3-ai-note{font-size:11.5px;color:var(--text2);max-width:560px;line-height:1.5}
+.pf3-ai-report{border:1px solid var(--border);border-radius:14px;padding:18px 22px;background:var(--bg);font-size:13.5px;line-height:1.65;color:var(--text1)}
+.pf3-ai-report p{margin:6px 0}
+.pf3-ai-h{margin:16px 0 8px;font-size:14.5px;font-weight:800;color:var(--text1);padding-bottom:6px;border-bottom:1px solid var(--border)}
+.pf3-ai-h:first-child{margin-top:0}
+.pf3-ai-ul{margin:6px 0 10px;padding-left:20px}
+.pf3-ai-ul li{margin:4px 0}
+.pf3-ai-report b{color:var(--text1)}

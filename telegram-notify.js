@@ -101,8 +101,10 @@ async function loadPortfolio(env){
   );
   if(!r.ok) throw new Error('Supabase read failed: ' + r.status);
   const snap = (await r.json())?.[0]?.data;
-  if(!snap || !snap.data || !snap.data[PF_KEY]) return null;
-  return { rows: snap.data[PF_KEY].rows, fx: snap.fx || FX_DEFAULT };
+  // Портфель 3.0 is the portfolio of record now; fall back to 2.0 for old states.
+  const pf = snap && snap.data && (snap.data['🚀 Портфель 3.0'] || snap.data[PF_KEY]);
+  if(!pf) return null;
+  return { rows: pf.rows, fx: snap.fx || FX_DEFAULT };
 }
 
 async function sendTelegram(env, text){

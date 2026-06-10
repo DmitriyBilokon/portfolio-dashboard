@@ -453,3 +453,23 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .pf3-prop-info b{font-size:13px;color:var(--text1)}
 .pf3-prop-info span{font-size:11.5px;color:var(--text2);line-height:1.45}
 .pf3-prop-amt{font:700 12.5px 'JetBrains Mono',monospace;color:var(--gold);white-space:nowrap;margin-left:auto}
+
+/* v3 список в индексном режиме (Nasdaq 100): без позиционных колонок, с таргетом */
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(150px,1.6fr) minmax(110px,1fr) 110px 96px 150px 52px}
+.pf3-c-tg{align-items:flex-end}
+.pf3-layout.open .pf3-row.idx{grid-template-columns:40px 1fr 110px 24px}
+.pf3-layout.open .pf3-row.idx .pf3-c-tg{display:none}
+@media(max-width:900px){
+  .pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px 1fr 110px 130px 52px}
+  .pf3-c-tg{display:none}
+}
+
+/* Индексный список: отдельная сортируемая колонка «1д %» */
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(140px,1.6fr) minmax(100px,1fr) 100px 74px 96px 150px 52px}
+.pf3-c-day{font:700 12px 'JetBrains Mono',monospace;text-align:right;white-space:nowrap}
+.pf3-layout.open .pf3-row.idx{grid-template-columns:40px 1fr 96px 24px}
+.pf3-layout.open .pf3-row.idx .pf3-c-day{display:none}
+@media(max-width:900px){
+  .pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px 1fr 96px 70px 130px 52px}
+  .pf3-c-day{display:block}
+}

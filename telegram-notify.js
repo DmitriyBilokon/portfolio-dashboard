@@ -211,6 +211,117 @@ async function buildReport(env){
        + blocks.join('\n\n');
 }
 
+// ── Yahoo fallback for fundamentals / earnings ──────────────────────────────
+// FMP covers mostly US tickers; for EU/Nordic stocks (RHM.DE, .ST, .OL, .CO)
+// we fall back to Yahoo: quoteSummary needs a crumb+cookie pair (cached per
+// isolate), the revenue timeseries endpoint needs no auth at all.
+let _yAuth = null;
+// Browser-like headers — Yahoo is picky about bare UAs coming from datacenter IPs.
+const Y_UA = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': '*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+async function yAuth(log){
+  if(_yAuth) return _yAuth;
+  const dbg = log || (() => {});
+  try{
+    let cookie = '';
+    for(const u of ['https://fc.yahoo.com/', 'https://finance.yahoo.com/']){
+      const r = await fetch(u, { headers: Y_UA, redirect: 'manual' });
+      cookie = (r.headers.get('set-cookie') || '').split(';')[0];
+      dbg(`cookie via ${u}: status ${r.status}, cookie ${cookie ? cookie.slice(0, 24) + '…' : 'NONE'}`);
+      if(cookie) break;
+    }
+    if(!cookie) return null;
+    for(const host of ['query1', 'query2']){
+      const r2 = await fetch(`https://${host}.finance.yahoo.com/v1/test/getcrumb`, { headers: { ...Y_UA, Cookie: cookie } });
+      const crumb = r2.ok ? (await r2.text()).trim() : '';
+      dbg(`crumb via ${host}: status ${r2.status}, crumb ${crumb && !crumb.includes('<') ? 'OK' : 'EMPTY/HTML'}`);
+      if(crumb && !crumb.includes('<')) return _yAuth = { cookie, crumb };
+    }
+    return null;
+  }catch(e){ dbg('yAuth exception: ' + (e.message || e)); return null; }
+}
+async function yQuoteSummary(sym, modules){
+  const a = await yAuth(); if(!a) return null;
+  try{
+    const r = await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}&crumb=${encodeURIComponent(a.crumb)}`,
+      { headers: { ...Y_UA, Cookie: a.cookie } });
+    if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
+    return (await r.json())?.quoteSummary?.result?.[0] || null;
+  }catch(e){ return null; }
+}
+const yRaw = v => (v && typeof v === 'object') ? (typeof v.raw === 'number' ? v.raw : null) : (typeof v === 'number' ? v : null);
+// Annual or quarterly total-revenue history (oldest → newest), no auth needed.
+async function yRevenueSeries(sym, quarterly){
+  try{
+    const t = quarterly ? 'quarterlyTotalRevenue' : 'annualTotalRevenue';
+    const now = Math.floor(Date.now() / 1000);
+    const r = await fetch(`https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${t}&period1=${now - 8 * 365 * 86400}&period2=${now}`, { headers: Y_UA });
+    if(!r.ok) return [];
+    const res = (await r.json())?.timeseries?.result?.[0];
+    return (res?.[t] || []).filter(x => x && x.reportedValue && typeof x.reportedValue.raw === 'number')
+      .map(x => ({ date: x.asOfDate, v: x.reportedValue.raw }));
+  }catch(e){ return []; }
+}
+// Same shape as the FMP fundamentals() result. financialData values are TTM/current.
+async function yahooFundamentals(sym, period){
+  const qtrMode = period === 'quarter';
+  const [qs, ann, qtr] = await Promise.all([
+    yQuoteSummary(sym, 'financialData'),
+    yRevenueSeries(sym, false),
+    qtrMode ? yRevenueSeries(sym, true) : [],
+  ]);
+  const fd = qs && qs.financialData;
+  if(!fd && !ann.length) return null;
+  const last = ann[ann.length - 1];
+  const years = ann.length - 1;
+  const cagr = (ann[0] && last && ann[0].v > 0 && years > 0) ? (Math.pow(last.v / ann[0].v, 1 / years) - 1) * 100 : null;
+  const de = yRaw(fd?.debtToEquity);
+  let revenue = yRaw(fd?.totalRevenue);   // TTM
+  let revenueYoY = typeof yRaw(fd?.revenueGrowth) === 'number' ? round2(yRaw(fd.revenueGrowth) * 100) : null;
+  if(qtrMode && qtr.length >= 5){
+    const q0 = qtr[qtr.length - 1], q4 = qtr[qtr.length - 5];
+    if(q4.v > 0) revenueYoY = round2((q0.v - q4.v) / q4.v * 100);
+  }else if(!qtrMode && ann.length >= 2){
+    revenue = last.v;
+    const prev = ann[ann.length - 2];
+    if(prev.v > 0) revenueYoY = round2((last.v - prev.v) / prev.v * 100);
+  }
+  return {
+    period: qtrMode ? 'quarter' : 'annual',
+    source: 'yahoo',
+    ccy: fd?.financialCurrency || null,
+    asOf: (qtrMode ? qtr[qtr.length - 1]?.date : last?.date) || null,
+    totalDebt: yRaw(fd?.totalDebt),
+    totalEquity: null,
+    cash: yRaw(fd?.totalCash),
+    currentRatio: yRaw(fd?.currentRatio),
+    debtToEquity: de == null ? null : round2(de / 100),   // Yahoo reports D/E as a percentage
+    operatingCashFlow: yRaw(fd?.operatingCashflow),       // TTM
+    freeCashFlow: yRaw(fd?.freeCashflow),                 // TTM
+    revenue,
+    netIncome: null,
+    revenueCagr: cagr === null ? null : round2(cagr),
+    revenueYears: years > 0 ? years : null,
+    revenueYoY,
+  };
+}
+// Same shape as the FMP earningsInfo() result (revenue actual/estimate for the
+// last quarter aren't exposed by Yahoo — those stay null).
+async function yahooEarnings(sym){
+  const qs = await yQuoteSummary(sym, 'calendarEvents,earningsHistory');
+  if(!qs) return null;
+  const ev = qs.calendarEvents && qs.calendarEvents.earnings;
+  const nextDate = ev?.earningsDate?.[0]?.fmt || null;
+  const hist = (qs.earningsHistory && qs.earningsHistory.history) || [];
+  const lastH = hist.find(h => h.period === '-1q') || hist[hist.length - 1];
+  const next = nextDate ? { date: nextDate, epsEst: yRaw(ev.earningsAverage), revEst: yRaw(ev.revenueAverage) } : null;
+  const last = lastH ? { date: lastH.quarter?.fmt || null, epsActual: yRaw(lastH.epsActual), epsEst: yRaw(lastH.epsEstimate), revActual: null, revEst: null } : null;
+  return (next || last) ? { next, last, ccy: lastH?.currency || null, source: 'yahoo' } : null;
+}
+
 // ── Fundamental health snapshot (FMP): balance sheet, cash flow, revenue growth ──
 // Powers the Портфель 3.0 «Здоровье бизнеса» cards. All fields null when unavailable.
 // period 'annual' (default): latest fiscal-year report.
@@ -258,8 +369,15 @@ async function fundamentals(sym, env, period){
     revenue = revNow ?? null;
     revenueYoY = (ann.length >= 2 && ann[1].revenue > 0) ? round2((ann[0].revenue - ann[1].revenue) / ann[1].revenue * 100) : null;
   }
+  // FMP has no data for most EU/Nordic tickers — fall back to Yahoo.
+  if(!b && !cfRows.length && !ann.length && !qs.length){
+    const y = await yahooFundamentals(sym, period);
+    if(y) return y;
+  }
   return {
     period: qtr ? 'quarter' : 'annual',
+    source: 'fmp',
+    ccy: b?.reportedCurrency || cfRows[0]?.reportedCurrency || ann[0]?.reportedCurrency || 'USD',
     asOf: b?.date || cfRows[0]?.date || null,
     totalDebt: b?.totalDebt ?? null,
     totalEquity: b?.totalStockholdersEquity ?? null,
@@ -281,27 +399,32 @@ async function fundamentals(sym, env, period){
 // `next` is the nearest upcoming report (consensus estimates), `last` the most
 // recent reported quarter (actual vs estimate). Either can be null.
 async function earningsInfo(sym, env){
+  let out = null;
   try{
     const r = await fetch(`https://financialmodelingprep.com/stable/earnings?symbol=${encodeURIComponent(sym)}&limit=12&apikey=${env.FMP_KEY}`);
-    if(!r.ok) return null;
-    const arr = await r.json();
-    if(!Array.isArray(arr)) return null;
-    const today = new Date().toISOString().slice(0, 10);
-    const future = arr.filter(e => e.date && e.date >= today).sort((a, b) => a.date < b.date ? -1 : 1);
-    const past = arr.filter(e => e.date && e.date < today && (e.epsActual != null || e.revenueActual != null)).sort((a, b) => a.date > b.date ? -1 : 1);
-    const nx = future[0] || null, pv = past[0] || null;
-    return {
-      next: nx ? { date: nx.date, epsEst: nx.epsEstimated ?? null, revEst: nx.revenueEstimated ?? null } : null,
-      last: pv ? { date: pv.date, epsActual: pv.epsActual ?? null, epsEst: pv.epsEstimated ?? null, revActual: pv.revenueActual ?? null, revEst: pv.revenueEstimated ?? null } : null,
-    };
-  }catch(e){ return null; }
+    const arr = r.ok ? await r.json() : null;
+    if(Array.isArray(arr)){
+      const today = new Date().toISOString().slice(0, 10);
+      const future = arr.filter(e => e.date && e.date >= today).sort((a, b) => a.date < b.date ? -1 : 1);
+      const past = arr.filter(e => e.date && e.date < today && (e.epsActual != null || e.revenueActual != null)).sort((a, b) => a.date > b.date ? -1 : 1);
+      const nx = future[0] || null, pv = past[0] || null;
+      out = {
+        next: nx ? { date: nx.date, epsEst: nx.epsEstimated ?? null, revEst: nx.revenueEstimated ?? null } : null,
+        last: pv ? { date: pv.date, epsActual: pv.epsActual ?? null, epsEst: pv.epsEstimated ?? null, revActual: pv.revenueActual ?? null, revEst: pv.revenueEstimated ?? null } : null,
+        ccy: 'USD', source: 'fmp',
+      };
+      if(!out.next && !out.last) out = null;   // FMP knows nothing about this ticker
+    }
+  }catch(e){ out = null; }
+  return out || await yahooEarnings(sym);   // EU/Nordic tickers → Yahoo calendar
 }
 
-// ── Analyst target prices (Financial Modeling Prep) ────────────────────────
+// ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 // Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
 // Off by default: restricting to these would blank most Nordic/EU holdings.
 const TARGET_FIRMS = new Set([
+  // US coverage
   'kgi securities','fubon securities','gf securities','loop capital markets','evercore isi',
   'itau bba securities','oppenheimer','president capital management','craig-hallum','susquehanna',
   'new street research','benchmark co','bnp paribas','huatai research','aletheia capital',
@@ -309,7 +432,27 @@ const TARGET_FIRMS = new Set([
   'truist securities','jefferies','wedbush','keybanc capital markets','raymond james','banco safra',
   'cantor fitzgerald','mizuho securities','stifel','wells fargo','td cowen','seaport global',
   'barclays','summit insights group',
+  // Nordic brokers — primary research houses for Swedish/Norwegian/Danish equities
+  'seb','seb equities','handelsbanken','handelsbanken capital markets','carnegie','dnb carnegie',
+  'nordea','nordea markets','dnb markets','abg sundal collier','pareto securities','danske bank',
+  'sparebank 1 markets','arctic securities',
+  // European banks covering EU large caps
+  'kepler cheuvreux','berenberg','deutsche bank','ubs','morgan stanley','jp morgan','j.p. morgan',
+  'jpmorgan','citigroup','citi','bofa securities','bank of america','hsbc','societe generale',
+  'oddo bhf','exane bnp paribas','bernstein','rbc capital markets','santander',
 ].map(s => s.toLowerCase()));
+
+// Yahoo (Refinitiv/LSEG) consensus — aggregates exactly those brokers' targets for
+// EU/Nordic tickers FMP can't price. targetMeanPrice is in the stock's TRADING
+// currency, so it's directly comparable to the dashboard's price column.
+async function yahooTarget(sym){
+  const qs = await yQuoteSummary(sym, 'financialData');
+  const fd = qs && qs.financialData;
+  const avg = yRaw(fd?.targetMeanPrice);
+  return (typeof avg === 'number' && avg > 0)
+    ? { avg: round2(avg), count: yRaw(fd?.numberOfAnalystOpinions) || 0, src: 'yahoo' }
+    : null;
+}
 
 const sleep = ms => new Promise(res => setTimeout(res, ms));
 // Average analyst target for one symbol (FMP "stable" API).
@@ -359,26 +502,40 @@ async function writeRow(env, userId, snap){
     body: JSON.stringify({ data: snap, updated_at: new Date().toISOString() }),
   });
 }
-// Add the target column if missing, fill it from Yahoo, and persist back to Supabase.
+// Add the target column if missing, fill it (FMP → Yahoo consensus fallback for
+// EU/Nordic tickers) on BOTH portfolio tabs, and persist back to Supabase.
+const PF3_KEY = '🚀 Портфель 3.0';
 async function updateTargets(env){
   const row = await loadRow(env);
-  const pf = row && row.snap && row.snap.data && row.snap.data[PF_KEY];
-  if(!pf) return { updated: 0, total: 0 };
-  let ti = pf.headers.indexOf(TARGET_COL);
-  const addedCol = ti === -1;
-  if(addedCol){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; }
-  pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
-  let updated = 0;
+  const tabs = [PF_KEY, PF3_KEY].map(k => row && row.snap && row.snap.data && row.snap.data[k]).filter(Boolean);
+  if(!tabs.length) return { updated: 0, total: 0 };
+  const cache = {};   // sym → result, shared across tabs (3.0 mirrors 2.0 holdings)
   const details = [];
-  for(const r of pf.rows){
-    const sym = exSymbol(r[2], r[8]);
-    const res = await fmpTarget(sym, env);
-    if(res && typeof res.avg === 'number'){ r[ti] = res.avg; updated++; details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.`); }
-    else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
-    await sleep(250);   // stay under FMP's burst rate limit
+  let updated = 0, total = 0, changed = false;
+  for(const pf of tabs){
+    let ti = pf.headers.indexOf(TARGET_COL);
+    if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
+    pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
+    for(const r of pf.rows){
+      total++;
+      const sym = exSymbol(r[2], r[8]);
+      let res = cache[sym];
+      if(res === undefined){
+        res = await fmpTarget(sym, env);
+        if(!(res && typeof res.avg === 'number')){
+          const y = await yahooTarget(sym);   // EU/Nordic → Yahoo/Refinitiv consensus
+          if(y) res = y;
+        }
+        cache[sym] = res;
+        if(res && typeof res.avg === 'number') details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.${res.src ? ' · ' + res.src : ''}`);
+        else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
+        await sleep(250);   // stay under FMP's burst rate limit
+      }
+      if(res && typeof res.avg === 'number'){ r[ti] = res.avg; updated++; changed = true; }
+    }
   }
-  if(addedCol || updated > 0) await writeRow(env, row.userId, row.snap);
-  return { updated, total: pf.rows.length, details };
+  if(changed) await writeRow(env, row.userId, row.snap);
+  return { updated, total, details };
 }
 
 export default {
@@ -407,6 +564,20 @@ export default {
       }
       try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+    }
+    if(url.searchParams.get('action') === 'ydebug'){
+      // Step-by-step Yahoo auth diagnostics: ?action=ydebug&sym=RHM.DE
+      const sym = (url.searchParams.get('sym') || 'RHM.DE').trim();
+      const lines = [];
+      _yAuth = null;   // force a fresh auth round
+      const a = await yAuth(m => lines.push(m));
+      if(a){
+        const r = await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=financialData&crumb=${encodeURIComponent(a.crumb)}`,
+          { headers: { ...Y_UA, Cookie: a.cookie } });
+        lines.push(`quoteSummary(${sym}) status: ${r.status}`);
+        lines.push('body: ' + (await r.text()).slice(0, 600));
+      }else lines.push('yAuth FAILED — no cookie/crumb');
+      return new Response(lines.join('\n'), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
     if(url.searchParams.has('fundamentals')){
       // Balance / cash-flow / growth snapshot for one symbol (FMP) → Портфель 3.0 health cards.

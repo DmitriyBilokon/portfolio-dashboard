@@ -736,8 +736,8 @@ async function drawChart(state=_chartState, boxId='chartBox', legendId='chartLeg
 /* ===== Портфель 3.0 — single-stock (MU) page with the v3 redesign ===== */
 let pf3State={row:null,ccy:'USD',years:1,chart:null};
 const pf3Fmt=(n,dec=0)=>{const v=parseFloat(n);return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}):'—'};
-// $12.3B / $450M formatting for fundamentals (FMP reports in USD).
-const pf3Bn=v=>(typeof v==='number'&&isFinite(v))?'$'+(Math.abs(v)>=1e9?(v/1e9).toFixed(1)+'B':(v/1e6).toFixed(0)+'M'):'—';
+// $12.3B / 9.9B EUR — money formatting for fundamentals in the report currency.
+const pf3Bn=(v,ccy)=>{if(!(typeof v==='number'&&isFinite(v)))return'—';const a=Math.abs(v);const s=a>=1e9?(v/1e9).toFixed(1)+'B':a>=1e6?(v/1e6).toFixed(0)+'M':Math.round(v).toLocaleString();return(!ccy||ccy==='USD')?'$'+s:s+' '+ccy};
 
 // Fundamentals (balance / cash flow / growth) via the worker's ?fundamentals= endpoint.
 // Two modes, toggled in the UI: 'annual' (последний фин. год) and 'quarter'
@@ -817,21 +817,23 @@ function pf3DateRu(s){const d=new Date(s+'T00:00:00');return isNaN(d)?String(s):
 // «Ближайший отчёт»: date + countdown, consensus EPS / revenue, last report vs estimates.
 function pf3Earnings(){
   const ok=pf3Earn.sym===pf3Sym(),E=ok?pf3Earn.data:null;
-  if(!E)return`<div class="pf3-empty">${pf3Earn.loading?'Загружаю календарь отчётов…':(ok&&pf3Earn.failed)?'Нет календаря отчётов по этой бумаге (FMP не покрывает тикер, либо worker не обновлён)':'Загрузка…'}</div>`;
+  if(!E)return`<div class="pf3-empty">${pf3Earn.loading?'Загружаю календарь отчётов…':(ok&&pf3Earn.failed)?'Нет календаря отчётов по этой бумаге (проверены FMP и Yahoo; убедитесь, что worker обновлён)':'Загрузка…'}</div>`;
+  const mc=v=>v==null?'—':((!E.ccy||E.ccy==='USD')?'$':'')+(+v).toFixed(2)+(E.ccy&&E.ccy!=='USD'?' '+E.ccy:'');
   let h='';
   if(E.next){
     const days=Math.ceil((Date.parse(E.next.date)-Date.now())/86400000);
     const when=days<=0?'сегодня':days===1?'завтра':`через ${days} дн.`;
     h+=`<div class="pf3-cards" style="margin-bottom:10px">
       <div class="pf3-card"><div class="pf3-card-l">Дата отчёта</div><div class="pf3-card-v" style="font-size:17px">${pf3DateRu(E.next.date)}</div><div class="pf3-card-s">📅 ${when}</div></div>
-      <div class="pf3-card"><div class="pf3-card-l">Ожидание: EPS</div><div class="pf3-card-v">${E.next.epsEst!=null?'$'+(+E.next.epsEst).toFixed(2):'—'}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
-      <div class="pf3-card"><div class="pf3-card-l">Ожидание: выручка</div><div class="pf3-card-v">${pf3Bn(E.next.revEst)}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Ожидание: EPS</div><div class="pf3-card-v">${mc(E.next.epsEst)}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Ожидание: выручка</div><div class="pf3-card-v">${pf3Bn(E.next.revEst,E.ccy)}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
     </div>`;
   }else h+='<div class="pf3-empty">Дата следующего отчёта ещё не объявлена</div>';
   if(E.last){
     const L=E.last;
     const cmp=(a,e)=>{if(a==null||e==null||!e)return'';const p=(a-e)/Math.abs(e)*100;return` <span class="${p>=0?'pf3-up':'pf3-down'}">(${p>=0?'✅ +':'❌ '}${p.toFixed(1)}% к прогнозу)</span>`};
-    h+=`<div class="pf3-hmetrics" style="margin-top:4px">Прошлый отчёт ${pf3DateRu(L.date)}: EPS <b>${L.epsActual!=null?'$'+(+L.epsActual).toFixed(2):'—'}</b>${cmp(L.epsActual,L.epsEst)} · Выручка <b>${pf3Bn(L.revActual)}</b>${cmp(L.revActual,L.revEst)}</div>`;
+    const rev=L.revActual!=null?` · Выручка <b>${pf3Bn(L.revActual,E.ccy)}</b>${cmp(L.revActual,L.revEst)}`:'';
+    h+=`<div class="pf3-hmetrics" style="margin-top:4px">Прошлый отчёт ${pf3DateRu(L.date)}: EPS <b>${mc(L.epsActual)}</b>${cmp(L.epsActual,L.epsEst)}${rev}</div>`;
   }
   return h;
 }
@@ -875,7 +877,7 @@ function pf3BuySection(r,h,price,ccy){
 // The three «здоровье бизнеса» cards + overall company verdict with a 0–10 scale.
 function pf3Health(){
   const c=pf3Fund.cache[pf3Fund.period],F=c&&c.sym===pf3Sym()?c.data:null;
-  if(!F)return`<div class="pf3-empty">${pf3Fund.loading?'Загружаю отчётность…':(c&&c.sym===pf3Sym()&&c.failed)?'Нет отчётности по этой бумаге (FMP не покрывает тикер, либо worker не обновлён)':'Загрузка…'}</div>`;
+  if(!F)return`<div class="pf3-empty">${pf3Fund.loading?'Загружаю отчётность…':(c&&c.sym===pf3Sym()&&c.failed)?'Нет данных по этой бумаге (проверены FMP и Yahoo; убедитесь, что worker обновлён)':'Загрузка…'}</div>`;
   const q=F.period==='quarter';
   const S=pf3Scores(F);
   const card=(icon,title,score,metrics)=>{
@@ -891,13 +893,14 @@ function pf3Health(){
     <div class="pf3-scale"><div class="pf3-scale-marker" style="left:${Math.min(100,Math.max(0,S.total*10))}%"></div></div>
     <div class="pf3-scale-labels"><span>Критично</span><span>Слабо</span><span>Средне</span><span>Хорошо</span><span>Отлично</span></div>
   </div>`;
+  const cfLbl=(q||F.source==='yahoo')?'за 12 мес (TTM)':'за фин. год';   // Yahoo's cash-flow figures are always TTM
   return overall
     +card('🏦','Устойчивый баланс',S.balance,
-      `Долг/капитал <b>${de!=null?de.toFixed(2):'—'}</b> · Ликвидность <b>${cr!=null?cr.toFixed(1):'—'}</b> · Кэш <b>${pf3Bn(F.cash)}</b>${q?' · на конец квартала':''}`)
+      `Долг/капитал <b>${de!=null?de.toFixed(2):'—'}</b> · Ликвидность <b>${cr!=null?cr.toFixed(1):'—'}</b> · Кэш <b>${pf3Bn(F.cash,F.ccy)}</b>${q?' · на конец квартала':''}`)
     +card('💵','Положительный денежный поток',S.cash,
-      `Свободный CF <b>${pf3Bn(fcf)}</b> · Операционный CF <b>${pf3Bn(ocf)}</b> ${q?'за 12 мес (TTM)':'за фин. год'}`)
+      `Свободный CF <b>${pf3Bn(fcf,F.ccy)}</b> · Операционный CF <b>${pf3Bn(ocf,F.ccy)}</b> ${cfLbl}`)
     +card('📈','Долгосрочный рост',S.growth,
-      `Выручка CAGR ${F.revenueYears||'—'} лет <b>${cagr!=null?(cagr>0?'+':'')+cagr.toFixed(1)+'%':'—'}</b> · ${q?'Квартал г/г':'Год к году'} <b>${yoy!=null?(yoy>0?'+':'')+yoy.toFixed(1)+'%':'—'}</b> · Выручка${q?' TTM':''} <b>${pf3Bn(F.revenue)}</b>`);
+      `Выручка CAGR ${F.revenueYears||'—'} лет <b>${cagr!=null?(cagr>0?'+':'')+cagr.toFixed(1)+'%':'—'}</b> · ${q?'Квартал г/г':'Год к году'} <b>${yoy!=null?(yoy>0?'+':'')+yoy.toFixed(1)+'%':'—'}</b> · Выручка${q?' TTM':''} <b>${pf3Bn(F.revenue,F.ccy)}</b>`);
 }
 
 // Master-detail: the holdings list shows brief info; clicking a row opens the
@@ -982,7 +985,7 @@ function pf3DetailHTML(){
       <div class="pf3-card"><div class="pf3-card-l">Стоимость позиции</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
       <div class="pf3-card"><div class="pf3-card-l">Прибыль</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
       <div class="pf3-card"><div class="pf3-card-l">Цена покупки</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>
-      <div class="pf3-card"><div class="pf3-card-l">Аналит. таргет</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% потенциал':'обновите цену для данных'}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Аналит. таргет</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% потенциал':'заполняется worker-ом (cron / ?action=targets)'}</div></div>
     </section>
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>💪 Здоровье бизнеса <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?'отчёт от '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">Годовой отчёт</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">Посл. квартал</button></span></div>

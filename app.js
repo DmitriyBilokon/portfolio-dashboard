@@ -95,7 +95,7 @@ async function boot(){
   if(session){ currentUser=session.user; await startApp(); }
   else { document.getElementById('authOverlay').classList.remove('hidden'); }
 }
-const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴','💼 Портфель 2.0':'💼'};
+const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴','💼 Портфель 2.0':'💼','🚀 Портфель 3.0':'🚀'};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375};
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
@@ -134,6 +134,9 @@ const SEC_COLORS={'tech':['#dbeafe','#1e40af'],'software':['#c7d2fe','#3730a3'],
 function getSC(s){s=(s||'').toLowerCase();for(const[k,[b,f]] of Object.entries(SEC_COLORS)){if(s.includes(k))return[b,f]}return['#f1f5f9','#475569']}
 let curIdx='OMXS30',curSub='table',sortCol=-1,sortDir=0,searchTerm='',selected=new Set(),colOrders={},hiddenCols={},dragSrc=-1;
 const isPF=()=>curIdx.startsWith('💼');
+// Портфель 3.0 — single-stock (MU) tab with its own "v3" site design (body.v3 in styles.css).
+const PF3_KEY='🚀 Портфель 3.0';
+const isPF3=()=>curIdx===PF3_KEY;
 // Tabs that get the portfolio's interactive analysis tools (live prices, SMA toggle, support/resistance, chart).
 const ANALYSIS_IDX='Nasdaq 100';
 const isAnalysis=()=>isPF()||curIdx===ANALYSIS_IDX;
@@ -152,11 +155,52 @@ function migratePortfolio(){
     if(!applyingRemote) scheduleSave();
   }
 }
-function init(){migratePortfolio();const t=document.getElementById('tabs');t.innerHTML='';Object.keys(DATA).forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+// Seed the Портфель 3.0 tab and keep its holdings list in sync with Портфель 2.0:
+// every PF2 ticker missing here is imported (qty / buy price carry over). Rows become
+// PF3's own copies — later edits in 3.0 don't touch 2.0.
+function migratePortfolio3(){
+  const pf2=DATA['💼 Портфель 2.0'];
+  if(!DATA[PF3_KEY])
+    DATA[PF3_KEY]={headers:pf2?pf2.headers.slice():['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие'],rows:[],count:0,subtitle:'Портфель 3.0'};
+  const d=DATA[PF3_KEY];
+  let added=0;
+  if(pf2){
+    const have=new Set(d.rows.map(r=>String(r[2]||'').trim().toUpperCase()));
+    pf2.rows.forEach(r=>{
+      const tk=String(r[2]||'').trim().toUpperCase();
+      if(!tk||have.has(tk))return;
+      const row=r.slice();
+      while(row.length<d.headers.length)row.push('');
+      d.rows.push(row);have.add(tk);added++;
+    });
+  }
+  if(!d.rows.length){   // no Портфель 2.0 in this state — fall back to the single MU seed
+    d.rows.push([1,'Micron Technology','MU','🇺🇸','Полупроводники','Акция',0,0,'USD',0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать']);
+    added++;
+  }
+  if(added){
+    d.rows.forEach((r,i)=>{r[0]=i+1});
+    d.count=d.rows.length;
+    if(!applyingRemote)scheduleSave();
+  }
+}
+function init(){migratePortfolio();migratePortfolio3();const t=document.getElementById('tabs');t.innerHTML='';Object.keys(DATA).forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
 
 function renderAll(){
   document.querySelectorAll('.tab').forEach((t,i)=>{t.className='tab'+(Object.keys(DATA)[i]===curIdx?' active':'')});
   const st=document.getElementById('subTabs');st.innerHTML='';
+  document.body.classList.toggle('v3',isPF3());   // Портфель 3.0 restyles the whole site
+  const pf3El=document.getElementById('pf3Area');
+  if(isPF3()){
+    ['smaBanner','pfSummary','fxBar','toolbarEl','statsBar','addPos','tableArea','rankingArea','divcalArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+    document.getElementById('smaBanner').innerHTML='';
+    if(pf3El)pf3El.style.display='';
+    renderPF3();
+    pf3EnsureAutoRefresh();
+    return;
+  }
+  pf3StopAutoRefresh();
+  if(pf3El)pf3El.style.display='none';
   const subs=isPF()?[['📊 Таблица','table'],['📅 Дивиденды','divcal']]:curIdx===ANALYSIS_IDX?[['📊 Таблица','table']]:[['📊 Таблица','table'],['🏆 Рейтинг','ranking']];
   subs.forEach(([l,k])=>{if(k==='ranking'&&!(RANK[curIdx]?.length))return;const b=document.createElement('div');b.className='sub-tab'+(curSub===k?' active':'');b.textContent=l;b.onclick=()=>{curSub=k;renderAll()};st.appendChild(b)});
   const smB=document.getElementById('smaBanner');smB.innerHTML='';smB.style.display=isPF()?'none':'';if(!isPF())renderSMA();
@@ -613,7 +657,7 @@ function lvlPctColor(absPct, ord){
 // ===== Stock chart popup (test mode) =====
 // Rolling simple moving average series; out[i] is null until enough history.
 function smaSeries(arr,n){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=n)sum-=arr[i-n];if(i>=n-1)out[i]=sum/n}return out}
-let _chartState=null,_lwcPromise=null;
+let _chartState=null,_lwcPromise=null,_histCache={};   // history cached 5 min per symbol+range — re-renders redraw instantly
 // Load TradingView Lightweight Charts from CDN once.
 function loadLWC(){
   if(window.LightweightCharts) return Promise.resolve();
@@ -634,21 +678,30 @@ async function openStockChart(ticker){
   ov.style.display='flex';
   drawChart();
 }
-// (Re)draw the chart for the current ticker + timeframe using Lightweight Charts.
-async function drawChart(){
-  const box=document.getElementById('chartBox'),legend=document.getElementById('chartLegend');
-  if(!box||!_chartState)return;
-  const {row,ccy,years}=_chartState;
+// (Re)draw a price + SMA + support/resistance chart using Lightweight Charts.
+// Defaults render the popup (_chartState into #chartBox); Портфель 3.0 passes its own state/ids.
+async function drawChart(state=_chartState, boxId='chartBox', legendId='chartLegend'){
+  const box=document.getElementById(boxId),legend=document.getElementById(legendId);
+  if(!box||!state)return;
+  state._boxId=boxId;
+  const {row,ccy,years}=state;
   if(!PRICE_PROXY){box.textContent='PRICE_PROXY не задан';return}
-  box.textContent='Загрузка графика…';
+  const histKey=exSymbol(row[2],ccy)+':'+(years===3?'5y':'2y');
+  const hc=_histCache[histKey];
+  const fromCache=hc&&Date.now()-hc.t<5*60*1000;
+  if(!fromCache)box.textContent='Загрузка графика…';
   let j;
   try{
     await loadLWC();
-    const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y'));
-    j=await r.json();
+    if(fromCache)j=hc.j;
+    else{
+      const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y'));
+      j=await r.json();
+      if(j&&Array.isArray(j.c)&&j.c.length)_histCache[histKey]={j,t:Date.now()};
+    }
   }catch(e){box.textContent='Ошибка загрузки: '+(e.message||e);return}
   if(!j||!Array.isArray(j.c)||!j.c.length){box.textContent='Нет исторических данных';return}
-  if(_chartState.chart){try{_chartState.chart.remove()}catch(e){}_chartState.chart=null}
+  if(state.chart){try{state.chart.remove()}catch(e){}state.chart=null}
   box.innerHTML='';
   const LWC=window.LightweightCharts,closes=j.c,ts=j.t||[];
   const DISP=years===3?756:252,start=Math.max(0,closes.length-DISP);
@@ -656,14 +709,14 @@ async function drawChart(){
   const P=series(closes),A=series(smaSeries(closes,50)),B=series(smaSeries(closes,100)),C=series(smaSeries(closes,200));
   const dark=document.documentElement.dataset.theme==='dark';
   const txt=dark?'#e8eaed':'#1a1f2e',grd=dark?'#2a2f3a':'#e8ebf0',priceCol=dark?'#e8eaed':'#111827';
-  const chart=LWC.createChart(box,{width:box.clientWidth||820,height:380,
+  const chart=LWC.createChart(box,{width:box.clientWidth||820,height:box.clientHeight||380,
     layout:{background:{type:'solid',color:'transparent'},textColor:txt},
     grid:{vertLines:{color:grd},horzLines:{color:grd}},
     rightPriceScale:{borderColor:grd},timeScale:{borderColor:grd},
     crosshair:{mode:LWC.CrosshairMode.Normal},
     handleScale:{axisPressedMouseMove:true,mouseWheel:true,pinch:true},
     localization:{priceFormatter:p=>p.toFixed(2)}});
-  _chartState.chart=chart;
+  state.chart=chart;
   const mk=(color,title,lw)=>chart.addLineSeries({color,lineWidth:lw,title,priceLineVisible:false,lastValueVisible:true});
   const ps=mk(priceCol,'Цена',2),s50=mk('#2563eb','SMA 50',1),s100=mk('#f59e0b','SMA 100',1),s200=mk('#7c3aed','SMA 200',1);
   ps.setData(P);s50.setData(A);s100.setData(B);s200.setData(C);
@@ -678,8 +731,330 @@ async function drawChart(){
   const paint=vals=>{legend.innerHTML=defs.map(([l,,c],i)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${vals[i]!=null?` <b>${vals[i].toFixed(2)} ${ccy}</b>`:''}</span>`).join('')};
   paint(last);
   chart.subscribeCrosshairMove(param=>{if(!param||!param.time||!param.seriesData){paint(last);return}paint(defs.map(([,s])=>{const dp=param.seriesData.get(s);return dp&&typeof dp.value==='number'?dp.value:null}))});
-  if(!_chartState._resize){_chartState._resize=()=>{if(_chartState&&_chartState.chart&&box.clientWidth)_chartState.chart.applyOptions({width:box.clientWidth})};window.addEventListener('resize',_chartState._resize)}
+  if(!state._resize){state._resize=()=>{const b=document.getElementById(state._boxId);if(state.chart&&b&&b.clientWidth)state.chart.applyOptions({width:b.clientWidth})};window.addEventListener('resize',state._resize)}
 }
+/* ===== Портфель 3.0 — single-stock (MU) page with the v3 redesign ===== */
+let pf3State={row:null,ccy:'USD',years:1,chart:null};
+const pf3Fmt=(n,dec=0)=>{const v=parseFloat(n);return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}):'—'};
+// $12.3B / $450M formatting for fundamentals (FMP reports in USD).
+const pf3Bn=v=>(typeof v==='number'&&isFinite(v))?'$'+(Math.abs(v)>=1e9?(v/1e9).toFixed(1)+'B':(v/1e6).toFixed(0)+'M'):'—';
+
+// Fundamentals (balance / cash flow / growth) via the worker's ?fundamentals= endpoint.
+// Two modes, toggled in the UI: 'annual' (последний фин. год) and 'quarter'
+// (баланс на конец последнего квартала + TTM денежный поток/выручка).
+// Each mode is cached in memory for the session; re-fetched at most every 6h.
+let pf3Fund={period:'annual',cache:{},loading:false};
+const pf3Sym=()=>{const r=DATA[PF3_KEY].rows[pf3SelIdx()];return exSymbol(r[2],r[8])};
+const pf3FundData=()=>{const c=pf3Fund.cache[pf3Fund.period];return c&&c.sym===pf3Sym()?c.data:null};
+// Failures are cached too (5 min) — otherwise a ticker FMP doesn't cover would
+// retry → re-render → retry in a tight loop and the card would flicker forever.
+async function pf3LoadFundamentals(){
+  const sym=pf3Sym(),per=pf3Fund.period,c=pf3Fund.cache[per];
+  if(pf3Fund.loading)return;
+  if(c&&c.sym===sym&&Date.now()-c.loaded<(c.failed?5*60*1000:6*3600*1000))return;
+  pf3Fund.loading=true;
+  let data=null;
+  try{
+    const j=await(await fetch(PRICE_PROXY+'?fundamentals='+encodeURIComponent(sym)+(per==='quarter'?'&period=quarter':''))).json();
+    if(j&&typeof j==='object'&&!j.error&&(j.asOf||j.revenue!=null||j.totalDebt!=null))data=j;
+  }catch(e){}
+  pf3Fund.cache[per]={data,loaded:Date.now(),sym,failed:!data};
+  pf3Fund.loading=false;
+  if(isPF3())pf3UpdateHealth();   // update only the health section — no full re-render
+}
+// Repaint just the «Здоровье бизнеса» section (cards, toggle state, report date).
+function pf3UpdateHealth(){
+  const g=document.getElementById('pf3HealthGrid');if(g)g.innerHTML=pf3Health();
+  const a=document.getElementById('pf3FundAnnualBtn'),q=document.getElementById('pf3FundQuarterBtn');
+  if(a)a.classList.toggle('on',pf3Fund.period==='annual');
+  if(q)q.classList.toggle('on',pf3Fund.period==='quarter');
+  const asof=document.getElementById('pf3FundAsof'),F=pf3FundData();
+  if(asof)asof.textContent=F&&F.asOf?'отчёт от '+F.asOf:'';
+}
+function pf3SetFundPeriod(p){pf3Fund.period=p;pf3UpdateHealth();pf3LoadFundamentals()}
+
+// 5-level grading: score 0–10 per dimension → Критично/Слабо/Средне/Хорошо/Отлично.
+const PF3_LV=[{l:'Критично',c:'crit',e:'🔴'},{l:'Слабо',c:'weak',e:'🟠'},{l:'Средне',c:'mid',e:'🟡'},{l:'Хорошо',c:'good',e:'🟢'},{l:'Отлично',c:'exc',e:'🏆'}];
+const pf3Lv=s=>s==null?null:s>=8.5?4:s>=6.5?3:s>=4.5?2:s>=2.5?1:0;
+// 0–10 scores for balance / cash flow / growth + total average; null when no data.
+function pf3Scores(F){
+  const avg=a=>{const v=a.filter(x=>x!=null);return v.length?v.reduce((x,y)=>x+y,0)/v.length:null};
+  const de=F.debtToEquity,cr=F.currentRatio,fcf=F.freeCashFlow,ocf=F.operatingCashFlow,cagr=F.revenueCagr,yoy=F.revenueYoY,rev=F.revenue;
+  const deS=de==null?null:de<0.3?10:de<0.6?8:de<1?6:de<1.5?4:de<2?2:0;
+  const crS=cr==null?null:cr>2.5?10:cr>1.8?8:cr>1.3?6:cr>1?4:cr>0.8?2:0;
+  let cfS=null;   // FCF margin drives the score; positive OCF with negative FCF is weak, both negative — critical
+  if(ocf!=null||fcf!=null){
+    if(typeof fcf==='number'&&fcf>0){const m=rev>0?fcf/rev:null;cfS=m==null?6:m>0.20?10:m>0.12?8:m>0.06?6:m>0.02?5:4}
+    else cfS=(typeof ocf==='number'&&ocf>0)?3:0;
+  }
+  const cagrS=cagr==null?null:cagr>15?10:cagr>8?8:cagr>4?6:cagr>0?5:cagr>-5?3:0;
+  const yoyS=yoy==null?null:yoy>20?10:yoy>8?8:yoy>0?6:yoy>-10?3:0;
+  const balance=avg([deS,crS]),growth=avg([cagrS,cagrS,yoyS]);   // CAGR weighs double vs YoY
+  return {balance,cash:cfS,growth,total:avg([balance,cfS,growth])};
+}
+
+// Earnings calendar (next report date + consensus) via the worker's ?earnings= endpoint.
+// Cached in memory for the session; re-fetched at most every 6h.
+let pf3Earn={data:null,loaded:0,loading:false,failed:false,sym:''};
+async function pf3LoadEarnings(){
+  const sym=pf3Sym();
+  if(pf3Earn.loading)return;
+  if(pf3Earn.sym===sym&&pf3Earn.loaded&&Date.now()-pf3Earn.loaded<(pf3Earn.failed?5*60*1000:6*3600*1000))return;
+  pf3Earn.loading=true;
+  let data=null;
+  try{
+    const j=await(await fetch(PRICE_PROXY+'?earnings='+encodeURIComponent(sym))).json();
+    if(j&&(j.next||j.last))data=j;
+  }catch(e){}
+  pf3Earn.data=data;pf3Earn.failed=!data;pf3Earn.sym=sym;pf3Earn.loaded=Date.now();
+  pf3Earn.loading=false;
+  if(isPF3())pf3UpdateEarn();   // update only the earnings panel — no full re-render
+}
+function pf3UpdateEarn(){const b=document.getElementById('pf3EarnBody');if(b)b.innerHTML=pf3Earnings()}
+const PF3_MONTHS=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function pf3DateRu(s){const d=new Date(s+'T00:00:00');return isNaN(d)?String(s):`${d.getDate()} ${PF3_MONTHS[d.getMonth()]} ${d.getFullYear()}`}
+
+// «Ближайший отчёт»: date + countdown, consensus EPS / revenue, last report vs estimates.
+function pf3Earnings(){
+  const ok=pf3Earn.sym===pf3Sym(),E=ok?pf3Earn.data:null;
+  if(!E)return`<div class="pf3-empty">${pf3Earn.loading?'Загружаю календарь отчётов…':(ok&&pf3Earn.failed)?'Нет календаря отчётов по этой бумаге (FMP не покрывает тикер, либо worker не обновлён)':'Загрузка…'}</div>`;
+  let h='';
+  if(E.next){
+    const days=Math.ceil((Date.parse(E.next.date)-Date.now())/86400000);
+    const when=days<=0?'сегодня':days===1?'завтра':`через ${days} дн.`;
+    h+=`<div class="pf3-cards" style="margin-bottom:10px">
+      <div class="pf3-card"><div class="pf3-card-l">Дата отчёта</div><div class="pf3-card-v" style="font-size:17px">${pf3DateRu(E.next.date)}</div><div class="pf3-card-s">📅 ${when}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Ожидание: EPS</div><div class="pf3-card-v">${E.next.epsEst!=null?'$'+(+E.next.epsEst).toFixed(2):'—'}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Ожидание: выручка</div><div class="pf3-card-v">${pf3Bn(E.next.revEst)}</div><div class="pf3-card-s">консенсус аналитиков</div></div>
+    </div>`;
+  }else h+='<div class="pf3-empty">Дата следующего отчёта ещё не объявлена</div>';
+  if(E.last){
+    const L=E.last;
+    const cmp=(a,e)=>{if(a==null||e==null||!e)return'';const p=(a-e)/Math.abs(e)*100;return` <span class="${p>=0?'pf3-up':'pf3-down'}">(${p>=0?'✅ +':'❌ '}${p.toFixed(1)}% к прогнозу)</span>`};
+    h+=`<div class="pf3-hmetrics" style="margin-top:4px">Прошлый отчёт ${pf3DateRu(L.date)}: EPS <b>${L.epsActual!=null?'$'+(+L.epsActual).toFixed(2):'—'}</b>${cmp(L.epsActual,L.epsEst)} · Выручка <b>${pf3Bn(L.revActual)}</b>${cmp(L.revActual,L.revEst)}</div>`;
+  }
+  return h;
+}
+
+// Buy / add-on levels computed from the live technicals (SMA 50/100/200 + support).
+// Re-rendered on every refresh, so the ladder follows the market automatically.
+function pf3BuySection(r,h,price,ccy){
+  const d=DATA[PF3_KEY];
+  const {s50,s100,s200}=smaIdx(d);
+  const supC=h.indexOf('Поддержка');
+  const raw=[['SMA 50',s50>=0?parseFloat(r[s50]):NaN],['SMA 100',s100>=0?parseFloat(r[s100]):NaN],['SMA 200',s200>=0?parseFloat(r[s200]):NaN],['Поддержка',supC>=0?parseFloat(r[supC]):NaN]].filter(([,v])=>isFinite(v)&&v>0);
+  if(!raw.length||!(price>0))return'<div class="pf3-empty">Нажмите «Обновить цену» — уровни покупки рассчитаются по SMA и поддержке</div>';
+  // Merge levels that sit within 1.5% of each other into one zone (e.g. SMA 100 ≈ SMA 200).
+  const zones=[];
+  raw.slice().sort((a,b)=>b[1]-a[1]).forEach(([n,v])=>{
+    const z=zones.find(z=>Math.abs(z.val-v)/z.val<0.015);
+    if(z){z.names.push(n);z.val=(z.val+v)/2;}else zones.push({names:[n],val:v});
+  });
+  const below=zones.filter(z=>z.val<price);            // buy zones, nearest first
+  const above=zones.filter(z=>z.val>=price);
+  const near=zones.find(z=>Math.abs(price-z.val)/z.val*100<=2);
+  // Current signal banner.
+  let sig;
+  if(near)sig={cls:'buy',txt:`🟢 Цена прямо у уровня ${near.names.join(' + ')} (${pf3Fmt(near.val,2)} ${ccy}) — зона покупки сейчас`};
+  else if(!below.length)sig={cls:'warn',txt:'🔴 Цена ниже всех технических уровней — нисходящий тренд, не ловите «падающий нож»'};
+  else sig={cls:'wait',txt:`⏳ Цена выше уровней — выгоднее ждать отката к ${below[0].names.join(' + ')} (−${((price-below[0].val)/price*100).toFixed(1)}%)`};
+  // Ladder of buy zones below the current price.
+  const plans=['Первая докупка · ~25% бюджета','Основная докупка · ~35% бюджета','Крупная докупка · ~40% бюджета','Экстра-зона · только при панике рынка'];
+  let rows='';
+  below.forEach((z,i)=>{
+    rows+=`<div class="pf3-buy"><span class="pf3-buy-n">${i+1}</span><div class="pf3-buy-info"><b>${pf3Fmt(z.val,2)} ${ccy}</b><span>${z.names.join(' + ')}</span></div><span class="pf3-buy-dist">−${((price-z.val)/price*100).toFixed(1)}%</span><span class="pf3-buy-plan">${plans[Math.min(i,plans.length-1)]}</span></div>`;
+  });
+  // Price under everything: the nearest level above becomes the reversal confirmation.
+  if(!below.length&&above.length){
+    const nx=above[above.length-1];
+    rows=`<div class="pf3-empty">Возврат выше ${pf3Fmt(nx.val,2)} ${ccy} (${nx.names.join(' + ')}) подтвердит разворот — докупать безопаснее после этого</div>`;
+  }
+  return `<div class="pf3-signal ${sig.cls}">${sig.txt}</div>${rows}`;
+}
+
+// The three «здоровье бизнеса» cards + overall company verdict with a 0–10 scale.
+function pf3Health(){
+  const c=pf3Fund.cache[pf3Fund.period],F=c&&c.sym===pf3Sym()?c.data:null;
+  if(!F)return`<div class="pf3-empty">${pf3Fund.loading?'Загружаю отчётность…':(c&&c.sym===pf3Sym()&&c.failed)?'Нет отчётности по этой бумаге (FMP не покрывает тикер, либо worker не обновлён)':'Загрузка…'}</div>`;
+  const q=F.period==='quarter';
+  const S=pf3Scores(F);
+  const card=(icon,title,score,metrics)=>{
+    const lv=pf3Lv(score);
+    const verdict=lv==null?'—':`${PF3_LV[lv].e} ${PF3_LV[lv].l} · ${score.toFixed(1)}`;
+    return`<div class="pf3-hcard ${lv==null?'':PF3_LV[lv].c}"><div class="pf3-hcard-top"><span class="pf3-hcard-t">${icon} ${title}</span><span class="pf3-verdict ${lv==null?'':PF3_LV[lv].c}">${verdict}</span></div><div class="pf3-hmetrics">${metrics}</div></div>`;
+  };
+  const de=F.debtToEquity,cr=F.currentRatio,fcf=F.freeCashFlow,ocf=F.operatingCashFlow,cagr=F.revenueCagr,yoy=F.revenueYoY;
+  const tl=pf3Lv(S.total);
+  const OVERALL=['Критическое','Слабое','Среднее','Хорошее','Отличное'];
+  const overall=tl==null?'':`<div class="pf3-overall">
+    <div class="pf3-overall-l"><span class="pf3-overall-badge ${PF3_LV[tl].c}">${PF3_LV[tl].e} Состояние компании: ${OVERALL[tl]}</span><span class="pf3-overall-score">${S.total.toFixed(1)} / 10</span></div>
+    <div class="pf3-scale"><div class="pf3-scale-marker" style="left:${Math.min(100,Math.max(0,S.total*10))}%"></div></div>
+    <div class="pf3-scale-labels"><span>Критично</span><span>Слабо</span><span>Средне</span><span>Хорошо</span><span>Отлично</span></div>
+  </div>`;
+  return overall
+    +card('🏦','Устойчивый баланс',S.balance,
+      `Долг/капитал <b>${de!=null?de.toFixed(2):'—'}</b> · Ликвидность <b>${cr!=null?cr.toFixed(1):'—'}</b> · Кэш <b>${pf3Bn(F.cash)}</b>${q?' · на конец квартала':''}`)
+    +card('💵','Положительный денежный поток',S.cash,
+      `Свободный CF <b>${pf3Bn(fcf)}</b> · Операционный CF <b>${pf3Bn(ocf)}</b> ${q?'за 12 мес (TTM)':'за фин. год'}`)
+    +card('📈','Долгосрочный рост',S.growth,
+      `Выручка CAGR ${F.revenueYears||'—'} лет <b>${cagr!=null?(cagr>0?'+':'')+cagr.toFixed(1)+'%':'—'}</b> · ${q?'Квартал г/г':'Год к году'} <b>${yoy!=null?(yoy>0?'+':'')+yoy.toFixed(1)+'%':'—'}</b> · Выручка${q?' TTM':''} <b>${pf3Bn(F.revenue)}</b>`);
+}
+
+// Master-detail: the holdings list shows brief info; clicking a row opens the
+// full card to the LEFT of the list, and the list scales down into a compact column.
+let pf3Sel=null;   // ticker whose full card is open (null = list only)
+const pf3SelIdx=()=>{const d=DATA[PF3_KEY],i=d.rows.findIndex(r=>String(r[2]||'')===pf3Sel);return i>=0?i:0};
+function pf3Select(tk){pf3Sel=(pf3Sel===tk?null:tk);renderPF3()}
+
+// One list row: logo, name+ticker, live price + day %, position value + P/L %.
+function pf3ListHTML(){
+  const d=DATA[PF3_KEY];
+  let out='';
+  d.rows.forEach((r,i)=>{
+    recalcPF(i,PF3_KEY);
+    const tk=String(r[2]||''),ccy=r[8]||'USD';
+    const price=parseFloat(r[7])||0,day=parseFloat(r[10]),val=parseFloat(r[13])||0,ppct=parseFloat(r[12])||0;
+    out+=`<div class="pf3-row${pf3Sel===tk?' active':''}" onclick="pf3Select('${tk}')">
+      <div class="pf3-row-logo">${tk.slice(0,2)}</div>
+      <div class="pf3-row-name"><b>${r[1]||tk}</b><span>${tk}${r[4]&&r[4]!=='—'?' · '+r[4]:''}</span></div>
+      <div class="pf3-row-price"><b>${price>0?pf3Fmt(price,2):'—'} ${ccy}</b>${isFinite(day)?`<span class="${day>=0?'pf3-up':'pf3-down'}">${day>0?'+':''}${day.toFixed(2)}%</span>`:''}</div>
+      <div class="pf3-row-val"><b>${pf3Fmt(val)} kr</b><span class="${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}%</span></div>
+      <span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span>
+    </div>`;
+  });
+  return out;
+}
+
+function renderPF3(){
+  const el=document.getElementById('pf3Area'),d=DATA[PF3_KEY];
+  if(!el||!d)return;
+  if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
+  const open=!!pf3Sel;
+  el.innerHTML=`<div class="pf3-wrap"><div class="pf3-layout${open?' open':''}">
+    ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
+    <aside class="pf3-list">
+      <div class="pf3-list-hd">📋 Акции · Портфель 3.0</div>
+      ${pf3ListHTML()}
+      ${open?'':'<div class="pf3-empty" style="padding:8px 4px">Нажмите на строку — карточка с полными данными откроется слева от списка</div>'}
+    </aside>
+  </div></div>`;
+  if(open){
+    const r=d.rows[pf3SelIdx()];
+    pf3State.row=r;pf3State.ccy=r[8]||'USD';
+    drawChart(pf3State,'pf3ChartBox','pf3Legend');
+    pf3LoadFundamentals();   // no-op when cached; re-renders the health cards when done
+    pf3LoadEarnings();       // same for the earnings calendar panel
+  }
+}
+
+// The full card for the selected holding (everything: hero, stats, health, earnings, chart, buy levels).
+function pf3DetailHTML(){
+  const d=DATA[PF3_KEY],ri=pf3SelIdx();
+  recalcPF(ri,PF3_KEY);
+  const r=d.rows[ri],h=d.headers,tk=String(r[2]||'');
+  const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=r[8]||'USD';
+  const day=parseFloat(r[10]),valSEK=parseFloat(r[13])||0,profit=parseFloat(r[11])||0,ppct=parseFloat(r[12])||0;
+  const {s50,s100,s200}=smaIdx(d);
+  const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
+  const target=tgC>=0?parseFloat(r[tgC]):NaN;
+  const hasTarget=isFinite(target)&&target>0&&price>0;
+  const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4]].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');
+  // One technical level row: value + coloured distance from the current price.
+  const lvl=(name,v)=>{const n=parseFloat(v);if(!(n>0)||!(price>0))return'';const dist=(price-n)/n*100,up=dist>=0;
+    return`<div class="pf3-lvl"><span class="pf3-lvl-name">${name}</span><span class="pf3-lvl-val">${pf3Fmt(n,2)}</span><span class="pf3-lvl-dist ${up?'pf3-up-bg':'pf3-down-bg'}">${up?'▲':'▼'} ${Math.abs(dist).toFixed(1)}%</span></div>`};
+  return`
+    <section class="pf3-hero">
+      <button class="pf3-close" onclick="pf3Select('${tk}')" title="Закрыть карточку">✕</button>
+      <div class="pf3-id">
+        <div class="pf3-logo">${tk.slice(0,2)}</div>
+        <div>
+          <h2>${r[1]||tk}</h2>
+          <div class="pf3-chips">${chips}</div>
+        </div>
+      </div>
+      <div class="pf3-quote">
+        <div class="pf3-price">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
+        ${isFinite(day)?`<div class="pf3-day ${day>=0?'pf3-up-bg':'pf3-down-bg'}">${day>0?'+':''}${day.toFixed(2)}% за день</div>`:''}
+        <button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">🔄 Обновить цену</button>
+      </div>
+    </section>
+    <section class="pf3-cards">
+      <div class="pf3-card"><div class="pf3-card-l">Стоимость позиции</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Прибыль</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Цена покупки</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">Аналит. таргет</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% потенциал':'обновите цену для данных'}</div></div>
+    </section>
+    <section class="pf3-panel">
+      <div class="pf3-panel-hd"><span>💪 Здоровье бизнеса <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?'отчёт от '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">Годовой отчёт</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">Посл. квартал</button></span></div>
+      <div class="pf3-health-grid" id="pf3HealthGrid">${pf3Health()}</div>
+    </section>
+    <section class="pf3-panel">
+      <div class="pf3-panel-hd"><span>📅 Ближайший отчёт и ожидания рынка</span></div>
+      <div id="pf3EarnBody">${pf3Earnings()}</div>
+    </section>
+    <section class="pf3-grid">
+      <div class="pf3-panel">
+        <div class="pf3-panel-hd"><span>📈 График · SMA 50/100/200 · уровни</span><span class="pf3-tf"><button class="pf3-tfbtn${pf3State.years===1?' on':''}" onclick="pf3SetYears(1)">1Г</button><button class="pf3-tfbtn${pf3State.years===3?' on':''}" onclick="pf3SetYears(3)">3Г</button></span></div>
+        <div id="pf3ChartBox" class="pf3-chart"></div>
+        <div id="pf3Legend" class="chart-legend"></div>
+      </div>
+      <div class="pf3-panel">
+        <div class="pf3-panel-hd"><span>🎯 Технические уровни</span></div>
+        ${lvl('SMA 50',s50>=0?r[s50]:'')+lvl('SMA 100',s100>=0?r[s100]:'')+lvl('SMA 200',s200>=0?r[s200]:'')+lvl('Поддержка',supC>=0?r[supC]:'')+lvl('Сопротивление',resC>=0?r[resC]:'')||'<div class="pf3-empty">Нажмите «Обновить цену», чтобы загрузить уровни</div>'}
+        <div class="pf3-panel-hd" style="margin-top:18px"><span>✏️ Моя позиция</span></div>
+        <div class="pf3-edit">
+          <label>Кол-во акций <input type="number" step="any" min="0" value="${qty}" onchange="pf3Edit(6,this.value)"></label>
+          <label>Цена покупки (${ccy}) <input type="number" step="any" min="0" value="${buy}" onchange="pf3Edit(9,this.value)"></label>
+        </div>
+      </div>
+    </section>
+    <section class="pf3-panel">
+      <div class="pf3-panel-hd"><span>🛒 Уровни покупки / докупки</span><span class="pf3-asof">по техданным · авто-обновление каждые 5 мин</span></div>
+      ${pf3BuySection(r,h,price,ccy)}
+    </section>`;
+}
+function pf3Edit(ci,v){const ri=pf3SelIdx(),n=parseFloat(v);DATA[PF3_KEY].rows[ri][ci]=isNaN(n)?0:n;recalcPF(ri,PF3_KEY);scheduleSave();renderPF3()}
+function pf3SetYears(y){pf3State.years=y;renderPF3()}
+async function pf3Refresh(silent){
+  const d=DATA[PF3_KEY];
+  const btn=document.getElementById('pf3RefreshBtn');
+  if(btn&&!silent){btn.disabled=true;btn.textContent='⏳ Обновляю…';}
+  try{
+    // One batched request for the whole list — same endpoint the 2.0 tab uses.
+    const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+    const prices=await(await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(syms.join(',')))).json();
+    const {s50,s100,s200}=smaIdx(d);
+    const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
+    let updated=0;
+    d.rows.forEach((r,i)=>{
+      const q=prices[exSymbol(r[2],r[8])];
+      if(!(q&&typeof q.price==='number'))return;
+      r[7]=q.price;
+      if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
+      if(s50>=0&&q.sma50!=null)r[s50]=q.sma50;
+      if(s100>=0&&q.sma100!=null)r[s100]=q.sma100;
+      if(s200>=0&&q.sma200!=null)r[s200]=q.sma200;
+      if(q.support!=null)r[supI]=q.support;
+      if(q.resistance!=null)r[resI]=q.resistance;
+      recalcPF(i,PF3_KEY);updated++;
+    });
+    if(updated){scheduleSave();pf3LastRefresh=Date.now();}
+    if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
+  }catch(e){if(!silent)toast('Прокси цен недоступен',true);}
+  // Don't redraw under the user's cursor while they edit qty / buy price.
+  const ae=document.activeElement,area=document.getElementById('pf3Area');
+  if(!(silent&&ae&&ae.tagName==='INPUT'&&area&&area.contains(ae)))renderPF3();
+}
+
+// Auto-refresh while the Портфель 3.0 tab is open: immediately when stale, then every 5 min.
+let pf3Timer=null,pf3LastRefresh=0;
+const PF3_REFRESH_MS=5*60*1000;
+function pf3EnsureAutoRefresh(){
+  if(!pf3Timer)pf3Timer=setInterval(()=>{if(isPF3())pf3Refresh(true)},PF3_REFRESH_MS);
+  if(Date.now()-pf3LastRefresh>PF3_REFRESH_MS)pf3Refresh(true);
+}
+function pf3StopAutoRefresh(){if(pf3Timer){clearInterval(pf3Timer);pf3Timer=null}}
+
 async function refreshLivePrices(){
   if(!isAnalysis()){ toast('Обновление цен доступно на вкладках 💼 Портфель и Nasdaq 100'); return; }
   const d = DATA[curIdx];

@@ -211,6 +211,92 @@ async function buildReport(env){
        + blocks.join('\n\n');
 }
 
+// ── Fundamental health snapshot (FMP): balance sheet, cash flow, revenue growth ──
+// Powers the Портфель 3.0 «Здоровье бизнеса» cards. All fields null when unavailable.
+// period 'annual' (default): latest fiscal-year report.
+// period 'quarter': balance = latest quarterly snapshot, cash flow = TTM (sum of
+// the last 4 quarters), revenue = TTM, YoY = latest quarter vs the same quarter a
+// year ago. Revenue CAGR always comes from annual statements.
+async function fundamentals(sym, env, period){
+  const get = async (path) => {
+    try{
+      const r = await fetch(`https://financialmodelingprep.com/stable/${path}&apikey=${env.FMP_KEY}`);
+      if(!r.ok) return null;
+      const j = await r.json();
+      return Array.isArray(j) ? j : null;
+    }catch(e){ return null; }
+  };
+  const s = encodeURIComponent(sym);
+  const qtr = period === 'quarter';
+  const per = qtr ? '&period=quarter' : '';
+  const [bs, cf, inc, incA] = await Promise.all([
+    get(`balance-sheet-statement?symbol=${s}&limit=1${per}`),
+    get(`cash-flow-statement?symbol=${s}&limit=${qtr ? 4 : 1}${per}`),
+    get(`income-statement?symbol=${s}&limit=${qtr ? 5 : 6}${per}`),   // annual: up to 5y history · quarter: q0..q4 for YoY
+    qtr ? get(`income-statement?symbol=${s}&limit=6`) : null,         // CAGR is always computed on annual data
+  ]);
+  const b = (bs && bs[0]) || null;
+  // Cash flow: single fiscal year, or the TTM sum of up to 4 quarters.
+  const cfRows = cf || [];
+  const cfSum = (k, alt) => {
+    let sum = 0, n = 0;
+    for(const r of cfRows){ const v = r[k] ?? (alt ? r[alt] : undefined); if(typeof v === 'number'){ sum += v; n++; } }
+    return n ? sum : null;
+  };
+  // Revenue growth: CAGR over annual history; YoY year-over-year (annual) or quarter-over-year-ago-quarter.
+  const ann = (qtr ? incA : inc) || [];   // newest first
+  const revNow = ann[0]?.revenue, revOld = ann[ann.length - 1]?.revenue;
+  const years = ann.length - 1;
+  const cagr = (revNow > 0 && revOld > 0 && years > 0) ? (Math.pow(revNow / revOld, 1 / years) - 1) * 100 : null;
+  const qs = (qtr ? inc : null) || [];
+  let revenue, revenueYoY;
+  if(qtr){
+    const ttm = qs.slice(0, 4).reduce((a, r) => a + (typeof r.revenue === 'number' ? r.revenue : 0), 0);
+    revenue = ttm > 0 ? ttm : null;
+    revenueYoY = (qs.length >= 5 && qs[4].revenue > 0) ? round2((qs[0].revenue - qs[4].revenue) / qs[4].revenue * 100) : null;
+  }else{
+    revenue = revNow ?? null;
+    revenueYoY = (ann.length >= 2 && ann[1].revenue > 0) ? round2((ann[0].revenue - ann[1].revenue) / ann[1].revenue * 100) : null;
+  }
+  return {
+    period: qtr ? 'quarter' : 'annual',
+    asOf: b?.date || cfRows[0]?.date || null,
+    totalDebt: b?.totalDebt ?? null,
+    totalEquity: b?.totalStockholdersEquity ?? null,
+    cash: b?.cashAndShortTermInvestments ?? b?.cashAndCashEquivalents ?? null,
+    currentRatio: (b && b.totalCurrentAssets > 0 && b.totalCurrentLiabilities > 0) ? round2(b.totalCurrentAssets / b.totalCurrentLiabilities) : null,
+    debtToEquity: (b && b.totalStockholdersEquity > 0) ? round2((b.totalDebt || 0) / b.totalStockholdersEquity) : null,
+    operatingCashFlow: cfSum('operatingCashFlow', 'netCashProvidedByOperatingActivities'),
+    freeCashFlow: cfSum('freeCashFlow'),
+    revenue,
+    netIncome: ann[0]?.netIncome ?? null,
+    revenueCagr: cagr === null ? null : round2(cagr),
+    revenueYears: years > 0 ? years : null,
+    revenueYoY,
+  };
+}
+
+// ── Earnings calendar (FMP): next report date + market expectations ────────
+// Returns { next:{date, epsEst, revEst}, last:{date, epsActual, epsEst, revActual, revEst} }.
+// `next` is the nearest upcoming report (consensus estimates), `last` the most
+// recent reported quarter (actual vs estimate). Either can be null.
+async function earningsInfo(sym, env){
+  try{
+    const r = await fetch(`https://financialmodelingprep.com/stable/earnings?symbol=${encodeURIComponent(sym)}&limit=12&apikey=${env.FMP_KEY}`);
+    if(!r.ok) return null;
+    const arr = await r.json();
+    if(!Array.isArray(arr)) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const future = arr.filter(e => e.date && e.date >= today).sort((a, b) => a.date < b.date ? -1 : 1);
+    const past = arr.filter(e => e.date && e.date < today && (e.epsActual != null || e.revenueActual != null)).sort((a, b) => a.date > b.date ? -1 : 1);
+    const nx = future[0] || null, pv = past[0] || null;
+    return {
+      next: nx ? { date: nx.date, epsEst: nx.epsEstimated ?? null, revEst: nx.revenueEstimated ?? null } : null,
+      last: pv ? { date: pv.date, epsActual: pv.epsActual ?? null, epsEst: pv.epsEstimated ?? null, revActual: pv.revenueActual ?? null, revEst: pv.revenueEstimated ?? null } : null,
+    };
+  }catch(e){ return null; }
+}
+
 // ── Analyst target prices (Financial Modeling Prep) ────────────────────────
 const TARGET_COL = 'Аналит. таргет';
 // Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
@@ -321,6 +407,18 @@ export default {
       }
       try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
       catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+    }
+    if(url.searchParams.has('fundamentals')){
+      // Balance / cash-flow / growth snapshot for one symbol (FMP) → Портфель 3.0 health cards.
+      // Optional &period=quarter → latest quarterly balance + TTM cash flow / revenue.
+      const per = url.searchParams.get('period') === 'quarter' ? 'quarter' : 'annual';
+      const f = await fundamentals(url.searchParams.get('fundamentals').trim().toUpperCase(), env, per);
+      return new Response(JSON.stringify(f), { headers: CORS });
+    }
+    if(url.searchParams.has('earnings')){
+      // Next earnings date + consensus estimates (FMP) → Портфель 3.0 «Ближайший отчёт».
+      const e = await earningsInfo(url.searchParams.get('earnings').trim().toUpperCase(), env);
+      return new Response(JSON.stringify(e || { next: null, last: null }), { headers: CORS });
     }
     if(url.searchParams.has('history')){
       // Daily close series for one symbol → powers the dashboard's stock chart popup.

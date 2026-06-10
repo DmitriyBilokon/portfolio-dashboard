@@ -166,3 +166,147 @@ td.price-manual::after{content:' ✎';font-size:9px;opacity:.7}
 .cl-item b{color:var(--text)}
 .chart-box{width:100%;height:380px;color:var(--text2);font-size:12px}
 .chart-tools{display:inline-flex;align-items:center;gap:6px}
+
+/* ===== Портфель 3.0 — v3 redesign (active while body.v3) ===== */
+body.v3{
+  --v3-acc:#6366f1;--v3-acc2:#22d3ee;
+  font-size:14px;
+  background:
+    radial-gradient(1200px 520px at 85% -10%,rgba(99,102,241,.16),transparent 60%),
+    radial-gradient(900px 420px at -10% 35%,rgba(34,211,238,.10),transparent 55%),
+    var(--bg);
+}
+body.v3 .header{background:transparent;border-bottom:none;padding:20px 28px 4px}
+body.v3 .header h1{font-size:22px;letter-spacing:-.3px}
+body.v3 .header h1 span{background:linear-gradient(90deg,var(--v3-acc),var(--v3-acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+body.v3 .header-sub{display:none}
+body.v3 .tabs{background:transparent;border-bottom:none;padding:10px 24px;gap:6px}
+body.v3 .tab{border:1px solid var(--border);border-radius:999px;padding:9px 16px;font-size:12.5px;background:var(--bg2);border-bottom-width:1px}
+body.v3 .tab:hover{border-color:var(--v3-acc);background:var(--bg2)}
+body.v3 .tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);border-color:transparent;color:#fff}
+body.v3 .tab.active .cnt{background:rgba(255,255,255,.22);color:#fff}
+body.v3 .sub-tabs{display:none}
+.pf3-wrap{max-width:1100px;margin:8px auto 48px;display:flex;flex-direction:column;gap:14px}
+.pf3-hero{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:22px 26px;box-shadow:0 10px 36px rgba(15,23,42,.07)}
+.pf3-id{display:flex;gap:16px;align-items:center}
+.pf3-logo{width:58px;height:58px;border-radius:16px;background:linear-gradient(135deg,var(--v3-acc),var(--v3-acc2));color:#fff;font-weight:800;font-size:19px;display:flex;align-items:center;justify-content:center;letter-spacing:.5px;box-shadow:0 8px 20px rgba(99,102,241,.35);flex-shrink:0}
+.pf3-id h2{font-size:24px;font-weight:800;letter-spacing:-.4px;color:var(--text1)}
+.pf3-chips{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.pf3-chip{font:600 10.5px 'JetBrains Mono',monospace;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:999px;padding:4px 10px;white-space:nowrap}
+.pf3-quote{display:flex;flex-direction:column;gap:8px;align-items:flex-end;margin-left:auto}
+.pf3-price{font-size:36px;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:-1px;color:var(--text1)}
+.pf3-price small{font-size:14px;color:var(--text3);font-weight:600}
+.pf3-day{font:700 12px 'JetBrains Mono',monospace;border-radius:999px;padding:5px 12px}
+.pf3-up{color:var(--green-t)}.pf3-down{color:var(--red-t)}
+.pf3-up-bg{color:var(--green-t);background:var(--green-bg)}.pf3-down-bg{color:var(--red-t);background:var(--red-bg)}
+.pf3-btn{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);color:#fff;border:none;border-radius:12px;padding:11px 20px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(99,102,241,.30);transition:transform .12s,box-shadow .12s}
+.pf3-btn:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(99,102,241,.40)}
+.pf3-btn:disabled{opacity:.6;cursor:wait;transform:none}
+.pf3-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px}
+.pf3-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:16px 18px;transition:transform .15s,box-shadow .15s}
+.pf3-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(15,23,42,.08)}
+.pf3-card-l{font:600 10px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)}
+.pf3-card-v{font-size:23px;font-weight:800;margin-top:6px;color:var(--text1);font-family:'JetBrains Mono',monospace;letter-spacing:-.5px}
+.pf3-card-v small{font-size:12px;color:var(--text3)}
+.pf3-card-s{font-size:11.5px;color:var(--text2);margin-top:4px}
+.pf3-grid{display:grid;grid-template-columns:1.7fr 1fr;gap:12px;align-items:start}
+.pf3-panel{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:16px 18px}
+.pf3-panel-hd{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13.5px;color:var(--text1);margin-bottom:12px}
+.pf3-chart{width:100%;height:340px;color:var(--text2);font-size:12px}
+.pf3-tf{display:inline-flex;gap:4px}
+.pf3-tfbtn{font:700 11px 'JetBrains Mono',monospace;padding:6px 12px;border:1px solid var(--border2);background:var(--bg2);color:var(--text2);border-radius:999px;cursor:pointer;transition:all .12s}
+.pf3-tfbtn:hover{border-color:var(--v3-acc);color:var(--text1)}
+.pf3-tfbtn.on{background:var(--v3-acc);border-color:var(--v3-acc);color:#fff}
+.pf3-lvl{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border-radius:10px}
+.pf3-lvl:hover{background:var(--bg3)}
+.pf3-lvl-name{color:var(--text2);font-weight:600;font-size:12.5px}
+.pf3-lvl-val{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--text1);margin-left:auto}
+.pf3-lvl-dist{font:700 10.5px 'JetBrains Mono',monospace;border-radius:999px;padding:3px 9px;min-width:62px;text-align:center}
+.pf3-empty{color:var(--text3);font-size:12px;padding:8px 2px}
+.pf3-edit label{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;color:var(--text2);padding:5px 0}
+.pf3-edit input{width:130px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text1);font:600 13px 'JetBrains Mono',monospace;outline:none;text-align:right}
+.pf3-edit input:focus{border-color:var(--v3-acc)}
+@media(max-width:880px){
+  .pf3-grid{grid-template-columns:1fr}
+  .pf3-quote{align-items:flex-start;margin-left:0}
+  .pf3-price{font-size:30px}
+  .pf3-wrap{margin-bottom:32px}
+}
+
+/* Портфель 3.0 — «Здоровье бизнеса» (fundamentals) */
+.pf3-health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:12px}
+.pf3-hcard{border:1px solid var(--border);border-radius:14px;padding:14px 16px;background:var(--bg)}
+/* 5-level grading: exc → good → mid → weak → crit */
+.pf3-hcard.exc{border-left:4px solid #16a34a}
+.pf3-hcard.good{border-left:4px solid #84cc16}
+.pf3-hcard.mid{border-left:4px solid #eab308}
+.pf3-hcard.weak{border-left:4px solid #f97316}
+.pf3-hcard.crit{border-left:4px solid #ef4444}
+.pf3-hcard-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.pf3-hcard-t{font-weight:700;font-size:13px;color:var(--text1)}
+.pf3-verdict{font:700 10.5px 'JetBrains Mono',monospace;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.pf3-verdict.exc,.pf3-overall-badge.exc{background:rgba(22,163,74,.13);color:#15803d}
+.pf3-verdict.good,.pf3-overall-badge.good{background:rgba(132,204,22,.16);color:#65a30d}
+.pf3-verdict.mid,.pf3-overall-badge.mid{background:rgba(234,179,8,.16);color:#b45309}
+.pf3-verdict.weak,.pf3-overall-badge.weak{background:rgba(249,115,22,.15);color:#ea580c}
+.pf3-verdict.crit,.pf3-overall-badge.crit{background:rgba(239,68,68,.14);color:#dc2626}
+[data-theme="dark"] .pf3-verdict.exc,[data-theme="dark"] .pf3-overall-badge.exc{color:#4ade80}
+[data-theme="dark"] .pf3-verdict.good,[data-theme="dark"] .pf3-overall-badge.good{color:#a3e635}
+[data-theme="dark"] .pf3-verdict.mid,[data-theme="dark"] .pf3-overall-badge.mid{color:#fcd34d}
+[data-theme="dark"] .pf3-verdict.weak,[data-theme="dark"] .pf3-overall-badge.weak{color:#fb923c}
+[data-theme="dark"] .pf3-verdict.crit,[data-theme="dark"] .pf3-overall-badge.crit{color:#fca5a5}
+/* Overall company verdict: badge + 0–10 gradient scale with a marker */
+.pf3-overall{grid-column:1/-1;border:1px solid var(--border);border-radius:14px;padding:14px 16px;background:var(--bg)}
+.pf3-overall-l{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.pf3-overall-badge{font-size:13.5px;font-weight:800;border-radius:999px;padding:6px 14px}
+.pf3-overall-score{font:800 16px 'JetBrains Mono',monospace;color:var(--text1)}
+.pf3-scale{position:relative;height:10px;border-radius:5px;background:linear-gradient(90deg,#ef4444,#f97316,#eab308,#84cc16,#16a34a)}
+.pf3-scale-marker{position:absolute;top:-4px;width:4px;height:18px;border-radius:2px;background:var(--text1);box-shadow:0 0 0 2px var(--bg2);transform:translateX(-50%)}
+.pf3-scale-labels{display:flex;justify-content:space-between;font:600 9px 'JetBrains Mono',monospace;color:var(--text3);margin-top:6px}
+.pf3-hmetrics{font-size:11.5px;color:var(--text2);line-height:1.7}
+.pf3-hmetrics b{color:var(--text1);font-family:'JetBrains Mono',monospace}
+.pf3-asof{font:600 10px 'JetBrains Mono',monospace;color:var(--text3)}
+
+/* Портфель 3.0 — уровни покупки / докупки */
+.pf3-signal{border-radius:12px;padding:12px 16px;font-size:13px;font-weight:700;margin-bottom:10px;line-height:1.5}
+.pf3-signal.buy{background:var(--green-bg);color:var(--green-t);border:1px solid rgba(22,163,74,.25)}
+.pf3-signal.wait{background:var(--blue-bg);color:var(--blue-t);border:1px solid rgba(37,99,235,.2)}
+.pf3-signal.warn{background:var(--red-bg);color:var(--red-t);border:1px solid rgba(220,38,38,.25)}
+.pf3-buy{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;margin-top:8px;background:var(--bg);flex-wrap:wrap}
+.pf3-buy:hover{border-color:var(--v3-acc)}
+.pf3-buy-n{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--v3-acc),#8b5cf6);color:#fff;font:800 12px 'JetBrains Mono',monospace;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pf3-buy-info{display:flex;flex-direction:column;min-width:120px}
+.pf3-buy-info b{font:700 14px 'JetBrains Mono',monospace;color:var(--text1)}
+.pf3-buy-info span{font-size:10.5px;color:var(--text3)}
+.pf3-buy-dist{font:700 12px 'JetBrains Mono',monospace;color:var(--gold);background:var(--yellow-bg);border-radius:999px;padding:4px 10px}
+.pf3-buy-plan{font-size:11.5px;color:var(--text2);margin-left:auto;font-weight:600}
+
+/* Портфель 3.0 — master-detail: список акций + карточка слева */
+.pf3-layout{display:flex;gap:14px;align-items:flex-start}
+.pf3-list{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0;transition:flex-basis .25s ease,transform .25s ease}
+.pf3-layout.open .pf3-list{flex:0 0 300px;transform:scale(.96);transform-origin:top right}
+.pf3-layout.open .pf3-row-val{display:none}   /* compact list: drop the value column */
+.pf3-detail{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px;animation:pf3in .25s ease}
+@keyframes pf3in{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+.pf3-list-hd{font-weight:800;font-size:13.5px;color:var(--text1);padding:2px 4px}
+.pf3-row{display:flex;align-items:center;gap:12px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:12px 16px;cursor:pointer;transition:border-color .15s,transform .15s,box-shadow .15s}
+.pf3-row:hover{border-color:var(--v3-acc);transform:translateY(-1px);box-shadow:0 8px 20px rgba(15,23,42,.06)}
+.pf3-row.active{border-color:var(--v3-acc);background:linear-gradient(90deg,rgba(99,102,241,.08),var(--bg2))}
+.pf3-row-logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--v3-acc),var(--v3-acc2));color:#fff;font:800 13px 'JetBrains Mono',monospace;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pf3-row-name{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.pf3-row-name b{font-size:14px;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pf3-row-name span{font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pf3-row-price,.pf3-row-val{display:flex;flex-direction:column;gap:2px;align-items:flex-end;font-family:'JetBrains Mono',monospace;flex-shrink:0}
+.pf3-row-price b,.pf3-row-val b{font-size:13px;font-weight:700;color:var(--text1)}
+.pf3-row-price span,.pf3-row-val span{font-size:10.5px;font-weight:700}
+.pf3-row-arr{color:var(--text3);font-size:15px;flex-shrink:0}
+.pf3-row.active .pf3-row-arr{color:var(--v3-acc)}
+.pf3-hero{position:relative}
+.pf3-close{position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.pf3-close:hover{border-color:var(--red);color:var(--red)}
+@media(max-width:900px){
+  .pf3-layout{flex-direction:column}
+  .pf3-layout.open .pf3-list{flex:1;width:100%;transform:none}
+  .pf3-layout.open .pf3-row-val{display:flex}
+  .pf3-detail{width:100%}
+}

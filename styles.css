@@ -432,3 +432,24 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .pf3-ai-ul{margin:6px 0 10px;padding-left:20px}
 .pf3-ai-ul li{margin:4px 0}
 .pf3-ai-report b{color:var(--text1)}
+
+/* Портфель 3.0 — кнопка обновления в списке, история AI, предложение */
+.pf3-list-hd{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.pf3-btn-sm{padding:7px 14px;font-size:12px;border-radius:10px}
+.pf3-ai-hist{border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:8px;background:var(--bg)}
+.pf3-ai-hist summary{cursor:pointer;font:600 12.5px 'JetBrains Mono',monospace;color:var(--text1);user-select:none;list-style:none;display:flex;align-items:center;gap:6px}
+.pf3-ai-hist summary::before{content:'▸';color:var(--text3);transition:transform .15s}
+.pf3-ai-hist[open] summary::before{transform:rotate(90deg)}
+.pf3-ai-hist summary::-webkit-details-marker{display:none}
+.pf3-prop-sum{border:1px solid rgba(99,102,241,.3);border-radius:12px;padding:12px 16px;margin-bottom:12px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(34,211,238,.04));font-size:13.5px;line-height:1.6;color:var(--text1)}
+.pf3-prop-sum p{margin:4px 0}
+.pf3-prop-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:7px;background:var(--bg);flex-wrap:wrap}
+.pf3-prop-n{width:24px;height:24px;border-radius:50%;background:var(--bg4);color:var(--text2);font:800 11px 'JetBrains Mono',monospace;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pf3-prop-act{font:700 11px 'JetBrains Mono',monospace;border-radius:999px;padding:5px 11px;white-space:nowrap;flex-shrink:0;min-width:84px;text-align:center}
+.pf3-prop-act.buy{background:var(--green-bg);color:var(--green-t)}
+.pf3-prop-act.sell{background:var(--red-bg);color:var(--red-t)}
+.pf3-prop-act.hold{background:var(--bg3);color:var(--text2)}
+.pf3-prop-info{display:flex;flex-direction:column;gap:2px;flex:1;min-width:200px}
+.pf3-prop-info b{font-size:13px;color:var(--text1)}
+.pf3-prop-info span{font-size:11.5px;color:var(--text2);line-height:1.45}
+.pf3-prop-amt{font:700 12.5px 'JetBrains Mono',monospace;color:var(--gold);white-space:nowrap;margin-left:auto}

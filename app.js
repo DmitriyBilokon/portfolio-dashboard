@@ -243,7 +243,7 @@ function renderAll(){
   if(isPF3()){
     ['smaBanner','pfSummary','fxBar','toolbarEl','statsBar','addPos','tableArea','rankingArea','divcalArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
-    [['📊 Портфель','list'],['📅 Дивиденды и отчёты','cal'],['🩺 Состояние портфеля','health'],['🤖 AI Assistant','ai']].forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
+    [['📊 Портфель','list'],['📅 Дивиденды и отчёты','cal'],['🩺 Состояние портфеля','health'],['🤖 AI Assistant','ai'],['⚖️ Предложение','prop']].forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
     renderPF3();
     pf3EnsureAutoRefresh();
@@ -975,23 +975,41 @@ function pf3AiSnapshot(){
     support:supC>=0?num(r[supC]):null,resistance:resC>=0?num(r[resC]):null,
     analystTarget:tgC>=0?num(r[tgC]):null,
   }));
+  // Allocation summary — the same numbers the «Состояние портфеля» tab shows.
+  const group=key=>{const m={};positions.forEach(p=>{const k=p[key]||'—';m[k]=(m[k]||0)+(p.valueSEK||0)});return Object.entries(m).map(([k,v])=>({name:k,pct:totalVal>0?Math.round(v/totalVal*1000)/10:0})).sort((a,b)=>b.pct-a.pct)};
   return{
     baseCurrency:'SEK',fxToSEK:FX,positions,
+    allocation:{bySector:group('sector'),byCurrency:group('ccy')},
     totals:{stocksSEK:Math.round(totalVal),freeCashSEK:num(d.cashFree)||0,leverageSEK:num(d.leverage)||0},
   };
 }
+
+// History of analyses (newest first, capped) — each entry {text, proposal, at}.
+// Older d.aiReport (single report) is folded in for backward compatibility.
+function pf3AiHist(){
+  const d=DATA[PF3_KEY];
+  if(d.aiHistory&&d.aiHistory.length)return d.aiHistory;
+  return d.aiReport?[d.aiReport]:[];
+}
+const pf3DtRu=iso=>{const d=new Date(iso);return isNaN(d)?'':pf3DateRu(String(iso).slice(0,10))+', '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
 
 async function pf3AiRun(){
   if(pf3Ai.loading)return;
   pf3Ai.loading=true;
   renderPF3();
   try{
+    // Fresh prices + SMA/levels first — so the AI snapshot, the signals column
+    // and the «Состояние портфеля» tab all reflect the current market state.
+    await pf3Refresh(true);
     const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pf3AiSnapshot())});
     const j=await r.json();
     if(j&&j.text){
-      DATA[PF3_KEY].aiReport={text:j.text,at:new Date().toISOString()};
+      const d=DATA[PF3_KEY];
+      const entry={text:j.text,proposal:j.proposal||null,at:new Date().toISOString()};
+      d.aiHistory=[entry,...pf3AiHist()].slice(0,10);   // keep the last 10 runs
+      delete d.aiReport;   // superseded by aiHistory
       scheduleSave();
-      toast('🤖 Анализ готов');
+      toast('🤖 Анализ готов — отчёт и предложение обновлены');
     }else toast((j&&j.error)||'AI не ответил',true);
   }catch(e){toast('Worker недоступен или не обновлён (нужен эндпоинт ?action=ai)',true);}
   pf3Ai.loading=false;
@@ -1016,15 +1034,45 @@ function pf3Md(t){
 }
 
 function pf3AiHTML(){
-  const R=DATA[PF3_KEY].aiReport;
-  return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>🤖 AI Assistant — анализ портфеля и рекомендации</span><span class="pf3-asof">${R&&R.at?'обновлено '+pf3DateRu(R.at.slice(0,10)):''}</span></div>
+  const H=pf3AiHist(),last=H[0];
+  let h=`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🤖 AI Assistant — анализ портфеля и рекомендации</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?'⏳ Анализирую… (30–60 сек)':'🔮 Проанализировать портфель'}</button>
-      <span class="pf3-ai-note">Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков и кэш — и вернёт рекомендации: что продать, что докупить и на каких уровнях, какие новые позиции добавить.</span>
+      <span class="pf3-ai-note">Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков и кэш — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).</span>
     </div>
-    ${R&&R.text?`<div class="pf3-ai-report">${pf3Md(R.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
+    ${last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
   </section>`;
+  if(H.length>1){
+    h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📜 История запросов</span><span class="pf3-asof">${H.length-1} пред.</span></div>`;
+    H.slice(1).forEach(e=>{
+      h+=`<details class="pf3-ai-hist"><summary>🗓 ${pf3DtRu(e.at)}</summary><div class="pf3-ai-report" style="margin-top:10px">${pf3Md(e.text)}</div></details>`;
+    });
+    h+='</section>';
+  }
+  return h;
+}
+
+// ===== «Предложение» sub-tab: rebalancing plan from the latest AI run =====
+function pf3PropHTML(){
+  const H=pf3AiHist(),last=H[0],P=last&&last.proposal;
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>⚖️ Предложение по балансировке портфеля</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>`;
+  if(!P){
+    h+=`<div class="pf3-empty">${last?'В последнем анализе нет структурированного плана — запустите анализ заново на вкладке «🤖 AI Assistant» (worker должен быть обновлён)':'Предложения ещё нет — запустите анализ на вкладке «🤖 AI Assistant», и план ребалансировки появится здесь'}</div></section>`;
+    return h;
+  }
+  if(P.summary)h+=`<div class="pf3-prop-sum">${pf3Md(P.summary)}</div>`;
+  (P.actions||[]).forEach((a,i)=>{
+    const cls=/куп/i.test(a.action)?'buy':/прода|сократ/i.test(a.action)?'sell':'hold';
+    h+=`<div class="pf3-prop-row">
+      <span class="pf3-prop-n">${i+1}</span>
+      <span class="pf3-prop-act ${cls}">${a.action||''}</span>
+      <div class="pf3-prop-info"><b>${a.name||''} <span class="pf3-cal-tk">${a.ticker||''}</span></b><span>${a.details||''}</span></div>
+      <span class="pf3-prop-amt">${typeof a.amountSEK==='number'&&a.amountSEK>0?'≈'+pf3Fmt(a.amountSEK)+' kr':''}</span>
+    </div>`;
+  });
+  h+='</section>';
+  return h;
 }
 
 // ===== «Состояние портфеля» sub-tab: client-side health analysis =====
@@ -1350,12 +1398,16 @@ function renderPF3(){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3AiHTML()}</div>`;
     return;
   }
+  if(pf3Tab==='prop'){
+    el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3PropHTML()}</div>`;
+    return;
+  }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
   el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
-      <div class="pf3-list-hd">📋 Акции · Портфель 3.0</div>
+      <div class="pf3-list-hd"><span>📋 Акции · Портфель 3.0</span>${open?'':'<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">🔄 Обновить акции</button>'}</div>
       ${pf3ListHead()}
       ${pf3ListHTML()}
       ${open?'':`<form class="pf3-add" onsubmit="pf3Add(event)">

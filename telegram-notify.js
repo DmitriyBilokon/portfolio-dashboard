@@ -464,7 +464,43 @@ const AI_SYSTEM = `Ты — опытный портфельный управля
 ## ✅ План действий
 Нумерованный список конкретных шагов на ближайшие 2–4 недели с суммами в kr.
 
-Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; в конце одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»`;
+Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
+
+Ответ верни строго в JSON по заданной схеме: поле report — весь анализ выше в markdown; поле proposal — машиночитаемый план ребалансировки портфеля: summary (2–3 предложения о целевой структуре) и actions — упорядоченный список конкретных сделок (action: Купить/Докупить/Сократить/Продать/Держать; details: уровень входа или выхода и краткое обоснование; amountSEK: примерная сумма сделки в кронах или null, если неприменимо).`;
+
+// Structured output: report (markdown) + machine-readable rebalancing proposal
+// for the dashboard's «Предложение» sub-tab.
+const AI_SCHEMA = {
+  type: 'object',
+  properties: {
+    report: { type: 'string', description: 'Полный анализ в markdown по заданным разделам' },
+    proposal: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: '2–3 предложения о целевой структуре портфеля' },
+        actions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['Купить', 'Докупить', 'Сократить', 'Продать', 'Держать'] },
+              name: { type: 'string' },
+              ticker: { type: 'string' },
+              details: { type: 'string' },
+              amountSEK: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+            },
+            required: ['action', 'name', 'ticker', 'details', 'amountSEK'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['summary', 'actions'],
+      additionalProperties: false,
+    },
+  },
+  required: ['report', 'proposal'],
+  additionalProperties: false,
+};
 
 async function aiAnalyze(env, snapshot){
   const today = new Date().toISOString().slice(0, 10);
@@ -479,15 +515,20 @@ async function aiAnalyze(env, snapshot){
       model: 'claude-opus-4-8',
       max_tokens: 16000,
       thinking: { type: 'adaptive' },
+      output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
       system: AI_SYSTEM,
       messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот портфеля (JSON):\n${JSON.stringify(snapshot)}` }],
     }),
   });
   if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
   const j = await r.json();
-  const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-  if(!text) throw new Error('Пустой ответ модели');
-  return text;
+  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  if(!raw) throw new Error('Пустой ответ модели');
+  try{
+    const parsed = JSON.parse(raw);
+    if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null };
+  }catch(e){ /* schema miss — fall back to raw text below */ }
+  return { text: raw, proposal: null };
 }
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
@@ -642,8 +683,8 @@ export default {
       if(request.method !== 'POST') return new Response(JSON.stringify({ error: 'POST required' }), { status: 405, headers: CORS });
       try{
         const snapshot = await request.json();
-        const text = await aiAnalyze(env, snapshot);
-        return new Response(JSON.stringify({ text }), { headers: CORS });
+        const out = await aiAnalyze(env, snapshot);   // { text, proposal }
+        return new Response(JSON.stringify(out), { headers: CORS });
       }catch(e){
         return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500, headers: CORS });
       }

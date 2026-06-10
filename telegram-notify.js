@@ -177,9 +177,12 @@ async function buildReport(env){
   const nearPct = parseFloat(env.NEAR_THRESHOLD || '10');
   const blocks = [];
 
-  for(const row of pf.rows){
-    const name = esc(row[1]), ticker = row[2], ccy = row[8];
-    const q = await yahoo(exSymbol(ticker, ccy));
+  // All quotes in parallel (Yahoo handles this fine; the ?symbols= endpoint already does the same).
+  const quotes = await Promise.all(pf.rows.map(row => yahoo(exSymbol(row[2], row[8]))));
+  for(let ri = 0; ri < pf.rows.length; ri++){
+    const row = pf.rows[ri];
+    const name = esc(row[1]), ccy = row[8];
+    const q = quotes[ri];
     if(!q || typeof q.price !== 'number' || q.price <= 0) continue;
     const price = q.price;
     const levels = [

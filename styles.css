@@ -354,7 +354,6 @@ body.v3 .sub-tabs{display:none}
 .pf3-summary{grid-template-columns:repeat(auto-fit,minmax(175px,1fr))}
 
 /* Портфель 3.0 — колонка «Сигнал» (уровни покупки/докупки/продажи) */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.3fr) 46px minmax(78px,0.9fr) 54px 70px 94px 90px 150px 52px}
 .pf3-c-sig{text-align:right;overflow:visible}
 .pf3-lhead .pf3-c-sig{text-align:right}
 .pf3-sig{font:700 10px 'JetBrains Mono',monospace;border-radius:999px;padding:4px 9px;white-space:nowrap;display:inline-block}
@@ -397,7 +396,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Портфель 3.0 — страна в ячейке названия, сортируемые заголовки */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(130px,1.5fr) minmax(80px,0.9fr) 54px 70px 96px 92px 150px 52px}
 .pf3-sort{cursor:pointer;user-select:none;white-space:nowrap}
 .pf3-sort:hover{color:var(--v3-acc)}
 @media(max-width:900px){
@@ -405,7 +403,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Портфель 3.0 — колонка «Доля» (% позиции от стоимости акций) */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(125px,1.5fr) minmax(76px,0.9fr) 52px 68px 94px 90px 54px 148px 52px}
 .pf3-c-share{font:600 11.5px 'JetBrains Mono',monospace;color:var(--text2);text-align:right}
 .pf3-layout.open .pf3-c-share{display:none}
 @media(max-width:900px){
@@ -455,7 +452,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .pf3-prop-amt{font:700 12.5px 'JetBrains Mono',monospace;color:var(--gold);white-space:nowrap;margin-left:auto}
 
 /* v3 список в индексном режиме (Nasdaq 100): без позиционных колонок, с таргетом */
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(150px,1.6fr) minmax(110px,1fr) 110px 96px 150px 52px}
 .pf3-c-tg{align-items:flex-end}
 .pf3-layout.open .pf3-row.idx{grid-template-columns:40px 1fr 110px 24px}
 .pf3-layout.open .pf3-row.idx .pf3-c-tg{display:none}
@@ -465,7 +461,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Индексный список: отдельная сортируемая колонка «1д %» */
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(140px,1.6fr) minmax(100px,1fr) 100px 74px 96px 150px 52px}
 .pf3-c-day{font:700 12px 'JetBrains Mono',monospace;text-align:right;white-space:nowrap}
 .pf3-layout.open .pf3-row.idx{grid-template-columns:40px 1fr 96px 24px}
 .pf3-layout.open .pf3-row.idx .pf3-c-day{display:none}
@@ -475,8 +470,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Колонка «Тип» (Акция / REIT / ETF) в обоих v3-списках */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(115px,1.5fr) minmax(72px,0.9fr) 64px 52px 68px 94px 90px 54px 148px 52px}
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(130px,1.6fr) minmax(95px,1fr) 64px 100px 74px 96px 150px 52px}
 .pf3-typ{font:600 10px 'JetBrains Mono',monospace;border:1px solid var(--border);border-radius:999px;padding:3px 8px;color:var(--text2);background:var(--bg2);white-space:nowrap}
 .pf3-typ.reit{border-color:rgba(34,197,94,.4);color:var(--green-t);background:var(--green-bg)}
 .pf3-typ.etf{border-color:rgba(96,165,250,.4);color:var(--blue-t);background:var(--blue-bg)}
@@ -488,8 +481,6 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .pf3-typ.def{border-color:rgba(217,119,6,.4);color:var(--yellow-t);background:var(--yellow-bg)}
 
 /* Типы в стиле Avanza: Защитная/Качественная/Циклическая/Дивидендная/Рост/Стоимость */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(110px,1.5fr) minmax(70px,0.9fr) 116px 50px 64px 92px 88px 52px 144px 52px}
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(125px,1.6fr) minmax(90px,1fr) 116px 96px 72px 94px 148px 52px}
 .pf3-typ.qual{border-color:rgba(96,165,250,.4);color:var(--blue-t);background:var(--blue-bg)}
 .pf3-typ.div{border-color:rgba(34,197,94,.4);color:var(--green-t);background:var(--green-bg)}
 .pf3-typ.gro{border-color:rgba(124,58,237,.35);color:var(--purple-t,#7c3aed);background:var(--purple-bg,rgba(124,58,237,.1))}

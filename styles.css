@@ -519,3 +519,40 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
   .pf3-typenav-it{margin-bottom:0;padding:6px 10px}
   .pf3-typenav-name small{display:none}
 }
+
+/* Колонка «Критерий» — рыночная фаза (падающий нож / импульс / тренд / оценка) */
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px 124px 138px 52px}
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px 124px 142px 52px}
+@media(min-width:901px){
+  .pf3-typelay .pf3-row{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 46px 62px 90px 86px 50px 124px 138px 52px}
+  .pf3-typelay .pf3-row.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 92px 70px 92px 124px 142px 52px}
+}
+.pf3-crit{font:600 9.5px 'JetBrains Mono',monospace;border:1px solid var(--border);border-radius:999px;padding:3px 7px;color:var(--text2);background:var(--bg2);white-space:nowrap}
+.pf3-crit.knife{border-color:rgba(239,68,68,.5);color:var(--red-t);background:var(--red-bg)}
+.pf3-crit.down{border-color:rgba(239,68,68,.3);color:var(--red-t);background:var(--red-bg)}
+.pf3-crit.corr{border-color:rgba(217,119,6,.4);color:var(--yellow-t);background:var(--yellow-bg)}
+.pf3-crit.rev{border-color:rgba(96,165,250,.4);color:var(--blue-t);background:var(--blue-bg)}
+.pf3-crit.undr{border-color:rgba(34,197,94,.4);color:var(--green-t);background:var(--green-bg)}
+.pf3-crit.up{border-color:rgba(34,197,94,.4);color:var(--green-t);background:var(--green-bg)}
+.pf3-crit.imp{border-color:rgba(124,58,237,.35);color:var(--purple-t,#7c3aed);background:var(--purple-bg,rgba(124,58,237,.1))}
+.pf3-crit.heat{border-color:rgba(217,119,6,.5);color:var(--yellow-t);background:var(--yellow-bg)}
+.pf3-layout.open .pf3-c-crit{display:none}
+@media(max-width:900px){.pf3-c-crit{display:none}}
+
+/* FAQ (❓ в шапке): модальное окно со справкой по обозначениям */
+.theme-toggle~.theme-toggle{margin-left:0}   /* кнопки шапки держатся группой справа */
+.faq-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);backdrop-filter:blur(3px);z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto}
+.faq-overlay.hidden{display:none}
+.faq-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;max-width:780px;width:100%;padding:24px 28px 28px;position:relative;box-shadow:0 24px 70px rgba(0,0,0,.3);margin:auto 0}
+.faq-card h2{font-size:16px;font-weight:700}
+.faq-sub{color:var(--text2);font-size:11px;margin-top:3px;font-family:'JetBrains Mono',monospace}
+.faq-close{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:13px}
+.faq-close:hover{border-color:var(--accent);color:var(--accent)}
+.faq-sec{margin-top:18px}
+.faq-sec h3{font:600 10.5px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.6px;color:var(--text2);margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.faq-row{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:start;padding:6px 0;border-bottom:1px dashed var(--border);font-size:12px}
+.faq-row:last-child{border-bottom:none}
+.faq-k{display:flex;flex-wrap:wrap;gap:4px;align-items:flex-start}
+.faq-k b{font-size:12px}
+.faq-v{color:var(--text2);line-height:1.5}
+@media(max-width:640px){.faq-row{grid-template-columns:1fr;gap:4px}.faq-card{padding:18px 16px}}

@@ -9,13 +9,14 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="header"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему">🌙</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" style="display:none">⏻</button></div>
+<div class="header"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему">🌙</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" style="display:none">⏻</button></div>
 <div class="tabs" id="tabs"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
 <div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены через Finnhub">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
 <div class="stats" id="statsBar"></div>
 <div id="contentArea"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
+<div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard"></div></div>
 <div class="auth-overlay hidden" id="authOverlay">
   <form class="auth-card" onsubmit="handleLogin(event)">
     <h1>📈 <span>Index</span> Dashboard</h1>

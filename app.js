@@ -396,6 +396,74 @@ function applyTheme(t){
   if(b) b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️' : '🌙';
   scheduleSave();
 }
+// FAQ (❓ in the header): legend for every badge / value used on the site.
+// Reuses the live badge classes (pf3-typ / pf3-crit / pf3-sig) so the modal
+// always looks exactly like the lists.
+function faqHTML(){
+  const row=(k,v)=>`<div class="faq-row"><span class="faq-k">${k}</span><span class="faq-v">${v}</span></div>`;
+  const typ=(t,v)=>row(`<span class="pf3-typ ${PF3_TYPE_META[t][1]}">${PF3_TYPE_META[t][0]} ${t}</span>`,v);
+  const crit=(cls,ico,l,v)=>row(`<span class="pf3-crit ${cls}">${ico} ${l}</span>`,v);
+  return`<button class="faq-close" onclick="toggleFaq()">✕</button>
+  <h2>❓ Справка по обозначениям</h2>
+  <div class="faq-sub">Что означают бейджи, колонки и оценки на вкладках Портфель 3.0 и Nasdaq 100</div>
+
+  <div class="faq-sec"><h3>Тип акции</h3>
+    ${typ('Защитная','Стабильный спрос вне зависимости от экономического цикла: фарма, потребительские товары, коммунальные услуги, телеком. Меньше падает в кризис, медленнее растёт на бычьем рынке.')}
+    ${typ('Качественная','Сильный баланс, высокая рентабельность, устойчивое конкурентное преимущество (Apple, Microsoft, ASML). Костяк долгосрочного портфеля.')}
+    ${typ('Циклическая','Результаты сильно зависят от фазы экономики и отраслевого цикла: полупроводниковое оборудование, память, авто, промышленность, энергетика.')}
+    ${typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')}
+    ${typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')}
+    ${typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')}
+    ${typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.')}
+  </div>
+
+  <div class="faq-sec"><h3>Критерий — рыночная фаза (техника + фундаментал)</h3>
+    ${crit('knife','🔪','Падающий нож','Цена ниже всех SMA и дневное падение ≤ −3%, либо пробита поддержка. Ловить не стоит — ждать стабилизации.')}
+    ${crit('down','📉','Даунтренд','Цена ниже SMA 50, 100 и 200 — нисходящий тренд на всех горизонтах.')}
+    ${crit('corr','⚠️','Коррекция','Откат ниже SMA 50 при цене выше SMA 200 — долгосрочный тренд цел, краткосрочная слабость.')}
+    ${crit('flat','⚖️','Боковик','Цена между уровнями без выраженного тренда, или недостаточно данных.')}
+    ${crit('rev','🔄','Разворот','Цена вернулась выше SMA 50, но ещё ниже SMA 200 — возможное начало восстановления.')}
+    ${crit('undr','💎','Недооценка','Потенциал до консенсус-таргета аналитиков ≥ +25% (и бумага не в свободном падении).')}
+    ${crit('up','📈','Аптренд','Цена выше всех SMA 50/100/200 — восходящий тренд подтверждён.')}
+    ${crit('imp','🚀','Импульс','Сильное дневное движение вверх: ≥ +2.5% при цене выше SMA 50 (или ≥ +4%).')}
+    ${crit('heat','🌡','Перегрев','Цена выше таргета аналитиков (+5%) или ≥ +30% над SMA 200 — риск отката, фиксация части позиции разумна.')}
+  </div>
+
+  <div class="faq-sec"><h3>Сигнал — цена у технического уровня (±2%)</h3>
+    ${row('<span class="pf3-sig pf3-sig-buy">🟢 Докупка · SMA 50 +1.2%</span>','Цена в пределах ±2% от уровня покупки (SMA 50/100/200 или поддержка). «Покупка» — если позиции ещё нет.')}
+    ${row('<span class="pf3-sig pf3-sig-sell">🔴 Продажа · Сопр. −0.8%</span>','Цена в пределах ±2% от сопротивления — зона фиксации прибыли.')}
+    ${row('<span class="pf3-sig pf3-sig-wait">⏳ SMA 100 −5.4%</span>','Уровней рядом нет; показан ближайший уровень покупки снизу и сколько до него.')}
+    ${row('<span class="pf3-sig pf3-sig-warn">🔻 ниже уровней</span>','Цена опустилась ниже всех уровней покупки.')}
+  </div>
+
+  <div class="faq-sec"><h3>Технические уровни и колонки</h3>
+    ${row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')}
+    ${row('<b>Поддержка / Сопротивление</b>','Минимум и максимум цены за последние ~3 месяца торгов.')}
+    ${row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков (консенсус FMP / Yahoo-Refinitiv) в валюте торгов. Рядом — потенциал в % к текущей цене.')}
+    ${row('<b>1д %</b>','Изменение цены к закрытию предыдущей сессии.')}
+    ${row('<b>Доля</b>','Вес позиции в общей стоимости акций портфеля.')}
+  </div>
+
+  <div class="faq-sec"><h3>Портфельные значения</h3>
+    ${row('<b>Покупка</b>','Средняя цена входа в валюте бумаги (из брокерского отчёта).')}
+    ${row('<b>Стоимость</b>','Текущая стоимость позиции в кронах по живому курсу (kr); под ней — прибыль/убыток в % к вложенному.')}
+    ${row('<b>Чистый капитал</b>','Стоимость всех акций + свободный кэш.')}
+    ${row('<b>Кредитное плечо</b>','Доступный кредит брокера сверх собственного капитала; «Доступно с плечом» = свободные + плечо.')}
+  </div>
+
+  <div class="faq-sec"><h3>Здоровье бизнеса (карточка акции)</h3>
+    ${row('<b>Оценка 0–10</b>','Баланс (долг/капитал, ликвидность), денежный поток (FCF) и рост выручки (CAGR и год-к-году); итог — среднее. Переключатель: «Годовой отчёт» — последний фискальный год, «Послед. квартал» — свежий квартал + TTM.')}
+    ${row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.')}
+  </div>`;
+}
+function toggleFaq(){
+  const o=document.getElementById('faqOverlay');
+  if(!o)return;
+  if(o.classList.contains('hidden')){document.getElementById('faqCard').innerHTML=faqHTML();o.classList.remove('hidden');}
+  else o.classList.add('hidden');
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('faqOverlay')?.classList.add('hidden')});
+
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 }
@@ -1072,6 +1140,35 @@ function pf3RowSignal(d,r){
   return'<span class="pf3-sig pf3-sig-warn">🔻 ниже уровней</span>';
 }
 
+// Market-phase criterion — one badge per stock, technical + fundamental:
+// 🔪 падающий нож (below all SMAs on a sharp drop / broken support),
+// 🌡 перегрев (price above the analyst consensus target or ≥30% over SMA 200),
+// 🚀 импульс (strong day move with trend support), 💎 недооценка (≥25% upside
+// to target), then trend phases: аптренд / коррекция / разворот / даунтренд.
+// rank orders the phases bearish→bullish so the column sorts meaningfully.
+function pf3Criterion(d,r){
+  const h=d.headers,{s50,s100,s200}=smaIdx(d);
+  const g=i=>i>=0?(parseFloat(r[i])||0):0;
+  const p=parseFloat(r[7])||0,day=parseFloat(r[10])||0;
+  const a50=g(s50),a100=g(s100),a200=g(s200),sup=g(h.indexOf('Поддержка'));
+  const tg=g(h.findIndex(x=>/аналит/i.test(x)));
+  const B=(rank,cls,ico,label)=>({rank,html:`<span class="pf3-crit ${cls}">${ico} ${label}</span>`});
+  if(!(p>0)||!(a50>0)||!(a200>0))return{rank:3,html:'<span class="pf3-crit flat">—</span>'};
+  const upTg=tg>0?(tg-p)/p*100:null;
+  const belowAll=p<a50&&(!(a100>0)||p<a100)&&p<a200;
+  const aboveAll=p>a50&&(!(a100>0)||p>a100)&&p>a200;
+  if(belowAll&&(day<=-3||(sup>0&&p<sup)))return B(0,'knife','🔪','Падающий нож');
+  if(upTg!==null&&upTg<=-5)return B(8,'heat','🌡','Перегрев');
+  if(aboveAll&&p>a200*1.3)return B(8,'heat','🌡','Перегрев');
+  if((day>=2.5&&p>a50)||day>=4)return B(7,'imp','🚀','Импульс');
+  if(upTg!==null&&upTg>=25&&!belowAll)return B(5,'undr','💎','Недооценка');
+  if(aboveAll)return B(6,'up','📈','Аптренд');
+  if(belowAll)return B(1,'down','📉','Даунтренд');
+  if(p<a50&&p>=a200)return B(2,'corr','⚠️','Коррекция');
+  if(p>=a50&&p<a200)return B(4,'rev','🔄','Разворот');
+  return B(3,'flat','⚖️','Боковик');
+}
+
 // Column sorting (display only — the underlying rows stay in place).
 let pf3Sort={key:'val',dir:-1};   // default: по общей стоимости, по убыванию
 function pf3SortBy(k){
@@ -1083,8 +1180,8 @@ function pf3ListHead(){
   const ar=k=>pf3Sort.key===k?(pf3Sort.dir>0?' ▲':' ▼'):'';
   const hd=(label,key,cls,right)=>`<span class="pf3-sort${cls?' '+cls:''}"${right?' style="text-align:right"':''} onclick="pf3SortBy('${key}')">${label}${ar(key)}</span>`;
   if(v3Key!==PF3_KEY)   // index mode (Nasdaq 100): no position economics, but day % and analyst target
-    return`<div class="pf3-lhead idx"><span></span>${hd('Компания','name')}${hd('Сектор','sec','pf3-c-sec')}${hd('Тип','typ','pf3-c-typ')}${hd('Цена','price','',1)}${hd('1д %','day','pf3-c-day',1)}${hd('Таргет','tg','pf3-c-tg',1)}<span class="pf3-c-sig">Сигнал</span><span></span></div>`;
-  return`<div class="pf3-lhead"><span></span>${hd('Компания','name')}${hd('Сектор','sec','pf3-c-sec')}${hd('Тип','typ','pf3-c-typ')}${hd('Кол-во','qty','pf3-c-qty')}${hd('Покупка','buy','pf3-c-buy')}${hd('Цена','price','',1)}${hd('Стоимость','val','',1)}${hd('Доля','share','pf3-c-share',1)}<span class="pf3-c-sig">Сигнал</span><span></span></div>`;
+    return`<div class="pf3-lhead idx"><span></span>${hd('Компания','name')}${hd('Сектор','sec','pf3-c-sec')}${hd('Тип','typ','pf3-c-typ')}${hd('Цена','price','',1)}${hd('1д %','day','pf3-c-day',1)}${hd('Таргет','tg','pf3-c-tg',1)}${hd('Критерий','crit','pf3-c-crit')}<span class="pf3-c-sig">Сигнал</span><span></span></div>`;
+  return`<div class="pf3-lhead"><span></span>${hd('Компания','name')}${hd('Сектор','sec','pf3-c-sec')}${hd('Тип','typ','pf3-c-typ')}${hd('Кол-во','qty','pf3-c-qty')}${hd('Покупка','buy','pf3-c-buy')}${hd('Цена','price','',1)}${hd('Стоимость','val','',1)}${hd('Доля','share','pf3-c-share',1)}${hd('Критерий','crit','pf3-c-crit')}<span class="pf3-c-sig">Сигнал</span><span></span></div>`;
 }
 
 // Rows with computed metrics + total stock value — shared by the flat list
@@ -1094,7 +1191,8 @@ function pf3Items(){
   const tgC=d.headers.findIndex(x=>/аналит/i.test(x));
   const items=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
-    return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price:parseFloat(r[7])||0,val:parseFloat(r[13])||0,tg:tgC>=0?(parseFloat(r[tgC])||0):0,day:parseFloat(r[10])||0};
+    const c=pf3Criterion(d,r);
+    return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price:parseFloat(r[7])||0,val:parseFloat(r[13])||0,tg:tgC>=0?(parseFloat(r[tgC])||0):0,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html};
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
   items.forEach(x=>x.share=totalVal>0?x.val/totalVal*100:0);
@@ -1123,6 +1221,7 @@ function pf3RowHTML(d,it,port){
     <div class="pf3-c pf3-c-sec">${r[4]&&r[4]!=='—'?r[4]:'—'}</div>
     <div class="pf3-c pf3-c-typ"><span class="pf3-typ${PF3_TYPE_META[r[5]]?' '+PF3_TYPE_META[r[5]][1]:''}">${PF3_TYPE_META[r[5]]?PF3_TYPE_META[r[5]][0]+' ':''}${r[5]&&r[5]!=='—'?r[5]:'—'}</span></div>
     ${cells}
+    <div class="pf3-c pf3-c-crit">${it.critHtml||''}</div>
     <div class="pf3-c pf3-c-sig">${pf3RowSignal(d,r)}</div>
     <div class="pf3-row-act"><button class="pf3-del" onclick="pf3Delete('${tk}',event)" title="Удалить акцию">🗑</button><span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span></div>
   </div>`;

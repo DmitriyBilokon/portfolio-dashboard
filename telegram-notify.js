@@ -717,6 +717,7 @@ export default {
       const qs = await yQuoteSummary(url.searchParams.get('profile').trim(), 'assetProfile,quoteType');
       const out = qs ? {
         name: qs.quoteType?.longName || qs.quoteType?.shortName || null,
+        type: qs.quoteType?.quoteType || null,   // EQUITY | ETF | MUTUALFUND | …
         sector: qs.assetProfile?.sector || null,
         industry: qs.assetProfile?.industry || null,
         country: qs.assetProfile?.country || null,

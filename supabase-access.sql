@@ -2,7 +2,8 @@
 -- Выполнить один раз: Supabase → SQL Editor → New query → вставить всё → Run.
 --
 -- Логика:
---  • dmitriy.bilokon@gmail.com — админ (видит всё, управляет доступом);
+--  • dmitriy.bilokon@gmail.com и dmitriy.bilokon@justforthewin.com — админ
+--    (видит всё, управляет доступом);
 --  • новые аккаунты получают роль user и только вкладку Nasdaq 100;
 --  • last_seen обновляется heartbeat-ом каждую минуту, пока сайт открыт.
 
@@ -37,7 +38,7 @@ create or replace function public.ensure_access() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   v_email text := lower(coalesce(auth.jwt()->>'email',''));
-  v_admin boolean := v_email = 'dmitriy.bilokon@gmail.com';
+  v_admin boolean := v_email in ('dmitriy.bilokon@gmail.com','dmitriy.bilokon@justforthewin.com');
   r user_access;
 begin
   if auth.uid() is null then return null; end if;

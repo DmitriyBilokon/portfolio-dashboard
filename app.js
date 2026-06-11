@@ -63,12 +63,12 @@ function subscribeRealtime(){
 
 // ===== Roles & tab access (table user_access — see supabase-access.sql) =====
 // Админ видит всё и раздаёт вкладки; новые аккаунты — роль user, только Nasdaq 100.
-const ADMIN_EMAIL='dmitriy.bilokon@gmail.com';
+const ADMIN_EMAILS=['dmitriy.bilokon@gmail.com','dmitriy.bilokon@justforthewin.com'];
 let userRole='user', allowedTabs=['Nasdaq 100'], hbTimer=null;
 const tabAllowed=n=>!SYNC_ENABLED||!currentUser||userRole==='admin'||(allowedTabs||[]).includes(n);
 async function initAccess(){
   // Хардкод-фолбэк: владелец остаётся админом, даже если таблица ещё не создана.
-  userRole=(currentUser.email||'').toLowerCase()===ADMIN_EMAIL?'admin':'user';
+  userRole=ADMIN_EMAILS.includes((currentUser.email||'').toLowerCase())?'admin':'user';
   try{
     const{data,error}=await sb.rpc('ensure_access');   // создаёт/обновляет свою строку, возвращает {role,tabs}
     if(!error&&data){

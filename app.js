@@ -65,7 +65,9 @@ function subscribeRealtime(){
 // Админ видит всё и раздаёт вкладки; новые аккаунты — роль user, только Nasdaq 100.
 const ADMIN_EMAILS=['dmitriy.bilokon@gmail.com','dmitriy.bilokon@justforthewin.com'];
 let userRole='user', allowedTabs=['Nasdaq 100'], hbTimer=null;
-const tabAllowed=n=>!SYNC_ENABLED||!currentUser||userRole==='admin'||(allowedTabs||[]).includes(n);
+// До входа и для роли user видны только разрешённые вкладки (по умолчанию Nasdaq 100).
+const tabAllowed=n=>!SYNC_ENABLED||userRole==='admin'||(allowedTabs||[]).includes(n);
+const isAdmin=()=>!SYNC_ENABLED||userRole==='admin';
 async function initAccess(){
   // Хардкод-фолбэк: владелец остаётся админом, даже если таблица ещё не создана.
   userRole=ADMIN_EMAILS.includes((currentUser.email||'').toLowerCase())?'admin':'user';
@@ -77,8 +79,10 @@ async function initAccess(){
     }
   }catch(e){ console.warn('access init failed',e); }
   const st=document.getElementById('settingsBtn'); if(st)st.style.display=userRole==='admin'?'':'none';
+  const hs=document.querySelector('.header-sub'); if(hs&&userRole!=='admin')hs.textContent='Аналитика и технические уровни';
   clearInterval(hbTimer);
   hbTimer=setInterval(()=>{ sb.rpc('heartbeat').then(()=>{},()=>{}) },60000);   // онлайн-статус для админа
+  init();   // перерисовать вкладки уже с учётом роли (важно при первом входе нового аккаунта)
 }
 
 // ===== Auth =====
@@ -101,6 +105,7 @@ async function handleLogout(){
   await sb.auth.signOut(); currentUser=null;
   document.getElementById('logoutBtn')?.style.setProperty('display','none');
   document.getElementById('authOverlay').classList.remove('hidden');
+  init();   // за оверлеем входа остаются только публичные вкладки
 }
 async function startApp(){
   document.getElementById('authOverlay').classList.add('hidden');
@@ -1300,7 +1305,7 @@ function pf3RowHTML(d,it,port){
     ${cells}
     <div class="pf3-c pf3-c-crit">${it.critHtml||''}</div>
     <div class="pf3-c pf3-c-sig">${pf3RowSignal(d,r)}</div>
-    <div class="pf3-row-act"><button class="pf3-del" onclick="pf3Delete('${tk}',event)" title="Удалить акцию">🗑</button><span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span></div>
+    <div class="pf3-row-act">${isAdmin()?`<button class="pf3-del" onclick="pf3Delete('${tk}',event)" title="Удалить акцию">🗑</button>`:''}<span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span></div>
   </div>`;
 }
 
@@ -1452,7 +1457,7 @@ function renderPF3(){
       <div class="pf3-list-hd"><span>📋 Акции · ${v3Key===PF3_KEY?'Портфель 3.0':v3Key}</span>${open?'':'<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">🔄 Обновить акции</button>'}</div>
       ${pf3ListHead()}
       ${pf3ListHTML()}
-      ${open||v3Key!==PF3_KEY?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
+      ${open||v3Key!==PF3_KEY||!isAdmin()?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
         <input id="pf3AddTicker" placeholder="Тикер" autocomplete="off">
         <input id="pf3AddQty" type="number" step="any" min="0" placeholder="Кол-во">
         <input id="pf3AddBuy" type="number" step="any" min="0" placeholder="Цена покупки">

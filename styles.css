@@ -571,3 +571,56 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .set-all{font:500 11px 'JetBrains Mono',monospace;color:var(--text2)}
 .set-err{margin-top:14px;font-size:12px;color:var(--red-t);background:var(--red-bg);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px 14px;line-height:1.5}
 .set-note{margin-top:14px;font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono',monospace;line-height:1.5}
+
+/* «Сектора» с тем же сайдбаром, что и «Тип»: прячем колонку сектора, тип возвращаем */
+.pf3-typelay.sec .pf3-c-typ{display:block}
+.pf3-typelay.sec .pf3-c-sec{display:none}
+@media(min-width:901px){
+  .pf3-typelay.sec .pf3-row{grid-template-columns:40px minmax(105px,1.5fr) 112px 46px 62px 90px 86px 50px 124px 138px 52px}
+  .pf3-typelay.sec .pf3-row.idx{grid-template-columns:40px minmax(120px,1.6fr) 112px 92px 70px 92px 124px 142px 52px}
+}
+@media(max-width:900px){.pf3-typelay.sec .pf3-c-typ{display:none}}
+
+/* Симуляция: тестовые покупки в карточке + саб-вкладка с бумажным портфелем */
+.sim-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)}
+.sim-form label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--text2);font-family:'JetBrains Mono',monospace}
+.sim-form input{width:130px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font:600 12px 'JetBrains Mono',monospace}
+.sim-buy{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sim-row{display:grid;grid-template-columns:84px 1fr 1.3fr 1.1fr 34px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);font:500 11.5px 'JetBrains Mono',monospace}
+.sim-row:last-of-type{border-bottom:none}
+.sim-d{color:var(--text3);font-size:10px}
+.sim-thead{display:grid;grid-template-columns:40px minmax(140px,1.6fr) 64px 92px 110px 92px 100px 64px 40px;gap:8px;padding:0 0 6px;font:600 9px 'JetBrains Mono',monospace;text-transform:uppercase;color:var(--text3)}
+.sim-trow{display:grid;grid-template-columns:40px minmax(140px,1.6fr) 64px 92px 110px 92px 100px 64px 40px;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--border);font-size:12px;cursor:pointer}
+.sim-trow:hover{background:var(--bg2)}
+.sim-trow .pf3-c small{display:block;font-size:9.5px}
+@media(max-width:900px){
+  .sim-thead{display:none}
+  .sim-trow{grid-template-columns:40px 1fr 92px 64px 40px}
+  .sim-trow>div:nth-child(3),.sim-trow>div:nth-child(4),.sim-trow>div:nth-child(5),.sim-trow>div:nth-child(6){display:none}
+}
+
+/* FAQ-аккордеон: разделы сворачиваются, читается по одному блоку за раз */
+details.faq-sec{margin-top:10px;border:1px solid var(--border);border-radius:12px;background:var(--bg);overflow:hidden}
+details.faq-sec summary{list-style:none;cursor:pointer;padding:11px 14px;font:600 12.5px 'DM Sans',sans-serif;color:var(--text);display:flex;align-items:center;gap:8px;user-select:none}
+details.faq-sec summary::-webkit-details-marker{display:none}
+details.faq-sec summary::after{content:'▸';margin-left:auto;color:var(--text3);font-size:11px;transition:transform .15s}
+details.faq-sec[open] summary::after{transform:rotate(90deg)}
+details.faq-sec summary:hover{background:var(--bg2)}
+details.faq-sec[open] summary{border-bottom:1px solid var(--border);background:var(--bg2)}
+details.faq-sec .faq-body{padding:6px 14px 12px}
+
+/* Чат с AI-ассистентом + память (правила инвестора) */
+.ai-chat-box{max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px}
+.ai-msg{max-width:86%;border-radius:14px;padding:9px 13px;font-size:12.5px;line-height:1.55}
+.ai-msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px;white-space:pre-wrap}
+.ai-msg.bot{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-bottom-left-radius:4px}
+.ai-msg.bot p{margin:4px 0}
+.ai-msg.bot .pf3-ai-h{margin:8px 0 4px;font-size:12px}
+.ai-msg.bot .pf3-ai-ul{margin:4px 0 4px 16px}
+.ai-typing{color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:11px}
+.ai-chat-form{display:flex;gap:8px;margin-top:12px}
+.ai-chat-form input{flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font-size:12.5px;outline:none}
+.ai-chat-form input:focus{border-color:var(--accent)}
+.ai-pref{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border);font-size:12px}
+.ai-pref span{flex:1;line-height:1.45}
+.ai-pref:last-of-type{border-bottom:none}

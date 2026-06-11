@@ -16,7 +16,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -46,6 +46,9 @@ function applyRemoteState(s){
   if(s.colOrders) colOrders=s.colOrders;
   if(s.hiddenCols) hiddenCols=s.hiddenCols;
   if(s.smaTf) SMA_TF=s.smaTf;
+  if(Array.isArray(s.sim)) SIM=s.sim;
+  if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
+  if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -125,6 +128,13 @@ async function boot(){
 }
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴','🚀 Портфель 3.0':'🚀'};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52};
+// Бумажный (тестовый) портфель: [{tk,name,ccy,qty,buy,date}] — общий для обеих
+// v3-вкладок, синхронизируется вместе с остальным состоянием.
+let SIM=[];
+// AI Assistant: диалог с ассистентом и его «память» — правила инвестора,
+// которые ассистент извлекает из чата (и которые можно добавить вручную).
+// Правила передаются и в чат, и в полный анализ портфеля (investorRules).
+let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
 let SMA_TF={};
@@ -357,10 +367,10 @@ function renderAll(){
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=v3Key===PF3_KEY;
-    if(!isPort&&!['list','cal','sec','typ'].includes(pf3Tab))pf3Tab='list';
+    if(!isPort&&!['list','cal','sec','typ','sim'].includes(pf3Tab))pf3Tab='list';
     (isPort
-      ?[['📊 Портфель','list'],['🏭 Сектора','sec'],['🏷 Тип','typ'],['📅 Дивиденды и отчёты','cal'],['🩺 Состояние портфеля','health'],['🤖 AI Assistant','ai'],['⚖️ Предложение','prop']]
-      :[['📊 Акции','list'],['🏭 Сектора','sec'],['🏷 Тип','typ'],['📅 Дивиденды и отчёты','cal']]
+      ?[['📊 Портфель','list'],['🏭 Сектора','sec'],['🏷 Тип','typ'],['🧪 Симуляция','sim'],['📅 Дивиденды и отчёты','cal'],['🩺 Состояние портфеля','health'],['🤖 AI Assistant','ai'],['⚖️ Предложение','prop']]
+      :[['📊 Акции','list'],['🏭 Сектора','sec'],['🏷 Тип','typ'],['🧪 Симуляция','sim'],['📅 Дивиденды и отчёты','cal']]
     ).forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
     renderPF3();
@@ -431,58 +441,66 @@ function faqHTML(){
   const row=(k,v)=>`<div class="faq-row"><span class="faq-k">${k}</span><span class="faq-v">${v}</span></div>`;
   const typ=(t,v)=>row(`<span class="pf3-typ ${PF3_TYPE_META[t][1]}">${PF3_TYPE_META[t][0]} ${t}</span>`,v);
   const crit=(cls,ico,l,v)=>row(`<span class="pf3-crit ${cls}">${ico} ${l}</span>`,v);
+  const sec=(title,body,open)=>`<details class="faq-sec"${open?' open':''}><summary>${title}</summary><div class="faq-body">${body}</div></details>`;
   return`<button class="faq-close" onclick="toggleFaq()">✕</button>
-  <h2>❓ Справка по обозначениям</h2>
-  <div class="faq-sub">Что означают бейджи, колонки и оценки на вкладках Портфель 3.0 и Nasdaq 100</div>
+  <h2>❓ Справка</h2>
+  <div class="faq-sub">Нажмите на раздел, чтобы развернуть его</div>
 
-  <div class="faq-sec"><h3>Тип акции</h3>
-    ${typ('Защитная','Стабильный спрос вне зависимости от экономического цикла: фарма, потребительские товары, коммунальные услуги, телеком. Меньше падает в кризис, медленнее растёт на бычьем рынке.')}
-    ${typ('Качественная','Сильный баланс, высокая рентабельность, устойчивое конкурентное преимущество (Apple, Microsoft, ASML). Костяк долгосрочного портфеля.')}
-    ${typ('Циклическая','Результаты сильно зависят от фазы экономики и отраслевого цикла: полупроводниковое оборудование, память, авто, промышленность, энергетика.')}
-    ${typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')}
-    ${typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')}
-    ${typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')}
-    ${typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.')}
-  </div>
+  ${sec('🗂 Вкладки и виды',
+    row('<b>📊 Портфель / Акции</b>','Главный список: клик по строке открывает карточку акции слева (график, здоровье бизнеса, уровни, отчёты). Колонки сортируются кликом по заголовку.')
+   +row('<b>🏭 Сектора · 🏷 Тип</b>','Те же акции, сгруппированные по категориям: слева список групп с итогами, справа акции выбранной группы. Сектора Nasdaq укрупнены до 12 макро-групп.')
+   +row('<b>🧪 Симуляция</b>','Бумажный портфель из тестовых покупок — без реальных денег. Подробнее в разделе «Симуляция» ниже.')
+   +row('<b>📅 Дивиденды и отчёты</b>','Календарь: ближайшие отчёты компаний, экс-дивидендные даты и выплаты.')
+   +row('<b>🩺 Состояние · 🤖 AI · ⚖️ Предложение</b>','Только на Портфеле 3.0: здоровье портфеля, AI-аналитика с историей запусков и план ребалансировки. В AI Assistant есть чат: задавайте вопросы по портфелю, а свои правила («никогда не предлагай плечо») ассистент запоминает в 🧠 память и учитывает во всех анализах.'),true)}
 
-  <div class="faq-sec"><h3>Критерий — рыночная фаза (техника + фундаментал)</h3>
-    ${crit('knife','🔪','Падающий нож','Цена ниже всех SMA и дневное падение ≤ −3%, либо пробита поддержка. Ловить не стоит — ждать стабилизации.')}
-    ${crit('down','📉','Даунтренд','Цена ниже SMA 50, 100 и 200 — нисходящий тренд на всех горизонтах.')}
-    ${crit('corr','⚠️','Коррекция','Откат ниже SMA 50 при цене выше SMA 200 — долгосрочный тренд цел, краткосрочная слабость.')}
-    ${crit('flat','⚖️','Боковик','Цена между уровнями без выраженного тренда, или недостаточно данных.')}
-    ${crit('rev','🔄','Разворот','Цена вернулась выше SMA 50, но ещё ниже SMA 200 — возможное начало восстановления.')}
-    ${crit('undr','💎','Недооценка','Потенциал до консенсус-таргета аналитиков ≥ +25% (и бумага не в свободном падении).')}
-    ${crit('up','📈','Аптренд','Цена выше всех SMA 50/100/200 — восходящий тренд подтверждён.')}
-    ${crit('imp','🚀','Импульс','Сильное дневное движение вверх: ≥ +2.5% при цене выше SMA 50 (или ≥ +4%).')}
-    ${crit('heat','🌡','Перегрев','Цена выше таргета аналитиков (+5%) или ≥ +30% над SMA 200 — риск отката, фиксация части позиции разумна.')}
-  </div>
+  ${sec('🏷 Тип акции',
+    typ('Защитная','Стабильный спрос вне зависимости от экономического цикла: фарма, потребительские товары, коммунальные услуги, телеком. Меньше падает в кризис, медленнее растёт на бычьем рынке.')
+   +typ('Качественная','Сильный баланс, высокая рентабельность, устойчивое конкурентное преимущество (Apple, Microsoft, ASML). Костяк долгосрочного портфеля.')
+   +typ('Циклическая','Результаты сильно зависят от фазы экономики и отраслевого цикла: полупроводниковое оборудование, память, авто, промышленность, энергетика.')
+   +typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')
+   +typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')
+   +typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')
+   +typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.'))}
 
-  <div class="faq-sec"><h3>Сигнал — цена у технического уровня (±2%)</h3>
-    ${row('<span class="pf3-sig pf3-sig-buy">🟢 Докупка · SMA 50 +1.2%</span>','Цена в пределах ±2% от уровня покупки (SMA 50/100/200 или поддержка). «Покупка» — если позиции ещё нет.')}
-    ${row('<span class="pf3-sig pf3-sig-sell">🔴 Продажа · Сопр. −0.8%</span>','Цена в пределах ±2% от сопротивления — зона фиксации прибыли.')}
-    ${row('<span class="pf3-sig pf3-sig-wait">⏳ SMA 100 −5.4%</span>','Уровней рядом нет; показан ближайший уровень покупки снизу и сколько до него.')}
-    ${row('<span class="pf3-sig pf3-sig-warn">🔻 ниже уровней</span>','Цена опустилась ниже всех уровней покупки.')}
-  </div>
+  ${sec('📊 Критерий — рыночная фаза (техника + фундаментал)',
+    crit('knife','🔪','Падающий нож','Цена ниже всех SMA и дневное падение ≤ −3%, либо пробита поддержка. Ловить не стоит — ждать стабилизации.')
+   +crit('down','📉','Даунтренд','Цена ниже SMA 50, 100 и 200 — нисходящий тренд на всех горизонтах.')
+   +crit('corr','⚠️','Коррекция','Откат ниже SMA 50 при цене выше SMA 200 — долгосрочный тренд цел, краткосрочная слабость.')
+   +crit('flat','⚖️','Боковик','Цена между уровнями без выраженного тренда, или недостаточно данных.')
+   +crit('rev','🔄','Разворот','Цена вернулась выше SMA 50, но ещё ниже SMA 200 — возможное начало восстановления.')
+   +crit('undr','💎','Недооценка','Потенциал до консенсус-таргета аналитиков ≥ +25% (и бумага не в свободном падении).')
+   +crit('up','📈','Аптренд','Цена выше всех SMA 50/100/200 — восходящий тренд подтверждён.')
+   +crit('imp','🚀','Импульс','Сильное дневное движение вверх: ≥ +2.5% при цене выше SMA 50 (или ≥ +4%).')
+   +crit('heat','🌡','Перегрев','Цена выше таргета аналитиков (+5%) или ≥ +30% над SMA 200 — риск отката, фиксация части позиции разумна.'))}
 
-  <div class="faq-sec"><h3>Технические уровни и колонки</h3>
-    ${row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')}
-    ${row('<b>Поддержка / Сопротивление</b>','Минимум и максимум цены за последние ~3 месяца торгов.')}
-    ${row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков (консенсус FMP / Yahoo-Refinitiv) в валюте торгов. Рядом — потенциал в % к текущей цене.')}
-    ${row('<b>1д %</b>','Изменение цены к закрытию предыдущей сессии.')}
-    ${row('<b>Доля</b>','Вес позиции в общей стоимости акций портфеля.')}
-  </div>
+  ${sec('🎯 Сигнал — цена у технического уровня (±2%)',
+    row('<span class="pf3-sig pf3-sig-buy">🟢 Докупка · SMA 50 +1.2%</span>','Цена в пределах ±2% от уровня покупки (SMA 50/100/200 или поддержка). «Покупка» — если позиции ещё нет.')
+   +row('<span class="pf3-sig pf3-sig-sell">🔴 Продажа · Сопр. −0.8%</span>','Цена в пределах ±2% от сопротивления — зона фиксации прибыли.')
+   +row('<span class="pf3-sig pf3-sig-wait">⏳ SMA 100 −5.4%</span>','Уровней рядом нет; показан ближайший уровень покупки снизу и сколько до него.')
+   +row('<span class="pf3-sig pf3-sig-warn">🔻 ниже уровней</span>','Цена опустилась ниже всех уровней покупки.'))}
 
-  <div class="faq-sec"><h3>Портфельные значения</h3>
-    ${row('<b>Покупка</b>','Средняя цена входа в валюте бумаги (из брокерского отчёта).')}
-    ${row('<b>Стоимость</b>','Текущая стоимость позиции в кронах по живому курсу (kr); под ней — прибыль/убыток в % к вложенному.')}
-    ${row('<b>Чистый капитал</b>','Стоимость всех акций + свободный кэш.')}
-    ${row('<b>Кредитное плечо</b>','Доступный кредит брокера сверх собственного капитала; «Доступно с плечом» = свободные + плечо.')}
-  </div>
+  ${sec('🧪 Симуляция — тестовые покупки',
+    row('<b>Как купить</b>','Откройте карточку акции → секция «🧪 Симуляция» внизу → укажите количество и цену (предзаполнена текущей) → «Купить (тест)». Реальный портфель не затрагивается.')
+   +row('<b>Где следить</b>','В карточке акции — позиции по этой бумаге; в саб-вкладке «🧪 Симуляция» — весь тестовый портфель: вложено, стоимость сейчас и результат в kr по живым ценам и курсу.')
+   +row('<b>Закрыть позицию</b>','Кнопка 🗑 в карточке или в таблице симуляции. Клик по строке таблицы открывает карточку акции.')
+   +row('<b>Общий портфель</b>','Тестовый портфель один на обе вкладки и синхронизируется между устройствами.'))}
 
-  <div class="faq-sec"><h3>Здоровье бизнеса (карточка акции)</h3>
-    ${row('<b>Оценка 0–10</b>','Баланс (долг/капитал, ликвидность), денежный поток (FCF) и рост выручки (CAGR и год-к-году); итог — среднее. Переключатель: «Годовой отчёт» — последний фискальный год, «Послед. квартал» — свежий квартал + TTM.')}
-    ${row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.')}
-  </div>`;
+  ${sec('📐 Технические уровни и колонки',
+    row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')
+   +row('<b>Поддержка / Сопротивление</b>','Минимум и максимум цены за последние ~3 месяца торгов.')
+   +row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков (консенсус FMP / Yahoo-Refinitiv) в валюте торгов. Рядом — потенциал в % к текущей цене.')
+   +row('<b>1д %</b>','Изменение цены к закрытию предыдущей сессии.')
+   +row('<b>Доля</b>','Вес позиции в общей стоимости акций портфеля.'))}
+
+  ${sec('💼 Портфельные значения',
+    row('<b>Покупка</b>','Средняя цена входа в валюте бумаги (из брокерского отчёта).')
+   +row('<b>Стоимость</b>','Текущая стоимость позиции в кронах по живому курсу (kr); под ней — прибыль/убыток в % к вложенному.')
+   +row('<b>Чистый капитал</b>','Стоимость всех акций + свободный кэш.')
+   +row('<b>Кредитное плечо</b>','Доступный кредит брокера сверх собственного капитала; «Доступно с плечом» = свободные + плечо.'))}
+
+  ${sec('💪 Здоровье бизнеса (карточка акции)',
+    row('<b>Оценка 0–10</b>','Баланс (долг/капитал, ликвидность), денежный поток (FCF) и рост выручки (CAGR и год-к-году); итог — среднее. Переключатель: «Годовой отчёт» — последний фискальный год, «Послед. квартал» — свежий квартал + TTM.')
+   +row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.'))}`;
 }
 // ===== Settings (⚙️, admin only): users, online status, per-tab access =====
 function toggleSettings(){
@@ -913,6 +931,7 @@ function pf3AiSnapshot(){
     baseCurrency:'SEK',fxToSEK:FX,positions,
     allocation:{bySector:group('sector'),byCurrency:group('ccy')},
     totals:{stocksSEK:Math.round(totalVal),freeCashSEK:num(d.cashFree)||0,leverageSEK:num(d.leverage)||0},
+    investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
   };
 }
 
@@ -965,15 +984,68 @@ function pf3Md(t){
   return html;
 }
 
+// ===== Чат с ассистентом + его память (правила инвестора) =====
+async function aiChatSend(){
+  const inp=document.getElementById('aiChatInp');
+  const q=(inp&&inp.value||'').trim();
+  if(!q||aiChatBusy)return;
+  AI_CHAT.push({role:'user',content:q,at:new Date().toISOString()});
+  aiChatBusy=true;scheduleSave();renderPF3();
+  try{
+    const r=await fetch(PRICE_PROXY+'?action=chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:AI_PREFS,snapshot:pf3AiSnapshot()})});
+    const j=await r.json();
+    if(j&&j.reply){
+      AI_CHAT.push({role:'assistant',content:j.reply,at:new Date().toISOString()});
+      AI_CHAT=AI_CHAT.slice(-40);   // держим последние 40 сообщений
+      (j.memory||[]).forEach(m=>{const t=String(m).trim();if(t&&!AI_PREFS.includes(t)){AI_PREFS.push(t);toast('🧠 Запомнил: '+t)}});
+      scheduleSave();
+    }else toast((j&&j.error)||'AI не ответил',true);
+  }catch(e){toast('Worker недоступен или не обновлён (нужен эндпоинт ?action=chat)',true);}
+  aiChatBusy=false;
+  if(isV3())renderPF3();
+}
+function aiChatClear(){if(confirm('Очистить диалог с ассистентом? Память (правила) сохранится.')){AI_CHAT=[];scheduleSave();renderPF3()}}
+function aiPrefAdd(){
+  const inp=document.getElementById('aiPrefInp');
+  const t=(inp&&inp.value||'').trim();
+  if(!t)return;
+  if(!AI_PREFS.includes(t))AI_PREFS.push(t);
+  inp.value='';scheduleSave();renderPF3();
+}
+function aiPrefDel(i){AI_PREFS.splice(i,1);scheduleSave();renderPF3()}
+function aiChatScroll(){const b=document.getElementById('aiChatBox');if(b)b.scrollTop=b.scrollHeight}
+
 function pf3AiHTML(){
   const H=pf3AiHist(),last=H[0];
   let h=`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🤖 AI Assistant — анализ портфеля и рекомендации</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?'⏳ Анализирую… (30–60 сек)':'🔮 Проанализировать портфель'}</button>
-      <span class="pf3-ai-note">Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков и кэш — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).</span>
+      <span class="pf3-ai-note">Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков, кэш и ваши правила (🧠) — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).</span>
     </div>
     ${last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
+  </section>`;
+  // Чат: вопросы по портфелю и рынку; ассистент сам выносит устойчивые
+  // пожелания в память (список правил ниже).
+  const msgs=AI_CHAT.slice(-30).map(m=>m.role==='user'
+    ?`<div class="ai-msg user">${m.content.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
+    :`<div class="ai-msg bot">${pf3Md(m.content)}</div>`).join('');
+  h+=`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>💬 Чат с ассистентом</span><span class="pf3-asof">${AI_CHAT.length?`<a href="#" onclick="aiChatClear();return false">очистить</a>`:'видит портфель, цены и ваши правила'}</span></div>
+    <div class="ai-chat-box" id="aiChatBox">${msgs||'<div class="pf3-empty">Спросите что угодно о портфеле и рынке: «Стоит ли докупать Micron?», «Куда вложить 20 000 kr?». Скажите ассистенту свои правила — он запомнит их и будет учитывать в анализах.</div>'}${aiChatBusy?'<div class="ai-msg bot ai-typing">⏳ Ассистент думает…</div>':''}</div>
+    <form class="ai-chat-form" onsubmit="event.preventDefault();aiChatSend()">
+      <input id="aiChatInp" placeholder="Ваш вопрос или указание ассистенту…" autocomplete="off" ${aiChatBusy?'disabled':''}>
+      <button class="pf3-btn sim-buy" type="submit" ${aiChatBusy?'disabled':''}>Отправить</button>
+    </form>
+  </section>
+  <section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🧠 Память ассистента — правила инвестора</span><span class="pf3-asof">учитываются в чате и в полном анализе</span></div>
+    ${AI_PREFS.map((p,i)=>`<div class="ai-pref"><span>• ${p.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><button class="pf3-del" onclick="aiPrefDel(${i})" title="Забыть правило">🗑</button></div>`).join('')||'<div class="pf3-empty">Правил пока нет — напишите их в чате («никогда не предлагай плечо», «хочу долю защитных 20%») или добавьте вручную ниже</div>'}
+    <form class="ai-chat-form" onsubmit="event.preventDefault();aiPrefAdd()">
+      <input id="aiPrefInp" placeholder="Добавить правило вручную…" autocomplete="off">
+      <button class="pf3-btn" type="submit">➕ Запомнить</button>
+    </form>
   </section>`;
   if(H.length>1){
     h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📜 История запросов</span><span class="pf3-asof">${H.length-1} пред.</span></div>`;
@@ -1317,17 +1389,37 @@ function pf3ListHTML(){
   return items.map(it=>pf3RowHTML(d,it,port)).join('');
 }
 
-// «Сектора» / «Тип» sub-tabs. Sectors: stacked panels per group. Types: a
-// sidebar with the type list on the left; clicking a type shows its stocks
-// on the right (the largest type is selected by default).
+// «Сектора» / «Тип» sub-tabs: a sidebar with the category list on the left;
+// clicking a category shows its stocks on the right (the largest one is
+// selected by default). pf3TypeSel is shared — an unknown name after switching
+// sub-tabs simply falls back to the first group.
 let pf3TypeSel=null;
 function pf3TypeSelect(g){pf3TypeSel=g;renderPF3()}
+// Nasdaq stores ~70 granular sectors (one stock each) — the «Сектора» view
+// would be a wall of single-stock groups. Roll them up into 12 macro sectors
+// by keyword; ORDER MATTERS (e.g. «AI Networking» must hit Полупроводники
+// before «Networking» hits Железо). The portfolio keeps its own coarse labels.
+const PF3_MACRO=[
+  ['Полупроводники',/полупровод|semicond|\bsemis?\b|chip|silicon|memory|analog|ai networking/i],
+  ['Кибербезопасность',/cyber|кибер/i],
+  ['Интернет и реклама',/search|social|ad tech|mobile ads|соцсет|реклам/i],
+  ['E-commerce и сервисы',/e-?comm|delivery|travel|hotel|restaurant|путешеств|туризм/i],
+  ['Финансы и недвижимость',/fintech|payment|payroll|real estate|\breit\b|финанс|недвиж|bitcoin/i],
+  ['Здравоохранение',/biotech|pharma|\bmed\b|health|vaccin|фарма|биотех|медицин|здравоохран/i],
+  ['Потребительский сектор',/staples|beverage|retail|auto parts|потребительск|напитк/i],
+  ['Медиа и телеком',/streaming|gaming|\bmedia\b|satellite|telecom|cable|телеком|медиа/i],
+  ['Промышленность и транспорт',/industrial|logistic|truck|uniform|security|defen[cs]e|оборон|auto auctions|\bev\b|aerospace/i],
+  ['Энергетика',/power|energy|oil|solar|utilit|nuclear|энерг|коммунал|нефт/i],
+  ['Железо и сети',/server|networking|distribution|\btech\b/i],
+  ['Софт и облако',/software|cloud|saas|analytics|databas|dev tools|облач|данн|\bai\b|\bии\b/i],
+];
+const pf3MacroSector=s=>{for(const[n,re]of PF3_MACRO)if(re.test(s))return n;return s||'Прочее'};
 function pf3Groups(key){
   const d=pf3D(),port=v3Key===PF3_KEY;
   const {items,totalVal}=pf3Items();
   const groups={};
   items.forEach(it=>{
-    const g=(key==='sec'?it.sec:it.typ);
+    const g=(key==='sec'?(port?it.sec:pf3MacroSector(it.sec)):it.typ);
     const name=g&&g!=='—'?g:'Прочее';
     (groups[name]=groups[name]||[]).push(it);
   });
@@ -1345,23 +1437,17 @@ function pf3GroupSub(x,port,totalVal){
 function pf3GroupedHTML(key){
   const {d,port,totalVal,list}=pf3Groups(key);
   if(!list.length)return '<section class="pf3-panel"><div class="pf3-empty">Нет данных</div></section>';
-  if(key==='typ'){
-    const sel=list.find(x=>x.g===pf3TypeSel)||list[0];
-    const nav=list.map(x=>{
-      const m=PF3_TYPE_META[x.g];
-      return`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${x.g.replace(/'/g,"\\'")}')">
-        <span class="pf3-typenav-ico">${m?m[0]:'🏷'}</span>
-        <span class="pf3-typenav-name">${x.g}<small>${port?pf3Fmt(x.val)+' kr · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' акц.'}</small></span>
-        <span class="pf3-typenav-cnt">${x.arr.length}</span>
-      </div>`;
-    }).join('');
-    const m=PF3_TYPE_META[sel.g];
-    return`<div class="pf3-typelay">
-      <aside class="pf3-panel pf3-typenav"><div class="pf3-panel-hd"><span>Типы</span></div>${nav}</aside>
-      <section class="pf3-panel"><div class="pf3-panel-hd"><span>${m?m[0]:'🏷'} ${sel.g}</span><span class="pf3-asof">${pf3GroupSub(sel,port,totalVal)}</span></div><div class="pf3-glist">${sel.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>
-    </div>`;
-  }
-  return list.map(x=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏭 ${x.g}</span><span class="pf3-asof">${pf3GroupSub(x,port,totalVal)}</span></div><div class="pf3-glist">${x.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>`).join('');
+  const ico=g=>key==='sec'?'🏭':(PF3_TYPE_META[g]?PF3_TYPE_META[g][0]:'🏷');
+  const sel=list.find(x=>x.g===pf3TypeSel)||list[0];
+  const nav=list.map(x=>`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${x.g.replace(/'/g,"\\'")}')">
+      <span class="pf3-typenav-ico">${ico(x.g)}</span>
+      <span class="pf3-typenav-name">${x.g}<small>${port?pf3Fmt(x.val)+' kr · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' акц.'}</small></span>
+      <span class="pf3-typenav-cnt">${x.arr.length}</span>
+    </div>`).join('');
+  return`<div class="pf3-typelay ${key}">
+    <aside class="pf3-panel pf3-typenav"><div class="pf3-panel-hd"><span>${key==='sec'?'Сектора':'Типы'}</span></div>${nav}</aside>
+    <section class="pf3-panel"><div class="pf3-panel-hd"><span>${ico(sel.g)} ${sel.g}</span><span class="pf3-asof">${pf3GroupSub(sel,port,totalVal)}</span></div><div class="pf3-glist">${sel.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>
+  </div>`;
 }
 
 // Add a stock to Портфель 3.0 (form at the bottom of the list).
@@ -1432,6 +1518,10 @@ function renderPF3(){
     el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():""}${pf3GroupedHTML(pf3Tab)}</div>`;
     return;
   }
+  if(pf3Tab==='sim'){
+    el.innerHTML=`<div class="pf3-wrap">${simTabHTML()}</div>`;
+    return;
+  }
   if(pf3Tab==='cal'){
     el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():""}${pf3CalendarHTML()}</div>`;
     pf3LoadCalendar();   // no-op when cached; re-renders this tab when done
@@ -1443,6 +1533,7 @@ function renderPF3(){
   }
   if(pf3Tab==='ai'){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3AiHTML()}</div>`;
+    aiChatScroll();   // держим чат прокрученным к последнему сообщению
     return;
   }
   if(pf3Tab==='prop'){
@@ -1477,6 +1568,92 @@ function renderPF3(){
 }
 
 // The full card for the selected holding (everything: hero, stats, health, earnings, chart, buy levels).
+// ===== Симуляция: тестовые покупки без реальных денег =====
+// Живая цена тикера — из строк любой v3-вкладки (портфель, затем индекс).
+function simQuote(tk){
+  for(const k of [PF3_KEY,ANALYSIS_IDX]){
+    const d=DATA[k];if(!d)continue;
+    const r=d.rows.find(x=>String(x[2]||'').trim().toUpperCase()===tk);
+    if(r)return{price:parseFloat(r[7])||0,ccy:r[8]||'USD',day:parseFloat(r[10]),name:String(r[1]||tk),flag:r[3]&&r[3]!=='—'?r[3]+' ':''};
+  }
+  return null;
+}
+function simAdd(tk){
+  const q=parseFloat(document.getElementById('simQty').value);
+  const p=parseFloat(document.getElementById('simPrice').value);
+  if(!(q>0)||!(p>0)){alert('Укажите количество и цену покупки');return;}
+  const i=simQuote(tk)||{};
+  SIM.push({tk,name:String(i.name||tk),ccy:i.ccy||'USD',qty:q,buy:p,date:new Date().toISOString().slice(0,10)});
+  scheduleSave();renderPF3();
+}
+function simRemove(idx){
+  const s=SIM[idx];if(!s)return;
+  if(!confirm(`Закрыть тестовую позицию ${s.tk} (${pf3Fmt(s.qty)} акц.)?`))return;
+  SIM.splice(idx,1);scheduleSave();renderPF3();
+}
+// Блок «Симуляция» в карточке акции: открытые тестовые позиции + форма покупки.
+function simSection(tk,price,ccy){
+  const mine=SIM.map((s,i)=>({s,i})).filter(x=>x.s.tk===tk);
+  const rows=mine.map(({s,i})=>{
+    const inv=s.qty*s.buy,val=price>0?s.qty*price:null;
+    const plp=val!=null&&inv>0?(val/inv-1)*100:null;
+    return`<div class="sim-row">
+      <span class="sim-d">${s.date}</span>
+      <span>${pf3Fmt(s.qty)} × ${pf3Fmt(s.buy,2)} ${s.ccy}</span>
+      <span>${pf3Fmt(inv)} → ${val!=null?pf3Fmt(val):'—'} ${s.ccy}</span>
+      <span class="${plp==null||plp>=0?'pf3-up':'pf3-down'}">${plp==null?'—':(plp>0?'+':'')+plp.toFixed(1)+'%'+(val!=null?' ('+(val-inv>0?'+':'')+pf3Fmt(val-inv)+' '+s.ccy+')':'')}</span>
+      <button class="pf3-del" onclick="simRemove(${i})" title="Закрыть тестовую позицию">🗑</button>
+    </div>`;
+  }).join('');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🧪 Симуляция</span><span class="pf3-asof">тестовый режим — без реальных денег</span></div>
+    ${rows||'<div class="pf3-empty">Тестовых позиций по этой акции нет — купите ниже и следите за результатом здесь и в саб-вкладке «Симуляция»</div>'}
+    <form class="sim-form" onsubmit="event.preventDefault();simAdd('${tk}')">
+      <label>Кол-во <input id="simQty" type="number" step="any" min="0" placeholder="10"></label>
+      <label>Цена покупки (${ccy}) <input id="simPrice" type="number" step="any" min="0" value="${price>0?price:''}"></label>
+      <button class="pf3-btn sim-buy" type="submit">🧪 Купить (тест)</button>
+    </form>
+  </section>`;
+}
+// Саб-вкладка «Симуляция»: весь бумажный портфель с итогами в kr.
+function simTabHTML(){
+  let inv=0,val=0,known=true;
+  const rows=SIM.map((s,i)=>{
+    const q=simQuote(s.tk),price=q&&q.price>0?q.price:0,fx=FX[s.ccy]||1;
+    const invS=s.qty*s.buy*fx,valS=price>0?s.qty*price*fx:null;
+    inv+=invS; if(valS!=null)val+=valS; else known=false;
+    const plp=valS!=null&&invS>0?(valS/invS-1)*100:null;
+    return`<div class="sim-trow" onclick="simOpen('${s.tk}')">
+      <div class="pf3-row-logo">${s.tk.slice(0,2)}</div>
+      <div class="pf3-row-name"><b>${q?q.flag:''}${s.name||s.tk}</b><span>${s.tk} · куплено ${s.date}</span></div>
+      <div class="pf3-c">${pf3Fmt(s.qty)}</div>
+      <div class="pf3-c">${pf3Fmt(s.buy,2)} ${s.ccy}</div>
+      <div class="pf3-c">${price>0?pf3Fmt(price,2)+' '+s.ccy:'—'}${q&&isFinite(q.day)?`<small class="${q.day>=0?'pf3-up':'pf3-down'}"> ${q.day>0?'+':''}${q.day.toFixed(2)}%</small>`:''}</div>
+      <div class="pf3-c">${pf3Fmt(invS)} kr</div>
+      <div class="pf3-c"><b>${valS!=null?pf3Fmt(valS)+' kr':'—'}</b></div>
+      <div class="pf3-c ${plp==null||plp>=0?'pf3-up':'pf3-down'}">${plp==null?'—':(plp>0?'+':'')+plp.toFixed(1)+'%'}</div>
+      <div class="pf3-row-act"><button class="pf3-del" onclick="simRemove(${i});event.stopPropagation()" title="Закрыть позицию">🗑</button></div>
+    </div>`;
+  }).join('');
+  const pl=val-inv,plp=inv>0?pl/inv*100:0;
+  const sum=SIM.length?`<section class="pf3-cards">
+    <div class="pf3-card"><div class="pf3-card-l">Вложено (тест)</div><div class="pf3-card-v">${pf3Fmt(inv)} kr</div><div class="pf3-card-s">${SIM.length} позиц.</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">Стоимость сейчас</div><div class="pf3-card-v">${known?pf3Fmt(val)+' kr':'—'}</div><div class="pf3-card-s">по живым ценам и курсу</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">Результат</div><div class="pf3-card-v ${pl>=0?'pf3-up':'pf3-down'}">${known?(pl>0?'+':'')+pf3Fmt(pl)+' kr':'—'}</div><div class="pf3-card-s ${plp>=0?'pf3-up':'pf3-down'}">${known?(plp>0?'+':'')+plp.toFixed(1)+'%':''}</div></div>
+  </section>`:'';
+  return`${sum}<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🧪 Тестовый портфель</span><span class="pf3-asof">покупка — в карточке акции, кнопка «Купить (тест)»</span></div>
+    <div class="sim-thead"><span></span><span>Акция</span><span>Кол-во</span><span>Покупка</span><span>Цена</span><span>Вложено</span><span>Стоимость</span><span>П/У</span><span></span></div>
+    ${rows||'<div class="pf3-empty">Пока пусто. Откройте карточку любой акции и нажмите «🧪 Купить (тест)» — позиция появится здесь.</div>'}
+  </section>`;
+}
+// Клик по строке теста — открыть карточку акции (на вкладке, где она есть).
+function simOpen(tk){
+  const home=[PF3_KEY,ANALYSIS_IDX].find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
+  if(!home||!tabAllowed(home))return;
+  curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
+}
+
 function pf3DetailHTML(){
   const d=pf3D(),ri=pf3SelIdx();
   recalcPF(ri,v3Key);
@@ -1540,7 +1717,8 @@ function pf3DetailHTML(){
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>🛒 Уровни покупки / докупки</span><span class="pf3-asof">по техданным · авто-обновление каждые 5 мин</span></div>
       ${pf3BuySection(r,h,price,ccy)}
-    </section>`;
+    </section>
+    ${simSection(tk,price,ccy)}`;
 }
 function pf3Edit(ci,v){const ri=pf3SelIdx(),n=parseFloat(v);pf3D().rows[ri][ci]=isNaN(n)?0:n;recalcPF(ri,v3Key);scheduleSave();renderPF3()}
 function pf3SetYears(y){pf3State.years=y;renderPF3()}

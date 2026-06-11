@@ -468,7 +468,7 @@ const AI_SYSTEM = `Ты — опытный портфельный управля
 ## ✅ План действий
 Нумерованный список конкретных шагов на ближайшие 2–4 недели с суммами в kr.
 
-Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
+Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; если в снапшоте есть investorRules — это сохранённые личные правила и предпочтения инвестора, строго учитывай их во всех рекомендациях и в плане ребалансировки; в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
 
 Ответ верни строго в JSON по заданной схеме: поле report — весь анализ выше в markdown; поле proposal — машиночитаемый план ребалансировки портфеля: summary (2–3 предложения о целевой структуре) и actions — упорядоченный список конкретных сделок (action: Купить/Докупить/Сократить/Продать/Держать; details: уровень входа или выхода и краткое обоснование; amountSEK: примерная сумма сделки в кронах или null, если неприменимо).`;
 
@@ -533,6 +533,54 @@ async function aiAnalyze(env, snapshot){
     if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null };
   }catch(e){ /* schema miss — fall back to raw text below */ }
   return { text: raw, proposal: null };
+}
+
+// ── AI chat (Портфель 3.0 «AI Assistant»): multi-turn Q&A over the live
+// portfolio snapshot + the investor's saved rules. Returns {reply, memory[]}
+// where memory = new durable preferences extracted from the user's message —
+// the dashboard appends them to the rules list ("обучение" ассистента).
+const CHAT_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: { type: 'string', description: 'Ответ ассистента в markdown' },
+    memory: { type: 'array', items: { type: 'string' }, description: 'Новые устойчивые правила/предпочтения инвестора из его сообщения (пустой список, если нет)' },
+  },
+  required: ['reply', 'memory'],
+  additionalProperties: false,
+};
+const CHAT_SYSTEM = `Ты — AI-ассистент инвестиционного дашборда частного инвестора из Швеции (базовая валюта — шведская крона, kr). В системном контексте тебе передают живой снапшот портфеля (позиции, цены, SMA 50/100/200, поддержка/сопротивление, консенсус-таргеты, кэш и плечо) и сохранённые «правила инвестора».
+
+Отвечай на вопросы инвестора на русском языке, в markdown, кратко и по делу: конкретные цифры, уровни, доли и суммы в kr. Опирайся на снапшот, правила инвестора и свои знания о компаниях; не выдумывай данные, которых нет. Если вопрос про сделку — дай чёткую рекомендацию с обоснованием и уровнями.
+
+Поле memory: если в ПОСЛЕДНЕМ сообщении инвестора есть новое устойчивое предпочтение или правило на будущее (риск-профиль, стратегия, ограничения, «всегда…», «никогда…», любимые сектора, целевые доли) — сформулируй каждое одной короткой фразой от третьего лица и верни в memory. Уже переданные правила не дублируй. Если нового нет — верни пустой список.`;
+
+async function aiChat(env, body){
+  const messages = (Array.isArray(body.messages) ? body.messages : []).slice(-20)
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }))
+    .filter(m => m.content);
+  if(!messages.length) throw new Error('Пустое сообщение');
+  const ctx = `Сегодня ${new Date().toISOString().slice(0, 10)}.\n\nПравила инвестора:\n${(body.prefs || []).map(p => '• ' + p).join('\n') || '(пока нет)'}\n\nСнапшот портфеля (JSON):\n${JSON.stringify(body.snapshot || {})}`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 4000,
+      thinking: { type: 'adaptive' },
+      output_config: { format: { type: 'json_schema', schema: CHAT_SCHEMA } },
+      system: CHAT_SYSTEM + '\n\n' + ctx,
+      messages,
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  const j = await r.json();
+  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  if(!raw) throw new Error('Пустой ответ модели');
+  try{
+    const parsed = JSON.parse(raw);
+    if(parsed && parsed.reply) return { reply: parsed.reply, memory: Array.isArray(parsed.memory) ? parsed.memory : [] };
+  }catch(e){ /* schema miss — fall back to raw text */ }
+  return { reply: raw, memory: [] };
 }
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
@@ -690,6 +738,13 @@ export default {
       }catch(e){
         return json({ error: String(e.message || e) }, 500);
       }
+    }
+    if(url.searchParams.get('action') === 'chat'){
+      // POST: {messages, prefs, snapshot} → Claude chat reply + new memory rules.
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      try{ return json(await aiChat(env, await request.json())); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'ydebug'){
       // Step-by-step Yahoo auth diagnostics: ?action=ydebug&sym=RHM.DE

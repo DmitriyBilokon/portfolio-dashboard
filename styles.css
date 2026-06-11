@@ -624,3 +624,15 @@ details.faq-sec .faq-body{padding:6px 14px 12px}
 .ai-pref{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border);font-size:12px}
 .ai-pref span{flex:1;line-height:1.45}
 .ai-pref:last-of-type{border-bottom:none}
+
+/* 🏠 Home: виджеты сигналов и уровней */
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(370px,1fr));gap:12px;align-items:start;margin-top:12px}
+.home-chips{display:flex;flex-wrap:wrap;gap:8px}
+.home-chip{font-size:11px;padding:5px 11px}
+.home-row{display:grid;grid-template-columns:40px minmax(120px,1.4fr) 110px minmax(120px,1fr);gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--border);cursor:pointer;font-size:12px}
+.home-row:hover{background:var(--bg2)}
+.home-px{display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:11px}
+.home-px span{font-size:10px}
+.home-lvl{display:flex;align-items:center;gap:8px;justify-content:flex-end;font:500 10.5px 'JetBrains Mono',monospace;color:var(--text2);flex-wrap:wrap}
+.home-row .pf3-crit{justify-self:end}
+@media(max-width:560px){.home-row{grid-template-columns:40px 1fr minmax(110px,auto)}.home-row>:nth-child(4){grid-column:2/4;justify-self:start;justify-content:flex-start}}

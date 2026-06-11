@@ -125,10 +125,7 @@ async function refreshFX(){
   const live=await fetchRatesSEK();
   if(!live)return;                                  // network/source down → keep existing rates
   FX={...FX,SEK:1,...live};                          // override USD/EUR/NOK, preserve any other keys
-  const pfKey=Object.keys(DATA).find(k=>k.startsWith('💼'));
-  if(pfKey)recalcAllPF(pfKey);                       // refresh stored portfolio values even if PF isn't the open tab
   if(DATA[PF3_KEY])recalcAllPF(PF3_KEY);
-  if(isPF()){renderPFSummary();if(curSub==='table'){renderTable();renderFX();}}
   if(isV3())renderPF3();
   scheduleSave();                                    // persist live rates so the cloud + Telegram worker see them
 }
@@ -282,7 +279,7 @@ function renderAll(){
       v3Key=curIdx;pf3Sel=null;pf3Tab='list';
       pf3Sort=curIdx===PF3_KEY?{key:'val',dir:-1}:{key:'day',dir:-1};   // index default: top movers first
     }
-    ['smaBanner','pfSummary','fxBar','toolbarEl','statsBar','addPos','tableArea','rankingArea','divcalArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+    ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=v3Key===PF3_KEY;
     if(!isPort&&pf3Tab!=='list'&&pf3Tab!=='cal')pf3Tab='list';
@@ -297,261 +294,28 @@ function renderAll(){
   }
   pf3StopAutoRefresh();
   if(pf3El)pf3El.style.display='none';
-  const subs=isPF()?[['📊 Таблица','table'],['📅 Дивиденды','divcal']]:curIdx===ANALYSIS_IDX?[['📊 Таблица','table']]:[['📊 Таблица','table'],['🏆 Рейтинг','ranking']];
+  // Classic index tabs (OMXS30, S&P 500, …): table + ranking sub-tabs.
+  const subs=[['📊 Таблица','table'],['🏆 Рейтинг','ranking']];
   subs.forEach(([l,k])=>{if(k==='ranking'&&!(RANK[curIdx]?.length))return;const b=document.createElement('div');b.className='sub-tab'+(curSub===k?' active':'');b.textContent=l;b.onclick=()=>{curSub=k;renderAll()};st.appendChild(b)});
-  const smB=document.getElementById('smaBanner');smB.innerHTML='';smB.style.display=isPF()?'none':'';if(!isPF())renderSMA();
-  const pfS=document.getElementById('pfSummary'),fxB=document.getElementById('fxBar');
-  pfS.style.display=isPF()&&curSub!=='ranking'?'':'none';fxB.style.display=isPF()&&curSub==='table'?'':'none';
-  if(isPF()&&curSub!=='ranking'){renderPFSummary();if(curSub==='table')renderFX()}
+  const smB=document.getElementById('smaBanner');smB.innerHTML='';smB.style.display='';renderSMA();
   document.getElementById('tableArea').style.display=curSub==='table'?'':'none';
   document.getElementById('rankingArea').style.display=curSub==='ranking'?'':'none';
-  document.getElementById('divcalArea').style.display=curSub==='divcal'?'':'none';
   document.getElementById('toolbarEl').style.display=curSub==='table'?'':'none';
-  document.getElementById('addPos').style.display=(isPF()&&curSub==='table')?'':'none';
-  document.getElementById('statsBar').style.display=curSub==='table'&&!isPF()?'':'none';
+  document.getElementById('statsBar').style.display=curSub==='table'?'':'none';
   if(curSub==='table')renderTable();
   else if(curSub==='ranking')renderRanking();
-  else if(curSub==='divcal')renderDivCal();
 }
 
 function renderSMA(){const b=document.getElementById('smaBanner');const s=SMA_IDX[curIdx];if(!s)return;const mk=(l,v,ab)=>{const d=document.createElement('div');d.className='sma-card';d.innerHTML=`<div><div class="sma-label">${l}</div><div class="sma-val ${ab?'sma-above':'sma-below'}">${typeof v==='number'?v.toLocaleString():v}</div></div>`;return d};b.appendChild(mk('Индекс',s.price,true));b.appendChild(mk('SMA 50',s.sma50,s.price>s.sma50));b.appendChild(mk('SMA 100',s.sma100,s.price>s.sma100));b.appendChild(mk('SMA 200',s.sma200,s.price>s.sma200));const sig=document.createElement('div');sig.className='sma-signal '+(s.signal.includes('Strong')?'sig-sbuy':s.signal.includes('Sell')?'sig-sell':'sig-buy');sig.textContent=s.signal;b.appendChild(sig)}
 
-function renderFX(){const b=document.getElementById('fxBar');b.innerHTML='';const lbl=document.createElement('span');lbl.style.cssText='font-size:10px;color:var(--text3);font-family:"JetBrains Mono",monospace';lbl.textContent='💱 Курсы:';b.appendChild(lbl);['EUR','USD','NOK','DKK'].forEach(c=>{const t=document.createElement('span');t.className='fx-tag';t.innerHTML=`<b>${c}</b> `;const inp=document.createElement('input');inp.type='text';inp.className='fx-input';inp.value=FX[c].toFixed(4);inp.addEventListener('change',()=>{const nv=parseFloat(inp.value);if(!isNaN(nv)&&nv>0){FX[c]=nv;recalcAllPF();renderPFSummary();renderTable();scheduleSave()}});t.appendChild(inp);b.appendChild(t)})}
-
-function renderPFSummary(){const ps=document.getElementById('pfSummary');ps.innerHTML='';const d=DATA[curIdx];let totalVal=0,totalProfit=0;d.rows.forEach(r=>{totalVal+=parseFloat(r[13])||0;totalProfit+=parseFloat(r[11])||0});const totalCost=totalVal-totalProfit;const cash=parseFloat(d.cash)||0;const pct=totalCost>0?(totalProfit/totalCost*100):0;[{l:'Акции',v:`${Math.round(totalVal).toLocaleString()} kr`,c:'sv-blue'},{l:'Прибыль',v:`${totalProfit>0?'+':''}${Math.round(totalProfit).toLocaleString()} kr`,c:totalProfit>=0?'sv-green':'sv-red',s:`${pct>=0?'+':''}${pct.toFixed(1)}%`},{l:'Кэш',v:`${Math.round(cash).toLocaleString()} kr`,c:'sv-gold',s:`${(cash/(cash+totalVal)*100).toFixed(1)}%`},{l:'Всего',v:`${Math.round(totalVal+cash).toLocaleString()} kr`,c:'sv-blue'}].forEach(c=>{const el=document.createElement('div');el.className='pf-card';el.innerHTML=`<div class="pf-card-label">${c.l}</div><div class="pf-card-val ${c.c}">${c.v}</div>${c.s?`<div class="pf-card-sub">${c.s}</div>`:''}`;ps.appendChild(el)})}
-
-function renderDivCal(){
-  const el=document.getElementById('divcalArea');if(!el)return;
-  
-  /* All dividend events */
-  const events=[
-    {name:'AstraZeneca',ticker:'AZN',xdag:'2026-02-19',payout:'2026-03-23',dps:'19.45',ccy:'SEK',qty:16,total:311.2},
-    {name:'Microsoft',ticker:'MSFT',xdag:'2026-02-19',payout:'2026-03-12',dps:'0.91',ccy:'USD',qty:2,total:16.3},
-    {name:'KLA Corp',ticker:'KLAC',xdag:'2026-02-28',payout:'2026-03-03',dps:'1.9',ccy:'USD',qty:1,total:17.0},
-    {name:'NVIDIA',ticker:'NVDA',xdag:'2026-03-12',payout:'2026-04-02',dps:'0.01',ccy:'USD',qty:5,total:0.4},
-    {name:'Taiwan Semi',ticker:'TSM',xdag:'2026-03-17',payout:'2026-04-09',dps:'0.968',ccy:'USD',qty:3,total:25.9},
-    {name:'Broadcom',ticker:'AVGO',xdag:'2026-03-20',payout:'2026-03-31',dps:'0.59',ccy:'USD',qty:3,total:15.8},
-    {name:'Nordea Bank',ticker:'NDB',xdag:'2026-03-25',payout:'2026-04-02',dps:'10.165',ccy:'SEK',qty:150,total:1524.8},
-    {name:'Swedbank A',ticker:'SWED A',xdag:'2026-03-25',payout:'2026-03-31',dps:'20.45+9.35',ccy:'SEK',qty:30,total:894.0},
-    {name:'Novo Nordisk',ticker:'NOVO B',xdag:'2026-03-27',payout:'2026-03-31',dps:'7.95',ccy:'DKK',qty:10,total:120.8},
-    {name:'Skanska B',ticker:'SKA B',xdag:'2026-04-01',payout:'2026-04-09',dps:'8.5+5.5',ccy:'SEK',qty:40,total:560.0},
-    {name:'ASML Holding',ticker:'ASML',xdag:'2026-04-24',payout:'2026-05-05',dps:'2.7',ccy:'EUR',qty:1,total:28.6},
-    {name:'Solid Försäkring',ticker:'SFAB',xdag:'2026-04-28',payout:'2026-05-05',dps:'5.25+1.5',ccy:'SEK',qty:50,total:337.5},
-    {name:'CellaVision',ticker:'CEVI',xdag:'2026-04-29',payout:'2026-05-06',dps:'2.75',ccy:'SEK',qty:70,total:192.5},
-    {name:'Atlas Copco A',ticker:'ATCO A',xdag:'2026-04-29',payout:'2026-05-06',dps:'1.5+1.0',ccy:'SEK',qty:40,total:100.0},
-    {name:'Scandi Standard',ticker:'SCST',xdag:'2026-04-29',payout:'2026-05-06',dps:'1.65',ccy:'SEK',qty:45,total:74.2},
-    {name:'Vår Energi',ticker:'VAR',xdag:'2026-04-29',payout:'2026-05-08',dps:'1.209',ccy:'NOK',qty:100,total:113.3},
-    {name:'Hacksaw',ticker:'HACK',xdag:'2026-05-04',payout:'2026-05-12',dps:'4.248',ccy:'SEK',qty:100,total:424.8},
-    {name:'NCC B',ticker:'NCC B',xdag:'2026-05-06',payout:'2026-05-12',dps:'4.5+2.0',ccy:'SEK',qty:30,total:195.0},
-    {name:'Loomis',ticker:'LOOMIS',xdag:'2026-05-07',payout:'2026-05-13',dps:'15+5',ccy:'SEK',qty:20,total:400.0},
-    {name:'Investor AB',ticker:'INVE B',xdag:'2026-05-08',payout:'2026-05-15',dps:'4.0',ccy:'SEK',qty:20,total:80.0},
-    {name:'EQT',ticker:'EQT',xdag:'2026-05-13',payout:'2026-05-20',dps:'2.5',ccy:'SEK',qty:35,total:87.5},
-    {name:'Rheinmetall',ticker:'RHM',xdag:'2026-05-15',payout:'2026-05-16',dps:'8.1',ccy:'EUR',qty:3,total:257.3},
-    {name:'Tele2 B',ticker:'TEL2 B',xdag:'2026-05-19',payout:'2026-05-25',dps:'5.25',ccy:'SEK',qty:40,total:210.0},
-    {name:'MilDef Group',ticker:'MILDEF',xdag:'2026-05-22',payout:'2026-05-28',dps:'0.75',ccy:'SEK',qty:100,total:75.0},
-    {name:'Taiwan Semi',ticker:'TSM',xdag:'2026-06-11',payout:'2026-07-09',dps:'0.950',ccy:'USD',qty:3,total:25.5},
-    {name:'Tele2 B',ticker:'TEL2 B',xdag:'2026-10-12',payout:'2026-10-16',dps:'5.25',ccy:'SEK',qty:40,total:210.0},
-    {name:'Atlas Copco A',ticker:'ATCO A',xdag:'2026-10-19',payout:'2026-10-23',dps:'1.5+1.0',ccy:'SEK',qty:40,total:100.0},
-    {name:'NCC B',ticker:'NCC B',xdag:'2026-11-04',payout:'2026-11-10',dps:'4.5',ccy:'SEK',qty:30,total:135.0},
-    {name:'Investor AB',ticker:'INVE B',xdag:'2026-11-06',payout:'2026-11-12',dps:'1.6',ccy:'SEK',qty:20,total:32.0},
-  ];
-  
-  /* Build lookup: date → [{type, events}] */
-  const dateMap={};
-  events.forEach(ev=>{
-    /* x-dag */
-    if(!dateMap[ev.xdag])dateMap[ev.xdag]={xdag:[],before:[],payout:[]};
-    dateMap[ev.xdag].xdag.push(ev);
-    /* day before x-dag */
-    const xd=new Date(ev.xdag);
-    xd.setDate(xd.getDate()-1);
-    const bKey=xd.toISOString().slice(0,10);
-    if(!dateMap[bKey])dateMap[bKey]={xdag:[],before:[],payout:[]};
-    dateMap[bKey].before.push(ev);
-    /* payout */
-    if(!dateMap[ev.payout])dateMap[ev.payout]={xdag:[],before:[],payout:[]};
-    dateMap[ev.payout].payout.push(ev);
-  });
-  
-  const months=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const days=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-  
-  /* Monthly totals */
-  const monthTotals=new Array(12).fill(0);
-  events.forEach(ev=>{
-    const m=parseInt(ev.payout.slice(5,7))-1;
-    monthTotals[m]+=ev.total;
-  });
-  
-  const totalYear=events.reduce((a,e)=>a+e.total,0);
-  
-  let h=`<style>
-    .dc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin:16px 0}
-    .dc-month{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-    .dc-month-hdr{padding:10px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);background:var(--bg3)}
-    .dc-month-name{color:var(--text1)}
-    .dc-month-total{color:var(--green-t);font-size:12px;font-weight:600}
-    .dc-days{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:6px}
-    .dc-day-hdr{text-align:center;font-size:9px;color:var(--text2);font-weight:600;padding:2px;text-transform:uppercase}
-    .dc-day{position:relative;text-align:center;font-size:11px;padding:6px 2px;border-radius:6px;cursor:default;min-height:28px;transition:all .15s}
-    .dc-day:hover{transform:scale(1.15);z-index:5}
-    .dc-day.empty{opacity:0}
-    .dc-day.today{font-weight:900;box-shadow:inset 0 0 0 2px var(--gold)}
-    .dc-day.xdag{background:rgba(59,130,246,0.2);color:#60a5fa;font-weight:700;border:1px solid rgba(59,130,246,0.4)}
-    .dc-day.before{background:rgba(234,179,8,0.2);color:#fbbf24;font-weight:600;border:1px solid rgba(234,179,8,0.4)}
-    .dc-day.payout{background:rgba(34,197,94,0.2);color:#4ade80;font-weight:700;border:1px solid rgba(34,197,94,0.4)}
-    .dc-day.multi{box-shadow:inset 0 -3px 0 0 rgba(234,179,8,0.5)}
-    .dc-popup{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:220px;max-width:300px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.3);font-size:11px;text-align:left;pointer-events:none}
-    .dc-day:hover .dc-popup{display:block}
-    .dc-popup-title{font-weight:700;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border)}
-    .dc-popup-title.xdag{color:#60a5fa}
-    .dc-popup-title.before{color:#fbbf24}
-    .dc-popup-title.payout{color:#4ade80}
-    .dc-popup-row{display:flex;justify-content:space-between;padding:2px 0;color:var(--text1)}
-    .dc-popup-row .name{font-weight:600}
-    .dc-popup-row .amt{color:var(--green-t);font-weight:600}
-    .dc-popup-total{margin-top:4px;padding-top:4px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-weight:700;color:var(--gold)}
-    .dc-legend{display:flex;gap:14px;flex-wrap:wrap;margin:12px 0;font-size:11px}
-    .dc-legend span{display:flex;align-items:center;gap:5px}
-    .dc-legend-dot{width:14px;height:14px;border-radius:4px;display:inline-block}
-  
-/* Target progress bar */
-.tgt-bar{display:flex;align-items:center;gap:6px;min-width:150px}
-.tgt-bar-track{flex:1;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(0,0,0,0.3)}
-.tgt-bar-fill{height:100%;border-radius:4px;transition:width .4s ease;position:relative}
-.tgt-bar-fill::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,0.15) 0%,transparent 60%);border-radius:4px}
-.tgt-bar-label{font-size:9px;font-family:'JetBrains Mono',monospace;white-space:nowrap;min-width:70px;text-align:right;font-weight:600}
-</style>`;
-  
-  /* Summary */
-  h+=`<div class="pf-summary">
-    <div class="pf-card"><div class="pf-card-label">📅 Дивиденды 2026</div><div class="pf-card-val sv-green">${Math.round(totalYear).toLocaleString()} kr</div><div class="pf-card-sub">${events.length} выплат</div></div>
-    <div class="pf-card"><div class="pf-card-label">Среднее/мес</div><div class="pf-card-val sv-green">~${Math.round(totalYear/12).toLocaleString()} kr</div><div class="pf-card-sub">пассивный доход</div></div>
-    <div class="pf-card"><div class="pf-card-label">Лучший месяц</div><div class="pf-card-val sv-gold">Март</div><div class="pf-card-sub">${Math.round(monthTotals[2]).toLocaleString()} kr</div></div>
-    <div class="pf-card"><div class="pf-card-label">Компаний с дивид.</div><div class="pf-card-val">${new Set(events.map(e=>e.ticker)).size}</div><div class="pf-card-sub">из 30 позиций</div></div>
-  </div>`;
-  
-  /* Legend */
-  h+=`<div class="dc-legend">
-    <span><span class="dc-legend-dot" style="background:rgba(234,179,8,0.3);border:1px solid rgba(234,179,8,0.6)"></span> Последний день покупки</span>
-    <span><span class="dc-legend-dot" style="background:rgba(59,130,246,0.3);border:1px solid rgba(59,130,246,0.6)"></span> X-dag (экс-дивиденд)</span>
-    <span><span class="dc-legend-dot" style="background:rgba(34,197,94,0.3);border:1px solid rgba(34,197,94,0.6)"></span> Выплата дивидендов</span>
-  </div>`;
-  
-  /* Calendar grid */
-  const today=new Date().toISOString().slice(0,10);
-  
-  h+=`<div class="dc-grid">`;
-  for(let m=0;m<12;m++){
-    const yr=2026;
-    const firstDay=new Date(yr,m,1);
-    const daysInMonth=new Date(yr,m+1,0).getDate();
-    let startDay=(firstDay.getDay()+6)%7; /* Mon=0 */
-    const mTotal=monthTotals[m];
-    const hasEvents=mTotal>0;
-    
-    h+=`<div class="dc-month" style="${!hasEvents?'opacity:0.5':''}">`;
-    h+=`<div class="dc-month-hdr"><span class="dc-month-name">${months[m]}</span>`;
-    if(mTotal>0)h+=`<span class="dc-month-total">💰 ${Math.round(mTotal).toLocaleString()} kr</span>`;
-    else h+=`<span style="font-size:11px;color:var(--text2)">—</span>`;
-    h+=`</div><div class="dc-days">`;
-    
-    /* Day headers */
-    days.forEach(d=>h+=`<div class="dc-day-hdr">${d}</div>`);
-    
-    /* Empty cells before first day */
-    for(let i=0;i<startDay;i++)h+=`<div class="dc-day empty"></div>`;
-    
-    /* Day cells */
-    for(let d=1;d<=daysInMonth;d++){
-      const ds=`${yr}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const info=dateMap[ds];
-      let cls='dc-day';
-      if(ds===today)cls+=' today';
-      
-      let hasXdag=info&&info.xdag.length>0;
-      let hasBefore=info&&info.before.length>0;
-      let hasPayout=info&&info.payout.length>0;
-      
-      /* Priority: xdag > payout > before */
-      if(hasXdag)cls+=' xdag';
-      else if(hasPayout)cls+=' payout';
-      else if(hasBefore)cls+=' before';
-      
-      /* Multiple types on same day */
-      const types=[];
-      if(hasXdag)types.push('xdag');
-      if(hasBefore)types.push('before');
-      if(hasPayout)types.push('payout');
-      if(types.length>1)cls+=' multi';
-      
-      h+=`<div class="${cls}">${d}`;
-      
-      /* Popup */
-      if(hasXdag||hasBefore||hasPayout){
-        h+=`<div class="dc-popup">`;
-        let dayTotal=0;
-        
-        if(hasBefore){
-          h+=`<div class="dc-popup-title before">⚠️ Последний день покупки для:</div>`;
-          info.before.forEach(ev=>{
-            h+=`<div class="dc-popup-row"><span class="name">${ev.name}</span><span style="color:#fbbf24">x-dag: ${ev.xdag.slice(5)}</span></div>`;
-          });
-        }
-        if(hasXdag){
-          h+=`<div class="dc-popup-title xdag">📌 X-dag (экс-дивиденд):</div>`;
-          info.xdag.forEach(ev=>{
-            h+=`<div class="dc-popup-row"><span class="name">${ev.name}</span><span class="amt">${ev.dps} ${ev.ccy} ×${ev.qty}</span></div>`;
-            dayTotal+=ev.total;
-          });
-        }
-        if(hasPayout){
-          h+=`<div class="dc-popup-title payout">💰 Выплата дивидендов:</div>`;
-          info.payout.forEach(ev=>{
-            h+=`<div class="dc-popup-row"><span class="name">${ev.name}</span><span class="amt">${ev.total.toFixed(0)} kr</span></div>`;
-            dayTotal+=ev.total;
-          });
-        }
-        if(dayTotal>0){
-          h+=`<div class="dc-popup-total"><span>Итого за день:</span><span>${Math.round(dayTotal).toLocaleString()} kr</span></div>`;
-        }
-        h+=`</div>`;
-      }
-      
-      h+=`</div>`;
-    }
-    
-    h+=`</div></div>`;
-  }
-  h+=`</div>`;
-  
-  /* Monthly breakdown table */
-  h+=`<h3 style="color:var(--gold);margin-top:20px">📊 Помесячная сводка</h3>`;
-  h+=`<table class="sv-tbl"><thead><tr><th>Месяц</th><th>Сумма</th><th>Компании</th><th>Визуал</th></tr></thead><tbody>`;
-  const maxMonth=Math.max(...monthTotals);
-  months.forEach((mn,i)=>{
-    const val=monthTotals[i];
-    const evs=events.filter(e=>parseInt(e.payout.slice(5,7))-1===i);
-    const names=evs.map(e=>e.name).join(', ')||'—';
-    const barW=maxMonth>0?Math.round(val/maxMonth*100):0;
-    const cls=val>500?'sv-green':val>0?'':'';
-    h+=`<tr><td><b>${mn}</b></td><td class="${cls}"><b>${val>0?Math.round(val).toLocaleString()+' kr':'—'}</b></td><td style="font-size:10px;max-width:250px">${names}</td><td><div style="height:16px;width:${barW}%;min-width:${val>0?'2':'0'}px;background:linear-gradient(90deg,rgba(34,197,94,0.6),rgba(34,197,94,0.2));border-radius:4px"></div></td></tr>`;
-  });
-  h+=`<tr style="border-top:2px solid var(--gold)"><td><b style="color:var(--gold)">ИТОГО 2026</b></td><td class="sv-green"><b>${Math.round(totalYear).toLocaleString()} kr</b></td><td style="font-size:10px;color:var(--text2)">${events.length} выплат от ${new Set(events.map(e=>e.ticker)).size} компаний</td><td></td></tr>`;
-  h+=`</tbody></table>`;
-  
-  el.innerHTML=h;
-}
-
 function renderTable(){
   const d=DATA[curIdx],h=d.headers,ord=getOrd(),rows=getFiltered();
   document.getElementById('indexInfo').textContent=d.subtitle||curIdx;
-  if(!isPF())renderStats(rows,h);updateDelBtn();
+  renderStats(rows,h);updateDelBtn();
   const priceC=h.findIndex(x=>/^цена/i.test(x)),s50=h.findIndex(x=>/sma.?50/i.test(x)),s100=h.findIndex(x=>/sma.?100/i.test(x)),s200=h.findIndex(x=>/sma.?200/i.test(x)),tfC=h.indexOf(SMA_TF_COL),supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление');
   const thead=document.getElementById('thead');thead.innerHTML='';const tr=document.createElement('tr');
   const thD=document.createElement('th');thD.style.width='28px';tr.appendChild(thD);
   ord.forEach((ci,vi)=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const th=document.createElement('th');th.textContent=h[ci];th.draggable=true;th.dataset.vi=vi;if(ci===sortCol)th.className=sortDir===1?'sorted-asc':'sorted-desc';th.onclick=()=>toggleSort(ci);th.addEventListener('dragstart',()=>{dragSrc=vi;th.classList.add('dragging')});th.addEventListener('dragend',()=>{th.classList.remove('dragging');document.querySelectorAll('thead th').forEach(t=>t.classList.remove('drag-over'))});th.addEventListener('dragover',e=>{e.preventDefault();th.classList.add('drag-over')});th.addEventListener('dragleave',()=>th.classList.remove('drag-over'));th.addEventListener('drop',e=>{e.preventDefault();th.classList.remove('drag-over');const tgt=parseInt(th.dataset.vi);if(dragSrc!==tgt){const o=getOrd();const it=o.splice(dragSrc,1)[0];o.splice(tgt,0,it);renderAll();scheduleSave()}});tr.appendChild(th)});
-  if(isPF()){const thT=document.createElement('th');thT.textContent='🎯 Прогресс';thT.style.cssText='min-width:130px;font-size:9px';tr.appendChild(thT)}
   thead.appendChild(tr);
   const tbody=document.getElementById('tbody');tbody.innerHTML='';
   rows.forEach(row=>{const oi=row._idx,tr=document.createElement('tr');if(selected.has(oi))tr.className='selected';const tdD=document.createElement('td');tdD.style.cssText='padding:3px;text-align:center';const isPlanned=parseInt(row.data[6])===0;if(isPlanned){tr.style.background='rgba(234,179,8,0.06)';tr.style.borderLeft='3px solid var(--gold)'}const btn=document.createElement('button');btn.className='del-btn';btn.textContent='✕';btn.onclick=e=>{e.stopPropagation();if(selected.has(oi))selected.delete(oi);else selected.add(oi);updateDelBtn();tr.className=selected.has(oi)?'selected':''};tdD.appendChild(btn);tr.appendChild(tdD);const price=priceC>=0?parseFloat(row.data[priceC]):0;
@@ -562,82 +326,7 @@ function renderTable(){
   if(isSec){const[bg,fg]=getSC(String(val));td.innerHTML=`<span class="sec-tag" style="background:${bg};color:${fg}">${val||''}</span>`}
   else if(isLevel&&price>0){const lv=parseFloat(val);if(!isNaN(lv)&&lv>0){const pct=(price-lv)/price*100;const ord=(ci===resC)?'X':(ci===supC)?'Y':(pct>=0?'X':'Y');const col=lvlPctColor(Math.abs(pct),ord);const vTxt=isSma?lv.toFixed(0):lv;td.innerHTML=`${vTxt} <span class="lvl-pct" style="color:${col}">(${pct>=0?'+':'−'}${Math.abs(pct).toFixed(1)}%)</span>`;if(isSma)td.className=price>lv?'c-sma-above':'c-sma-below'}else td.textContent=val??''}
   else{const isNum=typeof val==='number';if(hdr.includes('прибыль')||hdr.includes('стоимость')||hdr.includes('белайн')){td.textContent=isNum?Math.round(val).toLocaleString():(val??'');if(hdr.includes('прибыль')){const n=parseFloat(val);td.className=n>0?'c-pos':n<0?'c-neg':''}}else if(hdr.includes('курс')){td.textContent=isNum?val.toFixed(4):(val??'');td.style.fontFamily='"JetBrains Mono",monospace';td.style.fontSize='10px';td.style.color='var(--text2)'}else{td.textContent=val===null||val===undefined?'':val;if(ci<=1||hdr.includes('компани'))td.className='c-company';else if(ci===2||hdr.includes('тикер'))td.className='c-ticker';else if(hdr.includes('коммент'))td.className='c-comment';else if((hdr.includes('sma')||hdr.includes('позиц'))&&!isSma){const v=String(val);td.className=v.includes('🟢')?'c-sma-g':v.includes('🔴')?'c-sma-r':'c-sma-y'}else if(hdr.includes('потенц')||hdr.includes('от покупки')){const n=parseFloat(String(val));if(!isNaN(n))td.className=n>0?'c-pos':n<0?'c-neg':'c-neut'}else if(hdr.includes('1д')||hdr.includes('день')){const n=parseFloat(String(val));if(!isNaN(n))td.className=n>0?'c-pos':n<0?'c-neg':'c-neut'}else if(hdr.includes('див')){const n=parseFloat(String(val));if(!isNaN(n)&&n>=5)td.className='c-div-hi';else if(!isNaN(n)&&n>=3)td.className='c-div-mid'}else if(hdr.includes('валюта')){td.style.fontWeight='600';td.style.color='var(--accent)'}else if(hdr.includes('целевая')||hdr.includes('цель')){td.style.color='var(--gold)';td.style.fontWeight='600';if(hdr.includes('kr')){const n=parseFloat(String(val));if(!isNaN(n))td.textContent=Math.round(n).toLocaleString()}}}}
-  td.addEventListener('blur',()=>{const nv=td.textContent.replace(/\s/g,'').replace(/,/g,'');const num=parseFloat(nv);const keep=hdr.includes('валют')||hdr.includes('стран')||hdr.includes('сектор')||hdr.includes('компани')||hdr.includes('тикер')||nv.includes('⭐')||nv.includes('🟢')||nv.includes('🔴');d.rows[oi][ci]=keep?nv:(!isNaN(num)?num:nv);if(isPF()){if(ci===7)manualPriceRows.delete(oi);recalcPF(oi);renderPFSummary();renderTable()}else renderStats(getFiltered(),h);scheduleSave()});if(isPF()&&ci===7&&manualPriceRows.has(oi)){td.classList.add('price-manual');td.title='Нет онлайн-цены — обновите вручную';}tr.appendChild(td)});
-  /* Target progress bar */
-  if(isPF()){
-    const curVal=parseFloat(row.data[13])||0;
-    const tgtVal=parseFloat(row.data[19])||0;
-    const action=String(row.data[21]||'');
-    const tdP=document.createElement('td');
-    tdP.style.cssText='padding:4px 8px;min-width:160px';
-    if(tgtVal>0){
-      const pct=Math.min(200,Math.round(curVal/tgtVal*100));
-      const isSell=action.includes('Продать')||action.includes('Сократить');
-      const isDone=pct>=90&&pct<=110;
-      const isOver=curVal>tgtVal*1.10;
-      const delta=tgtVal-curVal;
-      let fillW=Math.min(100,pct);
-      let fillColor,bgGlow,icon,labelColor,labelText,pctColor;
-
-      if(isSell){
-        /* Red: need to sell/reduce — show how much OVER target */
-        const overPct=Math.min(100,Math.round(curVal/tgtVal*100));
-        fillW=Math.min(100,overPct);
-        fillColor='linear-gradient(90deg,#ef4444,#f87171)';
-        bgGlow='rgba(239,68,68,0.08)';
-        icon='📉';
-        labelColor='#f87171';
-        labelText=delta<0?Math.round(delta/1000).toLocaleString()+'K':'0';
-        pctColor='#f87171';
-      } else if(isDone){
-        /* Gold: target reached */
-        fillColor='linear-gradient(90deg,#d97706,#f59e0b)';
-        bgGlow='rgba(245,158,11,0.08)';
-        icon='✅';
-        labelColor='#f59e0b';
-        labelText='цель';
-        pctColor='#f59e0b';
-      } else if(isOver){
-        /* Orange-red: slightly over */
-        fillColor='linear-gradient(90deg,#ea580c,#f97316)';
-        bgGlow='rgba(249,115,22,0.08)';
-        icon='⚠️';
-        labelColor='#fb923c';
-        labelText=Math.round(delta/1000).toLocaleString()+'K';
-        pctColor='#fb923c';
-      } else {
-        /* Green: need to buy more */
-        fillColor='linear-gradient(90deg,#059669,#34d399)';
-        bgGlow='rgba(52,211,153,0.08)';
-        icon=pct<30?'🔵':pct<70?'🟡':'🟢';
-        labelColor='#34d399';
-        labelText='+'+Math.round(delta/1000).toLocaleString()+'K';
-        pctColor='#34d399';
-      }
-
-      let htm='<div style="display:flex;flex-direction:column;gap:2px;background:'+bgGlow+';padding:4px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03)">';
-      /* Top row: icon + pct + delta */
-      htm+='<div style="display:flex;justify-content:space-between;align-items:center">';
-      htm+='<span style="font-size:10px">'+icon+'</span>';
-      htm+='<span style="font-size:10px;font-weight:700;color:'+pctColor+';font-family:JetBrains Mono,monospace">'+pct+'%</span>';
-      htm+='<span style="font-size:9px;font-weight:600;color:'+labelColor+';font-family:JetBrains Mono,monospace">'+labelText+'</span>';
-      htm+='</div>';
-      /* Bar */
-      htm+='<div class="tgt-bar-track"><div class="tgt-bar-fill" style="width:'+fillW+'%;background:'+fillColor+'"></div></div>';
-      /* Bottom: current / target */
-      htm+='<div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text3);font-family:JetBrains Mono,monospace">';
-      htm+='<span>'+Math.round(curVal/1000)+'K</span>';
-      htm+='<span>→ '+Math.round(tgtVal/1000)+'K</span>';
-      htm+='</div>';
-      htm+='</div>';
-      tdP.innerHTML=htm;
-    } else if(parseInt(row.data[6])===0){
-      tdP.innerHTML='<div style="display:flex;align-items:center;gap:4px;background:rgba(96,165,250,0.08);padding:6px 8px;border-radius:8px;border:1px solid rgba(96,165,250,0.15)"><span style="font-size:12px">🆕</span><span style="font-size:10px;color:#60a5fa;font-weight:600">Новая позиция</span></div>';
-    } else {
-      tdP.innerHTML='<span style="font-size:9px;color:var(--text3)">—</span>';
-    }
-    tr.appendChild(tdP);
-  }
+  td.addEventListener('blur',()=>{const nv=td.textContent.replace(/\s/g,'').replace(/,/g,'');const num=parseFloat(nv);const keep=hdr.includes('валют')||hdr.includes('стран')||hdr.includes('сектор')||hdr.includes('компани')||hdr.includes('тикер')||nv.includes('⭐')||nv.includes('🟢')||nv.includes('🔴');d.rows[oi][ci]=keep?nv:(!isNaN(num)?num:nv);renderStats(getFiltered(),h);scheduleSave()});tr.appendChild(td)});
   tbody.appendChild(tr)})}
 
 function getFiltered(){const d=DATA[curIdx];let rows=d.rows.map((r,i)=>({data:r,_idx:i}));if(searchTerm){const s=searchTerm.toLowerCase();rows=rows.filter(r=>r.data.some(v=>String(v).toLowerCase().includes(s)))}if(sortCol>=0&&sortDir>0)rows.sort((a,b)=>{let va=a.data[sortCol],vb=b.data[sortCol];const na=parseFloat(va),nb=parseFloat(vb);if(!isNaN(na)&&!isNaN(nb))return sortDir===1?na-nb:nb-na;return sortDir===1?String(va||'').localeCompare(String(vb||'')):String(vb||'').localeCompare(String(va||''))});return rows}
@@ -1662,7 +1351,6 @@ async function refreshLivePrices(){
     }
   }
 
-  if(isPF()){ recalcAllPF(); renderPFSummary(); }   // value/profit recalc is portfolio-only
   renderTable(); scheduleSave();
   if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
   toast(`🔄 ${updated} обновлено · ${manual} вручную` + (manual ? ' (выделены жёлтым)' : ''));
@@ -1700,31 +1388,6 @@ function toggleCol(ci){
 function showAllCols(){
   hiddenCols[curIdx] = []; scheduleSave(); renderTable();
   const m = document.getElementById('colsMenu'); if(m) m.remove();
-}
-
-/* ===== Add a portfolio position ===== */
-function addPosition(e){
-  if(e) e.preventDefault();
-  if(!isPF()) return;
-  const t = document.getElementById('apTicker').value.trim().toUpperCase();
-  const shares = parseFloat(document.getElementById('apShares').value);
-  const buy = parseFloat(document.getElementById('apBuy').value);
-  const ccy = document.getElementById('apCcy').value;
-  if(!t || !(shares > 0) || !(buy > 0)){ toast('Заполните тикер, кол-во и цену покупки', true); return; }
-  const flag = {USD:'🇺🇸',EUR:'🇪🇺',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰'}[ccy] || '';
-  const d = DATA[curIdx];
-  // schema: #,Компания,Тикер,Страна,Сектор,Тип,Кол-во,Цена,Валюта,Покупка,1д%,Прибыль,От покупки%,Стоимость,X-dag,Выплата,SMA50,SMA100,SMA200,Целевая,Цель%,Действие
-  // current price starts at the buy price (P/L 0) — run 🔄 Цены to fetch the live price.
-  d.rows.push([d.rows.length+1, t, t, flag, '—', '—', shares, buy, ccy, buy, 0, 0, 0, 0, '—','—','—','—','—',0,0,'⚪ Держать']);
-  recalcPF(d.rows.length-1);
-  d.count = d.rows.length;
-  document.getElementById('apTicker').value = '';
-  document.getElementById('apShares').value = '';
-  document.getElementById('apBuy').value = '';
-  scheduleSave();
-  init();
-  document.getElementById('apTicker').focus();
-  toast(t + ' добавлен');
 }
 
 boot();

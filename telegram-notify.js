@@ -24,7 +24,8 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const PF_KEY = '💼 Портфель 2.0';
+const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
+const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
@@ -37,6 +38,11 @@ function exSymbol(ticker, ccy){
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const round2 = n => Math.round(n * 100) / 100;
 const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
+
+// Response helpers shared by every route.
+const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json; charset=utf-8' };
+const json = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: CORS });
+const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
 // Fetch a Yahoo Finance chart and return chart.result[0] (or null on any failure).
 const YH_HEADERS = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
@@ -94,15 +100,11 @@ async function dailyHistory(sym, range = '2y'){
   return c.length ? { t, c } : null;
 }
 
+// Портфель 3.0 is the portfolio of record; fall back to 2.0 for old states.
 async function loadPortfolio(env){
-  const r = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/ledger_state?select=data&order=updated_at.desc&limit=1`,
-    { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
-  );
-  if(!r.ok) throw new Error('Supabase read failed: ' + r.status);
-  const snap = (await r.json())?.[0]?.data;
-  // Портфель 3.0 is the portfolio of record now; fall back to 2.0 for old states.
-  const pf = snap && snap.data && (snap.data['🚀 Портфель 3.0'] || snap.data[PF_KEY]);
+  const row = await loadRow(env);
+  const snap = row && row.snap;
+  const pf = snap && snap.data && (snap.data[PF3_KEY] || snap.data[PF_KEY]);
   if(!pf) return null;
   return { rows: pf.rows, fx: snap.fx || FX_DEFAULT };
 }
@@ -618,7 +620,6 @@ async function writeRow(env, userId, snap){
 }
 // Add the target column if missing, fill it (FMP → Yahoo consensus fallback for
 // EU/Nordic tickers) on BOTH portfolio tabs, and persist back to Supabase.
-const PF3_KEY = '🚀 Портфель 3.0';
 async function updateTargets(env){
   const row = await loadRow(env);
   const tabs = [PF_KEY, PF3_KEY].map(k => row && row.snap && row.snap.data && row.snap.data[k]).filter(Boolean);
@@ -668,27 +669,26 @@ export default {
   // GET with no query             → run the alert report now (manual test).
   async fetch(request, env){
     const url = new URL(request.url);
-    const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json; charset=utf-8' };
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
       if(dbg){
         const fr = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(dbg)}&apikey=${env.FMP_KEY}`);
-        return new Response(`FMP HTTP ${fr.status}\n\n` + await fr.text(), { headers: { 'Content-Type':'text/plain; charset=utf-8' } });
+        return txt(`FMP HTTP ${fr.status}\n\n` + await fr.text());
       }
-      try{ const t = await updateTargets(env); return new Response(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`, { headers: { 'Content-Type':'text/plain; charset=utf-8' } }); }
-      catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+      try{ const t = await updateTargets(env); return txt(`Targets updated: ${t.updated}/${t.total}\n\n${(t.details || []).join('\n')}`); }
+      catch(e){ return txt('Error: ' + e.message, 500); }
     }
     if(url.searchParams.get('action') === 'ai'){
       // POST: portfolio snapshot JSON → Claude analysis → {text} (Портфель 3.0 «AI Assistant»).
-      if(!env.ANTHROPIC_API_KEY) return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }), { status: 500, headers: CORS });
-      if(request.method !== 'POST') return new Response(JSON.stringify({ error: 'POST required' }), { status: 405, headers: CORS });
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       try{
         const snapshot = await request.json();
         const out = await aiAnalyze(env, snapshot);   // { text, proposal }
-        return new Response(JSON.stringify(out), { headers: CORS });
+        return json(out);
       }catch(e){
-        return new Response(JSON.stringify({ error: String(e.message || e) }), { status: 500, headers: CORS });
+        return json({ error: String(e.message || e) }, 500);
       }
     }
     if(url.searchParams.get('action') === 'ydebug'){
@@ -703,14 +703,14 @@ export default {
         lines.push(`quoteSummary(${sym}) status: ${r.status}`);
         lines.push('body: ' + (await r.text()).slice(0, 600));
       }else lines.push('yAuth FAILED — no cookie/crumb');
-      return new Response(lines.join('\n'), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      return txt(lines.join('\n'));
     }
     if(url.searchParams.has('fundamentals')){
       // Balance / cash-flow / growth snapshot for one symbol (FMP) → Портфель 3.0 health cards.
       // Optional &period=quarter → latest quarterly balance + TTM cash flow / revenue.
       const per = url.searchParams.get('period') === 'quarter' ? 'quarter' : 'annual';
       const f = await fundamentals(url.searchParams.get('fundamentals').trim().toUpperCase(), env, per);
-      return new Response(JSON.stringify(f), { headers: CORS });
+      return json(f);
     }
     if(url.searchParams.has('profile')){
       // Company profile (name + sector) → auto-fill when adding a stock in Портфель 3.0.
@@ -721,31 +721,31 @@ export default {
         industry: qs.assetProfile?.industry || null,
         country: qs.assetProfile?.country || null,
       } : null;
-      return new Response(JSON.stringify(out || {}), { headers: CORS });
+      return json(out || {});
     }
     if(url.searchParams.has('calendar')){
       // Batch: next earnings date + dividend info per symbol → «Дивиденды и отчёты».
       const syms = url.searchParams.get('calendar').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
       await Promise.all(syms.map(async s => { out[s] = await calendarInfo(s); }));
-      return new Response(JSON.stringify(out), { headers: CORS });
+      return json(out);
     }
     if(url.searchParams.has('earnings')){
       // Next earnings date + consensus estimates (FMP) → Портфель 3.0 «Ближайший отчёт».
       const e = await earningsInfo(url.searchParams.get('earnings').trim().toUpperCase(), env);
-      return new Response(JSON.stringify(e || { next: null, last: null }), { headers: CORS });
+      return json(e || { next: null, last: null });
     }
     if(url.searchParams.has('history')){
       // Daily close series for one symbol → powers the dashboard's stock chart popup.
       // Optional &range= (e.g. 2y, 5y); defaults to 2y.
       const range = (url.searchParams.get('range') || '2y').trim();
       const h = await dailyHistory(url.searchParams.get('history').trim(), range);
-      return new Response(JSON.stringify(h || { t: [], c: [] }), { headers: CORS });
+      return json(h || { t: [], c: [] });
     }
     if(url.searchParams.get('action') === 'chart'){
       // Manual test: send the CHART_TICKER chart photo to Telegram now.
-      try{ const ok = await sendChartMU(env); return new Response(ok ? `Chart sent ✓ (${CHART_TICKER})` : `No chart (${CHART_TICKER} not in portfolio or render failed)`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }
-      catch(e){ return new Response('Error: ' + e.message, { status: 500 }); }
+      try{ const ok = await sendChartMU(env); return txt(ok ? `Chart sent ✓ (${CHART_TICKER})` : `No chart (${CHART_TICKER} not in portfolio or render failed)`); }
+      catch(e){ return txt('Error: ' + e.message, 500); }
     }
     if(url.searchParams.has('symbols')){
       const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
@@ -755,14 +755,14 @@ export default {
         if(q){ const w = await weeklySMA(s); if(w) Object.assign(q, w); }   // add sma50w/100w/200w (3-year view)
         out[s] = q;   // {price, pct, sma50/100/200, support, resistance, sma50w/100w/200w} | null
       }));
-      return new Response(JSON.stringify(out), { headers: CORS });
+      return json(out);
     }
     try{
       const text = await buildReport(env);
-      if(text){ await sendTelegram(env, text); return new Response('Sent ✓\n\n' + text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }); }
-      return new Response('Nothing to report right now (no holding is near a level).', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      if(text){ await sendTelegram(env, text); return txt('Sent ✓\n\n' + text); }
+      return txt('Nothing to report right now (no holding is near a level).');
     }catch(e){
-      return new Response('Error: ' + e.message, { status: 500 });
+      return txt('Error: ' + e.message, 500);
     }
   },
 };

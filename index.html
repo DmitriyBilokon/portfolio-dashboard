@@ -13,18 +13,9 @@
 <div class="tabs" id="tabs"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
-<div class="pf-summary" id="pfSummary" style="display:none"></div>
-<div class="fx-bar" id="fxBar" style="display:none"></div>
 <div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены через Finnhub">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
 <div class="stats" id="statsBar"></div>
-<form class="add-pos" id="addPos" style="display:none" onsubmit="addPosition(event)">
-  <input type="text" id="apTicker" class="ap-in" placeholder="Тикер" autocomplete="off">
-  <input type="number" id="apShares" class="ap-in" placeholder="Кол-во" step="any" min="0">
-  <input type="number" id="apBuy" class="ap-in" placeholder="Цена покупки" step="any" min="0">
-  <select id="apCcy" class="ap-in"><option>USD</option><option>EUR</option><option selected>SEK</option><option>NOK</option><option>DKK</option></select>
-  <button class="btn btn-export" type="submit">➕ Добавить позицию</button>
-</form>
-<div id="contentArea"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="divcalArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
+<div id="contentArea"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
 <div class="auth-overlay hidden" id="authOverlay">
   <form class="auth-card" onsubmit="handleLogin(event)">
     <h1>📈 <span>Index</span> Dashboard</h1>

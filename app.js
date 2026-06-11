@@ -1450,18 +1450,21 @@ function pf3GroupedHTML(key){
   </div>`;
 }
 
-// Add a stock to Портфель 3.0 (form at the bottom of the list).
+// Add a stock to Портфель 3.0 or to the Nasdaq 100 watchlist (form at the
+// bottom of the list). Index mode needs only the ticker — qty/buy stay 0;
+// name, sector, type, price and levels are auto-filled right after.
 function pf3Add(e){
   if(e)e.preventDefault();
+  const port=v3Key===PF3_KEY;
   const t=document.getElementById('pf3AddTicker').value.trim().toUpperCase();
-  const sh=parseFloat(document.getElementById('pf3AddQty').value);
-  const buy=parseFloat(document.getElementById('pf3AddBuy').value);
+  const sh=port?parseFloat(document.getElementById('pf3AddQty').value):0;
+  const buy=port?parseFloat(document.getElementById('pf3AddBuy').value):0;
   const ccy=document.getElementById('pf3AddCcy').value;
-  if(!t||!(sh>0)||!(buy>0)){toast('Заполните тикер, кол-во и цену покупки',true);return}
+  if(!t||(port&&(!(sh>0)||!(buy>0)))){toast(port?'Заполните тикер, кол-во и цену покупки':'Укажите тикер',true);return}
   const d=pf3D();
   if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===t)){toast(t+' уже в списке',true);return}
   const flag={USD:'🇺🇸',EUR:'🇪🇺',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰'}[ccy]||'';
-  const row=[d.rows.length+1,PF3_NAMES[t]||t,t,flag,'—','Акция',sh,buy,ccy,buy,0,0,0,0,'—','—','','','',0,0,'⚪ Держать'];
+  const row=[d.rows.length+1,PF3_NAMES[t]||t,t,flag,'—','Акция',sh||0,buy||0,ccy,buy||0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать'];
   while(row.length<d.headers.length)row.push('');
   d.rows.push(row);
   d.count=d.rows.length;
@@ -1500,7 +1503,7 @@ function pf3Delete(tk,ev){
   if(ev)ev.stopPropagation();
   const d=pf3D(),i=d.rows.findIndex(r=>String(r[2]||'')===tk);
   if(i<0)return;
-  if(!confirm('Удалить '+tk+' из Портфеля 3.0?'))return;
+  if(!confirm('Удалить '+tk+' из «'+v3Key+'»?'))return;
   d.rows.splice(i,1);
   d.rows.forEach((r,j)=>r[0]=j+1);
   d.count=d.rows.length;
@@ -1548,11 +1551,11 @@ function renderPF3(){
       <div class="pf3-list-hd"><span>📋 Акции · ${v3Key===PF3_KEY?'Портфель 3.0':v3Key}</span>${open?'':'<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">🔄 Обновить акции</button>'}</div>
       ${pf3ListHead()}
       ${pf3ListHTML()}
-      ${open||v3Key!==PF3_KEY||!isAdmin()?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
+      ${open||!isAdmin()?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
         <input id="pf3AddTicker" placeholder="Тикер" autocomplete="off">
-        <input id="pf3AddQty" type="number" step="any" min="0" placeholder="Кол-во">
-        <input id="pf3AddBuy" type="number" step="any" min="0" placeholder="Цена покупки">
-        <select id="pf3AddCcy"><option>USD</option><option>EUR</option><option selected>SEK</option><option>NOK</option><option>DKK</option></select>
+        ${v3Key===PF3_KEY?`<input id="pf3AddQty" type="number" step="any" min="0" placeholder="Кол-во">
+        <input id="pf3AddBuy" type="number" step="any" min="0" placeholder="Цена покупки">`:''}
+        <select id="pf3AddCcy"><option${v3Key===PF3_KEY?'':' selected'}>USD</option><option>EUR</option><option${v3Key===PF3_KEY?' selected':''}>SEK</option><option>NOK</option><option>DKK</option></select>
         <button class="pf3-btn" type="submit">➕ Добавить акцию</button>
       </form>
       <div class="pf3-empty" style="padding:4px 4px">Нажмите на строку — карточка с полными данными откроется слева от списка</div>`}

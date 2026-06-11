@@ -485,3 +485,37 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 
 /* Группированные виды «Сектора» / «Тип» */
 .pf3-glist{display:flex;flex-direction:column;gap:8px}
+.pf3-typ.def{border-color:rgba(217,119,6,.4);color:var(--yellow-t);background:var(--yellow-bg)}
+
+/* Типы в стиле Avanza: Защитная/Качественная/Циклическая/Дивидендная/Рост/Стоимость */
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(110px,1.5fr) minmax(70px,0.9fr) 116px 50px 64px 92px 88px 52px 144px 52px}
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(125px,1.6fr) minmax(90px,1fr) 116px 96px 72px 94px 148px 52px}
+.pf3-typ.qual{border-color:rgba(96,165,250,.4);color:var(--blue-t);background:var(--blue-bg)}
+.pf3-typ.div{border-color:rgba(34,197,94,.4);color:var(--green-t);background:var(--green-bg)}
+.pf3-typ.gro{border-color:rgba(124,58,237,.35);color:var(--purple-t,#7c3aed);background:var(--purple-bg,rgba(124,58,237,.1))}
+.pf3-typ.cyc{border-color:rgba(239,68,68,.3);color:var(--red-t);background:var(--red-bg)}
+.pf3-typ.val{border-color:var(--border);color:var(--text2);background:var(--bg3)}
+
+/* Саб-вкладка «Тип»: слева список типов, справа акции выбранного типа */
+.pf3-typelay{display:grid;grid-template-columns:250px 1fr;gap:12px;align-items:start}
+.pf3-typenav{position:sticky;top:12px}
+.pf3-typenav-it{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;cursor:pointer;border:1px solid transparent;margin-bottom:2px}
+.pf3-typenav-it:hover{background:var(--bg2)}
+.pf3-typenav-it.active{background:var(--blue-bg);border-color:rgba(96,165,250,.35)}
+.pf3-typenav-ico{font-size:16px}
+.pf3-typenav-name{flex:1;font-weight:600;font-size:12.5px;display:flex;flex-direction:column;gap:1px}
+.pf3-typenav-name small{font:500 10px 'JetBrains Mono',monospace;color:var(--text2)}
+.pf3-typenav-cnt{font:600 10px 'JetBrains Mono',monospace;background:var(--bg3);border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--text2)}
+/* Внутри вида типа колонка «Тип» избыточна — убираем её из сетки строк */
+.pf3-typelay .pf3-c-typ{display:none}
+@media(min-width:901px){
+  .pf3-typelay .pf3-row{grid-template-columns:40px minmax(110px,1.5fr) minmax(70px,0.9fr) 50px 64px 92px 88px 52px 144px 52px}
+  .pf3-typelay .pf3-row.idx{grid-template-columns:40px minmax(125px,1.6fr) minmax(90px,1fr) 96px 72px 94px 148px 52px}
+}
+@media(max-width:900px){
+  .pf3-typelay{grid-template-columns:1fr}
+  .pf3-typenav{position:static;display:flex;flex-wrap:wrap;gap:6px;padding-bottom:10px}
+  .pf3-typenav .pf3-panel-hd{display:none}
+  .pf3-typenav-it{margin-bottom:0;padding:6px 10px}
+  .pf3-typenav-name small{display:none}
+}

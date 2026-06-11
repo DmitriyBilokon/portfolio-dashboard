@@ -219,8 +219,51 @@ function migrateBrokerSnap20260610(){
 const PF3_NAMES={MU:'Micron Technology',AVGO:'Broadcom',BKNG:'Booking Holdings',RHM:'Rheinmetall',O:'Realty Income',MSFT:'Microsoft',META:'Meta Platforms',GOOG:'Alphabet (Class C)',NVDA:'NVIDIA',MCHP:'Microchip Technology',AZN:'AstraZeneca',MSTR:'Strategy (MicroStrategy)'};
 // Sectors for rows that have none ('—'); applied only when the cell is empty.
 const PF3_SECTORS={MU:'Полупроводники',AVGO:'Полупроводники',MCHP:'Полупроводники',AZN:'Фармацевтика',BKNG:'Путешествия / E-commerce',MSFT:'Software / Cloud',META:'Соцсети / Реклама',GOOG:'Search / Cloud',NVDA:'ИИ / Чипы',O:'Недвижимость (REIT)',RHM:'Оборона',MSTR:'Bitcoin / Software'};
-// Instrument type (r[5]): default «Акция»; specials listed here.
-const PF3_TYPES={O:'REIT',PLD:'REIT'};
+// Avanza-style instrument types (r[5]): Защитная · Качественная · Циклическая ·
+// Дивидендная · Рост · Стоимость (+ ETF/Фонд from the Yahoo quoteType, never
+// overwritten). Recomputed on every load so a stale synced value heals itself:
+// per-ticker map first, sector-based fallback for stocks added later.
+const PF3_TYPE_META={'Защитная':['🛡','def'],'Качественная':['💎','qual'],'Циклическая':['🔄','cyc'],'Дивидендная':['💰','div'],'Рост':['🚀','gro'],'Стоимость':['📊','val'],'ETF':['🧺','etf'],'Фонд':['🧺','etf']};
+const PF3_TYPES={
+  // Портфель 3.0
+  MU:'Циклическая',AVGO:'Качественная',MCHP:'Циклическая',AZN:'Защитная',BKNG:'Качественная',
+  MSFT:'Качественная',META:'Рост',GOOG:'Качественная',GOOGL:'Качественная',NVDA:'Рост',
+  O:'Дивидендная',PLD:'Дивидендная',RHM:'Рост',MSTR:'Рост',
+  // Nasdaq 100 — мегакэпы / качество
+  AAPL:'Качественная',AMZN:'Рост',NFLX:'Рост',TSLA:'Рост',COST:'Качественная',
+  ASML:'Качественная',TXN:'Качественная',ADI:'Качественная',LIN:'Качественная',HON:'Качественная',
+  INTU:'Качественная',ADBE:'Качественная',CRM:'Качественная',SNPS:'Качественная',CDNS:'Качественная',
+  ADP:'Качественная',VRSK:'Качественная',CTAS:'Качественная',CPRT:'Качественная',ORLY:'Качественная',
+  ROST:'Качественная',ODFL:'Качественная',EA:'Качественная',SBUX:'Качественная',MAR:'Циклическая',
+  MNST:'Качественная',VRTX:'Качественная',MELI:'Рост',
+  // Рост: ИИ, облако, кибербезопасность, биотех-спекулятивные
+  AMD:'Рост',ARM:'Рост',MRVL:'Рост',SMCI:'Рост',PLTR:'Рост',APP:'Рост',TTD:'Рост',
+  SNOW:'Рост',DDOG:'Рост',MDB:'Рост',TEAM:'Рост',WDAY:'Рост',CSGP:'Рост',
+  PANW:'Рост',CRWD:'Рост',FTNT:'Рост',ZS:'Рост',ANET:'Рост',AXON:'Рост',DASH:'Рост',
+  ISRG:'Рост',DXCM:'Рост',MRNA:'Рост',CEG:'Рост',GEV:'Рост',LCID:'Рост',
+  // Циклические: полупроводниковое оборудование, память, авто, энергосервис
+  AMAT:'Циклическая',LRCX:'Циклическая',KLAC:'Циклическая',INTC:'Циклическая',QCOM:'Циклическая',
+  ON:'Циклическая',PCAR:'Циклическая',CDW:'Циклическая',BKR:'Циклическая',ENPH:'Циклическая',
+  // Защитные: фарма, потребтовары, коммунальные, телеком
+  GILD:'Защитная',GEHC:'Защитная',PEP:'Защитная',MDLZ:'Защитная',TMUS:'Защитная',EXC:'Защитная',
+  // Дивидендные и стоимостные
+  KHC:'Дивидендная',CSCO:'Дивидендная',
+  CHTR:'Стоимость',WBD:'Стоимость',SIRI:'Стоимость',PYPL:'Стоимость',DLTR:'Стоимость',DG:'Стоимость',
+};
+const PF3_REIT_RE=/\breit\b|недвиж/i;
+const PF3_DEF_RE=/фарма|pharma|здравоохран|health|медицин|потребительск|staples|consumer defensive|beverages|напитк|utilit|коммунал|телеком|telecom/i;
+const PF3_GRO_RE=/software|облач|cloud|\bии\b|\bai\b|интернет|e-?comm|соцсет|social|биотех|biotech|кибер|cyber|данн|data|стриминг|streaming|search/i;
+const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace/i;
+function pf3DeriveType(tk,sec,cur){
+  if(/etf|фонд/i.test(cur||''))return cur;
+  if(PF3_TYPES[tk])return PF3_TYPES[tk];
+  const s=sec||'';
+  if(PF3_REIT_RE.test(s))return 'Дивидендная';
+  if(PF3_DEF_RE.test(s))return 'Защитная';
+  if(PF3_GRO_RE.test(s))return 'Рост';
+  if(PF3_CYC_RE.test(s))return 'Циклическая';
+  return 'Качественная';
+}
 function fixCompanyNames(){
   let touched=false;
   ['💼 Портфель 2.0',PF3_KEY,ANALYSIS_IDX].forEach(k=>{
@@ -230,8 +273,8 @@ function fixCompanyNames(){
       const proper=PF3_NAMES[tk],sec=PF3_SECTORS[tk];
       if(proper&&(!r[1]||String(r[1]).trim().toUpperCase()===tk)){r[1]=proper;touched=true;}
       if(sec&&(!r[4]||r[4]==='—')){r[4]=sec;touched=true;}
-      const typ=PF3_TYPES[tk]||((!r[5]||r[5]==='—')?'Акция':null);
-      if(typ&&r[5]!==typ){r[5]=typ;touched=true;}
+      const typ=pf3DeriveType(tk,r[4],r[5]);
+      if(r[5]!==typ){r[5]=typ;touched=true;}
     });
   });
   if(touched&&!applyingRemote)scheduleSave();
@@ -280,7 +323,7 @@ function renderAll(){
   const pf3El=document.getElementById('pf3Area');
   if(isV3()){
     if(v3Key!==curIdx){   // switched between Портфель 3.0 and Nasdaq 100 — rebind the v3 UI
-      v3Key=curIdx;pf3Sel=null;pf3Tab='list';
+      v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel=null;
       pf3Sort=curIdx===PF3_KEY?{key:'val',dir:-1}:{key:'day',dir:-1};   // index default: top movers first
     }
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
@@ -1078,7 +1121,7 @@ function pf3RowHTML(d,it,port){
     <div class="pf3-row-logo">${tk.slice(0,2)}</div>
     <div class="pf3-row-name"><b>${flag}${name||tk}</b><span>${tk}</span></div>
     <div class="pf3-c pf3-c-sec">${r[4]&&r[4]!=='—'?r[4]:'—'}</div>
-    <div class="pf3-c pf3-c-typ"><span class="pf3-typ${/reit/i.test(r[5])?' reit':/etf|фонд/i.test(r[5])?' etf':''}">${r[5]&&r[5]!=='—'?r[5]:'Акция'}</span></div>
+    <div class="pf3-c pf3-c-typ"><span class="pf3-typ${PF3_TYPE_META[r[5]]?' '+PF3_TYPE_META[r[5]][1]:''}">${PF3_TYPE_META[r[5]]?PF3_TYPE_META[r[5]][0]+' ':''}${r[5]&&r[5]!=='—'?r[5]:'—'}</span></div>
     ${cells}
     <div class="pf3-c pf3-c-sig">${pf3RowSignal(d,r)}</div>
     <div class="pf3-row-act"><button class="pf3-del" onclick="pf3Delete('${tk}',event)" title="Удалить акцию">🗑</button><span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span></div>
@@ -1093,30 +1136,51 @@ function pf3ListHTML(){
   return items.map(it=>pf3RowHTML(d,it,port)).join('');
 }
 
-// «Сектора» / «Тип» sub-tabs: the same rows grouped into a panel per category,
-// with per-group totals (value + share for the portfolio, count + avg day % for indexes).
-function pf3GroupedHTML(key){
+// «Сектора» / «Тип» sub-tabs. Sectors: stacked panels per group. Types: a
+// sidebar with the type list on the left; clicking a type shows its stocks
+// on the right (the largest type is selected by default).
+let pf3TypeSel=null;
+function pf3TypeSelect(g){pf3TypeSel=g;renderPF3()}
+function pf3Groups(key){
   const d=pf3D(),port=v3Key===PF3_KEY;
   const {items,totalVal}=pf3Items();
-  const fallback=key==='sec'?'Прочее':'Акция';
   const groups={};
   items.forEach(it=>{
     const g=(key==='sec'?it.sec:it.typ);
-    const name=g&&g!=='—'?g:fallback;
+    const name=g&&g!=='—'?g:'Прочее';
     (groups[name]=groups[name]||[]).push(it);
   });
   const list=Object.entries(groups).map(([g,arr])=>({g,arr,val:arr.reduce((a,x)=>a+x.val,0)}));
   list.sort((a,b)=>port?b.val-a.val:b.arr.length-a.arr.length);
-  let h='';
-  list.forEach(({g,arr,val})=>{
-    arr.sort((a,b)=>port?b.val-a.val:b.day-a.day);
-    const avgDay=arr.reduce((a,x)=>a+x.day,0)/arr.length;
-    const sub=port
-      ?`${arr.length} акц. · ${pf3Fmt(val)} kr · ${totalVal>0?(val/totalVal*100).toFixed(1):'0'}% портфеля`
-      :`${arr.length} акц. · ср. за день ${(avgDay>0?'+':'')+avgDay.toFixed(2)}%`;
-    h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${key==='sec'?'🏭':'🏷'} ${g}</span><span class="pf3-asof">${sub}</span></div><div class="pf3-glist">${arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>`;
-  });
-  return h||'<section class="pf3-panel"><div class="pf3-empty">Нет данных</div></section>';
+  list.forEach(x=>x.arr.sort((a,b)=>port?b.val-a.val:b.day-a.day));
+  return {d,port,totalVal,list};
+}
+function pf3GroupSub(x,port,totalVal){
+  const avgDay=x.arr.reduce((a,it)=>a+it.day,0)/x.arr.length;
+  return port
+    ?`${x.arr.length} акц. · ${pf3Fmt(x.val)} kr · ${totalVal>0?(x.val/totalVal*100).toFixed(1):'0'}% портфеля`
+    :`${x.arr.length} акц. · ср. за день ${(avgDay>0?'+':'')+avgDay.toFixed(2)}%`;
+}
+function pf3GroupedHTML(key){
+  const {d,port,totalVal,list}=pf3Groups(key);
+  if(!list.length)return '<section class="pf3-panel"><div class="pf3-empty">Нет данных</div></section>';
+  if(key==='typ'){
+    const sel=list.find(x=>x.g===pf3TypeSel)||list[0];
+    const nav=list.map(x=>{
+      const m=PF3_TYPE_META[x.g];
+      return`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${x.g.replace(/'/g,"\\'")}')">
+        <span class="pf3-typenav-ico">${m?m[0]:'🏷'}</span>
+        <span class="pf3-typenav-name">${x.g}<small>${port?pf3Fmt(x.val)+' kr · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' акц.'}</small></span>
+        <span class="pf3-typenav-cnt">${x.arr.length}</span>
+      </div>`;
+    }).join('');
+    const m=PF3_TYPE_META[sel.g];
+    return`<div class="pf3-typelay">
+      <aside class="pf3-panel pf3-typenav"><div class="pf3-panel-hd"><span>Типы</span></div>${nav}</aside>
+      <section class="pf3-panel"><div class="pf3-panel-hd"><span>${m?m[0]:'🏷'} ${sel.g}</span><span class="pf3-asof">${pf3GroupSub(sel,port,totalVal)}</span></div><div class="pf3-glist">${sel.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>
+    </div>`;
+  }
+  return list.map(x=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏭 ${x.g}</span><span class="pf3-asof">${pf3GroupSub(x,port,totalVal)}</span></div><div class="pf3-glist">${x.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>`).join('');
 }
 
 // Add a stock to Портфель 3.0 (form at the bottom of the list).
@@ -1154,9 +1218,11 @@ async function pf3FillProfile(tk){
     let ch=false;
     if(p.name&&(!r[1]||String(r[1]).trim().toUpperCase()===tk)){r[1]=p.name;ch=true;}
     if(p.sector&&(!r[4]||r[4]==='—')){r[4]=PF3_SECTOR_RU[p.sector]||p.sector;ch=true;}
-    // Instrument type: REIT by industry, ETF/fund by Yahoo quoteType, else «Акция».
-    const typ=/reit/i.test(p.industry||'')?'REIT':p.type==='ETF'?'ETF':p.type==='MUTUALFUND'?'Фонд':'Акция';
-    if(!r[5]||r[5]==='—'||r[5]==='Акция'&&typ!=='Акция'){if(r[5]!==typ){r[5]=typ;ch=true;}}
+    // Instrument type: ETF/fund by Yahoo quoteType, REIT→Дивидендная by industry, else by sector.
+    const typ=p.type==='ETF'?'ETF':p.type==='MUTUALFUND'?'Фонд'
+      :/reit/i.test(p.industry||'')?'Дивидендная'
+      :pf3DeriveType(tk,String(p.sector||r[4]||''),'');
+    if(r[5]!==typ){r[5]=typ;ch=true;}
     if(ch){scheduleSave();if(isV3())renderPF3();}
   }catch(e){}
 }

@@ -556,3 +556,18 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 .faq-k b{font-size:12px}
 .faq-v{color:var(--text2);line-height:1.5}
 @media(max-width:640px){.faq-row{grid-template-columns:1fr;gap:4px}.faq-card{padding:18px 16px}}
+
+/* Настройки доступа (⚙️, только админ) */
+.set-user{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:12px;background:var(--bg)}
+.set-user-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px}
+.set-role{font:600 9.5px 'JetBrains Mono',monospace;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--text2);background:var(--bg3);text-transform:uppercase}
+.set-role.adm{border-color:rgba(124,58,237,.4);color:var(--purple-t,#7c3aed);background:var(--purple-bg,rgba(124,58,237,.1))}
+.set-on{font:600 10.5px 'JetBrains Mono',monospace;color:var(--green-t)}
+.set-off{font:500 10.5px 'JetBrains Mono',monospace;color:var(--text3)}
+.set-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.set-tab{display:flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;background:var(--bg2)}
+.set-tab:hover{border-color:var(--accent)}
+.set-tab input{accent-color:var(--accent);cursor:pointer}
+.set-all{font:500 11px 'JetBrains Mono',monospace;color:var(--text2)}
+.set-err{margin-top:14px;font-size:12px;color:var(--red-t);background:var(--red-bg);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px 14px;line-height:1.5}
+.set-note{margin-top:14px;font-size:10.5px;color:var(--text3);font-family:'JetBrains Mono',monospace;line-height:1.5}

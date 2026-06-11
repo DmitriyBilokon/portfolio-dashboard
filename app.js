@@ -61,6 +61,26 @@ function subscribeRealtime(){
     .subscribe();
 }
 
+// ===== Roles & tab access (table user_access — see supabase-access.sql) =====
+// Админ видит всё и раздаёт вкладки; новые аккаунты — роль user, только Nasdaq 100.
+const ADMIN_EMAIL='dmitriy.bilokon@gmail.com';
+let userRole='user', allowedTabs=['Nasdaq 100'], hbTimer=null;
+const tabAllowed=n=>!SYNC_ENABLED||!currentUser||userRole==='admin'||(allowedTabs||[]).includes(n);
+async function initAccess(){
+  // Хардкод-фолбэк: владелец остаётся админом, даже если таблица ещё не создана.
+  userRole=(currentUser.email||'').toLowerCase()===ADMIN_EMAIL?'admin':'user';
+  try{
+    const{data,error}=await sb.rpc('ensure_access');   // создаёт/обновляет свою строку, возвращает {role,tabs}
+    if(!error&&data){
+      if(data.role==='admin')userRole='admin';
+      if(Array.isArray(data.tabs)&&userRole!=='admin')allowedTabs=data.tabs;
+    }
+  }catch(e){ console.warn('access init failed',e); }
+  const st=document.getElementById('settingsBtn'); if(st)st.style.display=userRole==='admin'?'':'none';
+  clearInterval(hbTimer);
+  hbTimer=setInterval(()=>{ sb.rpc('heartbeat').then(()=>{},()=>{}) },60000);   // онлайн-статус для админа
+}
+
 // ===== Auth =====
 async function handleLogin(e){
   e.preventDefault();
@@ -76,13 +96,16 @@ async function handleLogin(e){
 }
 async function handleLogout(){
   if(realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel=null; }
+  clearInterval(hbTimer); userRole='user'; allowedTabs=['Nasdaq 100'];
+  const st=document.getElementById('settingsBtn'); if(st)st.style.display='none';
   await sb.auth.signOut(); currentUser=null;
-  const lo=document.getElementById('logoutBtn'); if(lo) lo.style.display='none';
+  document.getElementById('logoutBtn')?.style.setProperty('display','none');
   document.getElementById('authOverlay').classList.remove('hidden');
 }
 async function startApp(){
   document.getElementById('authOverlay').classList.add('hidden');
   const lo=document.getElementById('logoutBtn'); if(lo){ lo.style.display=''; lo.title='Выйти ('+currentUser.email+')'; }
+  await initAccess();   // роль + вкладки до первой отрисовки синхронизированных данных
   await pullState();
   subscribeRealtime();
   refreshFX();   // override synced rates with live USD/EUR/NOK→SEK (non-blocking)
@@ -314,10 +337,10 @@ function migrateRemovePF2(){
     if(!applyingRemote)scheduleSave();
   }
 }
-function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();if(!DATA[curIdx])curIdx=Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';Object.keys(DATA).forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();const keys=Object.keys(DATA).filter(tabAllowed);if(!DATA[curIdx]||!tabAllowed(curIdx))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${n}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
 
 function renderAll(){
-  document.querySelectorAll('.tab').forEach((t,i)=>{t.className='tab'+(Object.keys(DATA)[i]===curIdx?' active':'')});
+  document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
   const st=document.getElementById('subTabs');st.innerHTML='';
   document.body.classList.toggle('v3',isV3());   // Портфель 3.0 restyles the whole site
   const pf3El=document.getElementById('pf3Area');
@@ -456,13 +479,67 @@ function faqHTML(){
     ${row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.')}
   </div>`;
 }
+// ===== Settings (⚙️, admin only): users, online status, per-tab access =====
+function toggleSettings(){
+  const o=document.getElementById('setOverlay');
+  if(!o)return;
+  if(!o.classList.contains('hidden')){o.classList.add('hidden');return;}
+  o.classList.remove('hidden');
+  document.getElementById('setCard').innerHTML='<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2><div class="faq-sub">Загрузка…</div>';
+  renderSettings();
+}
+async function renderSettings(){
+  const card=document.getElementById('setCard');
+  let users=[];
+  try{
+    const{data,error}=await sb.from('user_access').select('*').order('email');
+    if(error)throw error;
+    users=data||[];
+  }catch(e){
+    card.innerHTML=`<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2>
+      <div class="set-err">Не удалось загрузить пользователей: ${e.message||e}<br><br>
+      Скорее всего, таблица доступа ещё не создана — выполните содержимое файла
+      <code>supabase-access.sql</code> в Supabase → SQL Editor (один раз).</div>`;
+    return;
+  }
+  const tabs=Object.keys(DATA);
+  const ago=ts=>{const m=Math.round((Date.now()-Date.parse(ts))/60000);
+    return m<3?'только что':m<60?`${m} мин назад`:m<1440?`${Math.round(m/60)} ч назад`:new Date(ts).toLocaleDateString('ru-RU')};
+  const rows=users.map(u=>{
+    const on=u.last_seen&&(Date.now()-Date.parse(u.last_seen))<150000;   // heartbeat раз в минуту → онлайн = < 2.5 мин
+    const seen=on?'<span class="set-on">🟢 онлайн</span>':`<span class="set-off">⚪ ${u.last_seen?ago(u.last_seen):'не заходил'}</span>`;
+    const adm=u.role==='admin';
+    const grants=adm?'<span class="set-all">полный доступ ко всем вкладкам</span>'
+      :tabs.map(t=>`<label class="set-tab"><input type="checkbox"${(u.tabs||[]).includes(t)?' checked':''} onchange="setGrant('${u.user_id}','${t.replace(/'/g,"\\'")}',this.checked)"><span>${META[t]||''} ${t}</span></label>`).join('');
+    return`<div class="set-user">
+      <div class="set-user-hd"><b>${u.email||u.user_id}</b><span class="set-role${adm?' adm':''}">${adm?'Админ':'User'}</span>${seen}</div>
+      <div class="set-tabs">${grants}</div>
+    </div>`;
+  }).join('');
+  card.innerHTML=`<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2>
+    <div class="faq-sub">Доступ к вкладкам и активность · 🟢 = на сайте сейчас · <a href="#" onclick="renderSettings();return false">обновить</a></div>
+    ${rows||'<div class="set-err">Других пользователей пока нет — они появятся здесь после первого входа.</div>'}
+    <div class="set-note">Изменения доступа применяются у пользователя после обновления страницы. Каждый видит свою копию данных вкладки.</div>`;
+}
+// Toggle one tab for one user; reread → modify → write, чтобы не затереть параллельные правки.
+async function setGrant(uid,tab,on){
+  try{
+    const{data,error}=await sb.from('user_access').select('tabs').eq('user_id',uid).single();
+    if(error)throw error;
+    let t=Array.isArray(data?.tabs)?data.tabs:[];
+    t=on?[...new Set([...t,tab])]:t.filter(x=>x!==tab);
+    const r=await sb.from('user_access').update({tabs:t}).eq('user_id',uid);
+    if(r.error)throw r.error;
+  }catch(e){ alert('Не удалось сохранить доступ: '+(e.message||e)); renderSettings(); }
+}
+
 function toggleFaq(){
   const o=document.getElementById('faqOverlay');
   if(!o)return;
   if(o.classList.contains('hidden')){document.getElementById('faqCard').innerHTML=faqHTML();o.classList.remove('hidden');}
   else o.classList.add('hidden');
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('faqOverlay')?.classList.add('hidden')});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');

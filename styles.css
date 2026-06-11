@@ -636,3 +636,106 @@ details.faq-sec .faq-body{padding:6px 14px 12px}
 .home-lvl{display:flex;align-items:center;gap:8px;justify-content:flex-end;font:500 10.5px 'JetBrains Mono',monospace;color:var(--text2);flex-wrap:wrap}
 .home-row .pf3-crit{justify-self:end}
 @media(max-width:560px){.home-row{grid-template-columns:40px 1fr minmax(110px,auto)}.home-row>:nth-child(4){grid-column:2/4;justify-self:start;justify-content:flex-start}}
+
+/* ═══════════ ✨ Новый интерфейс (2026) — html.ui2 ═══════════
+   Оболочка поверх той же разметки: сайдбар-навигация, glass/bento-панели,
+   градиентный акцент, мягкие тени, плавные переходы. Переключается ✨ в шапке. */
+html.ui2 body{background:radial-gradient(1100px 560px at 88% -8%,rgba(99,102,241,.13),transparent 60%),radial-gradient(850px 480px at -8% 34%,rgba(16,185,129,.09),transparent 55%),var(--bg)}
+html.ui2[data-theme="dark"] body{background:radial-gradient(1100px 560px at 88% -8%,rgba(99,102,241,.2),transparent 60%),radial-gradient(850px 480px at -8% 34%,rgba(16,185,129,.1),transparent 55%),#0b1020}
+html.ui2 .header,html.ui2 body.v3 .header{position:sticky;top:0;z-index:90;background:color-mix(in srgb,var(--bg2) 70%,transparent);backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);border-bottom:1px solid color-mix(in srgb,var(--border) 70%,transparent);padding:13px 24px}
+html.ui2 .header h1{font-size:17px;letter-spacing:-.2px}
+html.ui2 .header h1 span{background:linear-gradient(90deg,#6366f1,#a855f7);-webkit-background-clip:text;background-clip:text;color:transparent}
+html.ui2 .theme-toggle{border-radius:11px}
+@media(min-width:901px){
+  html.ui2 .tabs,html.ui2 body.v3 .tabs{position:fixed;left:14px;top:76px;bottom:14px;width:218px;display:flex;flex-direction:column;gap:5px;padding:14px 12px;border:1px solid color-mix(in srgb,var(--border) 70%,transparent);border-radius:22px;background:color-mix(in srgb,var(--bg2) 76%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow-y:auto;z-index:80}
+  html.ui2 .tab,html.ui2 body.v3 .tab{display:flex;align-items:center;gap:8px;border:1px solid transparent;border-radius:14px;padding:11px 13px;font-size:12.5px;font-weight:600;background:transparent;color:var(--text2);white-space:nowrap}
+  html.ui2 .tab:hover,html.ui2 body.v3 .tab:hover{background:var(--bg3);color:var(--text);border-color:transparent}
+  html.ui2 .tab.active,html.ui2 body.v3 .tab.active{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-color:transparent;box-shadow:0 8px 22px rgba(99,102,241,.35)}
+  html.ui2 .tab .cnt{margin-left:auto}
+  html.ui2 .tab.active .cnt{background:rgba(255,255,255,.22);color:#fff}
+  html.ui2 .sub-tabs,html.ui2 .sma-banner,html.ui2 .toolbar,html.ui2 .stats,html.ui2 #contentArea,html.ui2 .pf-summary{margin-left:254px}
+  html.ui2 #contentArea{margin-right:14px}
+}
+html.ui2 .sub-tabs{background:transparent;padding-top:10px}
+html.ui2 .sub-tab{border-radius:12px;padding:7px 14px;background:color-mix(in srgb,var(--bg2) 80%,transparent);backdrop-filter:blur(8px)}
+html.ui2 .sub-tab.active{background:linear-gradient(135deg,#6366f1,#8b5cf6);border-color:transparent}
+html.ui2 .pf3-panel,html.ui2 .faq-card{border-radius:20px;background:color-mix(in srgb,var(--bg2) 82%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid color-mix(in srgb,var(--border) 70%,transparent);box-shadow:0 10px 34px rgba(15,23,42,.07)}
+html.ui2 .pf3-card{border-radius:18px;box-shadow:0 6px 22px rgba(15,23,42,.05)}
+html.ui2 .table-wrap,html.ui2 .ranking-table{border-radius:18px;overflow:hidden}
+html.ui2 .pf3-row,html.ui2 .home-row,html.ui2 .sim-trow,html.ui2 .pf3-typenav-it{transition:transform .14s ease,box-shadow .14s ease,background .14s ease}
+html.ui2 .pf3-row:hover,html.ui2 .home-row:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(15,23,42,.08)}
+html.ui2 .pf3-row{border-radius:16px}
+html.ui2 .pf3-btn{border-radius:12px}
+html.ui2 .sim-buy{background:linear-gradient(135deg,#6366f1,#8b5cf6);border-color:transparent}
+html.ui2 .pf3-hero{border-radius:22px}
+html.ui2 ::-webkit-scrollbar{width:9px;height:9px}
+html.ui2 ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--text3) 40%,transparent);border-radius:99px}
+html.ui2 ::-webkit-scrollbar-track{background:transparent}
+@media(prefers-reduced-motion:reduce){html.ui2 .pf3-row,html.ui2 .home-row,html.ui2 .sim-trow,html.ui2 .pf3-typenav-it{transition:none}}
+
+/* ═══ ✨ ui2 v2 — по мотивам theleaderboard.lovable.app ═══
+   Палитра-референс: фон #07070b, карточки #0f0f16, бордеры white@6%,
+   радиус 1rem, градиент 135°, glow 0 0 48px, Inter + Space Grotesk. */
+html.ui2{--u2a:#6366f1;--u2b:#a855f7;--u2-grad:linear-gradient(135deg,var(--u2a),var(--u2b));--u2-grad-soft:linear-gradient(135deg,#6366f128,#a855f718);--u2-glow:0 0 48px -8px #6366f199}
+/* Тёмная тема ✨ = точная палитра референса */
+html.ui2[data-theme="dark"]{--bg:#07070b;--bg2:#0f0f16;--bg3:#14141c;--border:#ffffff0f;--text:#f5f5f7;--text2:#8a8a96;--text3:#62626e;--accent:#818cf8;--accent-lt:#1a1a2e}
+html.ui2[data-theme="dark"] body,html.ui2[data-theme="dark"] body.v3{background:radial-gradient(1100px 560px at 88% -8%,#6366f124,transparent 60%),radial-gradient(850px 480px at -8% 34%,#a855f714,transparent 55%),#07070b}
+/* Светлая тема ✨ = светлая адаптация той же системы */
+html.ui2:not([data-theme="dark"]){--bg:#f6f6f9;--bg2:#ffffff;--bg3:#f0f0f5;--border:#0000000f}
+html.ui2 .header h1,html.ui2 .pf3-hero h2,html.ui2 .pf3-card-v,html.ui2 .pf3-price,html.ui2 .pf3-panel-hd>span:first-child,html.ui2 .faq-card h2{font-family:'Space Grotesk','DM Sans',sans-serif;letter-spacing:-.02em}
+html.ui2 .header h1 span{background:var(--u2-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+html.ui2 .pf3-panel,html.ui2 .faq-card{border-radius:1rem}
+html.ui2[data-theme="dark"] .pf3-panel,html.ui2[data-theme="dark"] .faq-card{background:#0f0f16cc;box-shadow:0 16px 40px -16px #0000008c}
+html.ui2[data-theme="dark"] .pf3-card,html.ui2[data-theme="dark"] .pf3-row,html.ui2[data-theme="dark"] .home-row:hover{box-shadow:0 16px 40px -16px #00000066}
+html.ui2 .pf3-card{border-radius:1rem;background:var(--u2-grad-soft),var(--bg2)}
+html.ui2 .tab.active,html.ui2 body.v3 .tab.active,html.ui2 .sub-tab.active,html.ui2 .sim-buy{background:var(--u2-grad);box-shadow:var(--u2-glow)}
+html.ui2 .pf3-hero{background:var(--u2-grad-soft),var(--bg2);border:1px solid var(--border)}
+html.ui2 .pf3-btn:hover{box-shadow:0 0 18px -4px color-mix(in srgb,var(--u2a) 50%,transparent)}
+html.ui2 .pf3-row.active{box-shadow:var(--u2-glow);border-color:color-mix(in srgb,var(--u2a) 45%,transparent)}
+html.ui2[data-theme="dark"] .pf3-row,html.ui2[data-theme="dark"] .sim-trow{border-color:#ffffff0f}
+html.ui2[data-theme="dark"] .pf3-row-logo{background:var(--u2-grad-soft),#14141c;color:#f5f5f7}
+html.ui2 .pf3-typenav-it.active{background:var(--u2-grad-soft),var(--bg3);border-color:color-mix(in srgb,var(--u2a) 35%,transparent)}
+
+/* ═══ ✨ ui2 v3 — компоненты в стиле референса (кнопки, переключатели, бейджи) ═══ */
+html.ui2{--u2-ghost:#ffffff0d;--u2-ghost-h:#ffffff1f;--u2-ring:#ffffff1a;--u2-seg:#00000059}
+html.ui2:not([data-theme="dark"]){--u2-ghost:#00000008;--u2-ghost-h:#00000012;--u2-ring:#00000014;--u2-seg:#00000010}
+/* Круглые ghost-кнопки шапки и тулбара (h-9 w-9 rounded-full bg-white/5) */
+html.ui2 .theme-toggle{border-radius:999px;background:var(--u2-ghost);border-color:var(--u2-ring);backdrop-filter:blur(8px)}
+html.ui2 .theme-toggle:hover{background:var(--u2-ghost-h);border-color:var(--u2-ring)}
+html.ui2 .btn,html.ui2 .pf3-btn{border-radius:999px;background:var(--u2-ghost);border:1px solid var(--u2-ring);font-weight:600;backdrop-filter:blur(8px)}
+html.ui2 .btn:hover,html.ui2 .pf3-btn:hover{background:var(--u2-ghost-h)}
+/* Primary CTA: градиентная пилюля + glow + display-шрифт */
+html.ui2 .sim-buy,html.ui2 .pf3-ai-bar .pf3-btn,html.ui2 .auth-card .primary{border-radius:999px;background:var(--u2-grad);border-color:transparent;color:#fff;font-family:'Space Grotesk','DM Sans',sans-serif;font-weight:700;box-shadow:var(--u2-glow)}
+html.ui2 .sim-buy:hover,html.ui2 .pf3-ai-bar .pf3-btn:hover{background:var(--u2-grad);filter:brightness(1.1)}
+/* Сегмент-контролы: саб-вкладки и тумблеры (Годовой/Квартал, 1Г/3Г) в тёмном контейнере */
+html.ui2 .sub-tabs{width:fit-content;max-width:calc(100% - 268px);flex-wrap:wrap;border:1px solid var(--u2-ring);border-radius:16px;background:var(--u2-seg);padding:6px;gap:4px;backdrop-filter:blur(12px);margin-top:10px;margin-bottom:4px}
+html.ui2 .sub-tab{border:none;border-radius:10px;background:transparent;padding:7px 13px}
+html.ui2 .sub-tab:hover{background:var(--u2-ghost-h);color:var(--text)}
+html.ui2 .sub-tab.active{background:var(--u2-grad);box-shadow:none}
+html.ui2 .pf3-tf{border:1px solid var(--u2-ring);border-radius:12px;background:var(--u2-seg);padding:3px;gap:3px}
+html.ui2 .pf3-tfbtn{border:none;border-radius:9px}
+html.ui2 .pf3-tfbtn.on{background:var(--u2-grad);color:#fff}
+/* Круглые градиентные «аватары» строк (h-8 w-8 rounded-full gradient ring-1) */
+html.ui2 .pf3-row-logo,html.ui2 .pf3-logo{border-radius:999px;background:var(--u2-grad-soft),var(--bg3);border:1px solid var(--u2-ring);font-family:'Space Grotesk',sans-serif}
+html.ui2 .pf3-row.active .pf3-row-logo{background:var(--u2-grad);color:#fff}
+/* Бейджи: UPPERCASE с трекингом, как у референса */
+html.ui2 .pf3-typ,html.ui2 .pf3-crit,html.ui2 .set-role{text-transform:uppercase;letter-spacing:.07em;font-size:8.5px;font-weight:800}
+/* Строки-списки: hover bg-white/8 */
+html.ui2[data-theme="dark"] .pf3-row:hover,html.ui2[data-theme="dark"] .home-row:hover,html.ui2[data-theme="dark"] .sim-trow:hover,html.ui2[data-theme="dark"] .pf3-typenav-it:hover{background:#ffffff14}
+/* Модалки: rounded-28, стекло, светящееся пятно сверху (blur-3xl blob) */
+html.ui2 .faq-card{border-radius:28px;overflow:hidden}
+html.ui2 .faq-card::before{content:'';position:absolute;pointer-events:none;top:-128px;left:50%;transform:translateX(-50%);width:256px;height:256px;border-radius:999px;background:var(--u2a);opacity:.12;filter:blur(64px)}
+html.ui2 .faq-close{border-radius:999px}
+/* Поля ввода: прозрачные на white/5, фокус white/10 */
+html.ui2 .sim-form input,html.ui2 .ai-chat-form input,html.ui2 .pf3-add input,html.ui2 .pf3-add select,html.ui2 .search-box,html.ui2 .auth-card input,html.ui2 .pf3-edit input{background:var(--u2-ghost);border:1px solid var(--u2-ring);border-radius:12px;color:var(--text)}
+html.ui2 .sim-form input:focus,html.ui2 .ai-chat-form input:focus,html.ui2 .pf3-add input:focus,html.ui2 .search-box:focus,html.ui2 .auth-card input:focus{background:var(--u2-ghost-h);border-color:color-mix(in srgb,var(--u2a) 50%,transparent);outline:none}
+/* Чат: пузырь пользователя — градиент */
+html.ui2 .ai-msg.user{background:var(--u2-grad)}
+/* Мобильные: плавающая нижняя навигация-пилюля (как bottom-nav референса) */
+@media(max-width:900px){
+  html.ui2 .tabs{position:fixed;left:12px;right:12px;bottom:12px;top:auto;z-index:95;display:flex;flex-direction:row;overflow-x:auto;border:1px solid var(--u2-ring);border-radius:999px;background:#000000bf;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:8px;gap:4px;box-shadow:0 10px 40px -10px #00000099}
+  html.ui2 .tab{border-radius:999px;border:none;color:#ffffffd9;white-space:nowrap}
+  html.ui2 .tab.active{background:var(--u2-grad);color:#fff}
+  html.ui2 #contentArea{padding-bottom:84px}
+  html.ui2 .sub-tabs{max-width:100%}
+}

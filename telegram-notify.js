@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-12h';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-12i';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -822,7 +822,19 @@ async function aiPortfolioRun(env, force){
     if(apEmpty && bakHas){
       ap = snap.aiPort = JSON.parse(JSON.stringify(bak));
       restored = true;
-      try{ await sendTelegram(env, `♻️ <b>AI ПОРТФЕЛЬ ВОССТАНОВЛЕН</b> из резервной копии worker'а: позиций ${(ap.positions || []).length}, сделок ${(ap.trades || []).length}. Похоже, какой-то клиент затёр состояние — обновите сайт на всех устройствах.`); }catch(e){}
+      // Персистим восстановление СРАЗУ: дальше цикл может выйти по «рынки
+      // закрыты», и без записи восстановление жило бы только в памяти
+      // (на выходных портфель оставался бы пустым при спаме «ВОССТАНОВЛЕН»).
+      try{
+        const fr = await loadRow(env);
+        if(fr){
+          fr.snap.aiPort = JSON.parse(JSON.stringify(ap));
+          fr.snap.aiPortBak = JSON.parse(JSON.stringify(ap));
+          await writeRow(env, fr.userId, fr.snap);
+        }
+        await saveBak(env, row.userId, ap);
+        await sendTelegram(env, `♻️ <b>AI ПОРТФЕЛЬ ВОССТАНОВЛЕН</b> из резервной копии worker'а: позиций ${(ap.positions || []).length}, сделок ${(ap.trades || []).length}. Похоже, какой-то клиент затёр состояние — обновите сайт на всех устройствах.`);
+      }catch(e){}
     }
   }
   if(!ap || !ap.startedAt) return 'AI портфель не инициализирован — откройте вкладку 🤖 на сайте';

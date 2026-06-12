@@ -1,11 +1,14 @@
 // Cloudflare Worker — scheduled Telegram alerts for the Index Portfolio Dashboard.
 //
 // What it does (on a cron, even when the site is closed):
-//   1. Reads your portfolio from Supabase (the synced ledger_state row).
-//   2. Fetches live prices + technical levels (SMA 50/100/200, support, resistance) from Yahoo.
-//   3. Sends one Telegram digest listing holdings whose price is within
-//      ±NEAR_THRESHOLD% of any of those levels (silent when nothing is close),
-//      then a chart image (price + SMA 50/100/200 + support/resistance) for CHART_TICKER.
+//   targeted per-stock alerts, near-realtime. Each run reads the portfolio
+//   from Supabase, fetches live prices + levels from Yahoo and sends ONE
+//   Telegram message PER STOCK when:
+//     🟢 price is within ±1.5% of a buy level (SMA 50/100/200 / support)
+//     🔴 price is within ±1.5% of resistance (take-profit zone)
+//     📡 price is approaching a level (1.5–4% away)
+//   A 24h cooldown per stock+signal (stored in the Supabase row) keeps a
+//   frequent cron from spamming. Recommended cron: */10 6-22 * * 1-5.
 //
 // ── Setup (≈10 min, free) ───────────────────────────────────────────────
 //  Bot:   message @BotFather → /newbot → copy the token.
@@ -747,15 +750,62 @@ async function updateTargets(env){
   return { updated, total, details };
 }
 
+
+// ── Точечные алерты по акциям портфеля (заменяют старый дайджест) ──────────
+// Одно сообщение на акцию и сигнал; кулдаун в snap.tgAlerts (клиент дашборда
+// прокидывает это поле через свои сохранения, так что оно переживает sync).
+const ALERT_NEAR = 1.5;       // ±% — «у уровня»
+const ALERT_APPROACH = 4;     // % — «приближается к уровню»
+const ALERT_COOLDOWN_H = 24;  // часов тишины по одному и тому же сигналу
+async function runAlerts(env){
+  const row = await loadRow(env);
+  const snap = row && row.snap;
+  const pf = snap && snap.data && (snap.data[PF3_KEY] || snap.data[PF_KEY]);
+  if(!pf) return 'Портфель не найден';
+  const tga = snap.tgAlerts = snap.tgAlerts || {};
+  const now = Date.now();
+  Object.keys(tga).forEach(k => { if(now - tga[k] > 7 * 86400e3) delete tga[k]; });
+  const quotes = await Promise.all(pf.rows.map(r => yahoo(exSymbol(r[2], r[8]))));
+  const sent = [];
+  for(let i = 0; i < pf.rows.length; i++){
+    const r = pf.rows[i], q = quotes[i];
+    if(!q || !(q.price > 0)) continue;
+    const name = esc(String(r[1] || r[2])), tk = esc(String(r[2] || '')), ccy = r[8] || '';
+    const sym = exSymbol(r[2], r[8]);
+    const qty = parseFloat(r[6]) || 0;
+    const buys = [['SMA 50', q.sma50], ['SMA 100', q.sma100], ['SMA 200', q.sma200], ['Поддержка', q.support]].filter(([, v]) => v > 0);
+    let best = null;
+    for(const [n, v] of buys){ const d = (q.price - v) / v * 100; if(!best || Math.abs(d) < Math.abs(best.d)) best = { n, v, d }; }
+    const resD = q.resistance > 0 ? (q.price - q.resistance) / q.resistance * 100 : null;
+    let kind = null, msg = '';
+    if(resD != null && Math.abs(resD) <= ALERT_NEAR){
+      kind = 'sell';
+      msg = `🔴 <b>ПРОДАЖА — ${name}</b> (${tk})\nЦена <b>${q.price} ${ccy}</b> у сопротивления <code>${q.resistance}</code> (${resD >= 0 ? '+' : ''}${resD.toFixed(1)}%) — зона фиксации прибыли`;
+    }else if(best && Math.abs(best.d) <= ALERT_NEAR){
+      kind = 'buy:' + best.n;
+      msg = `🟢 <b>${qty > 0 ? 'ДОКУПКА' : 'ПОКУПКА'} — ${name}</b> (${tk})\nЦена <b>${q.price} ${ccy}</b> у уровня ${best.n} <code>${best.v}</code> (${best.d >= 0 ? '+' : ''}${best.d.toFixed(1)}%)`;
+    }else if(resD != null && resD < 0 && -resD > ALERT_NEAR && -resD <= ALERT_APPROACH){
+      kind = 'near:res';
+      msg = `📡 <b>ПРИБЛИЖЕНИЕ — ${name}</b> (${tk})\nДо сопротивления <code>${q.resistance}</code> осталось <b>${(-resD).toFixed(1)}%</b> (цена ${q.price} ${ccy}) — готовьтесь фиксировать`;
+    }else if(best && best.d > ALERT_NEAR && best.d <= ALERT_APPROACH){
+      kind = 'near:' + best.n;
+      msg = `📡 <b>ПРИБЛИЖЕНИЕ — ${name}</b> (${tk})\nДо уровня ${best.n} <code>${best.v}</code> осталось <b>${best.d.toFixed(1)}%</b> (цена ${q.price} ${ccy}) — следите за входом`;
+    }
+    if(!kind) continue;
+    const key = sym + ':' + kind;
+    if(tga[key] && now - tga[key] < ALERT_COOLDOWN_H * 3600e3) continue;
+    await sendTelegram(env, msg);
+    tga[key] = now;
+    sent.push(String(r[2]) + ' → ' + kind);
+  }
+  if(sent.length) await writeRow(env, row.userId, snap);
+  return sent.length ? 'Отправлено:\n' + sent.join('\n') : 'Сигналов нет (или все на кулдауне)';
+}
 export default {
-  // Cron trigger — refresh analyst targets, then send the alert digest.
+  // Cron — only the targeted per-stock alerts (digest/chart/targets removed:
+  // the dashboard refreshes targets itself once a day).
   async scheduled(event, env, ctx){
-    ctx.waitUntil((async () => {
-      try{ await updateTargets(env); }catch(e){ /* targets are best-effort */ }
-      const text = await buildReport(env);
-      if(text) await sendTelegram(env, text);
-      try{ await sendChartMU(env); }catch(e){ /* chart is best-effort */ }
-    })());
+    ctx.waitUntil(runAlerts(env).catch(() => {}));
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
   // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
@@ -892,9 +942,7 @@ export default {
       return json(out);
     }
     try{
-      const text = await buildReport(env);
-      if(text){ await sendTelegram(env, text); return txt('Sent ✓\n\n' + text); }
-      return txt('Nothing to report right now (no holding is near a level).');
+      return txt(await runAlerts(env));   // ручной прогон точечных алертов
     }catch(e){
       return txt('Error: ' + e.message, 500);
     }

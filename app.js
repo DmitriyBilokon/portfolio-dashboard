@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -50,6 +50,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.sim)) SIM=s.sim;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
+  if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -132,6 +133,9 @@ let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52};
 // Бумажный (тестовый) портфель: [{tab,tk,name,ccy,qty,buy,date}] — у каждой
 // v3-вкладки свои тестовые покупки (tab), синхронизируется с остальным состоянием.
 let SIM=[];
+// Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
+// свои сохранения, чтобы push дашборда не стирал память бота.
+let TG_ALERTS={};
 // AI Assistant: диалог с ассистентом и его «память» — правила инвестора,
 // которые ассистент извлекает из чата (и которые можно добавить вручную).
 // Правила передаются и в чат, и в полный анализ портфеля (investorRules).

@@ -832,3 +832,4 @@ html.ui2 .tabs .tab,html.ui2 body.v3 .tabs .tab{font-size:12px}
 html.ui2[data-theme="dark"]{--bg:#0e0e15;--bg2:#15151e;--bg3:#1b1b26}
 html.ui2[data-theme="dark"] body,html.ui2[data-theme="dark"] body.v3{background:radial-gradient(1100px 560px at 88% -8%,#6366f124,transparent 60%),radial-gradient(850px 480px at -8% 34%,#a855f714,transparent 55%),#0e0e15}
 html.ui2[data-theme="dark"] .pf3-panel,html.ui2[data-theme="dark"] .faq-card{background:#15151ecc}
+.pf3-typ.spec{border-color:rgba(249,115,22,.45);color:#fb923c;background:rgba(249,115,22,.12)}

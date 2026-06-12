@@ -214,7 +214,7 @@ const I18N_EN={
 'Портфель':'Portfolio','Nasdaq 100':'Nasdaq 100',
 '📊 Портфель':'📊 Portfolio','📊 Акции':'📊 Stocks','🏭 Сектора':'🏭 Sectors','🏷 Тип':'🏷 Type','🧪 Симуляция':'🧪 Simulation','📅 Дивиденды и отчёты':'📅 Dividends & Earnings','🩺 Состояние портфеля':'🩺 Portfolio Health','⚖️ Предложение':'⚖️ Proposal',
 'Компания':'Company','Сектор':'Sector','Тип':'Type','Кол-во':'Qty','Покупка':'Buy','Цена':'Price','Стоимость':'Value','Доля':'Share','Критерий':'Criterion','Сигнал':'Signal','1д %':'1d %','Таргет':'Target',
-'Защитная':'Defensive','Качественная':'Quality','Циклическая':'Cyclical','Дивидендная':'Dividend','Рост':'Growth','Акция':'Stock','Фонд':'Fund','Прочее':'Other','Сектора':'Sectors','Типы':'Types',
+'Защитная':'Defensive','Качественная':'Quality','Циклическая':'Cyclical','Дивидендная':'Dividend','Рост':'Growth','Спекулятивная':'Speculative','Акция':'Stock','Фонд':'Fund','Прочее':'Other','Сектора':'Sectors','Типы':'Types',
 'Падающий нож':'Falling knife','Даунтренд':'Downtrend','Коррекция':'Correction','Боковик':'Sideways','Разворот':'Reversal','Недооценка':'Undervalued','Аптренд':'Uptrend','Импульс':'Momentum','Перегрев':'Overheated',
 'Продажа':'Sell','Докупка':'Add','ниже уровней':'below levels','Поддержка':'Support','Сопр.':'Res.','Сопротивление':'Resistance',
 'Чистый капитал':'Net worth','акции + свободный кэш':'stocks + free cash','Акции':'Stocks','Прибыль':'Profit','от вложений':'on cost','позиций':'positions','Свободный кэш':'Free cash','Кредитное плечо':'Leverage','доступный кредит сверх капитала':'broker credit on top of equity','Доступно с плечом':'Buying power','капитал + кредитное плечо':'equity + leverage','💱 Курсы':'💱 FX','живые курсы ECB · база SEK':'live ECB rates · SEK base','нажмите, чтобы изменить':'click to edit','% капитала · доступно для покупок':'% of equity · available to buy',
@@ -322,7 +322,7 @@ const PF3_SECTORS={MU:'Полупроводники',AVGO:'Полупровод�
 // Дивидендная · Рост · Стоимость (+ ETF/Фонд from the Yahoo quoteType, never
 // overwritten). Recomputed on every load so a stale synced value heals itself:
 // per-ticker map first, sector-based fallback for stocks added later.
-const PF3_TYPE_META={'Защитная':['🛡','def'],'Качественная':['💎','qual'],'Циклическая':['🔄','cyc'],'Дивидендная':['💰','div'],'Рост':['🚀','gro'],'Стоимость':['📊','val'],'ETF':['🧺','etf'],'Фонд':['🧺','etf']};
+const PF3_TYPE_META={'Защитная':['🛡','def'],'Качественная':['💎','qual'],'Циклическая':['🔄','cyc'],'Дивидендная':['💰','div'],'Рост':['🚀','gro'],'Стоимость':['📊','val'],'Спекулятивная':['⚡','spec'],'ETF':['🧺','etf'],'Фонд':['🧺','etf']};
 const PF3_TYPES={
   // Портфель 3.0
   MU:'Циклическая',AVGO:'Качественная',MCHP:'Циклическая',AZN:'Защитная',BKNG:'Качественная',
@@ -362,7 +362,7 @@ function pf3TypeMetrics(d,r){
   return{beta:g('Beta'),roe:g('ROE'),de:g('D/E'),revg:g('Рост выручки'),payout:g('Payout'),pe:g('P/E'),ps:g('P/S'),divy:g('Дивид. %')};
 }
 function pf3TypeScores(m,sec){
-  const sc={'Защитная':0,'Качественная':0,'Циклическая':0,'Дивидендная':0,'Рост':0,'Стоимость':0};
+  const sc={'Защитная':0,'Качественная':0,'Циклическая':0,'Дивидендная':0,'Рост':0,'Стоимость':0,'Спекулятивная':0};
   const has=v=>typeof v==='number'&&isFinite(v);
   const s=String(sec||'');
   // Защитная/Циклическая: beta + сектор (MSCI Defensive/Cyclical Sectors)
@@ -373,9 +373,18 @@ function pf3TypeScores(m,sec){
   if(PF3_DEF_RE.test(s))sc['Защитная']+=1.5;
   if(PF3_CYC_RE.test(s))sc['Циклическая']+=1.5;
   if(PF3_REIT_RE.test(s))sc['Дивидендная']+=2;
-  // Качественная: ROE + D/E (MSCI Quality)
-  if(has(m.roe)){if(m.roe>=20)sc['Качественная']+=2;else if(m.roe>=15)sc['Качественная']+=1;}
-  if(has(m.de)){if(m.de<0.5)sc['Качественная']+=1;else if(m.de<1)sc['Качественная']+=0.5;else if(m.de>2)sc['Качественная']-=0.5;}
+  // Качественная: ROE + D/E (MSCI Quality). Гейт прибыльности: убыточной
+  // компании низкий долг очков не даёт — кэш у неё от допэмиссий, не от бизнеса.
+  if(has(m.roe)){
+    if(m.roe>=20)sc['Качественная']+=2;else if(m.roe>=15)sc['Качественная']+=1;
+    if(m.roe<0){sc['Качественная']-=2;sc['Спекулятивная']+=2;}
+  }
+  if(has(m.de)&&(!has(m.roe)||m.roe>0)){if(m.de<0.5)sc['Качественная']+=has(m.roe)&&m.roe>=10?1:0.25;else if(m.de<1)sc['Качественная']+=0.5;else if(m.de>2)sc['Качественная']-=0.5;}
+  // Спекулятивная: венчур на публичном рынке — убыток + экстремальный P/S,
+  // отсутствие P/E (нет прибыли) при дорогой оценке.
+  if(has(m.ps)){if(m.ps>=20)sc['Спекулятивная']+=1.5;else if(m.ps>=12)sc['Спекулятивная']+=0.75;}
+  if(!has(m.pe)&&has(m.ps)&&m.ps>=8)sc['Спекулятивная']+=1;
+  if(has(m.pe)&&m.pe>0)sc['Спекулятивная']-=1;   // прибыль есть → это не венчурная ставка
   // Дивидендная: yield + payout 30–75% (Aristocrats-стиль устойчивости)
   if(has(m.divy)){if(m.divy>=4)sc['Дивидендная']+=2.5;else if(m.divy>=3)sc['Дивидендная']+=1.5;else if(m.divy>=2)sc['Дивидендная']+=0.5;}
   if(has(m.payout)&&m.payout>=30&&m.payout<=75)sc['Дивидендная']+=0.5;
@@ -414,7 +423,7 @@ function pf3DeriveType(tk,sec,cur,d,r){
   if(PF3_DEF_RE.test(s))return 'Защитная';
   if(PF3_GRO_RE.test(s))return 'Рост';
   if(PF3_CYC_RE.test(s))return 'Циклическая';
-  return 'Качественная';
+  return 'Акция';   // нейтрально до прихода метрик — «Качественную» надо заслужить
 }
 function fixCompanyNames(){
   let touched=false;
@@ -788,6 +797,7 @@ function faqHTML(){
    +typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')
    +typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')
    +typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')
+   +typ('Спекулятивная','Венчурная ставка на публичном рынке: компания убыточна (ROE < 0), оценка держится на ожиданиях (P/S > 12–20, P/E отсутствует), выживание зависит от привлечения капитала. Квантовые вычисления, ранний биотех. Не путать с настоящим ростом вроде CrowdStrike.')
    +typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.')
    +row('<b>🧮</b>',RT('Тип считается скорингом по live-метрикам в духе методологий MSCI/S&P: beta и сектор (защитная/циклическая), ROE и D/E (качественная), дивдоходность и payout (дивидендная), рост выручки (рост), P/E к среднему сектора (стоимость). Пограничные получают вторичную метку в карточке — как Microsoft: «Качественная · Рост». Пока метрики не загрузились, действует классификация по сектору.','The type is scored from live metrics in the spirit of MSCI/S&P methodologies: beta & sector (defensive/cyclical), ROE & D/E (quality), yield & payout (dividend), revenue growth (growth), P/E vs sector average (value). Borderline names get a secondary label on the card — like Microsoft: “Quality · Growth”. Until metrics load, the sector-based fallback applies.')))}
 

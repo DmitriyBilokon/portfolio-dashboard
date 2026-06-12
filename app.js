@@ -399,7 +399,30 @@ function migrateRemovePF2(){
     if(!applyingRemote)scheduleSave();
   }
 }
-function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();const keys=Object.keys(DATA).filter(tabAllowed);if(curIdx!==HOME_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';const home=document.createElement('div');home.className='tab'+(curIdx===HOME_KEY?' active':'');home.dataset.tab=HOME_KEY;home.textContent=HOME_KEY;home.onclick=()=>{curIdx=HOME_KEY;renderAll()};t.appendChild(home);keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+
+// Одноразово: AI-отчёты индексов, сохранённые до фикса во вкладку Портфель,
+// переезжают в свои вкладки. Watchlist-отчёт узнаём по разделу «Картина по
+// индексу», вкладку — по упоминанию имени индекса.
+function migrateAiHistory(){
+  const pf=DATA[PF3_KEY];
+  if(!pf||pf.aiMig==='1')return;
+  pf.aiMig='1';
+  const moved={};
+  pf.aiHistory=(pf.aiHistory||[]).filter(e=>{
+    const t=String(e&&e.text||'');
+    if(!/Картина по индексу/i.test(t))return true;   // портфельный отчёт — остаётся
+    const idx=/OMXS30/i.test(t)?OMX_IDX:/Nasdaq.?100/i.test(t)?ANALYSIS_IDX:null;
+    if(!idx||!DATA[idx])return true;
+    (moved[idx]=moved[idx]||[]).push(e);
+    return false;
+  });
+  let n=0;
+  Object.entries(moved).forEach(([k,arr])=>{
+    DATA[k].aiHistory=[...arr,...(DATA[k].aiHistory||[])].slice(0,10);n+=arr.length;
+  });
+  if(n&&!applyingRemote)scheduleSave();
+}
+function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();const keys=Object.keys(DATA).filter(tabAllowed);if(curIdx!==HOME_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';const home=document.createElement('div');home.className='tab'+(curIdx===HOME_KEY?' active':'');home.dataset.tab=HOME_KEY;home.textContent=HOME_KEY;home.onclick=()=>{curIdx=HOME_KEY;renderAll()};t.appendChild(home);keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
 
 function renderAll(){
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
@@ -1014,16 +1037,17 @@ function pf3Health(){
 let pf3Ai={loading:false};
 
 // Everything the model needs: positions with live prices, levels, targets, shares + capital.
-function pf3AiSnapshot(){
-  const d=pf3D(),h=d.headers,{s50,s100,s200}=smaIdx(d);
+function pf3AiSnapshot(key){
+  key=key||v3Key;
+  const d=DATA[key],h=d.headers,{s50,s100,s200}=smaIdx(d);
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
   // Индексные вкладки: watchlist-снапшот — все акции с уровнями, фазой и
   // сигналом; AI выделяет самые актуальные и рекомендует действия.
-  if(v3Key!==PF3_KEY){
+  if(key!==PF3_KEY){
     const peC=h.indexOf('P/E'),psC=h.indexOf('P/S');
     const nm=v=>{const n=parseFloat(v);return isFinite(n)&&n!==0?n:null};
     return{
-      mode:'watchlist',index:v3Key,baseCurrency:'SEK',
+      mode:'watchlist',index:key,baseCurrency:'SEK',
       stocks:d.rows.map(r=>{
         const c=pf3Criterion(d,r),sig=pf3SignalInfo(d,r);
         return{name:r[1],ticker:r[2],sector:r[4],type:r[5],ccy:r[8]||'USD',
@@ -1037,7 +1061,7 @@ function pf3AiSnapshot(){
     };
   }
   let totalVal=0;
-  d.rows.forEach((r,i)=>{recalcPF(i,v3Key);totalVal+=parseFloat(r[13])||0});
+  d.rows.forEach((r,i)=>{recalcPF(i,key);totalVal+=parseFloat(r[13])||0});
   const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
   const positions=d.rows.map(r=>({
     name:r[1],ticker:r[2],sector:r[4],ccy:r[8]||'USD',
@@ -1073,21 +1097,22 @@ async function sbToken(){
 }
 async function pf3AiRun(){
   if(pf3Ai.loading)return;
+  const key=v3Key;   // отчёт сохраняется во вкладку, где НАЖАЛИ кнопку, даже если переключились
   pf3Ai.loading=true;
   renderPF3();
   try{
     // Fresh prices + SMA/levels first — so the AI snapshot, the signals column
     // and the «Состояние портфеля» tab all reflect the current market state.
     await pf3Refresh(true);
-    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(pf3AiSnapshot())});
+    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(pf3AiSnapshot(key))});
     const j=await r.json();
     if(j&&j.text){
-      const d=pf3D();
+      const d=DATA[key];
       const entry={text:j.text,proposal:j.proposal||null,at:new Date().toISOString()};
-      d.aiHistory=[entry,...pf3AiHist()].slice(0,10);   // keep the last 10 runs
+      d.aiHistory=[entry,...(d.aiHistory||(d.aiReport?[d.aiReport]:[]))].slice(0,10);   // keep the last 10 runs
       delete d.aiReport;   // superseded by aiHistory
       scheduleSave();
-      toast('🤖 Анализ готов — отчёт и предложение обновлены');
+      toast('🤖 '+RT('Анализ готов — отчёт сохранён в «'+TAB_LABEL(key)+'»','Analysis ready — saved to '+TAB_LABEL(key)));
     }else toast((j&&j.error)||'AI не ответил',true);
   }catch(e){toast('Worker недоступен или не обновлён (нужен эндпоинт ?action=ai)',true);}
   pf3Ai.loading=false;

@@ -25,6 +25,20 @@ function schedulePush(){ clearTimeout(pushTimer); pushTimer=setTimeout(pushState
 
 async function pushState(){
   if(!currentUser) return;
+  // 🤖 aiPort: торговым состоянием (позиции/кэш/журнал) владеет worker. Перед
+  // записью берём его СЕРВЕРНУЮ копию — наша могла отстать, если realtime-канал
+  // спал (сон ноутбука, фоновая вкладка), и тогда push стирал сделки AI.
+  // За клиентом остаются только настройки.
+  try{
+    const { data:rw } = await sb.from('ledger_state').select('aiPort:data->aiPort').eq('user_id',currentUser.id).maybeSingle();
+    const srv = rw && rw.aiPort;
+    if(srv && typeof srv==='object' && srv.startedAt){
+      const mine = AI_PORT || {};
+      AI_PORT = { ...srv };
+      ['strategy','intervalMin','commissionPct','minTradeSEK','enabled','startCapital','startedAt','myStartEquity','myStartLive']
+        .forEach(k=>{ if(mine[k]!==undefined) AI_PORT[k]=mine[k]; });
+    }
+  }catch(e){ /* сеть/колонка недоступна — пушим как есть */ }
   const ts=new Date().toISOString();
   lastPushTs=Date.parse(ts);   // remember so the realtime echo of this push can be ignored
   const { error } = await sb.from('ledger_state')

@@ -907,9 +907,9 @@ export default {
       const syms = url.searchParams.get('targets').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
       await Promise.all(syms.map(async s => {
-        const qs = await yQuoteSummary(s, 'financialData,summaryDetail');
+        const qs = await yQuoteSummary(s, 'financialData,summaryDetail,price');
         if(!qs){ out[s] = null; return; }
-        const fd = qs.financialData || {}, sd = qs.summaryDetail || {};
+        const fd = qs.financialData || {}, sd = qs.summaryDetail || {}, pr = qs.price || {};
         const avg = yRaw(fd.targetMeanPrice);
         const pct = v => (typeof v === 'number' && isFinite(v)) ? round2(v * 100) : null;
         out[s] = {
@@ -923,6 +923,8 @@ export default {
           de: yRaw(fd.debtToEquity) != null ? round2(yRaw(fd.debtToEquity) / 100) : null,   // Yahoo даёт в %
           revg: pct(yRaw(fd.revenueGrowth)),                               // % г/г
           payout: pct(yRaw(sd.payoutRatio)),                               // %
+          rev: yRaw(fd.totalRevenue),                                      // TTM, валюта торгов
+          cap: yRaw(pr.marketCap),                                         // капитализация
         };
       }));
       return json(out);

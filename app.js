@@ -352,22 +352,25 @@ const PF3_TYPES={
 const PF3_REIT_RE=/\breit\b|недвиж/i;
 const PF3_DEF_RE=/фарма|pharma|здравоохран|health|медицин|потребительск|staples|consumer defensive|beverages|напитк|utilit|коммунал|телеком|telecom/i;
 const PF3_GRO_RE=/software|облач|cloud|\bии\b|\bai\b|интернет|e-?comm|соцсет|social|биотех|biotech|кибер|cyber|данн|data|стриминг|streaming|search/i;
-const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace|добыч|золот|серебр|mining|gold|silver|горнодоб/i;
+const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace|добыч|золот|серебр|mining|gold|silver|горнодоб|грузовик|подшипник|строительств|лесопром|теплонасос|теплообмен|электрификац|промтех|конгломерат|инвестиц/i;
 // ── Скоринг типов по правилам индекс-провайдеров (MSCI/S&P/Morningstar) ──
 // Метрики приходят суточным батчем ?targets и лежат в строках: Beta, ROE, D/E,
 // Рост выручки, Payout, P/E, P/S, Дивид. %. Каждый тип набирает очки; лучший —
 // первичный тип, второй — вторичная метка (для пограничных, как Microsoft).
 function pf3TypeMetrics(d,r){
   const h=d.headers,g=name=>{const i=h.indexOf(name);const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
-  return{beta:g('Beta'),roe:g('ROE'),de:g('D/E'),revg:g('Рост выручки'),payout:g('Payout'),pe:g('P/E'),ps:g('P/S'),divy:g('Дивид. %')};
+  return{beta:g('Beta'),roe:g('ROE'),de:g('D/E'),revg:g('Рост выручки'),payout:g('Payout'),pe:g('P/E'),ps:g('P/S'),divy:g('Дивид. %'),rev:g('Выручка TTM'),cap:g('Кап-я')};
 }
 function pf3TypeScores(m,sec){
   const sc={'Защитная':0,'Качественная':0,'Циклическая':0,'Дивидендная':0,'Рост':0,'Стоимость':0,'Спекулятивная':0};
   const has=v=>typeof v==='number'&&isFinite(v);
   const s=String(sec||'');
-  // Защитная/Циклическая: beta + сектор (MSCI Defensive/Cyclical Sectors)
+  // Защитная/Циклическая: beta + сектор (MSCI Defensive/Cyclical Sectors).
+  // У циклического сектора низкая бета защитных очков почти не даёт (Volvo,
+  // неликвидные микрокапы — там низкая бета артефакт, а не защитность).
+  const cycSec=PF3_CYC_RE.test(s);
   if(has(m.beta)){
-    if(m.beta<0.8)sc['Защитная']+=2;else if(m.beta<1)sc['Защитная']+=1;
+    if(m.beta<0.8)sc['Защитная']+=cycSec?0.5:2;else if(m.beta<1)sc['Защитная']+=cycSec?0.25:1;
     if(m.beta>1.2)sc['Циклическая']+=1.5;else if(m.beta>1.05)sc['Циклическая']+=0.5;
   }
   if(PF3_DEF_RE.test(s))sc['Защитная']+=1.5;
@@ -377,7 +380,8 @@ function pf3TypeScores(m,sec){
   // компании низкий долг очков не даёт — кэш у неё от допэмиссий, не от бизнеса.
   if(has(m.roe)){
     if(m.roe>=20)sc['Качественная']+=2;else if(m.roe>=15)sc['Качественная']+=1;
-    if(m.roe<0){sc['Качественная']-=2;sc['Спекулятивная']+=2;}
+    if(m.roe<=-5){sc['Качественная']-=2;sc['Спекулятивная']+=2;}        // настоящие убытки
+    else if(m.roe<0)sc['Спекулятивная']+=0.5;                            // грань безубыточности (CRWD-кейс)
   }
   if(has(m.de)&&(!has(m.roe)||m.roe>0)){if(m.de<0.5)sc['Качественная']+=has(m.roe)&&m.roe>=10?1:0.25;else if(m.de<1)sc['Качественная']+=0.5;else if(m.de>2)sc['Качественная']-=0.5;}
   // Спекулятивная: венчур на публичном рынке — убыток + экстремальный P/S,
@@ -385,6 +389,10 @@ function pf3TypeScores(m,sec){
   if(has(m.ps)){if(m.ps>=20)sc['Спекулятивная']+=1.5;else if(m.ps>=12)sc['Спекулятивная']+=0.75;}
   if(!has(m.pe)&&has(m.ps)&&m.ps>=8)sc['Спекулятивная']+=1;
   if(has(m.pe)&&m.pe>0)sc['Спекулятивная']-=1;   // прибыль есть → это не венчурная ставка
+  // Масштаб бизнеса: выручка ≥ $1 млрд — не венчур; крошечная выручка при
+  // миллиардной капитализации — чистая ставка на ожидания.
+  if(has(m.rev)&&m.rev>=1e9)sc['Спекулятивная']-=1;
+  if(has(m.rev)&&has(m.cap)&&m.rev<1e8&&m.cap>1e9)sc['Спекулятивная']+=1.5;
   // Дивидендная: yield + payout 30–75% (Aristocrats-стиль устойчивости)
   if(has(m.divy)){if(m.divy>=4)sc['Дивидендная']+=2.5;else if(m.divy>=3)sc['Дивидендная']+=1.5;else if(m.divy>=2)sc['Дивидендная']+=0.5;}
   if(has(m.payout)&&m.payout>=30&&m.payout<=75)sc['Дивидендная']+=0.5;
@@ -2576,6 +2584,7 @@ async function pf3RefreshTargets(d){
   const tg=Object.assign({},...good);
   const peC=ensurePFCol(d,'P/E'),psC=ensurePFCol(d,'P/S'),dyC=ensurePFCol(d,'Дивид. %');
   const beC=ensurePFCol(d,'Beta'),roC=ensurePFCol(d,'ROE'),deC=ensurePFCol(d,'D/E'),rgC=ensurePFCol(d,'Рост выручки'),poC=ensurePFCol(d,'Payout');
+  const rvC=ensurePFCol(d,'Выручка TTM'),cpC=ensurePFCol(d,'Кап-я');
   let n=0;
   d.rows.forEach(r=>{
     const q=tg[exSymbol(r[2],r[8])];
@@ -2589,6 +2598,8 @@ async function pf3RefreshTargets(d){
     if(typeof q.de==='number')r[deC]=Math.round(q.de*100)/100;
     if(typeof q.revg==='number')r[rgC]=Math.round(q.revg*10)/10;
     if(typeof q.payout==='number')r[poC]=Math.round(q.payout*10)/10;
+    if(typeof q.rev==='number')r[rvC]=q.rev;
+    if(typeof q.cap==='number')r[cpC]=q.cap;
     n++;
   });
   if(n){

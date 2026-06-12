@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-12e';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-12f';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -739,6 +739,39 @@ function aipUniverse(snap){
   }
   return out;
 }
+// Приближённый вердикт по полям вселенной — на случай, когда сохранённая
+// колонка «Реком. скоринг» пуста (вкладка давно не обновлялась на сайте).
+// Зеркалит pf3Reco по доступным полям; при наличии сохранённого вердикта
+// авторитетен сохранённый (он совпадает с интерфейсом).
+function aipVerdict(u){
+  const type=u[3],day=u[5],d50=u[6],d200=u[7],dSup=u[8],dRes=u[9],up=u[10],pe=u[11],beta=u[12],roe=u[13],revg=u[14];
+  let f=0,t=0,r=0;
+  if(up!=null){ if(up>=25)f+=2; else if(up>=10)f+=1; else if(up<=-5)f-=1.5; }
+  if(roe!=null){ if(roe>=15)f+=1; else if(roe<0)f-=1.5; }
+  if(revg!=null){ if(revg>=10)f+=1; else if(revg<0)f-=0.5; }
+  if(pe!=null&&pe>0){ if(pe<=15)f+=0.5; else if(pe>=40)f-=1; }
+  const belowAll=d50!=null&&d50<0&&d200!=null&&d200<0;
+  const aboveAll=d50!=null&&d50>0&&d200!=null&&d200>0;
+  let knife=false;
+  if(belowAll&&((day!=null&&day<=-3)||(dSup!=null&&dSup<0))){ t-=2.5; knife=true; }
+  else if(up!=null&&up<=-5)t-=1.5;
+  else if(aboveAll&&d200>=30)t-=1.5;
+  else if(aboveAll)t+=1.5;
+  else if(belowAll)t-=1.5;
+  else t-=0.5;
+  const near=v=>v!=null&&Math.abs(v)<=2;
+  if(near(d50)||near(d200)||near(dSup))t+=1.5;
+  else if(near(dRes))t-=1.5;
+  if(type==='Спекулятивная')r-=1.5;
+  if(beta!=null&&beta>1.5)r-=0.5;
+  if(up==null&&roe==null&&pe==null&&beta==null)return 'wait';   // данных нет — осторожно
+  const total=f+t+r;
+  if((type==='Спекулятивная'&&t+r<=-2)||(total<=-4.5&&r<0))return 'avoid';
+  if(knife)return 'wait';
+  if(total<=-2)return 'sell';
+  if(total>=2.5&&f>=0.5&&t>=0)return 'buy';
+  return 'wait';
+}
 // Имя/сектор/тип бумаги — из первой вкладки, где она встречается.
 function aipFindRow(snap, tk){
   const T = tk.toUpperCase();
@@ -811,8 +844,10 @@ async function aiPortfolioRun(env, force){
     universe: aipUniverse(snap),
   };
   // Вердикты скоринга по тикерам — для жёсткой проверки на исполнении.
+  // Пустой сохранённый вердикт добиваем автономным расчётом worker'а — щель
+  // «вкладка давно не обновлялась на сайте» закрыта.
   const recoBy = {};
-  payload.universe.forEach(u => { if(u[15]) recoBy[String(u[0]).toUpperCase()] = u[15]; });
+  payload.universe.forEach(u => { if(!u[15]) u[15] = aipVerdict(u); recoBy[String(u[0]).toUpperCase()] = u[15]; });
   // reason обязан ссылаться на вердикт, когда сделка идёт против него.
   const mentionsReco = t => /reco|вердикт|скоринг|wait|avoid|ждать|опасн/i.test(String(t || ''));
   const r = await fetch('https://api.anthropic.com/v1/messages', {

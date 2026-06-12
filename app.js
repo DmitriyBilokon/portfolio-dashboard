@@ -550,7 +550,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
@@ -730,6 +730,19 @@ function migrateFamilyPortfolios(){
     d.count=d.rows.length;changed=true;
   }
   if(changed&&!applyingRemote)scheduleSave();
+}
+// Восстановление выбора доп. колонок из localStorage, если облачная копия
+// вкладки пришла без него (затёрта старым клиентом и т.п.).
+function restoreXcols(){
+  let n=0;
+  try{
+    const m=JSON.parse(localStorage.getItem('dash_xcols')||'{}');
+    Object.keys(m).forEach(k=>{
+      const d=DATA[k];
+      if(d&&(!Array.isArray(d.xcols)||!d.xcols.length)&&Array.isArray(m[k])&&m[k].length){d.xcols=m[k].slice();n++;}
+    });
+  }catch(e){}
+  if(n&&!applyingRemote)scheduleSave();
 }
 // ===== Свои вкладки-watchlist'ы (админ) =====
 function pf3NewTab(){
@@ -2131,6 +2144,9 @@ function pf3XToggle(k,ev){
   const d=pf3D();d.xcols=pf3XC(d);
   const i=d.xcols.indexOf(k);
   if(i>=0)d.xcols.splice(i,1);else d.xcols.push(k);
+  // Локальный резерв выбора: переживает затирание облачной копии (старые
+  // кеши клиентов и т.п.) — restoreXcols() вернёт выбор при загрузке.
+  try{const m=JSON.parse(localStorage.getItem('dash_xcols')||'{}');m[v3Key]=d.xcols.slice();localStorage.setItem('dash_xcols',JSON.stringify(m));}catch(e){}
   scheduleSave();renderPF3();
 }
 function pf3XMenuHTML(d){

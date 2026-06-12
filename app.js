@@ -1637,6 +1637,13 @@ function pf3Items(){
   return{items,totalVal};
 }
 
+
+// Логотип компании: FMP image CDN → Parqet → буквы тикера (оба бесплатны,
+// покрывают US/.ST/.DE; при двойном промахе <img> убирает себя и остаются буквы).
+function logoHTML(tk,ccy,cls){
+  const esym=encodeURIComponent(exSymbol(tk,ccy));
+  return`<div class="${cls}">${String(tk).slice(0,2)}<img class="logo-i" loading="lazy" alt="" src="https://images.financialmodelingprep.com/symbol/${esym}.png" onerror="if(!this.dataset.f){this.dataset.f=1;this.src='https://assets.parqet.com/logos/symbol/${esym}?format=png&size=64'}else this.remove()"></div>`;
+}
 // One list row: logo, flag+name+ticker, sector, type, … , signal, delete.
 // Index mode swaps the position columns for day % and the analyst target.
 function pf3RowHTML(d,it,port,xc){
@@ -1654,7 +1661,7 @@ function pf3RowHTML(d,it,port,xc){
     <div class="pf3-c pf3-c-day"><span class="${day>=0?'pf3-up':'pf3-down'}">${isFinite(day)?(day>0?'+':'')+day.toFixed(2)+'%':'—'}</span></div>
     <div class="pf3-row-price pf3-c-tg"><b>${tg>0?pf3Fmt(tg,0):'—'}</b>${tg>0&&price>0?`<span class="${tg>=price?'pf3-up':'pf3-down'}">${tg>=price?'+':''}${((tg-price)/price*100).toFixed(0)}%</span>`:''}</div>`;
   return`<div class="pf3-row${port?'':' idx'}${pf3Sel===tk?' active':''}" style="${pf3GridTpl(port,(xc||[]).length)}" onclick="pf3Select('${tk}')">
-    <div class="pf3-row-logo">${tk.slice(0,2)}</div>
+    ${logoHTML(tk,ccy,'pf3-row-logo')}
     <div class="pf3-row-name"><b>${flag}${name||tk}</b><span>${tk}</span></div>
     <div class="pf3-c pf3-c-sec">${r[4]&&r[4]!=='—'?r[4]:'—'}</div>
     <div class="pf3-c pf3-c-typ"><span class="pf3-typ${PF3_TYPE_META[r[5]]?' '+PF3_TYPE_META[r[5]][1]:''}">${PF3_TYPE_META[r[5]]?PF3_TYPE_META[r[5]][0]+' ':''}${r[5]&&r[5]!=='—'?T(r[5]):'—'}</span></div>
@@ -2032,7 +2039,7 @@ function simTabHTML(){
     inv+=invS; if(valS!=null)val+=valS; else known=false;
     const plp=valS!=null&&invS>0?(valS/invS-1)*100:null;
     return`<div class="sim-trow" onclick="simOpen('${s.tk}')">
-      <div class="pf3-row-logo">${s.tk.slice(0,2)}</div>
+      ${logoHTML(s.tk,s.ccy,'pf3-row-logo')}
       <div class="pf3-row-name"><b>${q?q.flag:''}${s.name||s.tk}</b><span>${s.tk} · ${T('куплено')} ${s.date}</span></div>
       <div class="pf3-c">${pf3Fmt(s.qty)}</div>
       <div class="pf3-c">${pf3Fmt(s.buy,2)} ${s.ccy}</div>
@@ -2080,7 +2087,7 @@ function homeItems(){
 }
 function homeRowHTML(x,extra){
   return`<div class="home-row" onclick="simOpen('${x.tk}')">
-    <div class="pf3-row-logo">${x.tk.slice(0,2)}</div>
+    ${logoHTML(x.tk,x.ccy,'pf3-row-logo')}
     <div class="pf3-row-name"><b>${x.flag}${x.name}</b><span>${x.tk}${x.port?' · '+T('в портфеле'):''}</span></div>
     <div class="home-px"><b>${x.price>0?pf3Fmt(x.price,2):'—'} ${x.ccy}</b>${isFinite(x.day)?`<span class="${x.day>=0?'pf3-up':'pf3-down'}">${x.day>0?'+':''}${x.day.toFixed(2)}%</span>`:''}</div>
     ${extra}
@@ -2131,7 +2138,7 @@ function pf3DetailHTML(){
     <section class="pf3-hero">
       <button class="pf3-close" onclick="pf3Select('${tk}')" title="Закрыть карточку">✕</button>
       <div class="pf3-id">
-        <div class="pf3-logo">${tk.slice(0,2)}</div>
+        ${logoHTML(tk,ccy,'pf3-logo')}
         <div>
           <h2>${r[1]||tk}</h2>
           <div class="pf3-chips">${chips}</div>

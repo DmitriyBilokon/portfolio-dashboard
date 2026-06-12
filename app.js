@@ -2590,6 +2590,34 @@ function homeRowHTML(x,extra){
     ${extra}
   </div>`;
 }
+// 🔄 Обновить всё: курсы валют + цены/SMA/уровни всех v3-вкладок + метрики/типы
+// (таргеты уважают суточный таймер — форсируются кнопкой 🔁 на вкладке).
+let _homeUpd=false;
+async function homeUpdateAll(){
+  if(_homeUpd)return;
+  _homeUpd=true;
+  const btn=document.getElementById('homeUpdBtn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
+  const keys=v3Tabs().filter(k=>DATA[k]&&DATA[k].rows&&DATA[k].rows.length);
+  let updated=0,total=0,done=0;
+  try{
+    try{await refreshFX()}catch(e){}
+    for(const key of keys){
+      const d=DATA[key];
+      try{updated+=await pf3FetchPrices(d,key)}catch(e){}
+      total+=d.rows.length;
+      try{await pf3RefreshTargets(d)}catch(e){}
+      done++;
+      const b=document.getElementById('homeUpdBtn');
+      if(b)b.textContent=`⏳ ${Math.round(done/keys.length*100)}% · ${TAB_LABEL(key)}`;
+    }
+    pf3LastRefresh=Date.now();
+    toast(RT(`✓ Обновлено: ${updated}/${total} акций · ${keys.length} вкладок · курсы валют`,`✓ Updated: ${updated}/${total} stocks · ${keys.length} tabs · FX rates`),updated===0);
+  }finally{
+    _homeUpd=false;
+    renderAll();
+  }
+}
 function homeHTML(){
   const items=homeItems();
   const lvl=s=>`<div class="home-lvl"><span>${T(s.n)} <b>${pf3Fmt(s.v,2)}</b></span><span class="pf3-lvl-dist ${s.dist>=0?'pf3-up-bg':'pf3-down-bg'}">${s.dist>=0?'▲':'▼'} ${Math.abs(s.dist).toFixed(1)}%</span></div>`;
@@ -2607,7 +2635,7 @@ function homeHTML(){
   const chips=Object.entries(stat).sort((a,b)=>a[1].rank-b[1].rank)
     .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
   return`
-  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span></div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button></div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
   <div class="home-grid">
     ${widget(T('🟢 Покупать / докупать сейчас'),T('цена в ±2% от SMA или поддержки'),cap(buy,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Сейчас никто не стоит у уровня покупки'))}
     ${widget(T('🔴 Продавать — у сопротивления'),T('цена в ±2% от сопротивления'),cap(sell,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('У сопротивления никого нет'))}
@@ -2690,44 +2718,49 @@ function pf3DetailHTML(){
 }
 function pf3Edit(ci,v){const ri=pf3SelIdx(),n=parseFloat(v);pf3D().rows[ri][ci]=isNaN(n)?0:n;recalcPF(ri,v3Key);scheduleSave();renderPF3()}
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
+// Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
+// ОДНОЙ вкладки. Batched in chunks of 20 — the worker makes 2 Yahoo calls per
+// symbol and Cloudflare caps subrequests; все чанки параллельно.
+async function pf3FetchPrices(d,key){
+  const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+  const chunks=[];
+  for(let i=0;i<syms.length;i+=20)chunks.push(syms.slice(i,i+20).join(','));
+  const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
+  const prices=Object.assign({},...parts.filter(Boolean));
+  const {s50,s100,s200}=smaIdx(d);
+  const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
+  let updated=0;
+  d.rows.forEach((r,i)=>{
+    const q=prices[exSymbol(r[2],r[8])];
+    if(!(q&&typeof q.price==='number'))return;
+    r[7]=q.price;
+    if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
+    // Обе серии SMA (дневные и недельные) — в SMA_TF; в видимые колонки
+    // идёт набор выбранного периода (1Г/3Г), а не всегда дневной. От этих
+    // колонок считаются «Критерий» и «Сигнал» при перерисовке.
+    const tk=String(r[2]||'');
+    const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
+    SMA_TF[tk]={mode,
+      d:[q.sma50??null,q.sma100??null,q.sma200??null],
+      w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
+    const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
+    if(s50>=0&&set[0]!=null)r[s50]=set[0];
+    if(s100>=0&&set[1]!=null)r[s100]=set[1];
+    if(s200>=0&&set[2]!=null)r[s200]=set[2];
+    if(q.support!=null)r[supI]=q.support;
+    if(q.resistance!=null)r[resI]=q.resistance;
+    recalcPF(i,key);updated++;
+  });
+  if(updated)scheduleSave();
+  return updated;
+}
 async function pf3Refresh(silent){
   const d=pf3D();
   const btn=document.getElementById('pf3RefreshBtn');
   if(btn&&!silent){btn.disabled=true;btn.textContent='⏳ Обновляю…';}
   try{
-    // Batched in chunks of 20 — the worker makes 2 Yahoo calls per symbol and
-    // Cloudflare caps subrequests, so a 100-ticker index needs several requests.
-    const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
-    const chunks=[];
-    for(let i=0;i<syms.length;i+=20)chunks.push(syms.slice(i,i+20).join(','));
-    // Все чанки параллельно — для 100 тикеров 5 раундтрипов превращаются в один.
-    const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
-    const prices=Object.assign({},...parts.filter(Boolean));
-    const {s50,s100,s200}=smaIdx(d);
-    const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
-    let updated=0;
-    d.rows.forEach((r,i)=>{
-      const q=prices[exSymbol(r[2],r[8])];
-      if(!(q&&typeof q.price==='number'))return;
-      r[7]=q.price;
-      if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
-      // Обе серии SMA (дневные и недельные) — в SMA_TF; в видимые колонки
-      // идёт набор выбранного периода (1Г/3Г), а не всегда дневной. От этих
-      // колонок считаются «Критерий» и «Сигнал» при перерисовке ниже.
-      const tk=String(r[2]||'');
-      const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
-      SMA_TF[tk]={mode,
-        d:[q.sma50??null,q.sma100??null,q.sma200??null],
-        w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
-      const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
-      if(s50>=0&&set[0]!=null)r[s50]=set[0];
-      if(s100>=0&&set[1]!=null)r[s100]=set[1];
-      if(s200>=0&&set[2]!=null)r[s200]=set[2];
-      if(q.support!=null)r[supI]=q.support;
-      if(q.resistance!=null)r[resI]=q.resistance;
-      recalcPF(i,v3Key);updated++;
-    });
-    if(updated){scheduleSave();pf3LastRefresh=Date.now();}
+    const updated=await pf3FetchPrices(d,v3Key);
+    if(updated)pf3LastRefresh=Date.now();
     try{await pf3RefreshTargets(d)}catch(e){}   // аналит. таргеты — раз в сутки, тем же батч-паттерном
     if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
   }catch(e){if(!silent)toast('Прокси цен недоступен',true);}

@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14c';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-12d';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -755,12 +755,26 @@ async function aiPortfolioRun(env, force){
   if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
   const row = await loadRow(env);
   const snap = row && row.snap;
-  const ap = snap && snap.aiPort;
+  let ap = snap && snap.aiPort;
+  // ♻️ Самовосстановление: worker хранит собственную копию (aiPortBak) при
+  // каждой записи. Если клиент затёр aiPort (старый кеш сайта пушит снапшот
+  // без этого ключа / отставшая копия) — восстанавливаем из резерва.
+  let restored = false;
+  const bak = snap && snap.aiPortBak;
+  if(bak && bak.startedAt){
+    const apEmpty = !ap || !ap.startedAt || (!(ap.positions || []).length && !(ap.trades || []).length);
+    const bakHas = (bak.positions || []).length || (bak.trades || []).length;
+    if(apEmpty && bakHas){
+      ap = snap.aiPort = JSON.parse(JSON.stringify(bak));
+      restored = true;
+      try{ await sendTelegram(env, `♻️ <b>AI ПОРТФЕЛЬ ВОССТАНОВЛЕН</b> из резервной копии worker'а: позиций ${(ap.positions || []).length}, сделок ${(ap.trades || []).length}. Похоже, какой-то клиент затёр состояние — обновите сайт на всех устройствах.`); }catch(e){}
+    }
+  }
   if(!ap || !ap.startedAt) return 'AI портфель не инициализирован — откройте вкладку 🤖 на сайте';
   if(ap.enabled === false) return 'AI портфель выключен в настройках';
   const now = Date.now();
   const iv = (parseFloat(ap.intervalMin) || 60) * 60e3;
-  if(!force && ap.lastRunAt && now - ap.lastRunAt < iv - 90e3) return `Рано: следующий цикл через ${Math.ceil((ap.lastRunAt + iv - now) / 60e3)} мин`;
+  if(!force && !restored && ap.lastRunAt && now - ap.lastRunAt < iv - 90e3) return `Рано: следующий цикл через ${Math.ceil((ap.lastRunAt + iv - now) / 60e3)} мин`;
   const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
   // Торговые сессии: решения возможны только по открытым рынкам.
   const marketsOpen = {};
@@ -879,13 +893,9 @@ async function aiPortfolioRun(env, force){
   const fresh = await loadRow(env);
   if(fresh){
     const fap = (fresh.snap && fresh.snap.aiPort) || {};
-    // Пользователь обнулил портфель, пока шёл цикл — результаты цикла отбрасываем,
-    // иначе запись вернула бы дорезетные позиции поверх чистого счёта.
-    if((fap.resetAt || 0) > (ap.resetAt || 0)){
-      return 'Портфель обнулён во время цикла — результаты отброшены, следующий цикл стартует с чистого счёта';
-    }
-    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive', 'resetAt'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
+    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
     fresh.snap.aiPort = ap;
+    fresh.snap.aiPortBak = JSON.parse(JSON.stringify(ap));   // несгораемая копия worker'а
     await writeRow(env, fresh.userId, fresh.snap);
   }
   for(const t of trades){

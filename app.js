@@ -32,8 +32,7 @@ async function pushState(){
   try{
     const { data:rw } = await sb.from('ledger_state').select('aiPort:data->aiPort').eq('user_id',currentUser.id).maybeSingle();
     const srv = rw && rw.aiPort;
-    const localReset=(AI_PORT&&AI_PORT.resetAt)||0;
-    if(srv && typeof srv==='object' && srv.startedAt && (srv.resetAt||0)>=localReset){
+    if(srv && typeof srv==='object' && srv.startedAt){
       const mine = AI_PORT || {};
       AI_PORT = { ...srv };
       ['strategy','intervalMin','commissionPct','minTradeSEK','enabled','startCapital','startedAt','myStartEquity','myStartLive']
@@ -2792,21 +2791,6 @@ async function aipRunNow(ev){
   }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
   if(btn){btn.disabled=false;btn.textContent='▶ '+RT('Запустить цикл сейчас','Run cycle now');}
 }
-async function aipReset(){
-  if(!AI_PORT)return;
-  if(!confirm(RT('Обнулить AI портфель? Позиции, журнал сделок и история капитала будут стёрты, счёт вернётся к 300 000 kr. Настройки и стратегия сохранятся.','Reset the AI portfolio? Positions, trade journal and equity history will be wiped; the account returns to 300,000 kr. Settings and strategy are kept.')))return;
-  const keep=AI_PORT;
-  AI_PORT={startedAt:Date.now(),startCapital:300000,cashSEK:300000,
-    commissionPct:keep.commissionPct||0,minTradeSEK:keep.minTradeSEK||5000,
-    intervalMin:keep.intervalMin||60,enabled:keep.enabled!==false,
-    strategy:keep.strategy||'',positions:[],trades:[],equityHistory:[],
-    myStartEquity:null,myStartLive:'',lastRunAt:0,lastNote:'',
-    resetAt:Date.now()};   // маркер: выигрывает у push-merge и у идущего worker-цикла
-  scheduleSave();
-  aipSyncTab();
-  renderAll();
-  toast(RT('AI портфель обнулён ✓ Торговля начнётся со следующего цикла после открытия рынка','AI portfolio reset ✓ Trading restarts on the next cycle once a market opens'));
-}
 function aipSaveSettings(){
   if(!AI_PORT)return;
   const g=id=>document.getElementById(id);
@@ -2866,7 +2850,6 @@ function aipManageHTML(){
       <label><input type="checkbox" id="aipEnabled"${ap.enabled!==false?' checked':''}> ${RT('AI торгует','AI trading on')}</label>
       <button class="pf3-btn" onclick="aipSaveSettings()">💾 ${RT('Сохранить','Save')}</button>
       <button class="pf3-btn" onclick="aipRunNow(event)">▶ ${RT('Запустить цикл сейчас','Run cycle now')}</button>
-      <button class="pf3-btn btn-del" onclick="aipReset()">♻️ ${RT('Обнулить портфель','Reset portfolio')}</button>
     </div>
     <div class="pf3-reco-note">${RT('Старт: 300 000 kr · комиссия 0% · мин. сделка 5 000 kr · вселенная — все вкладки сайта · сделки только в часы торгов соответствующей биржи (США 9:30–16:00 ET, Стокгольм 9:00–17:25 и т.д.) · решения принимает Claude в worker-кроне, даже когда сайт закрыт.','Start: 300,000 kr · 0% commission · min trade 5,000 kr · universe — every tab on the site · trades only during each exchange\'s market hours (US 9:30–16:00 ET, Stockholm 9:00–17:25 etc.) · decisions are made by Claude in the worker cron, even with the site closed.')}</div>
   </section>`;

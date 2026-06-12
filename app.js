@@ -1895,6 +1895,85 @@ function pf3Criterion(d,r){
   return B(3,'flat','⚖️','Боковик');
 }
 
+// ── 💡 Рекомендация по акции: Покупать / Продавать / Ждать / Не приближаться ──
+// Детерминированный скоринг по трём группам факторов из уже загруженных данных:
+// фундаментал (таргет, ROE, рост, D/E, P/E к сектору), техника (фаза рынка +
+// сигнал у уровня), риск (спекулятивный профиль, beta, P/S, масштаб бизнеса).
+function pf3Reco(d,r){
+  const m=pf3TypeMetrics(d,r);
+  const price=parseFloat(r[7])||0;
+  const tgC=d.headers.findIndex(x=>/аналит/i.test(x));
+  const target=tgC>=0?parseFloat(r[tgC]):NaN;
+  const up=(isFinite(target)&&target>0&&price>0)?(target-price)/price*100:null;
+  const crit=pf3Criterion(d,r),sig=pf3SignalInfo(d,r);
+  const tf=pf3TypeFull(d,r);
+  const spec=(tf&&(tf.primary==='Спекулятивная'||tf.secondary==='Спекулятивная'))||r[5]==='Спекулятивная';
+  const avg=PF3_VAL_AVG[pf3MacroSector(String(r[4]||''))]||[22,3];
+  const F=[],TT=[],R=[];let fs=0,ts=0,rs=0;
+  const push=(arr,pts,ru,en)=>{arr.push({pts,txt:RT(ru,en)});return pts};
+  // Фундаментал
+  if(up!=null){
+    if(up>=25)fs+=push(F,2,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`);
+    else if(up>=10)fs+=push(F,1,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`);
+    else if(up<=-5)fs+=push(F,-1.5,`цена выше таргета на ${(-up).toFixed(0)}%`,`price ${(-up).toFixed(0)}% above target`);
+    else fs+=push(F,0,`таргет ≈ цена (${up>=0?'+':''}${up.toFixed(0)}%)`,`target ≈ price (${up>=0?'+':''}${up.toFixed(0)}%)`);
+  }
+  if(m.roe!=null){
+    if(m.roe>=15)fs+=push(F,1,`рентабельна: ROE ${m.roe.toFixed(0)}%`,`profitable: ROE ${m.roe.toFixed(0)}%`);
+    else if(m.roe<0)fs+=push(F,-1.5,`убыточна: ROE ${m.roe.toFixed(0)}%`,`loss-making: ROE ${m.roe.toFixed(0)}%`);
+  }
+  if(m.revg!=null){
+    if(m.revg>=10)fs+=push(F,1,`выручка растёт +${m.revg.toFixed(0)}% г/г`,`revenue +${m.revg.toFixed(0)}% YoY`);
+    else if(m.revg<0)fs+=push(F,-0.5,`выручка падает ${m.revg.toFixed(0)}% г/г`,`revenue ${m.revg.toFixed(0)}% YoY`);
+  }
+  if(m.de!=null&&m.de>2)fs+=push(F,-0.5,`высокий долг: D/E ${m.de.toFixed(1)}`,`high debt: D/E ${m.de.toFixed(1)}`);
+  if(m.pe!=null&&m.pe>0){
+    if(m.pe<=avg[0])fs+=push(F,0.5,`P/E ${m.pe.toFixed(0)} ≤ сектора (~${avg[0]})`,`P/E ${m.pe.toFixed(0)} ≤ sector (~${avg[0]})`);
+    else if(m.pe>=avg[0]*1.5)fs+=push(F,-1,`P/E ${m.pe.toFixed(0)} ≫ сектора (~${avg[0]})`,`P/E ${m.pe.toFixed(0)} ≫ sector (~${avg[0]})`);
+  }
+  // Техника
+  const PH={'Падающий нож':-2.5,'Даунтренд':-1.5,'Коррекция':-0.5,'Боковик':0,'Разворот':0.5,'Аптренд':1.5,'Импульс':1,'Перегрев':-1.5,'Недооценка':0.5};
+  if(crit.label in PH)ts+=push(TT,PH[crit.label],`фаза: ${crit.ico} ${crit.label}`,`phase: ${crit.ico} ${crit.label==='Падающий нож'?'Falling knife':crit.label==='Даунтренд'?'Downtrend':crit.label==='Коррекция'?'Correction':crit.label==='Боковик'?'Sideways':crit.label==='Разворот'?'Reversal':crit.label==='Аптренд'?'Uptrend':crit.label==='Импульс'?'Momentum':crit.label==='Перегрев'?'Overheated':'Undervalued'}`);
+  if(sig.type==='buy')ts+=push(TT,1.5,`цена у уровня покупки ${sig.n}`,`price at buy level ${sig.n}`);
+  else if(sig.type==='sell')ts+=push(TT,-1.5,'цена у сопротивления — зона фиксации','price at resistance — take-profit zone');
+  else if(sig.type==='wait')ts+=push(TT,0,`до уровня ${sig.n} ещё −${sig.dist.toFixed(1)}%`,`${sig.dist.toFixed(1)}% above level ${sig.n}`);
+  else if(sig.type==='below')ts+=push(TT,-1,'цена ниже всех уровней поддержки','price below all support levels');
+  // Риск
+  if(spec)rs+=push(R,-1.5,'спекулятивный профиль','speculative profile');
+  if(m.beta!=null&&m.beta>1.5)rs+=push(R,-0.5,`высокая волатильность: β ${m.beta.toFixed(1)}`,`high volatility: β ${m.beta.toFixed(1)}`);
+  if(m.ps!=null&&m.ps>=20)rs+=push(R,-1,`экстремальная оценка: P/S ${m.ps.toFixed(0)}`,`extreme valuation: P/S ${m.ps.toFixed(0)}`);
+  if(m.rev!=null&&m.cap!=null&&m.rev<1e8&&m.cap>1e9)rs+=push(R,-0.5,'крошечная выручка при большой кап-и','tiny revenue vs market cap');
+  if(!R.length)push(R,0,'особых красных флагов нет','no specific red flags');
+  // Вердикт
+  const total=fs+ts+rs,knife=crit.label==='Падающий нож';
+  const noData=up==null&&m.roe==null&&m.pe==null&&m.beta==null;
+  let v,hint;
+  if(noData){v='wait';hint=RT('недостаточно данных — нажмите 🔄 Обновить акции','not enough data — press 🔄 Refresh stocks');}
+  else if((spec&&ts+rs<=-2)||(total<=-4.5&&rs<0)){v='avoid';hint=RT('высокий риск и слабые факторы — лучше пропустить','high risk and weak factors — better to skip');}
+  else if(knife){v='wait';hint=RT('падающий нож — дождитесь стабилизации у поддержки','falling knife — wait for stabilisation at support');}
+  else if(total<=-2){v='sell';hint=RT('перевес негативных факторов — фиксируйте или сокращайте','negative factors dominate — take profit or trim');}
+  else if(total>=2.5&&fs>=0.5&&ts>=0){v='buy';hint=RT('фундаментал и техника за вход','fundamentals and technicals favour an entry');}
+  else{v='wait';hint=RT('факторы смешанные — дождитесь уровня или подтверждения тренда','mixed factors — wait for a level or trend confirmation');}
+  return{v,hint,total,fs,ts,rs,F,T:TT,R};
+}
+function pf3RecoHTML(d,r){
+  const rc=pf3Reco(d,r);
+  const META={buy:['🟢',RT('Покупать','Buy')],sell:['🔴',RT('Продавать / фиксировать','Sell / take profit')],wait:['🟡',RT('Ждать','Wait')],avoid:['⛔',RT('Не приближаться','Stay away')]};
+  const [ico,label]=META[rc.v];
+  const sgn=x=>`${x>0?'+':''}${x.toFixed(1)}`;
+  const dim=(title,score,items)=>`<div class="pf3-reco-dim"><div class="pf3-reco-dim-hd">${title} <span class="${score>0?'pf3-up':score<0?'pf3-down':''}">${sgn(score)}</span></div>${items.map(i=>`<div class="pf3-reco-it ${i.pts>0?'pos':i.pts<0?'neg':'neu'}">${i.pts>0?'▲':i.pts<0?'▼':'•'} ${i.txt}</div>`).join('')||`<div class="pf3-reco-it neu">• ${RT('нет данных','no data')}</div>`}</div>`;
+  return`<section class="pf3-panel pf3-reco">
+    <div class="pf3-panel-hd"><span>${RT('💡 Рекомендация','💡 Recommendation')}</span><span class="pf3-asof">${RT('балл','score')} ${sgn(rc.total)}</span></div>
+    <div class="pf3-reco-verdict rv-${rc.v}">${ico} ${label}<small>${rc.hint}</small></div>
+    <div class="pf3-reco-grid">
+      ${dim(RT('📊 Фундаментал','📊 Fundamentals'),rc.fs,rc.F)}
+      ${dim(RT('📈 Техника','📈 Technicals'),rc.ts,rc.T)}
+      ${dim(RT('⚡ Риск','⚡ Risk'),rc.rs,rc.R)}
+    </div>
+    <div class="pf3-reco-note">${RT('Автоматический скоринг по данным карточки — не индивидуальная инвестиционная рекомендация.','Automatic scoring from the card data — not individual investment advice.')}</div>
+  </section>`;
+}
+
 // Column sorting (display only — the underlying rows stay in place).
 let pf3Sort={key:'val',dir:-1};   // default: по общей стоимости, по убыванию
 function pf3SortBy(k){
@@ -2570,6 +2649,7 @@ function pf3DetailHTML(){
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
+    ${pf3RecoHTML(d,r)}
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>
       <div class="pf3-health-grid" id="pf3HealthGrid">${pf3Health()}</div>

@@ -837,3 +837,19 @@ html.ui2[data-theme="dark"] .pf3-panel,html.ui2[data-theme="dark"] .faq-card{bac
 /* 📜 Промпты: описание + текст промпта */
 .prm-about{font-size:12px;color:var(--text2);line-height:1.55;padding:4px 0 10px}
 .prm-pre{white-space:pre-wrap;font:500 10.5px 'JetBrains Mono',monospace;line-height:1.5;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;max-height:340px;overflow:auto;color:var(--text2)}
+
+/* 💡 Рекомендация в карточке акции */
+.pf3-reco-verdict{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:17px;font-weight:700;padding:10px 12px;border-radius:10px;margin-bottom:10px}
+.pf3-reco-verdict small{font-size:11px;font-weight:500;color:var(--text2)}
+.rv-buy{background:rgba(16,185,129,.12);color:var(--green)}
+.rv-sell{background:rgba(239,68,68,.12);color:var(--red)}
+.rv-wait{background:rgba(234,179,8,.12);color:var(--gold)}
+.rv-avoid{background:rgba(148,163,184,.14);color:var(--text2)}
+.pf3-reco-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.pf3-reco-dim{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px 11px;min-width:0}
+.pf3-reco-dim-hd{font-size:11px;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;gap:6px}
+.pf3-reco-it{font-size:11px;line-height:1.45;color:var(--text2);overflow:hidden;text-overflow:ellipsis}
+.pf3-reco-it.pos{color:var(--green)}
+.pf3-reco-it.neg{color:var(--red)}
+.pf3-reco-note{font-size:9.5px;color:var(--text3);margin-top:8px;font-family:'JetBrains Mono',monospace}
+html.ui2 .pf3-reco-dim{border-radius:12px}

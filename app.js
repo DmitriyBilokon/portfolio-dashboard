@@ -405,13 +405,18 @@ function migrateRemovePF2(){
 // индексу», вкладку — по упоминанию имени индекса.
 function migrateAiHistory(){
   const pf=DATA[PF3_KEY];
-  if(!pf||pf.aiMig==='1')return;
-  pf.aiMig='1';
+  if(!pf||pf.aiMig==='2')return;
+  pf.aiMig='2';
+  // Шведские тикеры OMXS30 — портфельный отчёт о них не рассуждает.
+  const SWE=/SAAB|VOLV|ERIC|TELIA|TEL2|ATCO|EVO\b|HEXA|SAND|\bBOL\b|SKF|ESSITY|SEB A|SWED|SHB|INVE B|ASSA|ALFA|NIBE|EPI A|LIFCO|ADDT|SKA B|INDU C/g;
   const moved={};
   pf.aiHistory=(pf.aiHistory||[]).filter(e=>{
     const t=String(e&&e.text||'');
-    if(!/Картина по индексу/i.test(t))return true;   // портфельный отчёт — остаётся
-    const idx=/OMXS30/i.test(t)?OMX_IDX:/Nasdaq.?100/i.test(t)?ANALYSIS_IDX:null;
+    const watch=/Картина по индексу/i.test(t);
+    const sweHits=(t.match(SWE)||[]).length;
+    let idx=null;
+    if(watch)idx=/OMXS30/i.test(t)?OMX_IDX:/Nasdaq.?100/i.test(t)?ANALYSIS_IDX:null;
+    else if(/OMXS30/i.test(t)&&sweHits>=3)idx=OMX_IDX;   // старый формат, но контент индексный
     if(!idx||!DATA[idx])return true;
     (moved[idx]=moved[idx]||[]).push(e);
     return false;
@@ -1079,6 +1084,15 @@ function pf3AiSnapshot(key){
     allocation:{bySector:group('sector'),byCurrency:group('ccy')},
     totals:{stocksSEK:Math.round(totalVal),freeCashSEK:num(d.cashFree)||0,leverageSEK:num(d.leverage)||0},
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
+    // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
+    // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.
+    marketContext:V3_TABS.filter(k=>k!==PF3_KEY&&DATA[k]).map(k=>{
+      const di=DATA[k],phases={};
+      di.rows.forEach(r=>{const c=pf3Criterion(di,r);phases[c.label]=(phases[c.label]||0)+1});
+      const last=(di.aiHistory||[])[0];
+      return{index:k,phases,
+        lastAiReview:last?{at:last.at,summary:(last.proposal&&last.proposal.summary)||String(last.text||'').slice(0,1200)}:null};
+    }),
   };
 }
 

@@ -353,10 +353,63 @@ const PF3_REIT_RE=/\breit\b|недвиж/i;
 const PF3_DEF_RE=/фарма|pharma|здравоохран|health|медицин|потребительск|staples|consumer defensive|beverages|напитк|utilit|коммунал|телеком|telecom/i;
 const PF3_GRO_RE=/software|облач|cloud|\bии\b|\bai\b|интернет|e-?comm|соцсет|social|биотех|biotech|кибер|cyber|данн|data|стриминг|streaming|search/i;
 const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace|добыч|золот|серебр|mining|gold|silver|горнодоб/i;
-function pf3DeriveType(tk,sec,cur){
+// ── Скоринг типов по правилам индекс-провайдеров (MSCI/S&P/Morningstar) ──
+// Метрики приходят суточным батчем ?targets и лежат в строках: Beta, ROE, D/E,
+// Рост выручки, Payout, P/E, P/S, Дивид. %. Каждый тип набирает очки; лучший —
+// первичный тип, второй — вторичная метка (для пограничных, как Microsoft).
+function pf3TypeMetrics(d,r){
+  const h=d.headers,g=name=>{const i=h.indexOf(name);const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
+  return{beta:g('Beta'),roe:g('ROE'),de:g('D/E'),revg:g('Рост выручки'),payout:g('Payout'),pe:g('P/E'),ps:g('P/S'),divy:g('Дивид. %')};
+}
+function pf3TypeScores(m,sec){
+  const sc={'Защитная':0,'Качественная':0,'Циклическая':0,'Дивидендная':0,'Рост':0,'Стоимость':0};
+  const has=v=>typeof v==='number'&&isFinite(v);
+  const s=String(sec||'');
+  // Защитная/Циклическая: beta + сектор (MSCI Defensive/Cyclical Sectors)
+  if(has(m.beta)){
+    if(m.beta<0.8)sc['Защитная']+=2;else if(m.beta<1)sc['Защитная']+=1;
+    if(m.beta>1.2)sc['Циклическая']+=1.5;else if(m.beta>1.05)sc['Циклическая']+=0.5;
+  }
+  if(PF3_DEF_RE.test(s))sc['Защитная']+=1.5;
+  if(PF3_CYC_RE.test(s))sc['Циклическая']+=1.5;
+  if(PF3_REIT_RE.test(s))sc['Дивидендная']+=2;
+  // Качественная: ROE + D/E (MSCI Quality)
+  if(has(m.roe)){if(m.roe>=20)sc['Качественная']+=2;else if(m.roe>=15)sc['Качественная']+=1;}
+  if(has(m.de)){if(m.de<0.5)sc['Качественная']+=1;else if(m.de<1)sc['Качественная']+=0.5;else if(m.de>2)sc['Качественная']-=0.5;}
+  // Дивидендная: yield + payout 30–75% (Aristocrats-стиль устойчивости)
+  if(has(m.divy)){if(m.divy>=4)sc['Дивидендная']+=2.5;else if(m.divy>=3)sc['Дивидендная']+=1.5;else if(m.divy>=2)sc['Дивидендная']+=0.5;}
+  if(has(m.payout)&&m.payout>=30&&m.payout<=75)sc['Дивидендная']+=0.5;
+  // Рост: рост выручки (Russell/MSCI Growth)
+  if(has(m.revg)){
+    if(m.revg>=20)sc['Рост']+=2.5;else if(m.revg>=15)sc['Рост']+=1.5;else if(m.revg>=8)sc['Рост']+=0.5;
+    if(m.revg<0)sc['Рост']-=1;
+    if((!has(m.divy)||m.divy===0)&&m.revg>=8)sc['Рост']+=0.5;
+  }
+  if(has(m.ps)&&m.ps>=8&&has(m.revg)&&m.revg>=10)sc['Рост']+=0.5;
+  // Стоимость: P/E против среднего по сектору + абсолютные пороги
+  const avg=PF3_VAL_AVG[pf3MacroSector(s)]||[22,3];
+  if(has(m.pe)&&m.pe>0){
+    if(m.pe<=avg[0]*0.6)sc['Стоимость']+=2;else if(m.pe<=avg[0]*0.8)sc['Стоимость']+=1;
+    if(m.pe<=10)sc['Стоимость']+=0.5;
+  }
+  if(has(m.ps)&&m.ps>0&&m.ps<=avg[1]*0.5)sc['Стоимость']+=0.5;
+  if(has(m.divy)&&m.divy>=3)sc['Стоимость']+=0.5;
+  return Object.entries(sc).sort((a,b)=>b[1]-a[1]);
+}
+// Первичный + вторичный тип. Вторичный — если набрал ≥2 и ≥60% от первичного.
+function pf3TypeFull(d,r){
+  const m=pf3TypeMetrics(d,r);
+  if(!(m.beta!=null||m.roe!=null||m.revg!=null))return null;   // метрик ещё нет
+  const sc=pf3TypeScores(m,r[4]);
+  if(!(sc[0][1]>0))return null;
+  const secd=(sc[1][1]>=2&&sc[1][1]>=sc[0][1]*0.6)?sc[1][0]:null;
+  return{primary:sc[0][0],secondary:secd};
+}
+function pf3DeriveType(tk,sec,cur,d,r){
   if(/etf|фонд/i.test(cur||''))return cur;
-  if(PF3_TYPES[tk])return PF3_TYPES[tk];
-  const s=sec||'';
+  if(d&&r){const f=pf3TypeFull(d,r);if(f)return f.primary;}   // скоринг по live-метрикам
+  if(PF3_TYPES[tk])return PF3_TYPES[tk];                       // фолбэк: карта тикеров
+  const s=sec||'';                                              // фолбэк: сектор
   if(PF3_REIT_RE.test(s))return 'Дивидендная';
   if(PF3_DEF_RE.test(s))return 'Защитная';
   if(PF3_GRO_RE.test(s))return 'Рост';
@@ -372,7 +425,7 @@ function fixCompanyNames(){
       const proper=PF3_NAMES[tk],sec=PF3_SECTORS[tk];
       if(proper&&(!r[1]||String(r[1]).trim().toUpperCase()===tk)){r[1]=proper;touched=true;}
       if(sec&&(!r[4]||r[4]==='—')){r[4]=sec;touched=true;}
-      const typ=pf3DeriveType(tk,r[4],r[5]);
+      const typ=pf3DeriveType(tk,r[4],r[5],d,r);
       if(r[5]!==typ){r[5]=typ;touched=true;}
     });
   });
@@ -735,7 +788,8 @@ function faqHTML(){
    +typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')
    +typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')
    +typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')
-   +typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.'))}
+   +typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.')
+   +row('<b>🧮</b>',RT('Тип считается скорингом по live-метрикам в духе методологий MSCI/S&P: beta и сектор (защитная/циклическая), ROE и D/E (качественная), дивдоходность и payout (дивидендная), рост выручки (рост), P/E к среднему сектора (стоимость). Пограничные получают вторичную метку в карточке — как Microsoft: «Качественная · Рост». Пока метрики не загрузились, действует классификация по сектору.','The type is scored from live metrics in the spirit of MSCI/S&P methodologies: beta & sector (defensive/cyclical), ROE & D/E (quality), yield & payout (dividend), revenue growth (growth), P/E vs sector average (value). Borderline names get a secondary label on the card — like Microsoft: “Quality · Growth”. Until metrics load, the sector-based fallback applies.')))}
 
   ${sec(T('📊 Критерий — рыночная фаза (техника + фундаментал)'),
     crit('knife','🔪','Падающий нож','Цена ниже всех SMA и дневное падение ≤ −3%, либо пробита поддержка. Ловить не стоит — ждать стабилизации.')
@@ -1780,7 +1834,7 @@ function pf3ListHead(){
 const PF3_XDEF=[
   ['sma50','SMA 50'],['sma100','SMA 100'],['sma200','SMA 200'],
   ['sup','Поддержка'],['res','Сопротивление'],
-  ['upside','Потенциал %'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],
+  ['upside','Потенциал %'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
 ];
 let pf3XMenuOpen=false;
 const pf3XC=d=>Array.isArray(d.xcols)?d.xcols.filter(k=>PF3_XDEF.some(x=>x[0]===k)):[];
@@ -1815,6 +1869,8 @@ function pf3XCell(it,k){
   if(k==='upside'){const v=it.tg>0&&p>0?(it.tg/p-1)*100:null;return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
   const v=it[k];
   if(k==='pe'||k==='ps')return v>0?(+v).toFixed(1):'—';
+  if(k==='beta')return v?(+v).toFixed(2):'—';
+  if(k==='roe')return v?(+v).toFixed(1)+'%':'—';
   if(k==='divy')return v>0?(+v).toFixed(1)+'%':'—';
   if(!(v>0)||!(p>0))return'—';
   const dd=(p-v)/v*100;   // уровни: значение + дистанция цены, как в карточке
@@ -1835,7 +1891,7 @@ function pf3Items(){
     const tg=tgC>=0?(parseFloat(r[tgC])||0):0,price=parseFloat(r[7])||0;
     return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
       sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
-      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),upside:tg>0&&price>0?(tg/price-1)*100:0};
+      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:tg>0&&price>0?(tg/price-1)*100:0};
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
   items.forEach(x=>x.share=totalVal>0?x.val/totalVal*100:0);
@@ -2385,7 +2441,9 @@ function pf3DetailHTML(){
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
   const target=tgC>=0?parseFloat(r[tgC]):NaN;
   const hasTarget=isFinite(target)&&target>0&&price>0;
-  const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4]].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');
+  const tf=pf3TypeFull(d,r);
+  const typeChip=(()=>{const p=(tf&&tf.primary)||r[5];if(!p||p==='—')return '';const m1=PF3_TYPE_META[p];let txt=`${m1?m1[0]+' ':''}${T(p)}`;if(tf&&tf.secondary){const m2=PF3_TYPE_META[tf.secondary];txt+=` · ${m2?m2[0]+' ':''}${T(tf.secondary)}`}return txt})();
+  const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4],typeChip].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');
   // One technical level row: value + coloured distance from the current price.
   const lvl=(name,v)=>{const n=parseFloat(v);if(!(n>0)||!(price>0))return'';const dist=(price-n)/n*100,up=dist>=0;
     return`<div class="pf3-lvl"><span class="pf3-lvl-name">${name}</span><span class="pf3-lvl-val">${pf3Fmt(n,2)}</span><span class="pf3-lvl-dist ${up?'pf3-up-bg':'pf3-down-bg'}">${up?'▲':'▼'} ${Math.abs(dist).toFixed(1)}%</span></div>`};
@@ -2507,6 +2565,7 @@ async function pf3RefreshTargets(d){
   if(!good.length){_tgEndpointDown=true;return;}
   const tg=Object.assign({},...good);
   const peC=ensurePFCol(d,'P/E'),psC=ensurePFCol(d,'P/S'),dyC=ensurePFCol(d,'Дивид. %');
+  const beC=ensurePFCol(d,'Beta'),roC=ensurePFCol(d,'ROE'),deC=ensurePFCol(d,'D/E'),rgC=ensurePFCol(d,'Рост выручки'),poC=ensurePFCol(d,'Payout');
   let n=0;
   d.rows.forEach(r=>{
     const q=tg[exSymbol(r[2],r[8])];
@@ -2515,9 +2574,18 @@ async function pf3RefreshTargets(d){
     if(typeof q.pe==='number'&&q.pe>0)r[peC]=Math.round(q.pe*10)/10;
     if(typeof q.ps==='number'&&q.ps>0)r[psC]=Math.round(q.ps*10)/10;
     if(typeof q.divy==='number'&&q.divy>0)r[dyC]=Math.round(q.divy*1000)/10;   // доля → %
+    if(typeof q.beta==='number')r[beC]=Math.round(q.beta*100)/100;
+    if(typeof q.roe==='number')r[roC]=Math.round(q.roe*10)/10;
+    if(typeof q.de==='number')r[deC]=Math.round(q.de*100)/100;
+    if(typeof q.revg==='number')r[rgC]=Math.round(q.revg*10)/10;
+    if(typeof q.payout==='number')r[poC]=Math.round(q.payout*10)/10;
     n++;
   });
-  if(n){d.targetsAt=Date.now();scheduleSave();}
+  if(n){
+    // Свежие метрики → пересчитать типы по скорингу (методологии MSCI/S&P).
+    d.rows.forEach(r=>{const t=pf3DeriveType(String(r[2]||'').trim().toUpperCase(),r[4],r[5],d,r);if(t&&r[5]!==t)r[5]=t});
+    d.targetsAt=Date.now();scheduleSave();
+  }
 }
 
 // Auto-refresh while the Портфель 3.0 tab is open: immediately when stale, then every 5 min.

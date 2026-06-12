@@ -911,11 +911,18 @@ export default {
         if(!qs){ out[s] = null; return; }
         const fd = qs.financialData || {}, sd = qs.summaryDetail || {};
         const avg = yRaw(fd.targetMeanPrice);
+        const pct = v => (typeof v === 'number' && isFinite(v)) ? round2(v * 100) : null;
         out[s] = {
           avg: (typeof avg === 'number' && avg > 0) ? round2(avg) : null,
           count: yRaw(fd.numberOfAnalystOpinions) || 0,
           pe: yRaw(sd.trailingPE), ps: yRaw(sd.priceToSalesTrailing12Months),
           divy: yRaw(sd.dividendYield), src: 'yahoo',
+          // Метрики для классификации типов (по правилам MSCI/S&P/Morningstar):
+          beta: yRaw(sd.beta),
+          roe: pct(yRaw(fd.returnOnEquity)),                               // %
+          de: yRaw(fd.debtToEquity) != null ? round2(yRaw(fd.debtToEquity) / 100) : null,   // Yahoo даёт в %
+          revg: pct(yRaw(fd.revenueGrowth)),                               // % г/г
+          payout: pct(yRaw(sd.payoutRatio)),                               // %
         };
       }));
       return json(out);

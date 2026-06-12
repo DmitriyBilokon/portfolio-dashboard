@@ -853,3 +853,9 @@ html.ui2[data-theme="dark"] .pf3-panel,html.ui2[data-theme="dark"] .faq-card{bac
 .pf3-reco-it.neg{color:var(--red)}
 .pf3-reco-note{font-size:9.5px;color:var(--text3);margin-top:8px;font-family:'JetBrains Mono',monospace}
 html.ui2 .pf3-reco-dim{border-radius:12px}
+
+/* Колонка «Рекомендация» в списке */
+.pf3-sig.xr-buy{background:rgba(16,185,129,.13);color:var(--green)}
+.pf3-sig.xr-sell{background:rgba(239,68,68,.13);color:var(--red)}
+.pf3-sig.xr-wait{background:rgba(234,179,8,.13);color:var(--gold)}
+.pf3-sig.xr-avoid{background:rgba(148,163,184,.15);color:var(--text2)}

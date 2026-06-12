@@ -799,6 +799,14 @@ export default {
       const e = await earningsInfo(url.searchParams.get('earnings').trim().toUpperCase(), env);
       return json(e || { next: null, last: null });
     }
+    if(url.searchParams.has('targets')){
+      // Batch analyst consensus targets (Yahoo/Refinitiv) → fills «Аналит. таргет»
+      // for index watchlists where the FMP cron can't run (subrequest cap).
+      const syms = url.searchParams.get('targets').split(',').map(s => s.trim()).filter(Boolean);
+      const out = {};
+      await Promise.all(syms.map(async s => { out[s] = await yahooTarget(s); }));
+      return json(out);
+    }
     if(url.searchParams.has('history')){
       // Daily close series for one symbol → powers the dashboard's stock chart popup.
       // Optional &range= (e.g. 2y, 5y); defaults to 2y.

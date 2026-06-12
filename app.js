@@ -2103,11 +2103,31 @@ async function pf3Refresh(silent){
       recalcPF(i,v3Key);updated++;
     });
     if(updated){scheduleSave();pf3LastRefresh=Date.now();}
+    try{await pf3RefreshTargets(d)}catch(e){}   // аналит. таргеты — раз в сутки, тем же батч-паттерном
     if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
   }catch(e){if(!silent)toast('Прокси цен недоступен',true);}
   // Don't redraw under the user's cursor while they edit qty / buy price.
   const ae=document.activeElement,area=document.getElementById('pf3Area');
   if(!(silent&&ae&&ae.tagName==='INPUT'&&area&&area.contains(ae)))renderPF3();
+}
+
+// Аналит. таргеты (Yahoo/Refinitiv-консенсус) для текущей вкладки: worker-эндпоинт
+// ?targets= батчем по 40, раз в сутки. Покрывает Nasdaq 100, где FMP-cron не
+// работает (лимит подзапросов Cloudflare); портфель тоже освежается между cron-ами.
+let _tgTriedThisSession=false;
+async function pf3RefreshTargets(d){
+  if(d.targetsAt&&Date.now()-d.targetsAt<24*3600*1000)return;
+  if(_tgTriedThisSession&&!d.targetsAt)return;   // worker без ?targets — не долбим повторно
+  _tgTriedThisSession=true;
+  const tgC=ensurePFCol(d,'Аналит. таргет');
+  const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+  const chunks=[];
+  for(let i=0;i<syms.length;i+=40)chunks.push(syms.slice(i,i+40).join(','));
+  const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?targets='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
+  const tg=Object.assign({},...parts.filter(p=>p&&typeof p==='object'&&!p.error));
+  let n=0;
+  d.rows.forEach(r=>{const q=tg[exSymbol(r[2],r[8])];if(q&&typeof q.avg==='number'&&q.avg>0){r[tgC]=q.avg;n++}});
+  if(n){d.targetsAt=Date.now();scheduleSave();}
 }
 
 // Auto-refresh while the Портфель 3.0 tab is open: immediately when stale, then every 5 min.

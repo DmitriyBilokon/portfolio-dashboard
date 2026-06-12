@@ -208,7 +208,8 @@ const pf3D=()=>DATA[v3Key];
 const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
 const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
 const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): виртуальный счёт под управлением Claude
-const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY;   // вкладки с экономикой позиций (кол-во/покупка/стоимость/доля)
+const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY||!!(DATA[k]&&DATA[k].port==='1');   // вкладки с экономикой позиций
+const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые портфели (мои/семейные, не AI)
 const OMX_IDX='OMXS30';
 // Все v3-вкладки: портфель + любые вкладки с флагом v3 (индексы и созданные пользователем).
 const v3Tabs=()=>[PF3_KEY,...Object.keys(DATA).filter(k=>k!==PF3_KEY&&k!==AIP_KEY&&DATA[k]&&DATA[k].v3==='1')];
@@ -230,7 +231,7 @@ const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||c
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
 const T=x=>(LANG==='en'&&I18N_EN[x])||x;
-const TAB_LABEL=k=>k===PF3_KEY?T('Портфель'):T(k);
+const TAB_LABEL=k=>{const d=typeof DATA!=='undefined'&&DATA[k];return(d&&d.title)?d.title:(k===PF3_KEY?T('Портфель'):T(k))};
 const RT=(ru,en)=>LANG==='en'?en:ru;   // для строк с подстановками
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
@@ -549,7 +550,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateAiPort();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
@@ -699,6 +700,37 @@ function migrateTabAdds(){
   });
   if(n&&!applyingRemote)scheduleSave();
 }
+// Семейные портфели: Портфель → «Portfolio (Dima)» (однократно, флаг ttlMig);
+// «Portfolio (Anna)» — второй полноценный портфель (port:'1'), позиции со
+// скрина Avanza 2026-06-14, тикеры проверены живыми котировками Yahoo.
+function migrateFamilyPortfolios(){
+  const p3=DATA[PF3_KEY];
+  if(!p3)return;
+  let changed=false;
+  if(!p3.ttlMig){p3.title=p3.title||'Portfolio (Dima)';p3.ttlMig='1';changed=true;}
+  const AK='Portfolio (Anna)';
+  if(!DATA[AK]){
+    const d=DATA[AK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:AK,cashFree:4251};
+    const SEED=[
+      // [тикер, название, сектор, валюта, флаг, кол-во, покупка, тип]
+      ['MU','Micron Technology','Полупроводники','USD','🇺🇸',1,672.38,'Акция'],
+      ['NVDA','NVIDIA','ИИ / Чипы','USD','🇺🇸',2,206.50,'Акция'],
+      ['AVGO','Broadcom','Полупроводники','USD','🇺🇸',1,398.26,'Акция'],
+      ['O','Realty Income REIT','Недвижимость / REIT','USD','🇺🇸',6,66.07,'Дивидендная'],
+      ['MCHP','Microchip Technology','Полупроводники','USD','🇺🇸',2,98.92,'Акция'],
+      ['AZN','AstraZeneca','Фармацевтика','SEK','🇸🇪',1,1650.00,'Акция'],
+      ['0P00005U1J.ST','Avanza Zero','Индексный фонд (Швеция)','SEK','🇸🇪',1.956,511.25,'Фонд'],
+    ];
+    SEED.forEach(([tk,name,sec,ccy,flag,qty,buy,typ])=>{
+      const row=new Array(d.headers.length).fill('');
+      row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]=typ;
+      row[6]=qty;row[7]=0;row[8]=ccy;row[9]=buy;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
+      d.rows.push(row);
+    });
+    d.count=d.rows.length;changed=true;
+  }
+  if(changed&&!applyingRemote)scheduleSave();
+}
 // ===== Свои вкладки-watchlist'ы (админ) =====
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
@@ -805,7 +837,7 @@ function renderAll(){
     }
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
-    const isPort=v3Key===PF3_KEY,isAip=v3Key===AIP_KEY;
+    const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
     if(isAip&&!['list','sec','typ','health','aim'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','sim','ai'].includes(pf3Tab))pf3Tab='list';
     if(!isAdmin()&&(pf3Tab==='ai'||pf3Tab==='prop'))pf3Tab='list';   // AI-вкладки — только админу
@@ -2068,6 +2100,18 @@ const PF3_XDEF=[
   ['reco','Рекомендация'],
 ];
 let pf3XMenuOpen=false;
+// Переименование вкладки: меняется только отображаемое имя (d.title) —
+// ключ данных остаётся прежним, чтобы не ломать синк, worker и группы.
+function pf3RenameTab(ev){
+  if(ev)ev.stopPropagation();
+  const d=DATA[v3Key];if(!d)return;
+  const cur=d.title||TAB_LABEL(v3Key);
+  const name=(prompt(RT('Новое название вкладки:','New tab name:'),cur)||'').trim();
+  if(!name||name===cur)return;
+  d.title=name;
+  scheduleSave();init();
+  toast(RT('Вкладка переименована ✓','Tab renamed ✓'));
+}
 // Принудительно обновить таргеты/метрики/типы текущей вкладки, не дожидаясь
 // суточного таймера (сбрасывает targetsAt и сразу тянет батч ?targets).
 async function pf3ForceTypes(ev){
@@ -2093,6 +2137,7 @@ function pf3XMenuHTML(d){
   if(!pf3XMenuOpen)return'';
   const on=pf3XC(d);
   return`<div class="xcols-menu" onclick="event.stopPropagation()">
+    ${isAdmin()?`<button class="pf3-btn" style="margin-bottom:6px" onclick="pf3RenameTab(event)">✏️ ${RT('Переименовать вкладку','Rename tab')}</button>`:''}
     <div class="xcols-t">${T('Доп. колонки списка')}</div>
     ${PF3_XDEF.map(([k,l])=>`<label class="set-tab"><input type="checkbox"${on.includes(k)?' checked':''} onchange="pf3XToggle('${k}',event)"><span>${T(l)}</span></label>`).join('')}
     <button class="pf3-btn" style="margin-top:4px" onclick="pf3ForceTypes(event)">🔁 ${RT('Обновить типы и метрики сейчас','Refresh types & metrics now')}</button>
@@ -2337,7 +2382,7 @@ function renderPF3(){
     return;
   }
   if(pf3Tab==='cal'){
-    el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():""}${pf3CalendarHTML()}</div>`;
+    el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pf3CalendarHTML()}</div>`;
     pf3LoadCalendar();   // no-op when cached; re-renders this tab when done
     return;
   }
@@ -2347,7 +2392,7 @@ function renderPF3(){
     return;
   }
   if(pf3Tab==='ai'){
-    el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():''}${pf3AiHTML()}</div>`;
+    el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():''}${pf3AiHTML()}</div>`;
     aiChatScroll();   // держим чат прокрученным к последнему сообщению
     return;
   }
@@ -2369,9 +2414,9 @@ function renderPF3(){
       ${pf3ListHTML()}
       ${open||!isAdmin()||v3Key===AIP_KEY?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
         <input id="pf3AddTicker" placeholder="${T('Тикер')}" autocomplete="off">
-        ${v3Key===PF3_KEY?`<input id="pf3AddQty" type="number" step="any" min="0" placeholder="${T('Кол-во')}">
+        ${pf3MyPort(v3Key)?`<input id="pf3AddQty" type="number" step="any" min="0" placeholder="${T('Кол-во')}">
         <input id="pf3AddBuy" type="number" step="any" min="0" placeholder="${T('Цена покупки')}">`:''}
-        <select id="pf3AddCcy"><option${v3Key===PF3_KEY?'':' selected'}>USD</option><option>EUR</option><option${v3Key===PF3_KEY?' selected':''}>SEK</option><option>NOK</option><option>DKK</option></select>
+        <select id="pf3AddCcy"><option${pf3MyPort(v3Key)?'':' selected'}>USD</option><option>EUR</option><option${pf3MyPort(v3Key)?' selected':''}>SEK</option><option>NOK</option><option>DKK</option></select>
         <button class="pf3-btn" type="submit">${T('➕ Добавить акцию')}</button>
       </form>
       <div class="pf3-empty" style="padding:4px 4px">${T('Нажмите на строку — карточка с полными данными откроется слева от списка')}</div>`}
@@ -2915,7 +2960,7 @@ function pf3DetailHTML(){
       </div>
     </section>
     <section class="pf3-cards">
-      ${v3Key===PF3_KEY?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
+      ${pf3MyPort(v3Key)?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>`:''}
       <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал'):T('появится при обновлении акций (🔄, раз в сутки)')}</div></div>
@@ -2940,7 +2985,7 @@ function pf3DetailHTML(){
       <div class="pf3-panel">
         <div class="pf3-panel-hd"><span>${T('🎯 Технические уровни')}</span></div>
         ${lvl('SMA 50',s50>=0?r[s50]:'')+lvl('SMA 100',s100>=0?r[s100]:'')+lvl('SMA 200',s200>=0?r[s200]:'')+lvl('Поддержка',supC>=0?r[supC]:'')+lvl('Сопротивление',resC>=0?r[resC]:'')||'<div class="pf3-empty">Нажмите «Обновить цену», чтобы загрузить уровни</div>'}
-        ${v3Key===PF3_KEY?`<div class="pf3-panel-hd" style="margin-top:18px"><span>${T('✏️ Моя позиция')}</span></div>
+        ${pf3MyPort(v3Key)?`<div class="pf3-panel-hd" style="margin-top:18px"><span>${T('✏️ Моя позиция')}</span></div>
         <div class="pf3-edit">
           <label>${T('Кол-во акций')} <input type="number" step="any" min="0" value="${qty}" onchange="pf3Edit(6,this.value)"></label>
           <label>${T('Цена покупки')} (${ccy}) <input type="number" step="any" min="0" value="${buy}" onchange="pf3Edit(9,this.value)"></label>

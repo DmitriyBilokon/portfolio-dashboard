@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -51,6 +51,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
+  if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -185,8 +186,22 @@ const pf3D=()=>DATA[v3Key];
 const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
 const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
 const OMX_IDX='OMXS30';
-const V3_TABS=[PF3_KEY,ANALYSIS_IDX,OMX_IDX,'OMXSPI','S&P 500','DAX 40','CAC 40','FTSE MIB','OBX 25'];   // вкладки в новом (v3) формате
-const isV3=()=>V3_TABS.includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY;
+// Все v3-вкладки: портфель + любые вкладки с флагом v3 (индексы и созданные пользователем).
+const v3Tabs=()=>[PF3_KEY,...Object.keys(DATA).filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].v3==='1')];
+// Группы вкладок: по умолчанию по странам; пользовательская раскладка хранится в TAB_GROUPS (sync).
+let TAB_GROUPS=null;
+const defaultGroups=()=>[
+  {name:'🇺🇸 USA',tabs:['S&P 500','Nasdaq 100']},
+  {name:'🇸🇪 Швеция',tabs:['OMXS30','OMXSPI']},
+  {name:'🇩🇪 Германия',tabs:['DAX 40']},
+  {name:'🇫🇷 Франция',tabs:['CAC 40']},
+  {name:'🇮🇹 Италия',tabs:['FTSE MIB']},
+  {name:'🇳🇴 Норвегия',tabs:['OBX 25']},
+];
+const ensureGroups=()=>{if(!Array.isArray(TAB_GROUPS))TAB_GROUPS=defaultGroups().map(g=>({name:g.name,tabs:g.tabs.slice()}));return TAB_GROUPS};
+let _grpCollapsed={};try{_grpCollapsed=JSON.parse(localStorage.getItem('dash_grpcol')||'{}')}catch(e){}
+function grpToggleCollapse(name){_grpCollapsed[name]=!_grpCollapsed[name];try{localStorage.setItem('dash_grpcol',JSON.stringify(_grpCollapsed))}catch(e){}init()}
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -350,7 +365,7 @@ function pf3DeriveType(tk,sec,cur){
 }
 function fixCompanyNames(){
   let touched=false;
-  ['💼 Портфель 2.0',...V3_TABS].forEach(k=>{
+  ['💼 Портфель 2.0',...v3Tabs()].forEach(k=>{
     const d=DATA[k];if(!d)return;
     d.rows.forEach(r=>{
       const tk=String(r[2]||'').trim().toUpperCase();
@@ -439,7 +454,129 @@ function migrateAiHistory(){
   });
   if(n&&!applyingRemote)scheduleSave();
 }
-function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();const keys=Object.keys(DATA).filter(tabAllowed);if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';const home=document.createElement('div');home.className='tab'+(curIdx===HOME_KEY?' active':'');home.dataset.tab=HOME_KEY;home.textContent=HOME_KEY;home.onclick=()=>{curIdx=HOME_KEY;renderAll()};t.appendChild(home);if(isAdmin()){const dup=document.createElement('div');dup.className='tab'+(curIdx===DUP_KEY?' active':'');dup.dataset.tab=DUP_KEY;dup.textContent=TAB_LABEL(DUP_KEY);dup.onclick=()=>{curIdx=DUP_KEY;renderAll()};t.appendChild(dup);}keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+function init(){
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();
+  const keys=Object.keys(DATA).filter(tabAllowed);
+  if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  const t=document.getElementById('tabs');t.innerHTML='';
+  const mkTab=n=>{
+    const el=document.createElement('div');
+    el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;
+    el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
+    el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};
+    return el;
+  };
+  const mkVirt=(key,label)=>{
+    const el=document.createElement('div');
+    el.className='tab'+(curIdx===key?' active':'');el.dataset.tab=key;el.textContent=label;
+    el.onclick=()=>{curIdx=key;renderAll()};
+    return el;
+  };
+  t.appendChild(mkVirt(HOME_KEY,HOME_KEY));
+  if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
+  if(keys.includes(PF3_KEY))t.appendChild(mkTab(PF3_KEY));
+  // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
+  const groups=ensureGroups();
+  const grouped=new Set();
+  groups.forEach(g=>{
+    const members=g.tabs.filter(n=>n!==PF3_KEY&&keys.includes(n));
+    members.forEach(n=>grouped.add(n));
+    if(!members.length)return;
+    const col=!!_grpCollapsed[g.name];
+    const hd=document.createElement('div');
+    hd.className='tab-group-hd'+(col?' col':'');
+    hd.textContent=(col?'▸ ':'▾ ')+g.name;
+    hd.onclick=()=>grpToggleCollapse(g.name);
+    t.appendChild(hd);
+    if(!col)members.forEach(n=>t.appendChild(mkTab(n)));
+  });
+  keys.filter(n=>n!==PF3_KEY&&!grouped.has(n)).forEach(n=>t.appendChild(mkTab(n)));
+  if(isAdmin()){
+    const add=document.createElement('div');add.className='tab tab-add';add.textContent=RT('➕ Вкладка','➕ Tab');add.title=RT('Создать свою вкладку-watchlist','Create a custom watchlist tab');add.onclick=pf3NewTab;t.appendChild(add);
+    const grp=document.createElement('div');grp.className='tab tab-add';grp.textContent=RT('🗂 Группы','🗂 Groups');grp.title=RT('Настроить группировку вкладок','Edit tab grouping');grp.onclick=toggleGroupsEditor;t.appendChild(grp);
+  }
+  renderAll();
+}
+
+// ===== Свои вкладки-watchlist'ы (админ) =====
+function pf3NewTab(){
+  const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
+  if(!name)return;
+  if(DATA[name]||name===HOME_KEY||name===DUP_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
+  DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
+  scheduleSave();
+  curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
+  init();
+  toast(RT('Вкладка создана — добавляйте акции формой внизу списка','Tab created — add stocks with the form below the list'));
+}
+function pf3TabDelete(name){
+  if(!DATA[name]||DATA[name].custom!=='1')return;
+  if(!confirm(RT(`Удалить вкладку «${name}» со всеми её акциями?`,`Delete tab “${name}” with all its stocks?`)))return;
+  delete DATA[name];
+  ensureGroups().forEach(g=>{g.tabs=g.tabs.filter(x=>x!==name)});
+  if(curIdx===name)curIdx=PF3_KEY;
+  if(v3Key===name)v3Key=PF3_KEY;
+  scheduleSave();init();
+  if(_grpEditorOpen)renderGroupsEditor();
+}
+
+// ===== Редактор групп вкладок (админ): группы + назначение вкладок =====
+let _grpEditorOpen=false;
+function toggleGroupsEditor(){
+  const o=document.getElementById('grpOverlay');if(!o)return;
+  _grpEditorOpen=o.classList.contains('hidden');
+  o.classList.toggle('hidden',!_grpEditorOpen);
+  if(_grpEditorOpen)renderGroupsEditor();
+}
+function renderGroupsEditor(){
+  const card=document.getElementById('grpCard');if(!card)return;
+  const groups=ensureGroups();
+  const tabs=Object.keys(DATA).filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].v3==='1');
+  const groupOf=n=>{const i=groups.findIndex(g=>g.tabs.includes(n));return i};
+  card.innerHTML=`<button class="faq-close" onclick="toggleGroupsEditor()">✕</button>
+    <h2>🗂 ${RT('Группы вкладок','Tab groups')}</h2>
+    <div class="faq-sub">${RT('Группы сворачиваются в навигации; вкладка может быть в одной группе или без группы','Groups collapse in the navigation; a tab belongs to one group or none')}</div>
+    <div class="faq-sec" style="margin-top:14px"><h3>${RT('Группы','Groups')}</h3>
+      ${groups.map((g,i)=>`<div class="ai-pref"><span>${g.name} <small style="color:var(--text3)">· ${g.tabs.length}</small></span>
+        <button class="pf3-btn pf3-btn-sm" onclick="grpRename(${i})">✏️</button>
+        <button class="pf3-del" onclick="grpDel(${i})" title="${RT('Удалить группу (вкладки останутся)','Delete group (tabs remain)')}">🗑</button></div>`).join('')}
+      <button class="pf3-btn" style="margin-top:8px" onclick="grpAdd()">➕ ${RT('Новая группа','New group')}</button>
+    </div>
+    <div class="faq-sec"><h3>${RT('Вкладки','Tabs')}</h3>
+      ${tabs.map(n=>`<div class="ai-pref"><span>${META[n]||''} ${n}${DATA[n].custom==='1'?' <small style="color:var(--text3)">· '+RT('своя','custom')+'</small>':''}</span>
+        <select class="grp-sel" onchange="grpAssign('${n.replace(/'/g,"\\'")}',this.value)">
+          <option value="-1">${RT('— без группы —','— no group —')}</option>
+          ${groups.map((g,i)=>`<option value="${i}"${groupOf(n)===i?' selected':''}>${g.name}</option>`).join('')}
+        </select>
+        ${DATA[n].custom==='1'?`<button class="pf3-del" onclick="pf3TabDelete('${n.replace(/'/g,"\\'")}')" title="${RT('Удалить вкладку','Delete tab')}">🗑</button>`:''}
+      </div>`).join('')}
+    </div>`;
+}
+function grpAdd(){
+  const name=(prompt(RT('Название группы (можно с флагом, например 🇺🇸 USA):','Group name (emoji ok, e.g. 🇺🇸 USA):'))||'').trim();
+  if(!name)return;
+  ensureGroups().push({name,tabs:[]});
+  scheduleSave();renderGroupsEditor();init();
+}
+function grpRename(i){
+  const g=ensureGroups()[i];if(!g)return;
+  const name=(prompt(RT('Новое название группы:','New group name:'),g.name)||'').trim();
+  if(!name)return;
+  g.name=name;scheduleSave();renderGroupsEditor();init();
+}
+function grpDel(i){
+  const g=ensureGroups()[i];if(!g)return;
+  if(!confirm(RT(`Удалить группу «${g.name}»? Вкладки останутся без группы.`,`Delete group “${g.name}”? Tabs stay ungrouped.`)))return;
+  ensureGroups().splice(i,1);scheduleSave();renderGroupsEditor();init();
+}
+function grpAssign(tab,gi){
+  const groups=ensureGroups();
+  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==tab)});
+  gi=parseInt(gi,10);
+  if(gi>=0&&groups[gi])groups[gi].tabs.push(tab);
+  scheduleSave();renderGroupsEditor();init();
+}
 
 function renderAll(){
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
@@ -666,7 +803,7 @@ function toggleFaq(){
   if(o.classList.contains('hidden')){document.getElementById('faqCard').innerHTML=faqHTML();o.classList.remove('hidden');}
   else o.classList.add('hidden');
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -1106,7 +1243,7 @@ function pf3AiSnapshot(key){
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
     // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
     // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.
-    marketContext:V3_TABS.filter(k=>k!==PF3_KEY&&DATA[k]).map(k=>{
+    marketContext:v3Tabs().filter(k=>k!==PF3_KEY&&DATA[k]).map(k=>{
       const di=DATA[k],phases={};
       di.rows.forEach(r=>{const c=pf3Criterion(di,r);phases[c.label]=(phases[c.label]||0)+1});
       const last=(di.aiHistory||[])[0];
@@ -2012,14 +2149,14 @@ async function pfPerfDraw(){
 // ===== Симуляция: тестовые покупки без реальных денег =====
 // Живая цена тикера — из строк любой v3-вкладки (портфель, затем индекс).
 function simQuote(tk){
-  for(const k of V3_TABS){
+  for(const k of v3Tabs()){
     const d=DATA[k];if(!d)continue;
     const r=d.rows.find(x=>String(x[2]||'').trim().toUpperCase()===tk);
     if(r)return{price:parseFloat(r[7])||0,ccy:r[8]||'USD',day:parseFloat(r[10]),name:String(r[1]||tk),flag:r[3]&&r[3]!=='—'?r[3]+' ':''};
   }
   return null;
 }
-const simHomeTab=tk=>V3_TABS.find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
+const simHomeTab=tk=>v3Tabs().find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
 // Старые записи без привязки к вкладке — раскладываем по родным вкладкам тикера.
 function simMigrateTabs(){
   let ch=false;
@@ -2108,7 +2245,7 @@ function simOpen(tk){
 // Считается на лету из текущих данных вкладок; кнопка «Обновить» пересчитывает.
 function dupScan(){
   const seen={};
-  V3_TABS.filter(k=>k!==PF3_KEY&&DATA[k]).forEach(k=>{
+  v3Tabs().filter(k=>k!==PF3_KEY&&DATA[k]).forEach(k=>{
     DATA[k].rows.forEach(r=>{
       const sym=exSymbol(r[2],r[8]);
       if(!sym)return;
@@ -2158,7 +2295,7 @@ function dupHTML(){
 // при дубликатах тикера) с сигналом и рыночной фазой каждой.
 function homeItems(){
   const out=[];
-  V3_TABS.filter(k=>DATA[k]&&tabAllowed(k)).forEach(k=>{
+  v3Tabs().filter(k=>DATA[k]&&tabAllowed(k)).forEach(k=>{
     DATA[k].rows.forEach((r,i)=>{
       recalcPF(i,k);
       const tk=String(r[2]||'').trim().toUpperCase();

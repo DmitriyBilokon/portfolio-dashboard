@@ -812,3 +812,23 @@ html.ui2 .ai-msg.user{background:var(--u2-grad)}
 /* 🔁 Дубли: чипы вкладок и разделители кросс-листингов */
 .dup-tabs{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .dup-sep{border-top:1px dashed var(--border);margin:4px 0}
+
+/* Группы вкладок в навигации + редактор групп */
+.tab-group-hd{font:700 9.5px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);padding:8px 12px 3px;cursor:pointer;user-select:none;white-space:nowrap}
+.tab-group-hd:hover{color:var(--text)}
+.tab-group-hd.col{opacity:.75}
+html.ui2 .tab-group-hd{padding:10px 13px 4px}
+.tab-add{opacity:.65;font-size:11px}
+.tab-add:hover{opacity:1}
+.grp-sel{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:11px;padding:4px 6px;max-width:170px}
+
+/* Названия стран (групп) крупнее имён индексов */
+.tab-group-hd{font-size:13px;font-weight:800;text-transform:none;letter-spacing:.2px;color:var(--text2);padding:11px 12px 4px}
+html.ui2 .tab-group-hd{font-size:14px;padding:13px 13px 5px}
+.tab-group-hd:hover{color:var(--text)}
+html.ui2 .tabs .tab,html.ui2 body.v3 .tabs .tab{font-size:12px}
+
+/* Тёмный фон чуть светлее (был почти чёрный #07070b) */
+html.ui2[data-theme="dark"]{--bg:#0e0e15;--bg2:#15151e;--bg3:#1b1b26}
+html.ui2[data-theme="dark"] body,html.ui2[data-theme="dark"] body.v3{background:radial-gradient(1100px 560px at 88% -8%,#6366f124,transparent 60%),radial-gradient(850px 480px at -8% 34%,#a855f714,transparent 55%),#0e0e15}
+html.ui2[data-theme="dark"] .pf3-panel,html.ui2[data-theme="dark"] .faq-card{background:#15151ecc}

@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14b';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14c';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -879,7 +879,12 @@ async function aiPortfolioRun(env, force){
   const fresh = await loadRow(env);
   if(fresh){
     const fap = (fresh.snap && fresh.snap.aiPort) || {};
-    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
+    // Пользователь обнулил портфель, пока шёл цикл — результаты цикла отбрасываем,
+    // иначе запись вернула бы дорезетные позиции поверх чистого счёта.
+    if((fap.resetAt || 0) > (ap.resetAt || 0)){
+      return 'Портфель обнулён во время цикла — результаты отброшены, следующий цикл стартует с чистого счёта';
+    }
+    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive', 'resetAt'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
     fresh.snap.aiPort = ap;
     await writeRow(env, fresh.userId, fresh.snap);
   }

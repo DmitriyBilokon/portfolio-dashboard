@@ -779,3 +779,32 @@ html.ui2 .ai-msg.user{background:var(--u2-grad)}
 .pf3-row-logo,.pf3-logo{position:relative;overflow:hidden}
 .logo-i{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;border-radius:inherit;padding:4px;box-sizing:border-box}
 .pf3-logo .logo-i{padding:7px}
+
+/* ═══ Анти-переполнение: текст не наезжает на соседние колонки и не выходит за рамки ═══ */
+/* Грид-ячейки по умолчанию имеют min-width:auto и не дают контенту сжиматься —
+   из-за этого длинный текст распирал колонки и наезжал на соседние. */
+.pf3-row>*,.pf3-lhead>*,.home-row>*,.sim-trow>*,.sim-thead>*,.pf3-div-row>*,.pf3-divhead>*{min-width:0}
+.pf3-c,.pf3-sort,.sim-thead>span,.pf3-divhead>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf3-c-x{white-space:normal}   /* доп. колонки двухстрочные (значение + дистанция) */
+.pf3-row-name{min-width:0}
+.pf3-row-name b,.pf3-row-name span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf3-typ,.pf3-crit,.pf3-sig{max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.pf3-sig{display:inline-block;white-space:nowrap}
+.pf3-row-price,.pf3-row-val,.home-px,.home-lvl{min-width:0;overflow:hidden}
+.pf3-row-price b,.pf3-row-val b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.pf3-panel-hd{flex-wrap:wrap;gap:6px;row-gap:4px}
+.pf3-panel-hd .pf3-asof{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sub-tabs{flex-wrap:wrap;row-gap:5px}
+.pf3-card{min-width:0;overflow:hidden}
+.pf3-card-v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf3-card-s{overflow:hidden;text-overflow:ellipsis}
+.pf3-typenav-name{min-width:0}
+.pf3-typenav-name small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+/* Средние ширины (сайдбар ✨ съедает место): список скроллится по горизонтали,
+   колонки сохраняют ширину вместо наезда друг на друга. */
+@media(min-width:901px){
+  .pf3-list,.pf3-glist{overflow-x:auto}
+  .pf3-row,.pf3-lhead{min-width:880px}
+  .pf3-row.idx,.pf3-lhead.idx{min-width:820px}
+  .pf3-typelay .pf3-row{min-width:780px}
+}

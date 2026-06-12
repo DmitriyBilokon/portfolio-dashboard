@@ -62,7 +62,11 @@ function subscribeRealtime(){
   realtimeChannel=sb.channel('dash_'+currentUser.id)
     .on('postgres_changes',{event:'*',schema:'public',table:'ledger_state',filter:'user_id=eq.'+currentUser.id},
         p=>{ if(!(p.new && p.new.data)) return;
-             if(lastPushTs && Date.parse(p.new.updated_at)===lastPushTs) return;   // our own push echoed back — skip the full re-render
+             // Эхо своих push-ей и любые записи СТАРЕЕ нашего последнего сохранения
+             // пропускаем: иначе отставший снапшот затирает свежие метрики/типы.
+             const ts=Date.parse(p.new.updated_at)||0;
+             if(lastPushTs && ts<=lastPushTs) return;
+             if(pushTimer) return;   // есть несохранённые локальные правки — их нельзя терять
              applyRemoteState(p.new.data); })
     .subscribe();
 }

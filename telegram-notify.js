@@ -720,34 +720,42 @@ async function writeRow(env, userId, snap){
 // EU/Nordic tickers) on BOTH portfolio tabs, and persist back to Supabase.
 async function updateTargets(env){
   const row = await loadRow(env);
-  const tabs = [PF_KEY, PF3_KEY].map(k => row && row.snap && row.snap.data && row.snap.data[k]).filter(Boolean);
+  const tabsOf = snap => [PF_KEY, PF3_KEY].map(k => snap && snap.data && snap.data[k]).filter(Boolean);
+  const tabs = tabsOf(row && row.snap);
   if(!tabs.length) return { updated: 0, total: 0 };
+  // Этап 1: медленно собираем таргеты в кэш (rate-limit FMP — 250мс на тикер).
   const cache = {};   // sym → result, shared across tabs (3.0 mirrors 2.0 holdings)
   const details = [];
-  let updated = 0, total = 0, changed = false;
   for(const pf of tabs){
+    for(const r of pf.rows){
+      const sym = exSymbol(r[2], r[8]);
+      if(cache[sym] !== undefined) continue;
+      let res = await fmpTarget(sym, env);
+      if(!(res && typeof res.avg === 'number')){
+        const y = await yahooTarget(sym);   // EU/Nordic → Yahoo/Refinitiv consensus
+        if(y) res = y;
+      }
+      cache[sym] = res;
+      if(res && typeof res.avg === 'number') details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.${res.src ? ' · ' + res.src : ''}`);
+      else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
+      await sleep(250);   // stay under FMP's burst rate limit
+    }
+  }
+  // Этап 2: перечитываем строку и пишем в СВЕЖИЙ снапшот — за минуты сбора
+  // клиент мог сохранить свои изменения, их нельзя затирать старой копией.
+  const fresh = await loadRow(env) || row;
+  let updated = 0, total = 0, changed = false;
+  for(const pf of tabsOf(fresh.snap)){
     let ti = pf.headers.indexOf(TARGET_COL);
     if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
     pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
     for(const r of pf.rows){
       total++;
-      const sym = exSymbol(r[2], r[8]);
-      let res = cache[sym];
-      if(res === undefined){
-        res = await fmpTarget(sym, env);
-        if(!(res && typeof res.avg === 'number')){
-          const y = await yahooTarget(sym);   // EU/Nordic → Yahoo/Refinitiv consensus
-          if(y) res = y;
-        }
-        cache[sym] = res;
-        if(res && typeof res.avg === 'number') details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.${res.src ? ' · ' + res.src : ''}`);
-        else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
-        await sleep(250);   // stay under FMP's burst rate limit
-      }
+      const res = cache[exSymbol(r[2], r[8])];
       if(res && typeof res.avg === 'number'){ r[ti] = res.avg; updated++; changed = true; }
     }
   }
-  if(changed) await writeRow(env, row.userId, row.snap);
+  if(changed) await writeRow(env, fresh.userId, fresh.snap);
   return { updated, total, details };
 }
 
@@ -799,7 +807,13 @@ async function runAlerts(env){
     tga[key] = now;
     sent.push(String(r[2]) + ' → ' + kind);
   }
-  if(sent.length) await writeRow(env, row.userId, snap);
+  if(sent.length){
+    // Перечитываем строку перед записью: пока шёл прогон (десятки секунд на
+    // котировки), клиент мог сохранить свежие данные — пишем кулдауны в НИХ,
+    // а не возвращаем в облако снапшот, загруженный в начале прогона.
+    const fresh = await loadRow(env);
+    if(fresh){ fresh.snap.tgAlerts = Object.assign({}, fresh.snap.tgAlerts, tga); await writeRow(env, fresh.userId, fresh.snap); }
+  }
   return sent.length ? 'Отправлено:\n' + sent.join('\n') : 'Сигналов нет (или все на кулдауне)';
 }
 export default {

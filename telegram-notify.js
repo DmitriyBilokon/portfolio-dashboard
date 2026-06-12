@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-12g';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-12h';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -784,6 +784,28 @@ function aipFindRow(snap, tk){
   return null;
 }
 
+// Полное обнуление AI-портфеля: свежий счёт 300 000 kr, настройки и стратегия
+// сохраняются. Чистит основное состояние и ОБА резерва (aiPortBak + ai_state) —
+// иначе самовосстановление вернуло бы старые позиции. startedAt обновляется и
+// служит маркером: цикл, шедший в момент обнуления, отбросит свои результаты.
+async function aiPortfolioReset(env){
+  const row = await loadRow(env);
+  if(!row) return 'Строка данных не найдена';
+  const old = (row.snap && row.snap.aiPort) || {};
+  const ap = {
+    startedAt: Date.now(), startCapital: 300000, cashSEK: 300000,
+    commissionPct: old.commissionPct || 0, minTradeSEK: old.minTradeSEK || 5000,
+    intervalMin: old.intervalMin || 60, enabled: old.enabled !== false,
+    strategy: old.strategy || '', positions: [], trades: [], equityHistory: [],
+    myStartEquity: null, myStartLive: '', lastRunAt: 0, lastNote: '',
+  };
+  row.snap.aiPort = ap;
+  row.snap.aiPortBak = JSON.parse(JSON.stringify(ap));
+  await writeRow(env, row.userId, row.snap);
+  await saveBak(env, row.userId, ap);
+  return 'AI портфель обнулён ✓ Счёт 300 000 kr, настройки сохранены. Нажмите ▶ или ждите следующего тика крона.';
+}
+
 async function aiPortfolioRun(env, force){
   if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
   const row = await loadRow(env);
@@ -839,7 +861,7 @@ async function aiPortfolioRun(env, force){
     fx,
     marketsOpen,
     positions: pView,
-    recentTrades: (ap.trades || []).slice(-25).map(t => ({ ts: new Date(t.ts).toISOString().slice(0, 16), action: t.action, ticker: t.ticker, qty: t.qty, price: t.price, reason: t.reason })),
+    recentTrades: (ap.trades || []).slice(-25).map(t => ({ ts: t.ts ? new Date(t.ts).toISOString().slice(0, 16) : '', action: t.action, ticker: t.ticker, qty: t.qty, price: t.price, reason: t.reason })),
     universeLegend: AIPORT_LEGEND,
     universe: aipUniverse(snap),
   };
@@ -928,6 +950,9 @@ async function aiPortfolioRun(env, force){
   const fresh = await loadRow(env);
   if(fresh){
     const fap = (fresh.snap && fresh.snap.aiPort) || {};
+    if((fap.startedAt || 0) > (ap.startedAt || 0)){
+      return 'Портфель обнулён во время цикла — результаты отброшены, следующий цикл стартует с чистого счёта';
+    }
     ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
     fresh.snap.aiPort = ap;
     fresh.snap.aiPortBak = JSON.parse(JSON.stringify(ap));   // быстрый резерв в той же строке
@@ -1203,6 +1228,13 @@ export default {
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{ return json(await aiChat(env, await request.json())); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'aipreset'){
+      // ♻️ Обнуление AI-портфеля (кнопка на вкладке 🤖, только админ).
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json({ result: await aiPortfolioReset(env) }); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'aiport'){

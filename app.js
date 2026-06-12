@@ -530,7 +530,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();
   const keys=Object.keys(DATA).filter(tabAllowed);
   if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
@@ -603,6 +603,43 @@ function migrateGoldSilver(){
     const row=new Array(d.headers.length).fill('');
     row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=SEC;row[5]='Циклическая';
     row[6]=0;row[7]=0;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
+    d.rows.push(row);
+  });
+  d.count=d.rows.length;
+  if(!applyingRemote)scheduleSave();
+}
+// Вкладка «Small Cap»: шведские компании малой капитализации (скриншот пользователя,
+// тикеры проверены живыми котировками Yahoo). Тип пересчитает скоринг при первом
+// обновлении метрик; сектор задан для иконок/группировки.
+function migrateSmallCap(){
+  const KEY='Small Cap',p3=DATA[PF3_KEY];
+  if(!p3)return;
+  const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
+  if(d.scSeed==='1')return;
+  d.scSeed='1';
+  const SEED=[
+    ['EPEN','Ependion','Промтех и автоматизация'],
+    ['NEWA-B','New Wave Group','Потребительские товары: одежда'],
+    ['BEIA-B','Beijer Alma','Промышленный конгломерат'],
+    ['SHOT','Scandic Hotels','Отели и туризм'],
+    ['FMM-B','FM Mattsson','Строительство: сантехника'],
+    ['TROAX','Troax Group','Промышленная безопасность'],
+    ['SYSR','Systemair','Промтех: вентиляция'],
+    ['ARJO-B','Arjo','Медицинское оборудование'],
+    ['PLAZ-B','Platzer Fastigheter','Недвижимость'],
+    ['MILDEF','MilDef Group','Оборонная электроника'],
+    ['ELAN-B','Elanders','Промышленность: логистика'],
+    ['XANO-B','XANO Industri','Промтех: автоматизация'],
+    ['ITAB','ITAB Shop Concept','Потребительский сектор: ритейл-оборудование'],
+    ['ARPL','Arla Plast','Промышленность: пластики'],
+    ['GARO','GARO','Электрификация и EV-зарядка'],
+    ['BOUL','Boule Diagnostics','Медицинская диагностика'],
+  ];
+  SEED.forEach(([tk,name,sec])=>{
+    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
+    const row=new Array(d.headers.length).fill('');
+    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]='🇸🇪';row[4]=sec;row[5]='Акция';
+    row[6]=0;row[7]=0;row[8]='SEK';row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
     d.rows.push(row);
   });
   d.count=d.rows.length;

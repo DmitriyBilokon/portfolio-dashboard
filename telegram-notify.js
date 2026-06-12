@@ -645,6 +645,7 @@ const AIPORT_SYSTEM = `Ты — автономный портфельный уп
 
 Правила:
 - Торгуй ТОЛЬКО тикерами из universe или из своих позиций.
+- Торгуй ТОЛЬКО бумагами, чей рынок сейчас ОТКРЫТ — смотри marketsOpen по валюте бумаги (true = биржа торгует). Решения по закрытым рынкам будут отклонены исполнением.
 - qty — целое число акций; сумма сделки ≥ minTradeSEK; не покупай, если не хватает cashSEK.
 - Держи кэш-резерв ≥5% от equity; одна позиция ≤15% equity, если стратегия не требует иного.
 - Триггеры: цена у SMA 50/200 или поддержки при здоровом тренде — покупка/докупка; у сопротивления, выше таргета или при перегреве — фиксация; падающий нож и Спекулятивная без явного сетапа — избегать; стоп-дисциплина: позиция глубже −12% от средней без улучшения картины — сокращай.
@@ -676,6 +677,27 @@ const AIPORT_SCHEMA = {
   required: ['decisions', 'note'],
   additionalProperties: false,
 };
+
+// Торговые сессии бирж по валюте инструмента (локальное время биржи, пн–пт).
+// Праздники не учитываются (аппроксимация); часы регулярной сессии.
+const MARKET_HOURS = {
+  USD: { tz: 'America/New_York',  open: 9 * 60 + 30, close: 16 * 60 },
+  CAD: { tz: 'America/Toronto',   open: 9 * 60 + 30, close: 16 * 60 },
+  SEK: { tz: 'Europe/Stockholm',  open: 9 * 60,      close: 17 * 60 + 25 },
+  NOK: { tz: 'Europe/Oslo',       open: 9 * 60,      close: 16 * 60 + 20 },
+  DKK: { tz: 'Europe/Copenhagen', open: 9 * 60,      close: 16 * 60 + 55 },
+  EUR: { tz: 'Europe/Berlin',     open: 9 * 60,      close: 17 * 60 + 30 },
+  GBP: { tz: 'Europe/London',     open: 8 * 60,      close: 16 * 60 + 30 },
+};
+function marketOpen(ccy, date){
+  const m = MARKET_HOURS[String(ccy || '').toUpperCase()] || MARKET_HOURS.USD;
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: m.tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date || new Date());
+  const get = t => (parts.find(p => p.type === t) || {}).value;
+  const wd = get('weekday');
+  if(wd === 'Sat' || wd === 'Sun') return false;
+  const mins = (parseInt(get('hour'), 10) % 24) * 60 + parseInt(get('minute'), 10);
+  return mins >= m.open && mins < m.close;
+}
 
 // Вселенная: все акции v3-вкладок дашборда, компактными массивами (см. legend).
 const AIPORT_LEGEND = '[ticker, ccy, sector, type, price, day%, %fromSMA50, %fromSMA200, %fromSupport, %fromResistance, upside%toTarget, P/E, Beta, ROE%, revGrowth%]';
@@ -734,6 +756,10 @@ async function aiPortfolioRun(env, force){
   const iv = (parseFloat(ap.intervalMin) || 60) * 60e3;
   if(!force && ap.lastRunAt && now - ap.lastRunAt < iv - 90e3) return `Рано: следующий цикл через ${Math.ceil((ap.lastRunAt + iv - now) / 60e3)} мин`;
   const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
+  // Торговые сессии: решения возможны только по открытым рынкам.
+  const marketsOpen = {};
+  Object.keys(MARKET_HOURS).forEach(c => { marketsOpen[c] = marketOpen(c, new Date(now)); });
+  if(!Object.values(marketsOpen).some(Boolean)) return 'Все рынки закрыты (выходной/вне сессии) — торговый цикл пропущен';
   const positions = ap.positions = Array.isArray(ap.positions) ? ap.positions : [];
   // Живые котировки позиций — для P&L, триггеров и исполнения продаж.
   const quotes = {};
@@ -758,6 +784,7 @@ async function aiPortfolioRun(env, force){
     minTradeSEK: ap.minTradeSEK || 5000,
     commissionPct: ap.commissionPct || 0,
     fx,
+    marketsOpen,
     positions: pView,
     recentTrades: (ap.trades || []).slice(-25).map(t => ({ ts: new Date(t.ts).toISOString().slice(0, 16), action: t.action, ticker: t.ticker, qty: t.qty, price: t.price, reason: t.reason })),
     universeLegend: AIPORT_LEGEND,
@@ -789,6 +816,7 @@ async function aiPortfolioRun(env, force){
     if(dec.action === 'sell'){
       const p = positions.find(x => String(x.ticker).toUpperCase() === tk);
       if(!p){ skipped.push(`sell ${tk}: нет позиции`); continue; }
+      if(!marketsOpen[String(p.ccy).toUpperCase()]){ skipped.push(`sell ${tk}: рынок ${p.ccy} закрыт`); continue; }
       const q = quotes[p.ticker] || await yahoo(exSymbol(p.ticker, p.ccy));
       if(!(q && q.price > 0)){ skipped.push(`sell ${tk}: нет котировки`); continue; }
       const sellQty = Math.min(qty, p.qty), f = fx[p.ccy] || 1;
@@ -804,6 +832,7 @@ async function aiPortfolioRun(env, force){
       const exist = positions.find(x => String(x.ticker).toUpperCase() === tk);
       const ccy = exist ? exist.ccy : (r0 ? String(r0[8] || 'USD') : null);
       if(!ccy){ skipped.push(`buy ${tk}: вне вселенной`); continue; }
+      if(!marketsOpen[String(ccy).toUpperCase()]){ skipped.push(`buy ${tk}: рынок ${ccy} закрыт`); continue; }
       const q = await yahoo(exSymbol(tk, ccy));
       if(!(q && q.price > 0)){ skipped.push(`buy ${tk}: нет котировки`); continue; }
       const f = fx[ccy] || 1;

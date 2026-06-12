@@ -27,6 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
+const WORKER_BUILD = '2026-06-14a';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -795,6 +796,11 @@ async function aiPortfolioRun(env, force){
     universeLegend: AIPORT_LEGEND,
     universe: aipUniverse(snap),
   };
+  // Вердикты скоринга по тикерам — для жёсткой проверки на исполнении.
+  const recoBy = {};
+  payload.universe.forEach(u => { if(u[15]) recoBy[String(u[0]).toUpperCase()] = u[15]; });
+  // reason обязан ссылаться на вердикт, когда сделка идёт против него.
+  const mentionsReco = t => /reco|вердикт|скоринг|wait|avoid|ждать|опасн/i.test(String(t || ''));
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -822,6 +828,7 @@ async function aiPortfolioRun(env, force){
       const p = positions.find(x => String(x.ticker).toUpperCase() === tk);
       if(!p){ skipped.push(`sell ${tk}: нет позиции`); continue; }
       if(!marketsOpen[String(p.ccy).toUpperCase()]){ skipped.push(`sell ${tk}: рынок ${p.ccy} закрыт`); continue; }
+      if(recoBy[tk] === 'buy' && !mentionsReco(dec.reason)){ skipped.push(`sell ${tk}: reco=buy, в reason нет объяснения отступления`); continue; }
       const q = quotes[p.ticker] || await yahoo(exSymbol(p.ticker, p.ccy));
       if(!(q && q.price > 0)){ skipped.push(`sell ${tk}: нет котировки`); continue; }
       const sellQty = Math.min(qty, p.qty), f = fx[p.ccy] || 1;
@@ -838,6 +845,7 @@ async function aiPortfolioRun(env, force){
       const ccy = exist ? exist.ccy : (r0 ? String(r0[8] || 'USD') : null);
       if(!ccy){ skipped.push(`buy ${tk}: вне вселенной`); continue; }
       if(!marketsOpen[String(ccy).toUpperCase()]){ skipped.push(`buy ${tk}: рынок ${ccy} закрыт`); continue; }
+      if((recoBy[tk] === 'wait' || recoBy[tk] === 'avoid') && !mentionsReco(dec.reason)){ skipped.push(`buy ${tk}: reco=${recoBy[tk]}, в reason нет объяснения отступления`); continue; }
       const q = await yahoo(exSymbol(tk, ccy));
       if(!(q && q.price > 0)){ skipped.push(`buy ${tk}: нет котировки`); continue; }
       const f = fx[ccy] || 1;
@@ -855,7 +863,7 @@ async function aiPortfolioRun(env, force){
       }
       p.lastPrice = q.price;
       quotes[p.ticker] = q;
-      trades.push({ id: 't' + now + '_' + trades.length, ts: now, action: 'buy', ticker: tk, name: p.name, qty, price: q.price, ccy, fx: f, amountSEK: Math.round(gross), feeSEK: fee, plSEK: null, reason: String(dec.reason || '').slice(0, 300), trigger: String(dec.trigger || '').slice(0, 120) });
+      trades.push({ id: 't' + now + '_' + trades.length, ts: now, action: 'buy', ticker: tk, name: p.name, qty, price: q.price, ccy, fx: f, amountSEK: Math.round(gross), feeSEK: fee, plSEK: null, reco: recoBy[tk] || null, reason: String(dec.reason || '').slice(0, 300), trigger: String(dec.trigger || '').slice(0, 120) });
     }
   }
   positions.forEach(p => { const q = quotes[p.ticker]; if(q && q.price > 0) p.lastPrice = q.price; });
@@ -877,7 +885,7 @@ async function aiPortfolioRun(env, force){
   }
   for(const t of trades){
     try{
-      await sendTelegram(env, `🤖 <b>AI ПОРТФЕЛЬ — ${t.action === 'buy' ? '🟢 ПОКУПКА' : '🔴 ПРОДАЖА'}</b>\n<b>${esc(t.name || t.ticker)}</b> (${esc(t.ticker)}): ${t.qty} × ${t.price} ${t.ccy} ≈ <b>${t.amountSEK} kr</b>${t.plSEK != null ? `\nP&amp;L сделки: <b>${t.plSEK >= 0 ? '+' : ''}${t.plSEK} kr</b>` : ''}${t.trigger ? `\n⚡ ${esc(t.trigger)}` : ''}\n${esc(t.reason)}`);
+      await sendTelegram(env, `🤖 <b>AI ПОРТФЕЛЬ — ${t.action === 'buy' ? '🟢 ПОКУПКА' : '🔴 ПРОДАЖА'}</b>\n<b>${esc(t.name || t.ticker)}</b> (${esc(t.ticker)}): ${t.qty} × ${t.price} ${t.ccy} ≈ <b>${t.amountSEK} kr</b>${t.plSEK != null ? `\nP&amp;L сделки: <b>${t.plSEK >= 0 ? '+' : ''}${t.plSEK} kr</b>` : ''}${t.trigger ? `\n⚡ ${esc(t.trigger)}` : ''}${t.reco && t.reco !== 'buy' ? `\n📋 вердикт скоринга: ${t.reco}` : ''}\n${esc(t.reason)}`);
     }catch(e){}
   }
   return `AI портфель: сделок ${trades.length} · equity ${eq2} kr · кэш ${Math.round(ap.cashSEK)} kr` +
@@ -1084,6 +1092,9 @@ export default {
   async fetch(request, env){
     const url = new URL(request.url);
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    if(url.searchParams.get('action') === 'version'){
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict(soft+hard) · prompts · rev/cap`);
+    }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
       if(dbg){

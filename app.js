@@ -130,7 +130,7 @@ async function boot(){
   else { document.getElementById('authOverlay').classList.remove('hidden'); }
 }
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴',};
-let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52};
+let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52,CAD:7.0,GBP:12.6,AUD:6.2};
 // Бумажный (тестовый) портфель: [{tab,tk,name,ccy,qty,buy,date}] — у каждой
 // v3-вкладки свои тестовые покупки (tab), синхронизируется с остальным состоянием.
 let SIM=[];
@@ -352,7 +352,7 @@ const PF3_TYPES={
 const PF3_REIT_RE=/\breit\b|недвиж/i;
 const PF3_DEF_RE=/фарма|pharma|здравоохран|health|медицин|потребительск|staples|consumer defensive|beverages|напитк|utilit|коммунал|телеком|telecom/i;
 const PF3_GRO_RE=/software|облач|cloud|\bии\b|\bai\b|интернет|e-?comm|соцсет|social|биотех|biotech|кибер|cyber|данн|data|стриминг|streaming|search/i;
-const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace/i;
+const PF3_CYC_RE=/полупровод|semicond|чип|chip|memory|авто|auto|truck|промышл|industrial|энерг|energy|нефть|oil|gas|сырь|материал|metal|банк|financ|финанс|туризм|travel|отел|hotel|транспорт|logistic|логистик|retail|ритейл|ресторан|restaurant|оборон|defense|aerospace|добыч|золот|серебр|mining|gold|silver|горнодоб/i;
 function pf3DeriveType(tk,sec,cur){
   if(/etf|фонд/i.test(cur||''))return cur;
   if(PF3_TYPES[tk])return PF3_TYPES[tk];
@@ -455,7 +455,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();
   const keys=Object.keys(DATA).filter(tabAllowed);
   if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
@@ -499,6 +499,40 @@ function init(){
   renderAll();
 }
 
+
+// Одноразово: наполняем пользовательскую вкладку «Gold and Silver» золото-
+// серебряными добытчиками (тикеры проверены на Yahoo 2026-06-12). Если вкладки
+// нет — создаём; уже добавленные пользователем бумаги не трогаем.
+function migrateGoldSilver(){
+  const KEY='Gold and Silver',p3=DATA[PF3_KEY];
+  if(!p3)return;
+  const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
+  if(d.gsSeed==='1')return;
+  d.gsSeed='1';
+  const SEC='Добыча золота и серебра';
+  const SEED=[
+    ['FF.TO','First Mining Gold Corp','CAD','🇨🇦'],['NGEX.TO','NGEx Minerals','CAD','🇨🇦'],
+    ['PRU.TO','Perseus Mining Limited','CAD','🇨🇦'],['MSA.TO','Mineros S.A.','CAD','🇨🇦'],
+    ['APM.TO','Andean Precious Metals Corp','CAD','🇨🇦'],['CG.TO','Centerra Gold','CAD','🇨🇦'],
+    ['SVRS.V','Silver Storm Mining Ltd.','CAD','🇨🇦'],['AGX.V','Silver X Mining Corp','CAD','🇨🇦'],
+    ['SVM.TO','Silvercorp Metals','CAD','🇨🇦'],['TXG.TO','Torex Gold Resources Inc','CAD','🇨🇦'],
+    ['WGX.TO','Westgold Resources Limited','CAD','🇨🇦'],['TG.V','Trifecta Gold','CAD','🇨🇦'],
+    ['EML.V','Electric Metals (USA) Ltd','CAD','🇨🇦'],
+    ['FRES.L','Fresnillo PLC','GBP','🇬🇧'],
+    ['LUG','Lundin Gold','SEK','🇸🇪'],['EPI A','Epiroc A','SEK','🇸🇪'],['GULD','Guldbrev Holding','SEK','🇸🇪'],
+    ['MUX','McEwen Inc.','USD','🇺🇸'],['HMY','Harmony Gold Mining ADR','USD','🇺🇸'],
+    ['EQX','Equinox Gold','USD','🇺🇸'],['CDE','Coeur Mining','USD','🇺🇸'],['SBSW','Sibanye-Stillwater ADR','USD','🇺🇸'],
+  ];
+  SEED.forEach(([tk,name,ccy,flag])=>{
+    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
+    const row=new Array(d.headers.length).fill('');
+    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=SEC;row[5]='Циклическая';
+    row[6]=0;row[7]=0;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
+    d.rows.push(row);
+  });
+  d.count=d.rows.length;
+  if(!applyingRemote)scheduleSave();
+}
 // ===== Свои вкладки-watchlist'ы (админ) =====
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
@@ -1900,7 +1934,7 @@ function pf3GroupSub(x,port,totalVal){
 }
 
 // Иконки секторов (по ключевым словам; работают и для макро-, и для детальных имён).
-const PF3_SEC_ICONS=[[/bitcoin|крипт/i,'₿'],[/кибер|cyber/i,'🛡️'],[/полупровод|чип|chip|semicond|memory/i,'💾'],[/интернет и реклама|соцсет|реклам|search|ad tech/i,'🌐'],[/e-?comm|путешеств|туризм|travel|hotel|restaurant|delivery/i,'🛒'],[/финанс|недвиж|fintech|payment|reit/i,'🏦'],[/здравоохран|фарма|pharma|био|biotech|med/i,'💊'],[/потребитель|staples|beverage|retail/i,'🛍️'],[/медиа|телеком|telecom|streaming|gaming|media|cable/i,'📡'],[/энерг|power|oil|solar|utilit|nuclear/i,'⚡'],[/железо|сети|networking|server|hardware|distribution/i,'🖥️'],[/софт|облако|software|cloud|данн|analytics|database|\bai\b|ии/i,'☁️'],[/промышл|транспорт|оборон|industrial|logistic|truck|defen/i,'🏭']];
+const PF3_SEC_ICONS=[[/золот|gold|silver|серебр|добыч золота|драгоцен/i,'⛏️'],[/bitcoin|крипт/i,'₿'],[/кибер|cyber/i,'🛡️'],[/полупровод|чип|chip|semicond|memory/i,'💾'],[/интернет и реклама|соцсет|реклам|search|ad tech/i,'🌐'],[/e-?comm|путешеств|туризм|travel|hotel|restaurant|delivery/i,'🛒'],[/финанс|недвиж|fintech|payment|reit/i,'🏦'],[/здравоохран|фарма|pharma|био|biotech|med/i,'💊'],[/потребитель|staples|beverage|retail/i,'🛍️'],[/медиа|телеком|telecom|streaming|gaming|media|cable/i,'📡'],[/энерг|power|oil|solar|utilit|nuclear/i,'⚡'],[/железо|сети|networking|server|hardware|distribution/i,'🖥️'],[/софт|облако|software|cloud|данн|analytics|database|\bai\b|ии/i,'☁️'],[/промышл|транспорт|оборон|industrial|logistic|truck|defen/i,'🏭']];
 const secIcon=s=>{for(const[re,i]of PF3_SEC_ICONS)if(re.test(s||''))return i;return '🏭'};
 function pf3GroupedHTML(key){
   const {d,port,totalVal,list}=pf3Groups(key);

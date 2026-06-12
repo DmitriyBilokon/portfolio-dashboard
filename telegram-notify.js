@@ -633,6 +633,224 @@ async function aiChat(env, body){
   return { reply: raw, memory: [] };
 }
 
+// ── 🤖 AI Портфель: виртуальный портфель под управлением Claude ────────────
+// Каждый час (гейт intervalMin поверх 10-минутного cron) worker собирает
+// снапшот: позиции с живыми котировками, кэш, журнал сделок и вселенную всех
+// акций дашборда (цены/SMA/уровни/типы из сохранённых вкладок) — и просит
+// Claude принять торговые решения. Исполнение по живым ценам Yahoo, состояние
+// в snap.aiPort (Supabase), Telegram-уведомление по каждой сделке.
+const AIPORT_SYSTEM = `Ты — автономный портфельный управляющий ВИРТУАЛЬНОГО AI-портфеля на инвестиционном дашборде (paper trading, базовая валюта — шведская крона SEK). Тебе передают JSON: стратегия, кэш, стартовый капитал, позиции с живыми ценами и P&L, журнал последних сделок, курсы валют и вселенная доступных акций (формат строки — в universeLegend).
+
+Управляй портфелем строго по стратегии: формируй позиции, докупай у уровней, фиксируй прибыль и убытки, ребалансируй по типам и секторам.
+
+Правила:
+- Торгуй ТОЛЬКО тикерами из universe или из своих позиций.
+- qty — целое число акций; сумма сделки ≥ minTradeSEK; не покупай, если не хватает cashSEK.
+- Держи кэш-резерв ≥5% от equity; одна позиция ≤15% equity, если стратегия не требует иного.
+- Триггеры: цена у SMA 50/200 или поддержки при здоровом тренде — покупка/докупка; у сопротивления, выше таргета или при перегреве — фиксация; падающий нож и Спекулятивная без явного сетапа — избегать; стоп-дисциплина: позиция глубже −12% от средней без улучшения картины — сокращай.
+- БОЛЬШИНСТВО циклов не требуют сделок: нет явных сетапов — верни пустой decisions. Не торгуй ради торговли. Максимум 4 сделки за цикл.
+- reason: 1–2 предложения с конкретными уровнями и цифрами; trigger: краткое условие («цена коснулась SMA 200», «фиксация +18%», «ребаланс: перевес Роста»).
+- note: 1–3 предложения — состояние портфеля и чего ждёшь к следующему циклу.
+
+Ответ строго в JSON по схеме.`;
+const AIPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    decisions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['buy', 'sell'] },
+          ticker: { type: 'string' },
+          qty: { type: 'number' },
+          reason: { type: 'string' },
+          trigger: { type: 'string' },
+        },
+        required: ['action', 'ticker', 'qty', 'reason', 'trigger'],
+        additionalProperties: false,
+      },
+    },
+    note: { type: 'string', description: 'Краткий комментарий о состоянии портфеля' },
+  },
+  required: ['decisions', 'note'],
+  additionalProperties: false,
+};
+
+// Вселенная: все акции v3-вкладок дашборда, компактными массивами (см. legend).
+const AIPORT_LEGEND = '[ticker, ccy, sector, type, price, day%, %fromSMA50, %fromSMA200, %fromSupport, %fromResistance, upside%toTarget, P/E, Beta, ROE%, revGrowth%]';
+function aipUniverse(snap){
+  const out = [], seen = new Set();
+  const data = (snap && snap.data) || {};
+  for(const key of Object.keys(data)){
+    const d = data[key];
+    if(!d || d.v3 !== '1' || !Array.isArray(d.rows)) continue;
+    const h = d.headers || [];
+    const ix = {
+      s50: h.findIndex(x => /sma.?50$/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
+      sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'), tg: h.findIndex(x => /аналит/i.test(x)),
+      pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
+    };
+    for(const r of d.rows){
+      const tk = String(r[2] || '').trim();
+      if(!tk) continue;
+      const ccy = String(r[8] || 'USD');
+      const sym = exSymbol(tk, ccy);
+      if(seen.has(sym)) continue;
+      seen.add(sym);
+      const price = parseFloat(r[7]) || 0;
+      if(!(price > 0)) continue;
+      const num = i => { const v = i >= 0 ? parseFloat(r[i]) : NaN; return isFinite(v) ? v : null; };
+      const dist = v => (v && v > 0) ? Math.round((price - v) / v * 1000) / 10 : null;
+      const tg = num(ix.tg);
+      out.push([tk, ccy, String(r[4] || ''), String(r[5] || ''), price, parseFloat(r[10]) || 0,
+        dist(num(ix.s50)), dist(num(ix.s200)), dist(num(ix.sup)), dist(num(ix.res)),
+        (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,
+        num(ix.pe), num(ix.beta), num(ix.roe), num(ix.revg)]);
+    }
+  }
+  return out;
+}
+// Имя/сектор/тип бумаги — из первой вкладки, где она встречается.
+function aipFindRow(snap, tk){
+  const T = tk.toUpperCase();
+  for(const key of Object.keys((snap && snap.data) || {})){
+    const d = snap.data[key];
+    if(!d || d.v3 !== '1') continue;
+    const r = (d.rows || []).find(r => String(r[2] || '').trim().toUpperCase() === T);
+    if(r) return r;
+  }
+  return null;
+}
+
+async function aiPortfolioRun(env, force){
+  if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
+  const row = await loadRow(env);
+  const snap = row && row.snap;
+  const ap = snap && snap.aiPort;
+  if(!ap || !ap.startedAt) return 'AI портфель не инициализирован — откройте вкладку 🤖 на сайте';
+  if(ap.enabled === false) return 'AI портфель выключен в настройках';
+  const now = Date.now();
+  const iv = (parseFloat(ap.intervalMin) || 60) * 60e3;
+  if(!force && ap.lastRunAt && now - ap.lastRunAt < iv - 90e3) return `Рано: следующий цикл через ${Math.ceil((ap.lastRunAt + iv - now) / 60e3)} мин`;
+  const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
+  const positions = ap.positions = Array.isArray(ap.positions) ? ap.positions : [];
+  // Живые котировки позиций — для P&L, триггеров и исполнения продаж.
+  const quotes = {};
+  await Promise.all(positions.map(async p => { quotes[p.ticker] = await yahoo(exSymbol(p.ticker, p.ccy)); }));
+  const pView = positions.map(p => {
+    const q = quotes[p.ticker];
+    const price = (q && q.price > 0) ? q.price : (p.lastPrice || p.avgBuy);
+    const f = fx[p.ccy] || 1;
+    return { ticker: p.ticker, name: p.name, ccy: p.ccy, type: p.type || '', sector: p.sector || '',
+      qty: p.qty, avgBuy: p.avgBuy, price, valueSEK: Math.round(p.qty * price * f),
+      plPct: p.avgBuy > 0 ? Math.round((price / p.avgBuy - 1) * 1000) / 10 : 0,
+      day: (q && typeof q.pct === 'number') ? Math.round(q.pct * 10) / 10 : null,
+      sma50: q && q.sma50, sma200: q && q.sma200, support: q && q.support, resistance: q && q.resistance };
+  });
+  const equity = Math.round((ap.cashSEK || 0) + pView.reduce((a, p) => a + p.valueSEK, 0));
+  const payload = {
+    today: new Date().toISOString().slice(0, 10),
+    strategy: ap.strategy || '',
+    startCapitalSEK: ap.startCapital || 300000,
+    cashSEK: Math.round(ap.cashSEK || 0),
+    equitySEK: equity,
+    minTradeSEK: ap.minTradeSEK || 5000,
+    commissionPct: ap.commissionPct || 0,
+    fx,
+    positions: pView,
+    recentTrades: (ap.trades || []).slice(-25).map(t => ({ ts: new Date(t.ts).toISOString().slice(0, 16), action: t.action, ticker: t.ticker, qty: t.qty, price: t.price, reason: t.reason })),
+    universeLegend: AIPORT_LEGEND,
+    universe: aipUniverse(snap),
+  };
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 6000,
+      thinking: { type: 'adaptive' },
+      output_config: { format: { type: 'json_schema', schema: AIPORT_SCHEMA } },
+      system: AIPORT_SYSTEM,
+      messages: [{ role: 'user', content: JSON.stringify(payload) }],
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  const j = await r.json();
+  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  let parsed = { decisions: [], note: '' };
+  try{ const p = JSON.parse(raw); if(p && Array.isArray(p.decisions)) parsed = p; }catch(e){ /* нет решений */ }
+  // ── Исполнение с валидацией ──
+  const trades = [], skipped = [];
+  for(const dec of parsed.decisions.slice(0, 4)){
+    const tk = String(dec.ticker || '').trim().toUpperCase();
+    const qty = Math.floor(Math.abs(parseFloat(dec.qty) || 0));
+    if(!tk || !(qty > 0)){ skipped.push(`${tk || '?'}: некорректное решение`); continue; }
+    if(dec.action === 'sell'){
+      const p = positions.find(x => String(x.ticker).toUpperCase() === tk);
+      if(!p){ skipped.push(`sell ${tk}: нет позиции`); continue; }
+      const q = quotes[p.ticker] || await yahoo(exSymbol(p.ticker, p.ccy));
+      if(!(q && q.price > 0)){ skipped.push(`sell ${tk}: нет котировки`); continue; }
+      const sellQty = Math.min(qty, p.qty), f = fx[p.ccy] || 1;
+      const gross = sellQty * q.price * f;
+      const fee = Math.round(gross * (ap.commissionPct || 0) / 100);
+      ap.cashSEK = (ap.cashSEK || 0) + gross - fee;
+      const pl = Math.round((q.price - p.avgBuy) * sellQty * f);
+      p.qty -= sellQty;
+      if(p.qty <= 0) positions.splice(positions.indexOf(p), 1);
+      trades.push({ id: 't' + now + '_' + trades.length, ts: now, action: 'sell', ticker: p.ticker, name: p.name, qty: sellQty, price: q.price, ccy: p.ccy, fx: f, amountSEK: Math.round(gross), feeSEK: fee, plSEK: pl, reason: String(dec.reason || '').slice(0, 300), trigger: String(dec.trigger || '').slice(0, 120) });
+    }else if(dec.action === 'buy'){
+      const r0 = aipFindRow(snap, tk);
+      const exist = positions.find(x => String(x.ticker).toUpperCase() === tk);
+      const ccy = exist ? exist.ccy : (r0 ? String(r0[8] || 'USD') : null);
+      if(!ccy){ skipped.push(`buy ${tk}: вне вселенной`); continue; }
+      const q = await yahoo(exSymbol(tk, ccy));
+      if(!(q && q.price > 0)){ skipped.push(`buy ${tk}: нет котировки`); continue; }
+      const f = fx[ccy] || 1;
+      const gross = qty * q.price * f;
+      const fee = Math.round(gross * (ap.commissionPct || 0) / 100);
+      if(gross < (ap.minTradeSEK || 5000)){ skipped.push(`buy ${tk}: ${Math.round(gross)} kr < мин. сделки`); continue; }
+      if(gross + fee > (ap.cashSEK || 0)){ skipped.push(`buy ${tk}: не хватает кэша (${Math.round(gross)} > ${Math.round(ap.cashSEK)})`); continue; }
+      ap.cashSEK -= gross + fee;
+      let p = exist;
+      if(p){ p.avgBuy = Math.round((p.avgBuy * p.qty + q.price * qty) / (p.qty + qty) * 100) / 100; p.qty += qty; }
+      else{
+        p = { ticker: tk, name: r0 ? String(r0[1] || tk) : tk, ccy, qty, avgBuy: q.price, openedAt: now,
+              type: r0 ? String(r0[5] || '') : '', sector: r0 ? String(r0[4] || '') : '' };
+        positions.push(p);
+      }
+      p.lastPrice = q.price;
+      quotes[p.ticker] = q;
+      trades.push({ id: 't' + now + '_' + trades.length, ts: now, action: 'buy', ticker: tk, name: p.name, qty, price: q.price, ccy, fx: f, amountSEK: Math.round(gross), feeSEK: fee, plSEK: null, reason: String(dec.reason || '').slice(0, 300), trigger: String(dec.trigger || '').slice(0, 120) });
+    }
+  }
+  positions.forEach(p => { const q = quotes[p.ticker]; if(q && q.price > 0) p.lastPrice = q.price; });
+  // Дневная точка equity (одна на дату) — для графика «Я vs AI».
+  const eq2 = Math.round((ap.cashSEK || 0) + positions.reduce((a, p) => a + p.qty * (p.lastPrice || p.avgBuy) * (fx[p.ccy] || 1), 0));
+  const dkey = new Date().toISOString().slice(0, 10);
+  ap.equityHistory = ((ap.equityHistory || []).filter(x => x.d !== dkey).concat([{ d: dkey, v: eq2 }])).slice(-800);
+  ap.trades = ((ap.trades || []).concat(trades)).slice(-400);
+  ap.lastRunAt = now;
+  ap.lastNote = String(parsed.note || '').slice(0, 600);
+  // Запись: перечитываем строку, настройки берём из свежей копии (клиент мог
+  // их поменять, пока шёл цикл), торговое состояние — из нашего расчёта.
+  const fresh = await loadRow(env);
+  if(fresh){
+    const fap = (fresh.snap && fresh.snap.aiPort) || {};
+    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
+    fresh.snap.aiPort = ap;
+    await writeRow(env, fresh.userId, fresh.snap);
+  }
+  for(const t of trades){
+    try{
+      await sendTelegram(env, `🤖 <b>AI ПОРТФЕЛЬ — ${t.action === 'buy' ? '🟢 ПОКУПКА' : '🔴 ПРОДАЖА'}</b>\n<b>${esc(t.name || t.ticker)}</b> (${esc(t.ticker)}): ${t.qty} × ${t.price} ${t.ccy} ≈ <b>${t.amountSEK} kr</b>${t.plSEK != null ? `\nP&amp;L сделки: <b>${t.plSEK >= 0 ? '+' : ''}${t.plSEK} kr</b>` : ''}${t.trigger ? `\n⚡ ${esc(t.trigger)}` : ''}\n${esc(t.reason)}`);
+    }catch(e){}
+  }
+  return `AI портфель: сделок ${trades.length} · equity ${eq2} kr · кэш ${Math.round(ap.cashSEK)} kr` +
+    (skipped.length ? `\nОтклонено: ${skipped.join('; ')}` : '') +
+    (ap.lastNote ? `\n💭 ${ap.lastNote}` : '');
+}
+
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 // Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
@@ -820,7 +1038,10 @@ export default {
   // Cron — only the targeted per-stock alerts (digest/chart/targets removed:
   // the dashboard refreshes targets itself once a day).
   async scheduled(event, env, ctx){
-    ctx.waitUntil(runAlerts(env).catch(() => {}));
+    ctx.waitUntil(Promise.all([
+      runAlerts(env).catch(() => {}),
+      aiPortfolioRun(env, false).catch(() => {}),   // гейт intervalMin внутри
+    ]));
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
   // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
@@ -861,6 +1082,13 @@ export default {
       try{ return json(await aiChat(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
+    if(url.searchParams.get('action') === 'aiport'){
+      // Принудительный цикл AI-портфеля (кнопка «▶» на вкладке 🤖, только админ).
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json({ result: await aiPortfolioRun(env, true) }); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
     if(url.searchParams.get('action') === 'prompts'){
       // Список AI-промптов для админской кнопки «📜 Промпты» на дашборде —
       // единственный источник правды, тексты не дублируются на клиенте.
@@ -873,6 +1101,9 @@ export default {
         { name: '🔥 Анализ индекса (WATCH_SYSTEM)',
           about: 'Кнопка анализа на индексных вкладках. Получает watchlist-снапшот: все акции с уровнями, фазами и сигналами. Выделяет 5–8 самых актуальных бумаг с действиями (Купить/Следить/Фиксировать/Избегать), сильные и слабые сектора, риски.',
           text: WATCH_SYSTEM },
+        { name: '🤖 AI Портфель (AIPORT_SYSTEM)',
+          about: 'Часовой цикл worker-крона. Получает виртуальный портфель (кэш, позиции с живыми ценами и P&L, журнал сделок), стратегию и вселенную всех акций дашборда. Возвращает торговые решения {action, ticker, qty, reason, trigger} — worker исполняет их по живым ценам и шлёт уведомления в Telegram.',
+          text: AIPORT_SYSTEM },
         { name: '💬 Чат ассистента (CHAT_SYSTEM)',
           about: 'Диалог в AI Assistant. Видит снапшот текущей вкладки и правила инвестора; отвечает кратко с конкретными уровнями. Извлекает из ваших сообщений устойчивые предпочтения и возвращает их в поле memory — так пополняется 🧠 память.',
           text: CHAT_SYSTEM },

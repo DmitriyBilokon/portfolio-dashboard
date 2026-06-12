@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, aiPort:AI_PORT };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -51,6 +51,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
+  if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
@@ -146,6 +147,7 @@ let TG_ALERTS={};
 // которые ассистент извлекает из чата (и которые можно добавить вручную).
 // Правила передаются и в чат, и в полный анализ портфеля (investorRules).
 let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
+let AI_PORT=null;   // 🤖 AI Портфель: состояние виртуального счёта (торгует worker)
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
 let SMA_TF={};
@@ -190,6 +192,7 @@ let v3Key=PF3_KEY;                  // which tab the v3 UI is currently bound to
 const pf3D=()=>DATA[v3Key];
 const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
 const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
+const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): виртуальный счёт под управлением Claude
 const OMX_IDX='OMXS30';
 // Все v3-вкладки: портфель + любые вкладки с флагом v3 (индексы и созданные пользователем).
 const v3Tabs=()=>[PF3_KEY,...Object.keys(DATA).filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].v3==='1')];
@@ -206,7 +209,7 @@ const defaultGroups=()=>[
 const ensureGroups=()=>{if(!Array.isArray(TAB_GROUPS))TAB_GROUPS=defaultGroups().map(g=>({name:g.name,tabs:g.tabs.slice()}));return TAB_GROUPS};
 let _grpCollapsed={};try{_grpCollapsed=JSON.parse(localStorage.getItem('dash_grpcol')||'{}')}catch(e){}
 function grpToggleCollapse(name){_grpCollapsed[name]=!_grpCollapsed[name];try{localStorage.setItem('dash_grpcol',JSON.stringify(_grpCollapsed))}catch(e){}init()}
-const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY;
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -231,7 +234,7 @@ const I18N_EN={
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
 '🤖 AI Assistant — анализ портфеля и рекомендации':'🤖 AI Assistant — portfolio analysis & recommendations','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с ассистентом':'💬 Assistant chat','видит портфель, цены и ваши правила':'sees your portfolio, prices and rules','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память ассистента — правила инвестора':'🧠 Assistant memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
 '❓ Справка':'❓ Help','Нажмите на раздел, чтобы развернуть его':'Click a section to expand it','🗂 Вкладки и виды':'🗂 Tabs & views','🏷 Тип акции':'🏷 Stock type','📊 Критерий — рыночная фаза (техника + фундаментал)':'📊 Criterion — market phase (technicals + fundamentals)','🎯 Сигнал — цена у технического уровня (±2%)':'🎯 Signal — price at a technical level (±2%)','🧪 Симуляция — тестовые покупки':'🧪 Simulation — paper trades','📐 Технические уровни и колонки':'📐 Technical levels & columns','💼 Портфельные значения':'💼 Portfolio values','💪 Здоровье бизнеса (карточка акции)':'💪 Business health (stock card)',
-'Нажмите на строку — карточка с полными данными откроется слева от списка':'Click a row — the full card opens to the left of the list','📋 Акции':'📋 Stocks','🔄 Обновить акции':'🔄 Refresh stocks','Рекомендация':'Recommendation',
+'Нажмите на строку — карточка с полными данными откроется слева от списка':'Click a row — the full card opens to the left of the list','📋 Акции':'📋 Stocks','🔄 Обновить акции':'🔄 Refresh stocks','Рекомендация':'Recommendation','🤖 AI Портфель':'🤖 AI Portfolio',
 'Критично':'Critical','Слабо':'Weak','Средне':'Fair','Хорошо':'Good','Отлично':'Excellent',
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
@@ -530,10 +533,10 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateAiPort();
   const keys=Object.keys(DATA).filter(tabAllowed);
-  if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
-  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=n=>{
     const el=document.createElement('div');
@@ -549,6 +552,7 @@ function init(){
     return el;
   };
   t.appendChild(mkVirt(HOME_KEY,HOME_KEY));
+  if(isAdmin())t.appendChild(mkVirt(AIP_KEY,TAB_LABEL(AIP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
   if(keys.includes(PF3_KEY))t.appendChild(mkTab(PF3_KEY));
   // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
@@ -645,11 +649,23 @@ function migrateSmallCap(){
   d.count=d.rows.length;
   if(!applyingRemote)scheduleSave();
 }
+// 🤖 AI Портфель: дефолтное состояние (worker торгует, клиент отображает).
+// myStartEquity — стоимость МОЕГО портфеля в момент старта (для «Я vs AI»).
+function migrateAiPort(){
+  if(AI_PORT&&AI_PORT.startedAt)return;
+  const d=DATA[PF3_KEY];let myEq=0;
+  if(d){d.rows.forEach(r=>{myEq+=parseFloat(r[13])||0});myEq+=parseFloat(d.cashFree)||0;}
+  AI_PORT={startedAt:Date.now(),startCapital:300000,cashSEK:300000,commissionPct:0,minTradeSEK:5000,
+    intervalMin:60,enabled:true,
+    strategy:'Сбалансированная: ~40% Качественные, ~25% Рост, ~15% Дивидендные, ~10% Защитные, ~10% Спекулятивные. Кэш-резерв минимум 5%, максимум 15% в одной позиции. Горизонт — недели-месяцы: свинг по уровням SMA 50/200 и поддержки, фиксация у сопротивления/таргета.',
+    positions:[],trades:[],equityHistory:[],myStartEquity:Math.round(myEq)||null,lastRunAt:0,lastNote:''};
+  if(!applyingRemote)scheduleSave();
+}
 // ===== Свои вкладки-watchlist'ы (админ) =====
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
   if(!name)return;
-  if(DATA[name]||name===HOME_KEY||name===DUP_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
+  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
   DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
   scheduleSave();
   curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
@@ -735,6 +751,13 @@ function renderAll(){
       document.getElementById('smaBanner').innerHTML='';
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${dupHTML()}</div>`;}
+      return;
+    }
+    if(curIdx===AIP_KEY){   // 🤖 AI Портфель (админ): виртуальный счёт Claude
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${aipHTML()}</div>`;}
       return;
     }
     if(curIdx===HOME_KEY){   // virtual home dashboard — no sub-tabs, aggregates both v3 tabs
@@ -2590,6 +2613,138 @@ function homeRowHTML(x,extra){
     ${extra}
   </div>`;
 }
+// ── 🤖 AI Портфель: отображение виртуального счёта (торгует worker) ─────────
+// Живую цену позиции ищем в строках вкладок (обновляются сайтом), иначе —
+// lastPrice из последнего цикла worker'а.
+function aipLivePrice(p){
+  for(const key of v3Tabs()){
+    const d=DATA[key];if(!d)continue;
+    const r=(d.rows||[]).find(r=>String(r[2]||'').trim().toUpperCase()===String(p.ticker).toUpperCase());
+    if(r&&parseFloat(r[7])>0)return parseFloat(r[7]);
+  }
+  return p.lastPrice||p.avgBuy||0;
+}
+function aipEquity(){
+  const ap=AI_PORT;if(!ap)return{equity:0,posVal:0};
+  const posVal=(ap.positions||[]).reduce((a,p)=>a+p.qty*aipLivePrice(p)*(FX[p.ccy]||1),0);
+  return{equity:Math.round((ap.cashSEK||0)+posVal),posVal:Math.round(posVal)};
+}
+function aipMaxDD(hist){
+  let peak=-Infinity,dd=0;
+  (hist||[]).forEach(p=>{peak=Math.max(peak,p.v);if(peak>0)dd=Math.min(dd,(p.v-peak)/peak*100)});
+  return dd;
+}
+function aipSpark(hist,start){
+  const h=(hist||[]).slice(-180);
+  if(h.length<2)return`<div class="pf3-empty">${RT('График появится после первых циклов AI','Chart appears after the first AI cycles')}</div>`;
+  const vs=h.map(p=>p.v),mn=Math.min(...vs,start),mx=Math.max(...vs,start);
+  const W=600,H=120,pad=6,span=(mx-mn)||1;
+  const X=i=>pad+i/(h.length-1)*(W-2*pad),Y=v=>H-pad-(v-mn)/span*(H-2*pad);
+  const pts=h.map((p,i)=>`${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+  const up=vs[vs.length-1]>=start;
+  return`<svg viewBox="0 0 ${W} ${H}" class="aip-spark" preserveAspectRatio="none">
+    <line x1="${pad}" y1="${Y(start).toFixed(1)}" x2="${W-pad}" y2="${Y(start).toFixed(1)}" stroke="currentColor" opacity=".25" stroke-dasharray="5 4"/>
+    <polyline points="${pts}" fill="none" stroke="${up?'#10b981':'#ef4444'}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+async function aipRunNow(ev){
+  const btn=ev&&ev.target;
+  if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Цикл идёт (до минуты)…','Cycle running (up to a minute)…');}
+  try{
+    const r=await fetch(PRICE_PROXY+'?action=aiport',{headers:{'Authorization':'Bearer '+await sbToken()}});
+    const j=await r.json();
+    toast(j.error?j.error:String(j.result||'OK').split('\n')[0],!!j.error);
+  }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
+  if(btn){btn.disabled=false;btn.textContent='▶ '+RT('Запустить цикл сейчас','Run cycle now');}
+}
+function aipSaveSettings(){
+  if(!AI_PORT)return;
+  const g=id=>document.getElementById(id);
+  AI_PORT.strategy=(g('aipStrategy')&&g('aipStrategy').value||'').trim()||AI_PORT.strategy;
+  AI_PORT.intervalMin=parseInt(g('aipInterval')&&g('aipInterval').value)||60;
+  AI_PORT.enabled=!!(g('aipEnabled')&&g('aipEnabled').checked);
+  scheduleSave();
+  toast(RT('Настройки AI портфеля сохранены ✓','AI portfolio settings saved ✓'));
+}
+function aipHTML(){
+  const ap=AI_PORT;
+  if(!ap)return`<section class="pf3-panel"><div class="pf3-empty">${RT('AI портфель инициализируется…','Initialising AI portfolio…')}</div></section>`;
+  const {equity,posVal}=aipEquity();
+  const ret=ap.startCapital>0?(equity/ap.startCapital-1)*100:0;
+  // «Я vs AI»: мой портфель с момента старта AI
+  const d=DATA[PF3_KEY];let myEq=0;
+  if(d){d.rows.forEach(r=>{myEq+=parseFloat(r[13])||0});myEq+=parseFloat(d.cashFree)||0;}
+  const myRet=ap.myStartEquity>0?(myEq/ap.myStartEquity-1)*100:null;
+  const dd=aipMaxDD(ap.equityHistory);
+  const closed=(ap.trades||[]).filter(t=>t.action==='sell'&&typeof t.plSEK==='number');
+  const best=closed.length?closed.reduce((a,b)=>a.plSEK>b.plSEK?a:b):null;
+  const worst=closed.length?closed.reduce((a,b)=>a.plSEK<b.plSEK?a:b):null;
+  const days=Math.max(1,Math.round((Date.now()-(ap.startedAt||Date.now()))/86400e3));
+  const pct=(v,dig)=>`${v>0?'+':''}${v.toFixed(dig==null?1:dig)}%`;
+  const cls=v=>v>=0?'pf3-up':'pf3-down';
+  const posRows=(ap.positions||[]).map(p=>{
+    const price=aipLivePrice(p),f=FX[p.ccy]||1,val=Math.round(p.qty*price*f);
+    const pl=p.avgBuy>0?(price/p.avgBuy-1)*100:0;
+    const m=PF3_TYPE_META[p.type];
+    return`<div class="pf3-row idx aip-row" style="grid-template-columns:40px minmax(120px,1.6fr) minmax(90px,1fr) 70px 90px 90px 80px 110px">
+      ${logoHTML(p.ticker,p.ccy,'pf3-rowlogo')}
+      <div class="pf3-cell-name"><b>${p.name||p.ticker}</b><small>${p.ticker} · ${p.sector||'—'}</small></div>
+      <div>${m?m[0]+' ':''}${T(p.type||'—')}</div>
+      <div>${pf3Fmt(p.qty)}</div>
+      <div>${pf3Fmt(p.avgBuy,2)} <small>${p.ccy}</small></div>
+      <div><b>${pf3Fmt(price,2)}</b> <small>${p.ccy}</small></div>
+      <div class="${cls(pl)}">${pct(pl)}</div>
+      <div><b>${pf3Fmt(val)}</b> <small>kr</small></div>
+    </div>`}).join('');
+  const trRows=(ap.trades||[]).slice(-30).reverse().map(t=>`
+    <div class="aip-trade">
+      <span class="pf3-sig ${t.action==='buy'?'xr-buy':'xr-sell'}">${t.action==='buy'?'🟢 '+RT('Покупка','Buy'):'🔴 '+RT('Продажа','Sell')}</span>
+      <b>${t.name||t.ticker}</b> <small>${t.qty} × ${pf3Fmt(t.price,2)} ${t.ccy} ≈ ${pf3Fmt(t.amountSEK)} kr${typeof t.plSEK==='number'?` · <span class="${cls(t.plSEK)}">P&L ${t.plSEK>0?'+':''}${pf3Fmt(t.plSEK)} kr</span>`:''}</small>
+      <div class="aip-trade-why">${t.trigger?`<span class="aip-trig">⚡ ${t.trigger}</span> `:''}${t.reason||''}</div>
+      <small class="aip-trade-ts">${new Date(t.ts).toLocaleString(LANG==='en'?'en-GB':'ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
+    </div>`).join('');
+  return`
+  <section class="pf3-cards">
+    <div class="pf3-card pf3-sum-hero"><div class="pf3-card-l">${RT('Капитал AI','AI equity')}</div><div class="pf3-card-v">${pf3Fmt(equity)} kr</div><div class="pf3-card-s ${cls(ret)}">${pct(ret,2)} ${RT('со старта','since start')} · ${days} ${RT('дн.','days')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${RT('Позиции','Positions')}</div><div class="pf3-card-v">${pf3Fmt(posVal)} kr</div><div class="pf3-card-s">${(ap.positions||[]).length} ${RT('бумаг','holdings')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${RT('Свободный кэш','Free cash')}</div><div class="pf3-card-v">${pf3Fmt(ap.cashSEK||0)} kr</div><div class="pf3-card-s">${equity>0?((ap.cashSEK||0)/equity*100).toFixed(1):'—'}% ${RT('капитала','of equity')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${RT('Сделок','Trades')}</div><div class="pf3-card-v">${(ap.trades||[]).length}</div><div class="pf3-card-s">${ap.lastRunAt?RT('посл. цикл','last cycle')+' '+new Date(ap.lastRunAt).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit'}):RT('циклов ещё не было','no cycles yet')}</div></div>
+  </section>
+  <section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>⚔️ ${RT('Я vs AI','Me vs AI')}</span><span class="pf3-asof">${RT('с момента старта AI портфеля','since the AI portfolio started')}</span></div>
+    <div class="aip-vs">
+      <div class="aip-vs-card"><span>🧑 ${RT('Мой портфель','My portfolio')}</span><b class="${myRet!=null?cls(myRet):''}">${myRet!=null?pct(myRet,2):'—'}</b></div>
+      <div class="aip-vs-card"><span>🤖 AI</span><b class="${cls(ret)}">${pct(ret,2)}</b></div>
+      <div class="aip-vs-card"><span>📉 Max drawdown AI</span><b class="${dd<0?'pf3-down':''}">${dd.toFixed(1)}%</b></div>
+      <div class="aip-vs-card"><span>🏆 ${RT('Лучшая сделка','Best trade')}</span><b class="pf3-up">${best?'+'+pf3Fmt(best.plSEK)+' kr':'—'}</b><small>${best?best.ticker:''}</small></div>
+      <div class="aip-vs-card"><span>💥 ${RT('Худшая сделка','Worst trade')}</span><b class="pf3-down">${worst&&worst.plSEK<0?pf3Fmt(worst.plSEK)+' kr':'—'}</b><small>${worst&&worst.plSEK<0?worst.ticker:''}</small></div>
+    </div>
+    ${aipSpark(ap.equityHistory,ap.startCapital||300000)}
+  </section>
+  ${ap.lastNote?`<section class="pf3-panel"><div class="pf3-panel-hd"><span>💭 ${RT('Последний комментарий AI','Latest AI note')}</span></div><div class="aip-note">${ap.lastNote}</div></section>`:''}
+  <section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>📋 ${RT('Позиции','Positions')}</span><span class="pf3-asof">${RT('цены — живые, как в вашем портфеле','live prices, same as your portfolio')}</span></div>
+    ${posRows||`<div class="pf3-empty">${RT('Позиций пока нет — AI ждёт сетапов. Запустите цикл вручную или дождитесь крона.','No positions yet — the AI is waiting for setups. Run a cycle manually or wait for the cron.')}</div>`}
+  </section>
+  <section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>📜 ${RT('Журнал сделок','Trade journal')}</span><span class="pf3-asof">${RT('последние 30 · каждое решение с обоснованием','last 30 · every decision with reasoning')}</span></div>
+    ${trRows||`<div class="pf3-empty">${RT('Сделок ещё не было','No trades yet')}</div>`}
+  </section>
+  <section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>⚙️ ${RT('Стратегия и управление','Strategy & controls')}</span></div>
+    <textarea id="aipStrategy" class="aip-strategy" rows="4">${(ap.strategy||'').replace(/</g,'&lt;')}</textarea>
+    <div class="aip-controls">
+      <label>${RT('Цикл решений','Decision cycle')}:
+        <select id="aipInterval">${[30,60,120].map(v=>`<option value="${v}"${(ap.intervalMin||60)==v?' selected':''}>${v} ${RT('мин','min')}</option>`).join('')}</select>
+      </label>
+      <label><input type="checkbox" id="aipEnabled"${ap.enabled!==false?' checked':''}> ${RT('AI торгует','AI trading on')}</label>
+      <button class="pf3-btn" onclick="aipSaveSettings()">💾 ${RT('Сохранить','Save')}</button>
+      <button class="pf3-btn" onclick="aipRunNow(event)">▶ ${RT('Запустить цикл сейчас','Run cycle now')}</button>
+    </div>
+    <div class="pf3-reco-note">${RT('Старт: 300 000 kr · комиссия 0% · мин. сделка 5 000 kr · вселенная — все вкладки сайта · решения принимает Claude в worker-кроне, даже когда сайт закрыт.','Start: 300,000 kr · 0% commission · min trade 5,000 kr · universe — every tab on the site · decisions are made by Claude in the worker cron, even with the site closed.')}</div>
+  </section>`;
+}
+
 // 🔄 Обновить всё: курсы валют + цены/SMA/уровни всех v3-вкладок + метрики/типы
 // (таргеты уважают суточный таймер — форсируются кнопкой 🔁 на вкладке).
 let _homeUpd=false;

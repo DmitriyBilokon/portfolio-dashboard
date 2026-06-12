@@ -800,11 +800,23 @@ export default {
       return json(e || { next: null, last: null });
     }
     if(url.searchParams.has('targets')){
-      // Batch analyst consensus targets (Yahoo/Refinitiv) → fills «Аналит. таргет»
-      // for index watchlists where the FMP cron can't run (subrequest cap).
+      // Batch: analyst consensus target + valuation extras (P/E, P/S, dividend
+      // yield) in ONE quoteSummary call per symbol → fills «Аналит. таргет» and
+      // the optional list columns on the dashboard.
       const syms = url.searchParams.get('targets').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
-      await Promise.all(syms.map(async s => { out[s] = await yahooTarget(s); }));
+      await Promise.all(syms.map(async s => {
+        const qs = await yQuoteSummary(s, 'financialData,summaryDetail');
+        if(!qs){ out[s] = null; return; }
+        const fd = qs.financialData || {}, sd = qs.summaryDetail || {};
+        const avg = yRaw(fd.targetMeanPrice);
+        out[s] = {
+          avg: (typeof avg === 'number' && avg > 0) ? round2(avg) : null,
+          count: yRaw(fd.numberOfAnalystOpinions) || 0,
+          pe: yRaw(sd.trailingPE), ps: yRaw(sd.priceToSalesTrailing12Months),
+          divy: yRaw(sd.dividendYield), src: 'yahoo',
+        };
+      }));
       return json(out);
     }
     if(url.searchParams.has('history')){

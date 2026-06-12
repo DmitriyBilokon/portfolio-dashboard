@@ -209,7 +209,7 @@ const I18N_EN={
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
 'Долг/капитал':'Debt/equity','Ликвидность':'Liquidity','Кэш':'Cash','на конец квартала':'at quarter end','Свободный CF':'Free CF','Операционный CF':'Operating CF','за 12 мес (TTM)':'TTM (12 mo)','за фин. год':'fiscal year','Выручка CAGR':'Revenue CAGR','лет':'yr','Квартал г/г':'Quarter YoY','Год к году':'Year over year','Выручка':'Revenue',
-'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)',
+'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)','Потенциал %':'Upside %','Дивид. %':'Div. %','Колонки':'Columns','Доп. колонки списка':'Extra list columns','значения приходят с обновлением акций':'values arrive with the stock refresh',
 'Загружаю отчётность…':'Loading financials…','Загрузка…':'Loading…','Загружаю календарь отчётов…':'Loading the earnings calendar…',
 'Дата отчёта':'Earnings date','Ожидание: EPS':'Estimate: EPS','Ожидание: выручка':'Estimate: revenue','консенсус аналитиков':'analyst consensus','сегодня':'today','завтра':'tomorrow','Прошлый отчёт':'Last report','к прогнозу':'vs estimate','Дата следующего отчёта ещё не объявлена':'Next earnings date not announced yet',
 'Здоровье портфеля:':'Portfolio health:','Состояние компании:':'Company health:','🧩 Диверсификация':'🧩 Diversification','💱 Валюты':'💱 Currencies','💵 Кэш и плечо':'💵 Cash & leverage','📈 Тренд и качество':'📈 Trend & quality','🏭 Распределение по секторам':'🏭 Sector allocation','💱 Распределение по валютам':'💱 Currency allocation','💡 Рекомендации':'💡 Recommendations',
@@ -407,7 +407,7 @@ function renderAll(){
       return;
     }
     if(v3Key!==curIdx){   // switched between Портфель 3.0 and Nasdaq 100 — rebind the v3 UI
-      v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel=null;
+      v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel=null;pf3XMenuOpen=false;
       pf3Sort=curIdx===PF3_KEY?{key:'val',dir:-1}:{key:'day',dir:-1};   // index default: top movers first
     }
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
@@ -616,7 +616,8 @@ function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 }
 function initTheme(){
-  applyTheme(localStorage.getItem('dash_theme') || document.documentElement.dataset.theme || 'light');
+  // Дефолт сайта: тёмная тема + новый интерфейс; сохранённый выбор важнее.
+  applyTheme(localStorage.getItem('dash_theme') || document.documentElement.dataset.theme || 'dark');
   initUI2();
   initLang();
 }
@@ -631,7 +632,7 @@ function applyUI2(){
   if(b){b.textContent=UI2?'↩':'✨';b.title=UI2?'Вернуть классический интерфейс':'Новый интерфейс (2026)';}
 }
 function initUI2(){
-  try{UI2=localStorage.getItem('dash_ui2')==='1'}catch(e){}
+  try{UI2=localStorage.getItem('dash_ui2')!=='0'}catch(e){UI2=true}   // дефолт: новый интерфейс включён
   applyUI2();
 }
 function toggleUI2(){
@@ -1501,20 +1502,78 @@ function pf3SortBy(k){
 function pf3ListHead(){
   const ar=k=>pf3Sort.key===k?(pf3Sort.dir>0?' ▲':' ▼'):'';
   const hd=(label,key,cls,right)=>`<span class="pf3-sort${cls?' '+cls:''}"${right?' style="text-align:right"':''} onclick="pf3SortBy('${key}')">${label}${ar(key)}</span>`;
+  const xc=pf3XActive(pf3D());
+  const xh=xc.map(k=>hd(T((PF3_XDEF.find(x=>x[0]===k)||[])[1]||k),k,'pf3-c-x',1)).join('');
+  const tpl=pf3GridTpl(v3Key===PF3_KEY,xc.length);
   if(v3Key!==PF3_KEY)   // index mode (Nasdaq 100): no position economics, but day % and analyst target
-    return`<div class="pf3-lhead idx"><span></span>${hd(T('Компания'),'name')}${hd(T('Сектор'),'sec','pf3-c-sec')}${hd(T('Тип'),'typ','pf3-c-typ')}${hd(T('Цена'),'price','',1)}${hd(T('1д %'),'day','pf3-c-day',1)}${hd(T('Таргет'),'tg','pf3-c-tg',1)}${hd(T('Критерий'),'crit','pf3-c-crit')}<span class="pf3-c-sig">${T('Сигнал')}</span><span></span></div>`;
-  return`<div class="pf3-lhead"><span></span>${hd(T('Компания'),'name')}${hd(T('Сектор'),'sec','pf3-c-sec')}${hd(T('Тип'),'typ','pf3-c-typ')}${hd(T('Кол-во'),'qty','pf3-c-qty')}${hd(T('Покупка'),'buy','pf3-c-buy')}${hd(T('Цена'),'price','',1)}${hd(T('Стоимость'),'val','',1)}${hd(T('Доля'),'share','pf3-c-share',1)}${hd(T('Критерий'),'crit','pf3-c-crit')}<span class="pf3-c-sig">${T('Сигнал')}</span><span></span></div>`;
+    return`<div class="pf3-lhead idx" style="${tpl}"><span></span>${hd(T('Компания'),'name')}${hd(T('Сектор'),'sec','pf3-c-sec')}${hd(T('Тип'),'typ','pf3-c-typ')}${hd(T('Цена'),'price','',1)}${hd(T('1д %'),'day','pf3-c-day',1)}${hd(T('Таргет'),'tg','pf3-c-tg',1)}${xh}${hd(T('Критерий'),'crit','pf3-c-crit')}<span class="pf3-c-sig">${T('Сигнал')}</span><span></span></div>`;
+  return`<div class="pf3-lhead" style="${tpl}"><span></span>${hd(T('Компания'),'name')}${hd(T('Сектор'),'sec','pf3-c-sec')}${hd(T('Тип'),'typ','pf3-c-typ')}${hd(T('Кол-во'),'qty','pf3-c-qty')}${hd(T('Покупка'),'buy','pf3-c-buy')}${hd(T('Цена'),'price','',1)}${hd(T('Стоимость'),'val','',1)}${hd(T('Доля'),'share','pf3-c-share',1)}${xh}${hd(T('Критерий'),'crit','pf3-c-crit')}<span class="pf3-c-sig">${T('Сигнал')}</span><span></span></div>`;
 }
 
+
+// ── Доп. колонки списка: любой параметр карточки в таблицу, набор свой у
+// каждой вкладки (d.xcols, синхронизируется). P/E·P/S·дивдоходность пишутся
+// в строки суточным обновлением таргетов (?targets). На мобильных и при
+// открытой карточке доп. колонки скрываются — там и так тесно.
+const PF3_XDEF=[
+  ['sma50','SMA 50'],['sma100','SMA 100'],['sma200','SMA 200'],
+  ['sup','Поддержка'],['res','Сопротивление'],
+  ['upside','Потенциал %'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],
+];
+let pf3XMenuOpen=false;
+const pf3XC=d=>Array.isArray(d.xcols)?d.xcols.filter(k=>PF3_XDEF.some(x=>x[0]===k)):[];
+const pf3XActive=d=>(pf3Sel||matchMedia('(max-width:900px)').matches)?[]:pf3XC(d);
+function pf3XMenuToggle(ev){if(ev)ev.stopPropagation();pf3XMenuOpen=!pf3XMenuOpen;renderPF3()}
+function pf3XToggle(k,ev){
+  if(ev)ev.stopPropagation();
+  const d=pf3D();d.xcols=pf3XC(d);
+  const i=d.xcols.indexOf(k);
+  if(i>=0)d.xcols.splice(i,1);else d.xcols.push(k);
+  scheduleSave();renderPF3();
+}
+function pf3XMenuHTML(d){
+  if(!pf3XMenuOpen)return'';
+  const on=pf3XC(d);
+  return`<div class="xcols-menu" onclick="event.stopPropagation()">
+    <div class="xcols-t">${T('Доп. колонки списка')}</div>
+    ${PF3_XDEF.map(([k,l])=>`<label class="set-tab"><input type="checkbox"${on.includes(k)?' checked':''} onchange="pf3XToggle('${k}',event)"><span>${T(l)}</span></label>`).join('')}
+    <div class="xcols-note">${T('значения приходят с обновлением акций')}</div>
+  </div>`;
+}
+// Инлайн-шаблон сетки: базовые колонки + 82px на каждую дополнительную.
+function pf3GridTpl(port,n){
+  if(!n)return'';
+  const x=' 82px'.repeat(n);
+  return`grid-template-columns:${port
+    ?`40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px${x} 124px 138px 52px`
+    :`40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px${x} 124px 142px 52px`}`;
+}
+function pf3XCell(it,k){
+  const p=it.price;
+  if(k==='upside'){const v=it.tg>0&&p>0?(it.tg/p-1)*100:null;return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
+  const v=it[k];
+  if(k==='pe'||k==='ps')return v>0?(+v).toFixed(1):'—';
+  if(k==='divy')return v>0?(+v).toFixed(1)+'%':'—';
+  if(!(v>0)||!(p>0))return'—';
+  const dd=(p-v)/v*100;   // уровни: значение + дистанция цены, как в карточке
+  return`<b>${pf3Fmt(v,2)}</b><small class="${dd>=0?'pf3-up':'pf3-down'}">${dd>=0?'▲':'▼'}${Math.abs(dd).toFixed(1)}%</small>`;
+}
 // Rows with computed metrics + total stock value — shared by the flat list
 // and the grouped «Сектора»/«Тип» views.
 function pf3Items(){
-  const d=pf3D();
-  const tgC=d.headers.findIndex(x=>/аналит/i.test(x));
+  const d=pf3D(),h=d.headers;
+  const tgC=h.findIndex(x=>/аналит/i.test(x));
+  const {s50,s100,s200}=smaIdx(d);
+  const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление');
+  const peC=h.indexOf('P/E'),psC=h.indexOf('P/S'),dyC=h.indexOf('Дивид. %');
+  const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
   const items=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
     const c=pf3Criterion(d,r);
-    return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price:parseFloat(r[7])||0,val:parseFloat(r[13])||0,tg:tgC>=0?(parseFloat(r[tgC])||0):0,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html};
+    const tg=tgC>=0?(parseFloat(r[tgC])||0):0,price=parseFloat(r[7])||0;
+    return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
+      sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
+      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),upside:tg>0&&price>0?(tg/price-1)*100:0};
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
   items.forEach(x=>x.share=totalVal>0?x.val/totalVal*100:0);
@@ -1523,7 +1582,7 @@ function pf3Items(){
 
 // One list row: logo, flag+name+ticker, sector, type, … , signal, delete.
 // Index mode swaps the position columns for day % and the analyst target.
-function pf3RowHTML(d,it,port){
+function pf3RowHTML(d,it,port,xc){
   const {r,name,qty,buy,price,val,share,tg}=it;
   const tk=String(r[2]||''),ccy=r[8]||'USD';
   const day=parseFloat(r[10]),ppct=parseFloat(r[12])||0;
@@ -1537,12 +1596,13 @@ function pf3RowHTML(d,it,port){
     :`<div class="pf3-row-price"><b>${price>0?pf3Fmt(price,2):'—'} ${ccy}</b></div>
     <div class="pf3-c pf3-c-day"><span class="${day>=0?'pf3-up':'pf3-down'}">${isFinite(day)?(day>0?'+':'')+day.toFixed(2)+'%':'—'}</span></div>
     <div class="pf3-row-price pf3-c-tg"><b>${tg>0?pf3Fmt(tg,0):'—'}</b>${tg>0&&price>0?`<span class="${tg>=price?'pf3-up':'pf3-down'}">${tg>=price?'+':''}${((tg-price)/price*100).toFixed(0)}%</span>`:''}</div>`;
-  return`<div class="pf3-row${port?'':' idx'}${pf3Sel===tk?' active':''}" onclick="pf3Select('${tk}')">
+  return`<div class="pf3-row${port?'':' idx'}${pf3Sel===tk?' active':''}" style="${pf3GridTpl(port,(xc||[]).length)}" onclick="pf3Select('${tk}')">
     <div class="pf3-row-logo">${tk.slice(0,2)}</div>
     <div class="pf3-row-name"><b>${flag}${name||tk}</b><span>${tk}</span></div>
     <div class="pf3-c pf3-c-sec">${r[4]&&r[4]!=='—'?r[4]:'—'}</div>
     <div class="pf3-c pf3-c-typ"><span class="pf3-typ${PF3_TYPE_META[r[5]]?' '+PF3_TYPE_META[r[5]][1]:''}">${PF3_TYPE_META[r[5]]?PF3_TYPE_META[r[5]][0]+' ':''}${r[5]&&r[5]!=='—'?T(r[5]):'—'}</span></div>
     ${cells}
+    ${(xc||[]).map(k=>`<div class="pf3-c pf3-c-x">${pf3XCell(it,k)}</div>`).join('')}
     <div class="pf3-c pf3-c-crit">${it.critHtml||''}</div>
     <div class="pf3-c pf3-c-sig">${pf3RowSignal(d,r)}</div>
     <div class="pf3-row-act">${isAdmin()?`<button class="pf3-del" onclick="pf3Delete('${tk}',event)" title="${T('Удалить акцию')}">🗑</button>`:''}<span class="pf3-row-arr">${pf3Sel===tk?'✕':'›'}</span></div>
@@ -1551,10 +1611,11 @@ function pf3RowHTML(d,it,port){
 
 function pf3ListHTML(){
   const d=pf3D(),port=v3Key===PF3_KEY;
+  const xc=pf3XActive(d);
   const {items}=pf3Items();
   const k=pf3Sort.key,dir=pf3Sort.dir;
   items.sort((a,b)=>{const x=a[k],y=b[k];return(typeof x==='string'?x.localeCompare(y,'ru'):x-y)*dir});
-  return items.map(it=>pf3RowHTML(d,it,port)).join('');
+  return items.map(it=>pf3RowHTML(d,it,port,xc)).join('');
 }
 
 // «Сектора» / «Тип» sub-tabs: a sidebar with the category list on the left;
@@ -1721,7 +1782,7 @@ function renderPF3(){
   el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():""}${v3Key===PF3_KEY&&!open?pfPerfHTML():''}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
-      <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`}</div>
+      <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act"><button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button><button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>${pf3XMenuHTML(d)}</span>`}</div>
       ${pf3ListHead()}
       ${pf3ListHTML()}
       ${open||!isAdmin()?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
@@ -2126,8 +2187,17 @@ async function pf3RefreshTargets(d){
   const good=parts.filter(p=>p&&typeof p==='object'&&!p.error);
   if(!good.length){_tgEndpointDown=true;return;}
   const tg=Object.assign({},...good);
+  const peC=ensurePFCol(d,'P/E'),psC=ensurePFCol(d,'P/S'),dyC=ensurePFCol(d,'Дивид. %');
   let n=0;
-  d.rows.forEach(r=>{const q=tg[exSymbol(r[2],r[8])];if(q&&typeof q.avg==='number'&&q.avg>0){r[tgC]=q.avg;n++}});
+  d.rows.forEach(r=>{
+    const q=tg[exSymbol(r[2],r[8])];
+    if(!q)return;
+    if(typeof q.avg==='number'&&q.avg>0)r[tgC]=q.avg;
+    if(typeof q.pe==='number'&&q.pe>0)r[peC]=Math.round(q.pe*10)/10;
+    if(typeof q.ps==='number'&&q.ps>0)r[psC]=Math.round(q.ps*10)/10;
+    if(typeof q.divy==='number'&&q.divy>0)r[dyC]=Math.round(q.divy*1000)/10;   // доля → %
+    n++;
+  });
   if(n){d.targetsAt=Date.now();scheduleSave();}
 }
 

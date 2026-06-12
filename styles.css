@@ -877,3 +877,16 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .aip-controls{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:10px 0;font-size:12px}
 .aip-controls select{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:4px 8px}
 .aip-row .pf3-cell-name small{display:block;color:var(--text3);font-size:9.5px}
+
+/* ── Фиксы списка: масштабируемость, полная обводка строк, бейджи не режутся ── */
+/* Основной экран тянется под ширину окна (раньше был жёсткий потолок 1100px) */
+.pf3-wrap{max-width:min(1680px,calc(100vw - 32px))}
+/* Горизонтальный скролл списка: обводка строки охватывает ВСЕ колонки,
+   включая Сигнал и доп. колонки, а не обрезается на ширине контейнера */
+.pf3-list{overflow-x:auto}
+.pf3-list>.pf3-row,.pf3-list>.pf3-lhead{min-width:max-content}
+.pf3-list .pf3-row-name,.pf3-list .pf3-c-sec{max-width:240px}
+.pf3-row-name b,.pf3-row-name span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Тип/Критерий: ячейка растёт под бейдж — низ букв больше не обрезается */
+.pf3-c.pf3-c-typ,.pf3-c.pf3-c-crit{display:flex;align-items:center;min-width:0}
+.pf3-c-typ .pf3-typ,.pf3-c-crit .pf3-crit{overflow:hidden;text-overflow:ellipsis;max-width:100%}

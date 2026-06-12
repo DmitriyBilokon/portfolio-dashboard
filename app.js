@@ -535,7 +535,7 @@ function migrateAiHistory(){
 }
 function init(){
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateAiPort();
-  const keys=Object.keys(DATA).filter(tabAllowed);
+  const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
@@ -2291,6 +2291,9 @@ function pf3Delete(tk,ev){
 function renderPF3(){
   const el=document.getElementById('pf3Area'),d=pf3D();
   if(!el||!d)return;
+  // Асинхронные хвосты (обновление цен/таргетов/риска) не должны подменять
+  // контент, если пользователь уже ушёл на Home/другую вкладку.
+  if(curIdx!==v3Key)return;
   if(pf3Tab==='sec'||pf3Tab==='typ'){
     el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pf3GroupedHTML(pf3Tab)}</div>`;
     return;

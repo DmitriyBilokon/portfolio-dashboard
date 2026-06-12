@@ -763,8 +763,16 @@ export default {
     if(url.searchParams.has('fundamentals')){
       // Balance / cash-flow / growth snapshot for one symbol (FMP) → Портфель 3.0 health cards.
       // Optional &period=quarter → latest quarterly balance + TTM cash flow / revenue.
+      // Valuation (P/E, forward P/E, P/S) comes from Yahoo summaryDetail in parallel.
       const per = url.searchParams.get('period') === 'quarter' ? 'quarter' : 'annual';
-      const f = await fundamentals(url.searchParams.get('fundamentals').trim().toUpperCase(), env, per);
+      const sym = url.searchParams.get('fundamentals').trim().toUpperCase();
+      const [f, qs] = await Promise.all([fundamentals(sym, env, per), yQuoteSummary(sym, 'summaryDetail')]);
+      if(f && qs && qs.summaryDetail){
+        const sd = qs.summaryDetail;
+        f.pe = yRaw(sd.trailingPE);
+        f.fwdPe = yRaw(sd.forwardPE);
+        f.ps = yRaw(sd.priceToSalesTrailing12Months);
+      }
       return json(f);
     }
     if(url.searchParams.has('profile')){

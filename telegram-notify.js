@@ -40,7 +40,7 @@ const round2 = n => Math.round(n * 100) / 100;
 const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
 
 // Response helpers shared by every route.
-const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type', 'Content-Type':'application/json; charset=utf-8' };
+const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type, Authorization', 'Content-Type':'application/json; charset=utf-8' };
 const json = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: CORS });
 const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
@@ -442,6 +442,29 @@ async function earningsInfo(sym, env){
   return out || await yahooEarnings(sym);   // EU/Nordic tickers → Yahoo calendar
 }
 
+// ── Авторизация AI-эндпоинтов: пускаем только администратора дашборда ──────
+// Клиент шлёт Supabase access-token (Authorization: Bearer …); worker проверяет
+// его через /auth/v1/user и роль — по email-списку или по user_access.role.
+const ADMIN_EMAILS = ['dmitriy.bilokon@gmail.com', 'dmitriy.bilokon@justforthewin.com'];
+async function requireAdmin(request, env){
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if(!token) return { ok:false, error:'Требуется вход на сайт (нет токена)' };
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/auth/v1/user`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${token}` } });
+    if(!r.ok) return { ok:false, error:'Сессия недействительна — войдите заново' };
+    const u = await r.json();
+    const email = String(u.email || '').toLowerCase();
+    if(ADMIN_EMAILS.includes(email)) return { ok:true, email };
+    const q = await fetch(`${env.SUPABASE_URL}/rest/v1/user_access?user_id=eq.${u.id}&select=role`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+    const rows = q.ok ? await q.json() : [];
+    if(rows[0] && rows[0].role === 'admin') return { ok:true, email };
+    return { ok:false, error:'AI Assistant доступен только администратору' };
+  }catch(e){ return { ok:false, error:'Не удалось проверить доступ' }; }
+}
+
 // ── AI Assistant: portfolio analysis via the Claude API ─────────────────────
 // The dashboard POSTs a portfolio snapshot (positions with live prices, SMA
 // levels, support/resistance, analyst targets, cash/leverage); Claude returns a
@@ -506,7 +529,30 @@ const AI_SCHEMA = {
   additionalProperties: false,
 };
 
+// Watchlist mode (index tabs): analyze the tab's stocks and surface the most
+// relevant ones with concrete actions. Same JSON schema as the portfolio run.
+const WATCH_SYSTEM = `Ты — опытный рыночный аналитик. Тебе передают watchlist-снапшот вкладки биржевого индекса (поле index): все акции с живыми ценами, дневными изменениями, SMA 50/100/200, поддержкой/сопротивлением, консенсус-таргетами, P/E и P/S, рыночной фазой (phase: падающий нож, импульс, аптренд…) и сигналом близости к уровню (signal).
+
+Дай анализ на русском языке в markdown строго по разделам:
+
+## 📊 Картина по индексу
+2–4 предложения: breadth (сколько в аптренде/даунтренде), общий моментум, что выделяется.
+
+## 🔥 Самые актуальные акции
+Выбери 5–8 бумаг, где прямо сейчас происходит главное (цена у ключевого уровня, сильный импульс, перегрев, явная недооценка к таргету, падающий нож). Для каждой: **действие** (Купить / Следить / Фиксировать прибыль / Избегать), уровни входа-выхода из переданных данных и одна строка почему.
+
+## 🏭 Сектора
+Какие сектора индекса сильны, какие слабы (по фазам и дневным движениям).
+
+## ⚠️ Риски
+2–3 главных риска для этого индекса сейчас.
+
+Правила: опирайся на переданные данные и свои знания о компаниях; конкретные цифры и уровни; лаконично; если есть investorRules — строго учитывай их; в конце одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
+
+Ответ верни строго в JSON по схеме: report — анализ в markdown; proposal — summary (1–2 предложения о состоянии индекса) и actions — те же 5–8 самых актуальных акций (action из списка: Купить/Докупить/Сократить/Продать/Держать — подбери ближайшее по смыслу; details: уровни и причина; amountSEK: null).`;
+
 async function aiAnalyze(env, snapshot){
+  const system = (snapshot && snapshot.mode === 'watchlist') ? WATCH_SYSTEM : AI_SYSTEM;
   const today = new Date().toISOString().slice(0, 10);
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -520,8 +566,8 @@ async function aiAnalyze(env, snapshot){
       max_tokens: 16000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
-      system: AI_SYSTEM,
-      messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот портфеля (JSON):\n${JSON.stringify(snapshot)}` }],
+      system,
+      messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот (JSON):\n${JSON.stringify(snapshot)}` }],
     }),
   });
   if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
@@ -731,6 +777,8 @@ export default {
       // POST: portfolio snapshot JSON → Claude analysis → {text} (Портфель 3.0 «AI Assistant»).
       if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }, 500);
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
       try{
         const snapshot = await request.json();
         const out = await aiAnalyze(env, snapshot);   // { text, proposal }
@@ -743,6 +791,8 @@ export default {
       // POST: {messages, prefs, snapshot} → Claude chat reply + new memory rules.
       if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан — добавьте Secret в настройках worker' }, 500);
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
       try{ return json(await aiChat(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }

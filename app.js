@@ -178,8 +178,10 @@ const PF3_KEY='🚀 Портфель 3.0';
 const ANALYSIS_IDX='Nasdaq 100';
 let v3Key=PF3_KEY;                  // which tab the v3 UI is currently bound to
 const pf3D=()=>DATA[v3Key];
-const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over both v3 tabs
-const isV3=()=>curIdx===PF3_KEY||curIdx===ANALYSIS_IDX||curIdx===HOME_KEY;
+const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
+const OMX_IDX='OMXS30';
+const V3_TABS=[PF3_KEY,ANALYSIS_IDX,OMX_IDX];   // вкладки в новом (v3) формате
+const isV3=()=>V3_TABS.includes(curIdx)||curIdx===HOME_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -343,7 +345,7 @@ function pf3DeriveType(tk,sec,cur){
 }
 function fixCompanyNames(){
   let touched=false;
-  ['💼 Портфель 2.0',PF3_KEY,ANALYSIS_IDX].forEach(k=>{
+  ['💼 Портфель 2.0',PF3_KEY,ANALYSIS_IDX,OMX_IDX].forEach(k=>{
     const d=DATA[k];if(!d)return;
     d.rows.forEach(r=>{
       const tk=String(r[2]||'').trim().toUpperCase();
@@ -360,7 +362,13 @@ function fixCompanyNames(){
 // master-detail UI (list + cards) can render it. Old columns are mapped by
 // header name; qty/buy stay 0 (it's a watchlist, not a position list).
 function migrateNasdaqV3(){
-  const d=DATA[ANALYSIS_IDX],p3=DATA[PF3_KEY];
+  migrateIndexV3(ANALYSIS_IDX,'🇺🇸','USD');
+  migrateIndexV3('OMXS30','🇸🇪','SEK');
+}
+// One-time: convert a classic index tab to the PF row schema so the v3
+// master-detail UI can render it. Columns are mapped by header name.
+function migrateIndexV3(KEY,flag,ccy){
+  const d=DATA[KEY],p3=DATA[PF3_KEY];
   if(!d||!p3||d.v3==='1')return;
   const oh=d.headers,find=re=>oh.findIndex(x=>re.test(String(x)));
   const o={sec:find(/сектор|отрасль/i),price:find(/^цена/i),day:find(/1д|день/i),tg:find(/аналит/i),s50:find(/sma.?50/i),s100:find(/sma.?100/i),s200:find(/sma.?200/i),sup:oh.indexOf('Поддержка'),res:oh.indexOf('Сопротивление'),div:find(/^дивид/i)};
@@ -369,8 +377,8 @@ function migrateNasdaqV3(){
   const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
   const rows=d.rows.filter(r=>String(r[2]||'').trim()).map((r,i)=>{
     const row=new Array(nh.length).fill('');
-    row[0]=i+1;row[1]=r[1]||r[2];row[2]=String(r[2]).trim();row[3]='🇺🇸';row[4]=o.sec>=0?(r[o.sec]||'—'):'—';row[5]='Акция';
-    row[6]=0;row[7]=num(r,o.price);row[8]='USD';row[9]=0;row[10]=num(r,o.day);
+    row[0]=i+1;row[1]=r[1]||r[2];row[2]=String(r[2]).trim();row[3]=flag;row[4]=o.sec>=0?(r[o.sec]||'—'):'—';row[5]='Акция';
+    row[6]=0;row[7]=num(r,o.price);row[8]=ccy;row[9]=0;row[10]=num(r,o.day);
     row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]=o.div>=0?(r[o.div]||'—'):'—';
     if(n.s50>=0)row[n.s50]=num(r,o.s50)||'';
     if(n.s100>=0)row[n.s100]=num(r,o.s100)||'';
@@ -380,7 +388,7 @@ function migrateNasdaqV3(){
     if(n.tg>=0)row[n.tg]=num(r,o.tg)||'';
     return row;
   });
-  DATA[ANALYSIS_IDX]={headers:nh,rows,count:rows.length,subtitle:d.subtitle||'Nasdaq 100',v3:'1'};
+  DATA[KEY]={headers:nh,rows,count:rows.length,subtitle:d.subtitle||KEY,v3:'1',xcols:d.xcols};
   if(!applyingRemote)scheduleSave();
 }
 // Портфель 2.0 is retired — Портфель 3.0 owns the holdings now. Runs after
@@ -413,11 +421,12 @@ function renderAll(){
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=v3Key===PF3_KEY;
-    if(!isPort&&!['list','cal','sec','typ','sim'].includes(pf3Tab))pf3Tab='list';
+    if(!isPort&&!['list','cal','sec','typ','sim','ai'].includes(pf3Tab))pf3Tab='list';
+    if(!isAdmin()&&(pf3Tab==='ai'||pf3Tab==='prop'))pf3Tab='list';   // AI-вкладки — только админу
     (isPort
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],[T('🧪 Симуляция'),'sim'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Assistant','ai'],[T('⚖️ Предложение'),'prop']]
-      :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],[T('🧪 Симуляция'),'sim'],[T('📅 Дивиденды и отчёты'),'cal']]
-    ).forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
+      :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],[T('🧪 Симуляция'),'sim'],['🤖 AI Assistant','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
+    ).filter(([,k])=>isAdmin()||(k!=='ai'&&k!=='prop')).forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
     renderPF3();
     pf3EnsureAutoRefresh();
@@ -1008,6 +1017,25 @@ let pf3Ai={loading:false};
 function pf3AiSnapshot(){
   const d=pf3D(),h=d.headers,{s50,s100,s200}=smaIdx(d);
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
+  // Индексные вкладки: watchlist-снапшот — все акции с уровнями, фазой и
+  // сигналом; AI выделяет самые актуальные и рекомендует действия.
+  if(v3Key!==PF3_KEY){
+    const peC=h.indexOf('P/E'),psC=h.indexOf('P/S');
+    const nm=v=>{const n=parseFloat(v);return isFinite(n)&&n!==0?n:null};
+    return{
+      mode:'watchlist',index:v3Key,baseCurrency:'SEK',
+      stocks:d.rows.map(r=>{
+        const c=pf3Criterion(d,r),sig=pf3SignalInfo(d,r);
+        return{name:r[1],ticker:r[2],sector:r[4],type:r[5],ccy:r[8]||'USD',
+          price:nm(r[7]),dayPct:nm(r[10]),
+          sma50:s50>=0?nm(r[s50]):null,sma100:s100>=0?nm(r[s100]):null,sma200:s200>=0?nm(r[s200]):null,
+          support:supC>=0?nm(r[supC]):null,resistance:resC>=0?nm(r[resC]):null,
+          analystTarget:tgC>=0?nm(r[tgC]):null,pe:peC>=0?nm(r[peC]):null,ps:psC>=0?nm(r[psC]):null,
+          phase:c.label,signal:sig.type!=='none'?`${sig.type}${sig.n?' '+sig.n:''}${typeof sig.dist==='number'?' '+sig.dist.toFixed(1)+'%':''}`:null};
+      }),
+      investorRules:AI_PREFS,
+    };
+  }
   let totalVal=0;
   d.rows.forEach((r,i)=>{recalcPF(i,v3Key);totalVal+=parseFloat(r[13])||0});
   const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
@@ -1039,6 +1067,10 @@ function pf3AiHist(){
 }
 const pf3DtRu=iso=>{const d=new Date(iso);return isNaN(d)?'':pf3DateRu(String(iso).slice(0,10))+', '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
 
+// Access-token текущей сессии — worker пускает к AI только админа по нему.
+async function sbToken(){
+  try{const{data}=await sb.auth.getSession();return (data&&data.session&&data.session.access_token)||''}catch(e){return''}
+}
 async function pf3AiRun(){
   if(pf3Ai.loading)return;
   pf3Ai.loading=true;
@@ -1047,7 +1079,7 @@ async function pf3AiRun(){
     // Fresh prices + SMA/levels first — so the AI snapshot, the signals column
     // and the «Состояние портфеля» tab all reflect the current market state.
     await pf3Refresh(true);
-    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pf3AiSnapshot())});
+    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(pf3AiSnapshot())});
     const j=await r.json();
     if(j&&j.text){
       const d=pf3D();
@@ -1087,7 +1119,7 @@ async function aiChatSend(){
   AI_CHAT.push({role:'user',content:q,at:new Date().toISOString()});
   aiChatBusy=true;scheduleSave();renderPF3();
   try{
-    const r=await fetch(PRICE_PROXY+'?action=chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch(PRICE_PROXY+'?action=chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},
       body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:AI_PREFS,snapshot:pf3AiSnapshot()})});
     const j=await r.json();
     if(j&&j.reply){
@@ -1117,7 +1149,7 @@ function pf3AiHTML(){
     <div class="pf3-panel-hd"><span>${T('🤖 AI Assistant — анализ портфеля и рекомендации')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?T('⏳ Анализирую… (30–60 сек)'):T('🔮 Проанализировать портфель')}</button>
-      <span class="pf3-ai-note">Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков, кэш и ваши правила (🧠) — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).</span>
+      <span class="pf3-ai-note">${v3Key===PF3_KEY?RT('Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков, кэш и ваши правила (🧠) — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).','Claude gets your holdings, live prices, SMA/support levels, analyst targets, cash and your rules (🧠) — and returns a report with recommendations plus a rebalancing plan (the ⚖️ Proposal tab).'):RT(`Claude получит все ${pf3D().rows.length} акций вкладки с живыми ценами, уровнями, фазами и таргетами — и выделит самые актуальные с рекомендациями (правила 🧠 учитываются).`,`Claude gets all ${pf3D().rows.length} stocks of this tab with live prices, levels, phases and targets — and highlights the most relevant ones with recommendations (your 🧠 rules apply).`)}</span>
     </div>
     ${last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
   </section>`;
@@ -1633,14 +1665,14 @@ const PF3_MACRO=[
   ['Кибербезопасность',/cyber|кибер/i],
   ['Интернет и реклама',/search|social|ad tech|mobile ads|соцсет|реклам/i],
   ['E-commerce и сервисы',/e-?comm|delivery|travel|hotel|restaurant|путешеств|туризм/i],
-  ['Финансы и недвижимость',/fintech|payment|payroll|real estate|\breit\b|финанс|недвиж|bitcoin/i],
+  ['Финансы и недвижимость',/fintech|payment|payroll|real estate|\breit\b|финанс|недвиж|bitcoin|банк|инвестиц|pe fund/i],
   ['Здравоохранение',/biotech|pharma|\bmed\b|health|vaccin|фарма|биотех|медицин|здравоохран/i],
   ['Потребительский сектор',/staples|beverage|retail|auto parts|потребительск|напитк/i],
-  ['Медиа и телеком',/streaming|gaming|\bmedia\b|satellite|telecom|cable|телеком|медиа/i],
-  ['Промышленность и транспорт',/industrial|logistic|truck|uniform|security|defen[cs]e|оборон|auto auctions|\bev\b|aerospace/i],
+  ['Медиа и телеком',/streaming|gaming|\bmedia\b|satellite|telecom|cable|телеком|медиа|казино/i],
+  ['Промышленность и транспорт',/industrial|logistic|truck|uniform|security|defen[cs]e|оборон|auto auctions|\bev\b|aerospace|горнодоб|лесопром|строительств|подшипник|грузовик|конгломерат|теплонасос|теплообмен|замк|электрификац|промтех|сырь/i],
   ['Энергетика',/power|energy|oil|solar|utilit|nuclear|энерг|коммунал|нефт/i],
   ['Железо и сети',/server|networking|distribution|\btech\b/i],
-  ['Софт и облако',/software|cloud|saas|analytics|databas|dev tools|облач|данн|\bai\b|\bии\b/i],
+  ['Софт и облако',/software|cloud|saas|analytics|databas|dev tools|облач|данн|\bai\b|\bии\b|цифр/i],
 ];
 const pf3MacroSector=s=>{for(const[n,re]of PF3_MACRO)if(re.test(s))return n;return s||'Прочее'};
 function pf3Groups(key){
@@ -1769,7 +1801,7 @@ function renderPF3(){
     return;
   }
   if(pf3Tab==='ai'){
-    el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3AiHTML()}</div>`;
+    el.innerHTML=`<div class="pf3-wrap">${v3Key===PF3_KEY?pf3Summary():''}${pf3AiHTML()}</div>`;
     aiChatScroll();   // держим чат прокрученным к последнему сообщению
     return;
   }
@@ -1914,14 +1946,14 @@ async function pfPerfDraw(){
 // ===== Симуляция: тестовые покупки без реальных денег =====
 // Живая цена тикера — из строк любой v3-вкладки (портфель, затем индекс).
 function simQuote(tk){
-  for(const k of [PF3_KEY,ANALYSIS_IDX]){
+  for(const k of V3_TABS){
     const d=DATA[k];if(!d)continue;
     const r=d.rows.find(x=>String(x[2]||'').trim().toUpperCase()===tk);
     if(r)return{price:parseFloat(r[7])||0,ccy:r[8]||'USD',day:parseFloat(r[10]),name:String(r[1]||tk),flag:r[3]&&r[3]!=='—'?r[3]+' ':''};
   }
   return null;
 }
-const simHomeTab=tk=>[PF3_KEY,ANALYSIS_IDX].find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
+const simHomeTab=tk=>V3_TABS.find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
 // Старые записи без привязки к вкладке — раскладываем по родным вкладкам тикера.
 function simMigrateTabs(){
   let ch=false;
@@ -2000,7 +2032,7 @@ function simTabHTML(){
 }
 // Клик по строке теста — открыть карточку акции (на вкладке, где она есть).
 function simOpen(tk){
-  const home=[PF3_KEY,ANALYSIS_IDX].find(k=>DATA[k]&&DATA[k].rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk));
+  const home=simHomeTab(tk);
   if(!home||!tabAllowed(home))return;
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
 }
@@ -2010,7 +2042,7 @@ function simOpen(tk){
 // при дубликатах тикера) с сигналом и рыночной фазой каждой.
 function homeItems(){
   const out=[];
-  [PF3_KEY,ANALYSIS_IDX].filter(k=>DATA[k]&&tabAllowed(k)).forEach(k=>{
+  V3_TABS.filter(k=>DATA[k]&&tabAllowed(k)).forEach(k=>{
     DATA[k].rows.forEach((r,i)=>{
       recalcPF(i,k);
       const tk=String(r[2]||'').trim().toUpperCase();

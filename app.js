@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, aiPort:AI_PORT };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -66,6 +66,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
+  if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
@@ -161,7 +162,7 @@ let TG_ALERTS={};
 // которые ассистент извлекает из чата (и которые можно добавить вручную).
 // Правила передаются и в чат, и в полный анализ портфеля (investorRules).
 let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
-let AI_PORT=null;   // 🤖 AI Портфель: состояние виртуального счёта (торгует worker)
+let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
 let SMA_TF={};

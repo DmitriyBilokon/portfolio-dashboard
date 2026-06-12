@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-12d';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-12e';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -760,7 +760,7 @@ async function aiPortfolioRun(env, force){
   // каждой записи. Если клиент затёр aiPort (старый кеш сайта пушит снапшот
   // без этого ключа / отставшая копия) — восстанавливаем из резерва.
   let restored = false;
-  const bak = snap && snap.aiPortBak;
+  const bak = (await loadBak(env, row && row.userId)) || (snap && snap.aiPortBak);
   if(bak && bak.startedAt){
     const apEmpty = !ap || !ap.startedAt || (!(ap.positions || []).length && !(ap.trades || []).length);
     const bakHas = (bak.positions || []).length || (bak.trades || []).length;
@@ -895,8 +895,9 @@ async function aiPortfolioRun(env, force){
     const fap = (fresh.snap && fresh.snap.aiPort) || {};
     ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
     fresh.snap.aiPort = ap;
-    fresh.snap.aiPortBak = JSON.parse(JSON.stringify(ap));   // несгораемая копия worker'а
+    fresh.snap.aiPortBak = JSON.parse(JSON.stringify(ap));   // быстрый резерв в той же строке
     await writeRow(env, fresh.userId, fresh.snap);
+    await saveBak(env, fresh.userId, ap);                    // несгораемый резерв в ai_state
   }
   for(const t of trades){
     try{
@@ -975,6 +976,28 @@ async function fmpTarget(symbol, env){
       return { avg: round2(d.lastMonthAvgPriceTarget), count: d.lastMonth ?? d.lastMonthCount ?? 0 };
     return { err: 'no recent target' };
   }catch(e){ return { err: 'exc ' + String(e.message || '').slice(0, 24) }; }
+}
+// Резерв AI-портфеля в таблице ai_state: клиенты её не трогают (RLS без
+// политик, доступ только у service-роли). Пока SQL не выполнен — try/catch
+// и фолбэк на snap.aiPortBak.
+async function loadBak(env, userId){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state?user_id=eq.${userId}&select=port`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+    if(!r.ok) return null;
+    const rows = await r.json();
+    return (rows && rows[0] && rows[0].port) || null;
+  }catch(e){ return null; }
+}
+async function saveBak(env, userId, ap){
+  try{
+    await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state`, {
+      method: 'POST',
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: userId, port: ap, updated_at: new Date().toISOString() }),
+    });
+  }catch(e){ /* таблицы ещё нет — резерв в snap.aiPortBak продолжает работать */ }
 }
 async function loadRow(env){
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&order=updated_at.desc&limit=1`,

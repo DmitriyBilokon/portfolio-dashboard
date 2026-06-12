@@ -871,7 +871,7 @@ async function aiPortfolioRun(env, force){
   const fresh = await loadRow(env);
   if(fresh){
     const fap = (fresh.snap && fresh.snap.aiPort) || {};
-    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
+    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
     fresh.snap.aiPort = ap;
     await writeRow(env, fresh.userId, fresh.snap);
   }

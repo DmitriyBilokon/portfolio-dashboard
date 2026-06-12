@@ -654,12 +654,15 @@ function migrateSmallCap(){
 // myStartEquity — стоимость МОЕГО портфеля в момент старта (для «Я vs AI»).
 function migrateAiPort(){
   if(AI_PORT&&AI_PORT.startedAt)return;
-  const d=DATA[PF3_KEY];let myEq=0;
-  if(d){d.rows.forEach(r=>{myEq+=parseFloat(r[13])||0});myEq+=parseFloat(d.cashFree)||0;}
+  // Базу «Я vs AI» НЕ считаем здесь: при первой загрузке цены ещё из сид-блоба
+  // data.js (устаревшие). myStartEquity поставит первый живой рефреш цен
+  // (pf3FetchPrices, флаг myStartLive) — иначе сравнение стартует с фантомного
+  // минуса/плюса.
+  const myEq=0;
   AI_PORT={startedAt:Date.now(),startCapital:300000,cashSEK:300000,commissionPct:0,minTradeSEK:5000,
     intervalMin:60,enabled:true,
     strategy:'Цель — опережать эталонные индексы (OMXS30, Nasdaq 100, S&P 500). Сбалансированная: ~40% Качественные, ~25% Рост, ~15% Дивидендные, ~10% Защитные, ~10% Спекулятивные. Кэш-резерв минимум 5%, максимум 15% в одной позиции. Горизонт — недели-месяцы: свинг по уровням SMA 50/200 и поддержки, фиксация у сопротивления/таргета.',
-    positions:[],trades:[],equityHistory:[],myStartEquity:Math.round(myEq)||null,lastRunAt:0,lastNote:''};
+    positions:[],trades:[],equityHistory:[],myStartEquity:null,lastRunAt:0,lastNote:''};
   if(!applyingRemote)scheduleSave();
 }
 // ===== Свои вкладки-watchlist'ы (админ) =====
@@ -2932,7 +2935,17 @@ async function pf3FetchPrices(d,key){
     if(q.resistance!=null)r[resI]=q.resistance;
     recalcPF(i,key);updated++;
   });
-  if(updated){pf3WriteReco(d);scheduleSave();}
+  if(updated){
+    pf3WriteReco(d);
+    // База «Я vs AI» — стоимость МОЕГО портфеля по живым ценам. Ставится один
+    // раз (myStartLive); базы, посчитанные по устаревшему сид-блобу до этого
+    // флага, перефиксируются здесь же.
+    if(key===PF3_KEY&&AI_PORT&&AI_PORT.myStartLive!=='1'){
+      let eq=0;d.rows.forEach(r=>{eq+=parseFloat(r[13])||0});eq+=parseFloat(d.cashFree)||0;
+      if(eq>0){AI_PORT.myStartEquity=Math.round(eq);AI_PORT.myStartLive='1';}
+    }
+    scheduleSave();
+  }
   return updated;
 }
 async function pf3Refresh(silent){

@@ -1855,6 +1855,17 @@ const PF3_XDEF=[
   ['upside','Потенциал %'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
 ];
 let pf3XMenuOpen=false;
+// Принудительно обновить таргеты/метрики/типы текущей вкладки, не дожидаясь
+// суточного таймера (сбрасывает targetsAt и сразу тянет батч ?targets).
+async function pf3ForceTypes(ev){
+  if(ev)ev.stopPropagation();
+  const d=pf3D();
+  d.targetsAt=0;_tgEndpointDown=false;
+  toast(RT('Обновляю метрики и типы…','Refreshing metrics & types…'));
+  await pf3RefreshTargets(d);
+  renderPF3();
+  toast(d.targetsAt?RT('Метрики и типы пересчитаны ✓','Metrics & types re-scored ✓'):RT('Не удалось получить метрики (worker?)','Could not fetch metrics (worker?)'),!d.targetsAt);
+}
 const pf3XC=d=>Array.isArray(d.xcols)?d.xcols.filter(k=>PF3_XDEF.some(x=>x[0]===k)):[];
 const pf3XActive=d=>(pf3Sel||matchMedia('(max-width:900px)').matches)?[]:pf3XC(d);
 function pf3XMenuToggle(ev){if(ev)ev.stopPropagation();pf3XMenuOpen=!pf3XMenuOpen;renderPF3()}
@@ -1871,6 +1882,7 @@ function pf3XMenuHTML(d){
   return`<div class="xcols-menu" onclick="event.stopPropagation()">
     <div class="xcols-t">${T('Доп. колонки списка')}</div>
     ${PF3_XDEF.map(([k,l])=>`<label class="set-tab"><input type="checkbox"${on.includes(k)?' checked':''} onchange="pf3XToggle('${k}',event)"><span>${T(l)}</span></label>`).join('')}
+    <button class="pf3-btn" style="margin-top:4px" onclick="pf3ForceTypes(event)">🔁 ${RT('Обновить типы и метрики сейчас','Refresh types & metrics now')}</button>
     <div class="xcols-note">${T('значения приходят с обновлением акций')}</div>
   </div>`;
 }

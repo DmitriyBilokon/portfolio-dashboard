@@ -684,7 +684,7 @@ function aipUniverse(snap){
   const data = (snap && snap.data) || {};
   for(const key of Object.keys(data)){
     const d = data[key];
-    if(!d || d.v3 !== '1' || !Array.isArray(d.rows)) continue;
+    if(!d || d.v3 !== '1' || d.aip === '1' || !Array.isArray(d.rows)) continue;   // aip — производная вкладка самого AI
     const h = d.headers || [];
     const ix = {
       s50: h.findIndex(x => /sma.?50$/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),

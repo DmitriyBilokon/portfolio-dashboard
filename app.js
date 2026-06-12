@@ -85,6 +85,7 @@ async function initAccess(){
     }
   }catch(e){ console.warn('access init failed',e); }
   const st=document.getElementById('settingsBtn'); if(st)st.style.display=userRole==='admin'?'':'none';
+  const pb=document.getElementById('promptBtn'); if(pb)pb.style.display=userRole==='admin'?'':'none';
   const hs=document.querySelector('.header-sub'); if(hs&&userRole!=='admin')hs.textContent='Аналитика и технические уровни';
   clearInterval(hbTimer);
   hbTimer=setInterval(()=>{ sb.rpc('heartbeat').then(()=>{},()=>{}) },60000);   // онлайн-статус для админа
@@ -849,6 +850,33 @@ function faqHTML(){
     row('<b>Оценка 0–10</b>','Баланс (долг/капитал, ликвидность), денежный поток (FCF) и рост выручки (CAGR и год-к-году); итог — среднее. Переключатель: «Годовой отчёт» — последний фискальный год, «Послед. квартал» — свежий квартал + TTM.')
    +row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.'))}`;
 }
+// ===== 📜 Промпты (админ): названия и тексты AI-промптов из worker'а =====
+function togglePrompts(){
+  const o=document.getElementById('prmOverlay');if(!o)return;
+  const opening=o.classList.contains('hidden');
+  o.classList.toggle('hidden',!opening);
+  if(opening)renderPrompts();
+}
+async function renderPrompts(){
+  const card=document.getElementById('prmCard');if(!card)return;
+  card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2><div class="faq-sub">${RT('Загрузка…','Loading…')}</div>`;
+  try{
+    const r=await fetch(PRICE_PROXY+'?action=prompts',{headers:{'Authorization':'Bearer '+await sbToken()}});
+    const list=await r.json();
+    if(!Array.isArray(list))throw new Error(list&&list.error||'нет данных');
+    card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button>
+      <h2>📜 ${RT('AI-промпты','AI prompts')}</h2>
+      <div class="faq-sub">${RT('Системные промпты worker\'а — что именно получает и делает Claude в каждом режиме','The worker\'s system prompts — exactly what Claude receives and does in each mode')}</div>
+      ${list.map(p=>`<details class="faq-sec"><summary>${p.name}</summary><div class="faq-body">
+        <div class="prm-about">${p.about||''}</div>
+        <pre class="prm-pre">${String(p.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>
+      </div></details>`).join('')}`;
+  }catch(e){
+    card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2>
+      <div class="set-err">${RT('Не удалось загрузить промпты','Failed to load prompts')}: ${e.message||e}<br>${RT('Нужен редеплой worker (эндпоинт ?action=prompts)','Worker redeploy needed (?action=prompts endpoint)')}</div>`;
+  }
+}
+
 // ===== Settings (⚙️, admin only): users, online status, per-tab access =====
 function toggleSettings(){
   const o=document.getElementById('setOverlay');
@@ -909,7 +937,7 @@ function toggleFaq(){
   if(o.classList.contains('hidden')){document.getElementById('faqCard').innerHTML=faqHTML();o.classList.remove('hidden');}
   else o.classList.add('hidden');
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');

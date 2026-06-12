@@ -847,6 +847,23 @@ export default {
       try{ return json(await aiChat(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
+    if(url.searchParams.get('action') === 'prompts'){
+      // Список AI-промптов для админской кнопки «📜 Промпты» на дашборде —
+      // единственный источник правды, тексты не дублируются на клиенте.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      return json([
+        { name: '🤖 Анализ портфеля (AI_SYSTEM)',
+          about: 'Кнопка «Проанализировать портфель». Получает позиции с живыми ценами, уровни SMA/поддержки, таргеты, кэш и плечо, правила инвестора (investorRules) и рыночный контекст всех индексов (marketContext). Возвращает отчёт по разделам + машиночитаемый план ребалансировки для вкладки «Предложение».',
+          text: AI_SYSTEM },
+        { name: '🔥 Анализ индекса (WATCH_SYSTEM)',
+          about: 'Кнопка анализа на индексных вкладках. Получает watchlist-снапшот: все акции с уровнями, фазами и сигналами. Выделяет 5–8 самых актуальных бумаг с действиями (Купить/Следить/Фиксировать/Избегать), сильные и слабые сектора, риски.',
+          text: WATCH_SYSTEM },
+        { name: '💬 Чат ассистента (CHAT_SYSTEM)',
+          about: 'Диалог в AI Assistant. Видит снапшот текущей вкладки и правила инвестора; отвечает кратко с конкретными уровнями. Извлекает из ваших сообщений устойчивые предпочтения и возвращает их в поле memory — так пополняется 🧠 память.',
+          text: CHAT_SYSTEM },
+      ]);
+    }
     if(url.searchParams.get('action') === 'ydebug'){
       // Step-by-step Yahoo auth diagnostics: ?action=ydebug&sym=RHM.DE
       const sym = (url.searchParams.get('sym') || 'RHM.DE').trim();

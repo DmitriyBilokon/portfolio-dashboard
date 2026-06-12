@@ -1977,6 +1977,12 @@ function pf3Reco(d,r){
   else{v='wait';hint=RT('факторы смешанные — дождитесь уровня или подтверждения тренда','mixed factors — wait for a level or trend confirmation');}
   return{v,hint,total,fs,ts,rs,F,T:TT,R};
 }
+// Вердикт скоринга → колонка данных «Реком. скоринг» (buy/wait/sell/avoid).
+// Worker передаёт её Claude в universe AI-портфеля как мягкий фактор.
+function pf3WriteReco(d){
+  const c=ensurePFCol(d,'Реком. скоринг');
+  d.rows.forEach(r=>{try{r[c]=pf3Reco(d,r).v}catch(e){}});
+}
 function pf3RecoHTML(d,r){
   const rc=pf3Reco(d,r);
   const META={buy:['🟢',RT('Покупать','Buy')],sell:['🔴',RT('Продавать / фиксировать','Sell / take profit')],wait:['🟡',RT('Ждать','Wait')],avoid:['⛔',RT('Не приближаться','Stay away')]};
@@ -2926,7 +2932,7 @@ async function pf3FetchPrices(d,key){
     if(q.resistance!=null)r[resI]=q.resistance;
     recalcPF(i,key);updated++;
   });
-  if(updated)scheduleSave();
+  if(updated){pf3WriteReco(d);scheduleSave();}
   return updated;
 }
 async function pf3Refresh(silent){
@@ -2982,6 +2988,7 @@ async function pf3RefreshTargets(d){
   if(n){
     // Свежие метрики → пересчитать типы по скорингу (методологии MSCI/S&P).
     d.rows.forEach(r=>{const t=pf3DeriveType(String(r[2]||'').trim().toUpperCase(),r[4],r[5],d,r);if(t&&r[5]!==t)r[5]=t});
+    pf3WriteReco(d);
     d.targetsAt=Date.now();scheduleSave();
   }
 }

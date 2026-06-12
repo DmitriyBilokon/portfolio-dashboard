@@ -649,6 +649,7 @@ const AIPORT_SYSTEM = `Ты — автономный портфельный уп
 - qty — целое число акций; сумма сделки ≥ minTradeSEK; не покупай, если не хватает cashSEK.
 - Держи кэш-резерв ≥5% от equity; одна позиция ≤15% equity, если стратегия не требует иного.
 - Триггеры: цена у SMA 50/200 или поддержки при здоровом тренде — покупка/докупка; у сопротивления, выше таргета или при перегреве — фиксация; падающий нож и Спекулятивная без явного сетапа — избегать; стоп-дисциплина: позиция глубже −12% от средней без улучшения картины — сокращай.
+- recoVerdict в universe — вердикт детерминированного скоринга сайта (фундаментал+техника+риск): учитывай его как ОДИН ИЗ факторов, не как приказ. Если покупаешь бумагу с recoVerdict=wait/avoid или продаёшь с recoVerdict=buy — ОБЯЗАТЕЛЬНО начни reason с объяснения, почему отступаешь от вердикта (например «reco=wait, но беру в ядро по квоте Качественных: …»). Бумаги с recoVerdict=avoid покупай только в исключительном случае с сильным обоснованием.
 - БОЛЬШИНСТВО циклов не требуют сделок: нет явных сетапов — верни пустой decisions. Не торгуй ради торговли. Максимум 4 сделки за цикл.
 - reason: 1–2 предложения с конкретными уровнями и цифрами; trigger: краткое условие («цена коснулась SMA 200», «фиксация +18%», «ребаланс: перевес Роста»).
 - note: 1–3 предложения — состояние портфеля и чего ждёшь к следующему циклу.
@@ -700,7 +701,7 @@ function marketOpen(ccy, date){
 }
 
 // Вселенная: все акции v3-вкладок дашборда, компактными массивами (см. legend).
-const AIPORT_LEGEND = '[ticker, ccy, sector, type, price, day%, %fromSMA50, %fromSMA200, %fromSupport, %fromResistance, upside%toTarget, P/E, Beta, ROE%, revGrowth%]';
+const AIPORT_LEGEND = '[ticker, ccy, sector, type, price, day%, %fromSMA50, %fromSMA200, %fromSupport, %fromResistance, upside%toTarget, P/E, Beta, ROE%, revGrowth%, recoVerdict(buy|wait|sell|avoid|null — детерминированный скоринг сайта)]';
 function aipUniverse(snap){
   const out = [], seen = new Set();
   const data = (snap && snap.data) || {};
@@ -712,6 +713,7 @@ function aipUniverse(snap){
       s50: h.findIndex(x => /sma.?50$/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
       sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'), tg: h.findIndex(x => /аналит/i.test(x)),
       pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
+      reco: h.indexOf('Реком. скоринг'),
     };
     for(const r of d.rows){
       const tk = String(r[2] || '').trim();
@@ -728,7 +730,8 @@ function aipUniverse(snap){
       out.push([tk, ccy, String(r[4] || ''), String(r[5] || ''), price, parseFloat(r[10]) || 0,
         dist(num(ix.s50)), dist(num(ix.s200)), dist(num(ix.sup)), dist(num(ix.res)),
         (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,
-        num(ix.pe), num(ix.beta), num(ix.roe), num(ix.revg)]);
+        num(ix.pe), num(ix.beta), num(ix.roe), num(ix.revg),
+        (ix.reco >= 0 && /^(buy|wait|sell|avoid)$/.test(String(r[ix.reco] || ''))) ? String(r[ix.reco]) : null]);
     }
   }
   return out;

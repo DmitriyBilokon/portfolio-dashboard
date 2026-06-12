@@ -548,7 +548,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateAiPort();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateAiPort();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
@@ -678,6 +678,25 @@ function migrateAiPort(){
     strategy:'Цель — опережать эталонные индексы (OMXS30, Nasdaq 100, S&P 500). Сбалансированная: ~40% Качественные, ~25% Рост, ~15% Дивидендные, ~10% Защитные, ~10% Спекулятивные. Кэш-резерв минимум 5%, максимум 15% в одной позиции. Горизонт — недели-месяцы: свинг по уровням SMA 50/200 и поддержки, фиксация у сопротивления/таргета.',
     positions:[],trades:[],equityHistory:[],myStartEquity:null,lastRunAt:0,lastNote:''};
   if(!applyingRemote)scheduleSave();
+}
+// Точечные добавления акций в индексные вкладки (по запросам пользователя).
+// Идемпотентно: проверка по тикеру, флагов не нужно.
+function migrateTabAdds(){
+  const ADDS=[
+    // [вкладка, тикер, название, сектор, валюта, флаг]  · HEM.ST проверен на Yahoo 2026-06-14
+    ['OMXSPI','HEM','Hemnet Group','Интернет-площадка недвижимости','SEK','🇸🇪'],
+  ];
+  let n=0;
+  ADDS.forEach(([key,tk,name,sec,ccy,flag])=>{
+    const d=DATA[key];
+    if(!d||d.v3!=='1')return;
+    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
+    const row=new Array(d.headers.length).fill('');
+    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]='Акция';
+    row[6]=0;row[7]=0;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
+    d.rows.push(row);d.count=d.rows.length;n++;
+  });
+  if(n&&!applyingRemote)scheduleSave();
 }
 // ===== Свои вкладки-watchlist'ы (админ) =====
 function pf3NewTab(){

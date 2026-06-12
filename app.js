@@ -209,7 +209,7 @@ const I18N_EN={
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
 'Долг/капитал':'Debt/equity','Ликвидность':'Liquidity','Кэш':'Cash','на конец квартала':'at quarter end','Свободный CF':'Free CF','Операционный CF':'Operating CF','за 12 мес (TTM)':'TTM (12 mo)','за фин. год':'fiscal year','Выручка CAGR':'Revenue CAGR','лет':'yr','Квартал г/г':'Quarter YoY','Год к году':'Year over year','Выручка':'Revenue',
-'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)',
+'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)',
 'Загружаю отчётность…':'Loading financials…','Загрузка…':'Loading…','Загружаю календарь отчётов…':'Loading the earnings calendar…',
 'Дата отчёта':'Earnings date','Ожидание: EPS':'Estimate: EPS','Ожидание: выручка':'Estimate: revenue','консенсус аналитиков':'analyst consensus','сегодня':'today','завтра':'tomorrow','Прошлый отчёт':'Last report','к прогнозу':'vs estimate','Дата следующего отчёта ещё не объявлена':'Next earnings date not announced yet',
 'Здоровье портфеля:':'Portfolio health:','Состояние компании:':'Company health:','🧩 Диверсификация':'🧩 Diversification','💱 Валюты':'💱 Currencies','💵 Кэш и плечо':'💵 Cash & leverage','📈 Тренд и качество':'📈 Trend & quality','🏭 Распределение по секторам':'🏭 Sector allocation','💱 Распределение по валютам':'💱 Currency allocation','💡 Рекомендации':'💡 Recommendations',
@@ -2029,7 +2029,7 @@ function pf3DetailHTML(){
       ${v3Key===PF3_KEY?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>`:''}
-      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал'):T('заполняется worker-ом (cron / ?action=targets)')}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал'):T('появится при обновлении акций (🔄, раз в сутки)')}</div></div>
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
@@ -2114,17 +2114,18 @@ async function pf3Refresh(silent){
 // Аналит. таргеты (Yahoo/Refinitiv-консенсус) для текущей вкладки: worker-эндпоинт
 // ?targets= батчем по 40, раз в сутки. Покрывает Nasdaq 100, где FMP-cron не
 // работает (лимит подзапросов Cloudflare); портфель тоже освежается между cron-ами.
-let _tgTriedThisSession=false;
+let _tgEndpointDown=false;   // worker без ?targets отвечает не-JSON — выключаемся до перезагрузки страницы
 async function pf3RefreshTargets(d){
+  if(_tgEndpointDown)return;
   if(d.targetsAt&&Date.now()-d.targetsAt<24*3600*1000)return;
-  if(_tgTriedThisSession&&!d.targetsAt)return;   // worker без ?targets — не долбим повторно
-  _tgTriedThisSession=true;
   const tgC=ensurePFCol(d,'Аналит. таргет');
   const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
   const chunks=[];
   for(let i=0;i<syms.length;i+=40)chunks.push(syms.slice(i,i+40).join(','));
   const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?targets='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
-  const tg=Object.assign({},...parts.filter(p=>p&&typeof p==='object'&&!p.error));
+  const good=parts.filter(p=>p&&typeof p==='object'&&!p.error);
+  if(!good.length){_tgEndpointDown=true;return;}
+  const tg=Object.assign({},...good);
   let n=0;
   d.rows.forEach(r=>{const q=tg[exSymbol(r[2],r[8])];if(q&&typeof q.avg==='number'&&q.avg>0){r[tgC]=q.avg;n++}});
   if(n){d.targetsAt=Date.now();scheduleSave();}

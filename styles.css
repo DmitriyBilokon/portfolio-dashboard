@@ -808,3 +808,7 @@ html.ui2 .ai-msg.user{background:var(--u2-grad)}
   .pf3-row.idx,.pf3-lhead.idx{min-width:820px}
   .pf3-typelay .pf3-row{min-width:780px}
 }
+
+/* 🔁 Дубли: чипы вкладок и разделители кросс-листингов */
+.dup-tabs{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.dup-sep{border-top:1px dashed var(--border);margin:4px 0}

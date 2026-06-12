@@ -36,6 +36,7 @@ const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA'
 function exSymbol(ticker, ccy){
   const t = String(ticker || '').trim().toUpperCase().replace(/\s+/g, '-');
   if(OVERRIDES[t]) return OVERRIDES[t];
+  if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
   return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE' })[String(ccy||'').toUpperCase()] || t;
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

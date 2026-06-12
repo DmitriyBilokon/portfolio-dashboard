@@ -183,9 +183,10 @@ const ANALYSIS_IDX='Nasdaq 100';
 let v3Key=PF3_KEY;                  // which tab the v3 UI is currently bound to
 const pf3D=()=>DATA[v3Key];
 const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
+const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
 const OMX_IDX='OMXS30';
-const V3_TABS=[PF3_KEY,ANALYSIS_IDX,OMX_IDX];   // вкладки в новом (v3) формате
-const isV3=()=>V3_TABS.includes(curIdx)||curIdx===HOME_KEY;
+const V3_TABS=[PF3_KEY,ANALYSIS_IDX,OMX_IDX,'OMXSPI','S&P 500','DAX 40','CAC 40','FTSE MIB','OBX 25'];   // вкладки в новом (v3) формате
+const isV3=()=>V3_TABS.includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -215,7 +216,7 @@ const I18N_EN={
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
 'Долг/капитал':'Debt/equity','Ликвидность':'Liquidity','Кэш':'Cash','на конец квартала':'at quarter end','Свободный CF':'Free CF','Операционный CF':'Operating CF','за 12 мес (TTM)':'TTM (12 mo)','за фин. год':'fiscal year','Выручка CAGR':'Revenue CAGR','лет':'yr','Квартал г/г':'Quarter YoY','Год к году':'Year over year','Выручка':'Revenue',
-'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)','Потенциал %':'Upside %','Дивид. %':'Div. %','Колонки':'Columns','Доп. колонки списка':'Extra list columns','значения приходят с обновлением акций':'values arrive with the stock refresh',
+'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)','🔁 Дубли':'🔁 Duplicates','Потенциал %':'Upside %','Дивид. %':'Div. %','Колонки':'Columns','Доп. колонки списка':'Extra list columns','значения приходят с обновлением акций':'values arrive with the stock refresh',
 'Загружаю отчётность…':'Loading financials…','Загрузка…':'Loading…','Загружаю календарь отчётов…':'Loading the earnings calendar…',
 'Дата отчёта':'Earnings date','Ожидание: EPS':'Estimate: EPS','Ожидание: выручка':'Estimate: revenue','консенсус аналитиков':'analyst consensus','сегодня':'today','завтра':'tomorrow','Прошлый отчёт':'Last report','к прогнозу':'vs estimate','Дата следующего отчёта ещё не объявлена':'Next earnings date not announced yet',
 'Здоровье портфеля:':'Portfolio health:','Состояние компании:':'Company health:','🧩 Диверсификация':'🧩 Diversification','💱 Валюты':'💱 Currencies','💵 Кэш и плечо':'💵 Cash & leverage','📈 Тренд и качество':'📈 Trend & quality','🏭 Распределение по секторам':'🏭 Sector allocation','💱 Распределение по валютам':'💱 Currency allocation','💡 Рекомендации':'💡 Recommendations',
@@ -349,7 +350,7 @@ function pf3DeriveType(tk,sec,cur){
 }
 function fixCompanyNames(){
   let touched=false;
-  ['💼 Портфель 2.0',PF3_KEY,ANALYSIS_IDX,OMX_IDX].forEach(k=>{
+  ['💼 Портфель 2.0',...V3_TABS].forEach(k=>{
     const d=DATA[k];if(!d)return;
     d.rows.forEach(r=>{
       const tk=String(r[2]||'').trim().toUpperCase();
@@ -368,20 +369,27 @@ function fixCompanyNames(){
 function migrateNasdaqV3(){
   migrateIndexV3(ANALYSIS_IDX,'🇺🇸','USD');
   migrateIndexV3('OMXS30','🇸🇪','SEK');
+  migrateIndexV3('OMXSPI','🇸🇪','SEK');
+  migrateIndexV3('S&P 500','🇺🇸','USD');
+  migrateIndexV3('DAX 40','🇩🇪','EUR');
+  migrateIndexV3('CAC 40','🇫🇷','EUR','.PA');   // Париж — суффикс прямо в тикере
+  migrateIndexV3('FTSE MIB','🇮🇹','EUR','.MI'); // Милан
+  migrateIndexV3('OBX 25','🇳🇴','NOK');
 }
 // One-time: convert a classic index tab to the PF row schema so the v3
 // master-detail UI can render it. Columns are mapped by header name.
-function migrateIndexV3(KEY,flag,ccy){
+function migrateIndexV3(KEY,flag,ccy,sfx){
   const d=DATA[KEY],p3=DATA[PF3_KEY];
   if(!d||!p3||d.v3==='1')return;
   const oh=d.headers,find=re=>oh.findIndex(x=>re.test(String(x)));
-  const o={sec:find(/сектор|отрасль/i),price:find(/^цена/i),day:find(/1д|день/i),tg:find(/аналит/i),s50:find(/sma.?50/i),s100:find(/sma.?100/i),s200:find(/sma.?200/i),sup:oh.indexOf('Поддержка'),res:oh.indexOf('Сопротивление'),div:find(/^дивид/i)};
+  const o={sec:find(/сектор|отрасль/i),price:find(/^цена/i),day:find(/1д|день/i),tg:find(/аналит|^таргет/i),s50:find(/sma.?50/i),s100:find(/sma.?100/i),s200:find(/sma.?200/i),sup:oh.indexOf('Поддержка'),res:oh.indexOf('Сопротивление'),div:find(/^дивид/i)};
   const nh=p3.headers.slice();
   const n={s50:nh.findIndex(x=>/sma.?50/i.test(x)),s100:nh.findIndex(x=>/sma.?100/i.test(x)),s200:nh.findIndex(x=>/sma.?200/i.test(x)),sup:nh.indexOf('Поддержка'),res:nh.indexOf('Сопротивление'),tg:nh.findIndex(x=>/аналит/i.test(x))};
   const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
   const rows=d.rows.filter(r=>String(r[2]||'').trim()).map((r,i)=>{
     const row=new Array(nh.length).fill('');
-    row[0]=i+1;row[1]=r[1]||r[2];row[2]=String(r[2]).trim();row[3]=flag;row[4]=o.sec>=0?(r[o.sec]||'—'):'—';row[5]='Акция';
+    const tk0=String(r[2]).trim();
+    row[0]=i+1;row[1]=r[1]||tk0;row[2]=(sfx&&!tk0.includes('.'))?tk0.replace(/\s+/g,'-')+sfx:tk0;row[3]=flag;row[4]=o.sec>=0?(r[o.sec]||'—'):'—';row[5]='Акция';
     row[6]=0;row[7]=num(r,o.price);row[8]=ccy;row[9]=0;row[10]=num(r,o.day);
     row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]=o.div>=0?(r[o.div]||'—'):'—';
     if(n.s50>=0)row[n.s50]=num(r,o.s50)||'';
@@ -431,7 +439,7 @@ function migrateAiHistory(){
   });
   if(n&&!applyingRemote)scheduleSave();
 }
-function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();const keys=Object.keys(DATA).filter(tabAllowed);if(curIdx!==HOME_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';const home=document.createElement('div');home.className='tab'+(curIdx===HOME_KEY?' active':'');home.dataset.tab=HOME_KEY;home.textContent=HOME_KEY;home.onclick=()=>{curIdx=HOME_KEY;renderAll()};t.appendChild(home);keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
+function init(){migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();const keys=Object.keys(DATA).filter(tabAllowed);if(curIdx===DUP_KEY&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];const t=document.getElementById('tabs');t.innerHTML='';const home=document.createElement('div');home.className='tab'+(curIdx===HOME_KEY?' active':'');home.dataset.tab=HOME_KEY;home.textContent=HOME_KEY;home.onclick=()=>{curIdx=HOME_KEY;renderAll()};t.appendChild(home);if(isAdmin()){const dup=document.createElement('div');dup.className='tab'+(curIdx===DUP_KEY?' active':'');dup.dataset.tab=DUP_KEY;dup.textContent=TAB_LABEL(DUP_KEY);dup.onclick=()=>{curIdx=DUP_KEY;renderAll()};t.appendChild(dup);}keys.forEach(n=>{const el=document.createElement('div');el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};t.appendChild(el)});renderAll()}
 
 function renderAll(){
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
@@ -439,6 +447,13 @@ function renderAll(){
   document.body.classList.toggle('v3',isV3());   // Портфель 3.0 restyles the whole site
   const pf3El=document.getElementById('pf3Area');
   if(isV3()){
+    if(curIdx===DUP_KEY){   // 🔁 Дубли (админ): пересечения индексных вкладок, пересчёт по кнопке
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${dupHTML()}</div>`;}
+      return;
+    }
     if(curIdx===HOME_KEY){   // virtual home dashboard — no sub-tabs, aggregates both v3 tabs
       ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
       document.getElementById('smaBanner').innerHTML='';
@@ -701,6 +716,7 @@ const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 
 function exSymbol(ticker, ccy){
   const t = String(ticker||'').trim().toUpperCase().replace(/\s+/g,'-');
   if(SYMBOL_OVERRIDES[t]) return SYMBOL_OVERRIDES[t];
+  if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
   switch(String(ccy||'').toUpperCase()){
     case 'USD': return t;
     case 'SEK': return t + '.ST';
@@ -2087,6 +2103,56 @@ function simOpen(tk){
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
 }
 
+
+// ===== 🔁 Дубли (админ): какие бумаги повторяются между индексными вкладками =====
+// Считается на лету из текущих данных вкладок; кнопка «Обновить» пересчитывает.
+function dupScan(){
+  const seen={};
+  V3_TABS.filter(k=>k!==PF3_KEY&&DATA[k]).forEach(k=>{
+    DATA[k].rows.forEach(r=>{
+      const sym=exSymbol(r[2],r[8]);
+      if(!sym)return;
+      (seen[sym]=seen[sym]||[]).push({tab:k,r});
+    });
+  });
+  const exact=Object.entries(seen).filter(([,a])=>a.length>1)
+    .map(([sym,a])=>({sym,a,name:String(a[0].r[1]||sym)}))
+    .sort((x,y)=>x.name.localeCompare(y.name,'ru'));
+  // Кросс-листинги: одно имя компании — разные биржевые символы.
+  const byName={};
+  Object.entries(seen).forEach(([sym,a])=>{
+    const nm=String(a[0].r[1]||'').trim().toLowerCase();
+    if(nm)(byName[nm]=byName[nm]||{name:String(a[0].r[1]),syms:{}}).syms[sym]=a;
+  });
+  const cross=Object.values(byName).filter(x=>Object.keys(x.syms).length>1);
+  return{exact,cross};
+}
+function dupRow(name,tk,ccy,r,tabs){
+  const price=parseFloat(r[7])||0,day=parseFloat(r[10]);
+  return`<div class="home-row" onclick="simOpen('${String(tk).replace(/'/g,"\\'")}')">
+    ${logoHTML(tk,ccy,'pf3-row-logo')}
+    <div class="pf3-row-name"><b>${name}</b><span>${tk}</span></div>
+    <div class="home-px"><b>${price>0?pf3Fmt(price,2):'—'} ${ccy||''}</b>${isFinite(day)?`<span class="${day>=0?'pf3-up':'pf3-down'}">${day>0?'+':''}${day.toFixed(2)}%</span>`:''}</div>
+    <div class="dup-tabs">${tabs.map(t2=>`<span class="pf3-chip">${T(t2)}</span>`).join('')}</div>
+  </div>`;
+}
+function dupHTML(){
+  const {exact,cross}=dupScan();
+  const ts=new Date().toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  let h=`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>${RT('🔁 Дубли между вкладками','🔁 Duplicates across tabs')} <b>${exact.length}</b></span>
+    <span class="pfp-chips"><span class="pf3-asof">${RT('пересчитано в','computed at')} ${ts}</span><button class="pf3-btn pf3-btn-sm" onclick="renderAll()">🔄 ${RT('Обновить','Refresh')}</button></span></div>
+    <div class="pf3-empty" style="padding:4px 4px 10px">${RT('Одна и та же бумага в составе нескольких индексов (портфель не учитывается). Это нормально — индексы пересекаются; вкладка нужна для контроля.','The same security in several indexes (portfolio excluded). This is expected — indexes overlap; this tab is for oversight.')}</div>
+    ${exact.map(x=>dupRow(x.name,String(x.a[0].r[2]),x.a[0].r[8],x.a[0].r,[...new Set(x.a.map(e=>e.tab))])).join('')||`<div class="pf3-empty">${T('Нет данных')}</div>`}
+  </section>`;
+  if(cross.length){
+    h+=`<section class="pf3-panel">
+      <div class="pf3-panel-hd"><span>${RT('🌍 Кросс-листинги — одна компания, разные биржи','🌍 Cross-listings — one company, different exchanges')} <b>${cross.length}</b></span></div>
+      ${cross.map(x=>Object.entries(x.syms).map(([sym,a])=>dupRow(x.name,String(a[0].r[2]),a[0].r[8],a[0].r,[...new Set(a.map(e=>e.tab))])).join('')).join('<div class="dup-sep"></div>')}
+    </section>`;
+  }
+  return h;
+}
 // ===== 🏠 Home: виджеты сигналов и уровней по акциям обеих v3-вкладок =====
 // Собирает все акции из доступных пользователю вкладок (портфель в приоритете
 // при дубликатах тикера) с сигналом и рыночной фазой каждой.

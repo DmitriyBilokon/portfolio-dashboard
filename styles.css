@@ -890,3 +890,8 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* Тип/Критерий: ячейка растёт под бейдж — низ букв больше не обрезается */
 .pf3-c.pf3-c-typ,.pf3-c.pf3-c-crit{display:flex;align-items:center;min-width:0}
 .pf3-c-typ .pf3-typ,.pf3-c-crit .pf3-crit{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* Перетаскивание вкладок */
+.tab[draggable="true"]{cursor:grab}
+.tab.drag-over{box-shadow:inset 3px 0 0 var(--accent)}
+.tab-group-hd.drag-over{background:var(--accent-lt);border-radius:6px}

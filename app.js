@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -68,6 +68,7 @@ function applyRemoteState(s){
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
+  if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -215,6 +216,7 @@ const OMX_IDX='OMXS30';
 const v3Tabs=()=>[PF3_KEY,...Object.keys(DATA).filter(k=>k!==PF3_KEY&&k!==AIP_KEY&&DATA[k]&&DATA[k].v3==='1')];
 // Группы вкладок: по умолчанию по странам; пользовательская раскладка хранится в TAB_GROUPS (sync).
 let TAB_GROUPS=null;
+let TAB_ORDER=[];   // порядок негруппированных вкладок (drag-and-drop), синхронизируется
 const defaultGroups=()=>[
   {name:'🇺🇸 USA',tabs:['S&P 500','Nasdaq 100']},
   {name:'🇸🇪 Швеция',tabs:['OMXS30','OMXSPI']},
@@ -226,6 +228,59 @@ const defaultGroups=()=>[
 const ensureGroups=()=>{if(!Array.isArray(TAB_GROUPS))TAB_GROUPS=defaultGroups().map(g=>({name:g.name,tabs:g.tabs.slice()}));return TAB_GROUPS};
 let _grpCollapsed={};try{_grpCollapsed=JSON.parse(localStorage.getItem('dash_grpcol')||'{}')}catch(e){}
 function grpToggleCollapse(name){_grpCollapsed[name]=!_grpCollapsed[name];try{localStorage.setItem('dash_grpcol',JSON.stringify(_grpCollapsed))}catch(e){}init()}
+// Негруппированные вкладки в их пользовательском порядке (TAB_ORDER); новые,
+// которых ещё нет в порядке, идут в конец по порядку появления.
+function ungroupedKeys(){
+  const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));
+  const grouped=new Set();
+  ensureGroups().forEach(g=>g.tabs.forEach(tn=>{if(tn!==PF3_KEY&&keys.includes(tn))grouped.add(tn)}));
+  const un=keys.filter(k=>k!==PF3_KEY&&!grouped.has(k));
+  const ord=Array.isArray(TAB_ORDER)?TAB_ORDER:[];
+  return un.slice().sort((a,b)=>{
+    let ia=ord.indexOf(a),ib=ord.indexOf(b);
+    if(ia<0)ia=1e6+un.indexOf(a);
+    if(ib<0)ib=1e6+un.indexOf(b);
+    return ia-ib;
+  });
+}
+// ── Перетаскивание вкладок (админ): меняем порядок и группировку ──
+let _dragTab=null;
+function tabDragStart(ev,key){_dragTab=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key)}catch(e){}}
+function tabDragOver(ev){if(_dragTab){ev.preventDefault();ev.currentTarget.classList.add('drag-over')}}
+function tabDragLeave(ev){ev.currentTarget.classList.remove('drag-over')}
+function tabDragClear(){document.querySelectorAll('.drag-over').forEach(x=>x.classList.remove('drag-over'))}
+function tabDropOn(ev,dropKey){
+  ev.preventDefault();tabDragClear();
+  const drag=_dragTab;_dragTab=null;
+  if(!drag||drag===dropKey)return;
+  reorderTab(drag,dropKey);
+}
+function tabDropGroup(ev,gName){
+  ev.preventDefault();tabDragClear();
+  const drag=_dragTab;_dragTab=null;
+  if(!drag)return;
+  const groups=ensureGroups();
+  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==drag)});
+  TAB_ORDER=(Array.isArray(TAB_ORDER)?TAB_ORDER:[]).filter(x=>x!==drag);
+  const g=groups.find(g=>g.name===gName);if(g)g.tabs.push(drag);
+  scheduleSave();init();
+}
+// Вставить drag перед dropKey — в его группе или в негруппированной зоне.
+function reorderTab(drag,dropKey){
+  const groups=ensureGroups();
+  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==drag)});
+  const tgt=groups.find(g=>g.tabs.includes(dropKey));
+  if(tgt){
+    tgt.tabs.splice(tgt.tabs.indexOf(dropKey),0,drag);
+    TAB_ORDER=(Array.isArray(TAB_ORDER)?TAB_ORDER:[]).filter(x=>x!==drag);
+  }else{
+    const ord=ungroupedKeys().filter(x=>x!==drag);
+    const i=ord.indexOf(dropKey);
+    if(i<0)ord.push(drag);else ord.splice(i,0,drag);
+    TAB_ORDER=ord;
+  }
+  scheduleSave();init();
+}
 const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
@@ -560,6 +615,14 @@ function init(){
     el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;
     el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
     el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};
+    if(isAdmin()&&n!==PF3_KEY){
+      el.draggable=true;el.title=RT('Перетащите, чтобы переставить','Drag to reorder');
+      el.addEventListener('dragstart',e=>tabDragStart(e,n));
+      el.addEventListener('dragover',tabDragOver);
+      el.addEventListener('dragleave',tabDragLeave);
+      el.addEventListener('drop',e=>tabDropOn(e,n));
+      el.addEventListener('dragend',tabDragClear);
+    }
     return el;
   };
   const mkVirt=(key,label)=>{
@@ -584,10 +647,15 @@ function init(){
     hd.className='tab-group-hd'+(col?' col':'');
     hd.textContent=(col?'▸ ':'▾ ')+g.name;
     hd.onclick=()=>grpToggleCollapse(g.name);
+    if(isAdmin()){
+      hd.addEventListener('dragover',tabDragOver);
+      hd.addEventListener('dragleave',tabDragLeave);
+      hd.addEventListener('drop',e=>tabDropGroup(e,g.name));
+    }
     t.appendChild(hd);
     if(!col)members.forEach(n=>t.appendChild(mkTab(n)));
   });
-  keys.filter(n=>n!==PF3_KEY&&!grouped.has(n)).forEach(n=>t.appendChild(mkTab(n)));
+  ungroupedKeys().forEach(n=>{if(!grouped.has(n))t.appendChild(mkTab(n))});
   if(isAdmin()){
     const add=document.createElement('div');add.className='tab tab-add';add.textContent=RT('➕ Вкладка','➕ Tab');add.title=RT('Создать свою вкладку-watchlist','Create a custom watchlist tab');add.onclick=pf3NewTab;t.appendChild(add);
     const grp=document.createElement('div');grp.className='tab tab-add';grp.textContent=RT('🗂 Группы','🗂 Groups');grp.title=RT('Настроить группировку вкладок','Edit tab grouping');grp.onclick=toggleGroupsEditor;t.appendChild(grp);

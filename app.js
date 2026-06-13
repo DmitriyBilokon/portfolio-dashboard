@@ -2351,7 +2351,11 @@ function pf3Add(e){
   scheduleSave();
   init();   // rebuild tabs (count badge) + re-render
   toast(t+' '+RT('добавлен','added')+cashMsg);
-  pf3Refresh(true);     // pull the live price / levels for the new stock
+  // Новый тикер: сбросить суточный гейт таргетов, чтобы метрики (P/S, ROE,
+  // рост…) подтянулись СРАЗУ и тип определился по скорингу, а не по грубому
+  // секторному fallback (иначе SpaceX → «Циклическая» по сектору Aerospace).
+  d.targetsAt=0;_tgEndpointDown=false;
+  pf3Refresh(true);     // pull live price/levels + targets/metrics + re-score types
   pf3FillProfile(t);    // auto-fill the company name + sector from Yahoo
 }
 

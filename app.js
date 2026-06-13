@@ -2339,9 +2339,18 @@ function pf3Add(e){
   d.count=d.rows.length;
   if(d.removed)d.removed=d.removed.filter(x=>x!==t);   // re-adding cancels an earlier delete
   recalcPF(d.rows.length-1,v3Key);
+  // Покупка списывает деньги со свободного кэша (кэш → акции, чистый капитал
+  // не меняется). Только мои/семейные портфели; AI-портфель сюда не попадает
+  // (форма скрыта). Кэш может уйти в минус — это плечо, оставляем как есть.
+  const cost=port?Math.round((sh||0)*(buy||0)*(FX[ccy]||1)):0;
+  let cashMsg='';
+  if(cost>0&&d.cashFree!=null&&d.cashFree!==''){
+    d.cashFree=Math.round((parseFloat(d.cashFree)||0)-cost);
+    cashMsg=` · −${pf3Fmt(cost)} kr ${RT('из кэша','from cash')}`;
+  }
   scheduleSave();
   init();   // rebuild tabs (count badge) + re-render
-  toast(t+' добавлен');
+  toast(t+' '+RT('добавлен','added')+cashMsg);
   pf3Refresh(true);     // pull the live price / levels for the new stock
   pf3FillProfile(t);    // auto-fill the company name + sector from Yahoo
 }

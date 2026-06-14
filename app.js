@@ -3336,6 +3336,11 @@ function pf3DetailHTML(){
   const targetR=tgrC>=0?parseFloat(r[tgrC]):NaN;
   const hasTargetR=isFinite(targetR)&&targetR>0&&price>0;
   const tgM=TG_META[tk.toUpperCase()]||{};
+  // Флаг «устарел»: основной (за всё время) сильно расходится со свежим срезом —
+  // значит старые таргеты тянут среднее, ориентир — свежий.
+  const TG_STALE_PCT=10;
+  const tgDiv=(hasTarget&&hasTargetR&&target>0)?Math.abs(targetR-target)/target*100:0;
+  const tgStale=tgDiv>=TG_STALE_PCT;
   const tf=pf3TypeFull(d,r);
   const typeChip=(()=>{const p=(tf&&tf.primary)||r[5];if(!p||p==='—')return '';const m1=PF3_TYPE_META[p];let txt=`${m1?m1[0]+' ':''}${T(p)}`;if(tf&&tf.secondary){const m2=PF3_TYPE_META[tf.secondary];txt+=` · ${m2?m2[0]+' ':''}${T(tf.secondary)}`}return txt})();
   const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4],typeChip].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');
@@ -3362,7 +3367,7 @@ function pf3DetailHTML(){
       ${pf3MyPort(v3Key)?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>`:''}
-      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}${tgM.src?`<span class="tg-src">${tgM.src==='fmp'?'FMP':'Yahoo/Refinitiv'}</span>`:''}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал')+(tgM.n?` · ${tgM.n} `+RT('аналит.','an.'):''):T('появится при обновлении акций (🔄, раз в сутки)')}</div>${hasTargetR?`<div class="pf3-card-sub"><span class="tg-recent-l">${tgM.span==='m'?RT('за месяц','last mo'):RT('за квартал','last qtr')}</span> <b>${pf3Fmt(targetR,0)}</b> <small>${ccy}</small> <span class="${targetR>=price?'pf3-up':'pf3-down'}">${targetR>=price?'+':''}${((targetR-price)/price*100).toFixed(1)}%</span>${tgM.nr?` · ${tgM.nr} `+RT('аналит.','an.'):''}</div>`:''}</div>
+      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}${tgM.src?`<span class="tg-src">${tgM.src==='fmp'?'FMP':'Yahoo/Refinitiv'}</span>`:''}${tgStale?`<span class="tg-stale" title="${RT(`Среднее за всё время расходится со свежим срезом на ${tgDiv.toFixed(0)}% — старые таргеты тянут его. Ориентир — свежий.`,`All-time mean diverges from the recent slice by ${tgDiv.toFixed(0)}% — old targets drag it. Trust the recent one.`)}">⚠️ ${RT('устарел','stale')}</span>`:''}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал')+(tgM.n?` · ${tgM.n} `+RT('аналит.','an.'):''):T('появится при обновлении акций (🔄, раз в сутки)')}</div>${hasTargetR?`<div class="pf3-card-sub${tgStale?' tg-hi':''}"><span class="tg-recent-l">${tgM.span==='m'?RT('за месяц','last mo'):RT('за квартал','last qtr')}</span> <b>${pf3Fmt(targetR,0)}</b> <small>${ccy}</small> <span class="${targetR>=price?'pf3-up':'pf3-down'}">${targetR>=price?'+':''}${((targetR-price)/price*100).toFixed(1)}%</span>${tgM.nr?` · ${tgM.nr} `+RT('аналит.','an.'):''}</div>`:''}</div>
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>

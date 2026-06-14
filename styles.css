@@ -948,3 +948,7 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-card-sub b{color:var(--text);font-weight:700}
 .tg-recent-l{font-size:10px;text-transform:uppercase;letter-spacing:.3px;opacity:.75}
 .tg-src{margin-left:6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:1px 5px;border-radius:4px;background:var(--bg3);color:var(--text2);vertical-align:middle}
+
+/* ⚠️ Флаг устаревшего таргета (расхождение all-time vs свежий) */
+.tg-stale{margin-left:6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,.16);color:#f59e0b;cursor:help;vertical-align:middle}
+.pf3-card-sub.tg-hi{background:rgba(245,158,11,.08);margin:6px -6px 0;padding:6px 8px 5px;border-radius:6px;border-top-color:rgba(245,158,11,.35)}

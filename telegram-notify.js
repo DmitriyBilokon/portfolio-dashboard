@@ -24,10 +24,11 @@
 //     FMP_KEY               (Secret)  – Financial Modeling Prep API key (analyst targets)
 //     ANTHROPIC_API_KEY     (Secret)  – Claude API key (AI Assistant) — console.anthropic.com
 //     RESTRICT_FIRMS        (Text)    – optional, set "1" to only average the whitelisted firms
+//     FINNHUB_KEY           (Secret)  – Finnhub API key (insider transactions) — finnhub.io
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14stockai';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14insider';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -981,6 +982,67 @@ async function aiPortfolioRun(env, force){
     (ap.lastNote ? `\n💭 ${ap.lastNote}` : '');
 }
 
+// ── 🕵 Инсайдерские сделки (Finnhub): сбор, агрегация, кластерные покупки ───
+// Finnhub Insider Transactions — только US (SEC Form 4). Соблюдаем 60 req/min;
+// при 429 — экспоненциальный backoff. Кластер: ≥3 уникальных инсайдера-
+// покупателя в скользящем окне (по умолчанию 10 дней).
+async function finnhubInsider(sym, from, to, key){
+  const url = `https://finnhub.io/api/v1/stock/insider-transactions?symbol=${encodeURIComponent(sym)}&from=${from}&to=${to}&token=${encodeURIComponent(key)}`;
+  for(let attempt = 0; attempt < 4; attempt++){
+    let r;
+    try{ r = await fetch(url, { headers: { 'X-Finnhub-Token': key } }); }
+    catch(e){ return { err: 'net' }; }
+    if(r.status === 429){ await sleep(800 * Math.pow(2, attempt)); continue; }   // backoff
+    if(r.status === 401) return { err: 'auth' };
+    if(!r.ok) return { err: 'http ' + r.status };
+    const j = await r.json().catch(() => null);
+    return { data: (j && Array.isArray(j.data)) ? j.data : [] };
+  }
+  return { err: '429' };
+}
+// Агрегирует сырые транзакции в сводку: объёмы покупок/продаж, нетто, список
+// сделок и кластер покупателей (скользящее окно windowDays).
+function insiderAggregate(rows, windowDays){
+  const W = windowDays || 10;
+  const tx = (rows || []).filter(x => x && x.transactionCode && typeof x.change === 'number')
+    .map(x => ({
+      name: String(x.name || '').slice(0, 60),
+      code: String(x.transactionCode || '').toUpperCase(),
+      shares: Math.abs(x.change),
+      price: (typeof x.transactionPrice === 'number' && x.transactionPrice > 0) ? x.transactionPrice : null,
+      date: x.transactionDate || x.filingDate || null,
+      filing: x.filingDate || null,
+    }))
+    .map(t => ({ ...t, value: t.price != null ? Math.round(t.shares * t.price) : null }))
+    .filter(t => t.shares > 0);
+  let buyShares = 0, buyUSD = 0, sellShares = 0, sellUSD = 0;
+  for(const t of tx){
+    if(t.code === 'P'){ buyShares += t.shares; buyUSD += t.value || 0; }
+    else if(t.code === 'S'){ sellShares += t.shares; sellUSD += t.value || 0; }
+  }
+  // Кластер покупок: P-сделки, скользящее окно W дней, ≥3 уникальных имени.
+  const buys = tx.filter(t => t.code === 'P' && t.date).sort((a, b) => a.date < b.date ? -1 : 1);
+  let cluster = null;
+  for(let i = 0; i < buys.length; i++){
+    const start = new Date(buys[i].date).getTime(), names = new Set(), inWin = [];
+    for(let k = i; k < buys.length; k++){
+      if(new Date(buys[k].date).getTime() - start > W * 86400e3) break;
+      names.add(buys[k].name); inWin.push(buys[k]);
+    }
+    if(names.size >= 3 && (!cluster || names.size > cluster.uniqueBuyers)){
+      cluster = { uniqueBuyers: names.size, windowDays: W,
+        fromDate: inWin[0].date, toDate: inWin[inWin.length - 1].date,
+        sumUSD: inWin.reduce((a, t) => a + (t.value || 0), 0) };
+    }
+  }
+  return {
+    buyShares, buyUSD: Math.round(buyUSD), sellShares, sellUSD: Math.round(sellUSD),
+    netUSD: Math.round(buyUSD - sellUSD), txCount: tx.length,
+    tx: tx.sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 15),
+    cluster,
+  };
+}
+
 // ── 🔬 AI-анализ одной акции с веб-поиском новостей (карточка → кнопка) ─────
 // Клиент шлёт снапшот акции (цена, SMA, уровни, фундаментал, таргет) + контекст
 // портфеля (доли по секторам, концентрация, кэш) + журнал прошлых анализов по
@@ -1270,7 +1332,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict(soft+hard) · prompts · rev/cap\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1303,6 +1365,42 @@ export default {
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{ return json(await aiChat(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'insider'){
+      // POST {symbols:[...], from, to, windowDays}: батч инсайдерских сводок.
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      if(!env.FINNHUB_KEY) return json({ error: 'FINNHUB_KEY не задан — добавьте Secret в настройках worker' }, 500);
+      try{
+        const body = await request.json();
+        const syms = (Array.isArray(body.symbols) ? body.symbols : []).slice(0, 25).map(s => String(s).trim().toUpperCase()).filter(Boolean);
+        const today = new Date().toISOString().slice(0, 10);
+        const from = body.from || new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+        const to = body.to || today;
+        const out = {};
+        // Параллельно, но чанками по 8 — щадим Finnhub (60/min) и subrequest-лимит.
+        for(let i = 0; i < syms.length; i += 8){
+          const chunk = syms.slice(i, i + 8);
+          await Promise.all(chunk.map(async s => {
+            const r = await finnhubInsider(s, from, to, env.FINNHUB_KEY);
+            out[s] = r.err ? { err: r.err } : { ...insiderAggregate(r.data, body.windowDays), from, to, at: new Date().toISOString() };
+          }));
+          if(i + 8 < syms.length) await sleep(300);
+        }
+        return json(out);
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'insidernotify'){
+      // POST {ticker,name,uniqueBuyers,sumUSD,windowDays,fromDate,toDate}: Telegram-алерт о кластере.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{
+        const b = await request.json();
+        const sum = b.sumUSD ? ` · объём ≈ $${Number(b.sumUSD).toLocaleString('en-US')}` : '';
+        await sendTelegram(env, `🕵 <b>CLUSTER BUY — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${b.uniqueBuyers} инсайдер${b.uniqueBuyers >= 5 ? 'ов' : (b.uniqueBuyers >= 2 ? 'а' : '')} купили в окне ${b.windowDays || 10} дн.${sum}\n📅 ${b.fromDate || ''} — ${b.toDate || ''}`);
+        return json({ ok: true });
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'stockai'){
       if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);

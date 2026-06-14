@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -68,6 +68,7 @@ function applyRemoteState(s){
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
+  if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -166,6 +167,8 @@ let TG_ALERTS={};
 let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
+let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
+let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
 function stockAiToggle(sym){_stkCardOpen[sym]=!_stkCardOpen[sym];renderPF3();}
@@ -1707,6 +1710,100 @@ async function stockAiRun(ev){
   }catch(e){pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast(RT('Worker недоступен (нужен эндпоинт ?action=stockai)','Worker unreachable (?action=stockai)'),true);}
   renderPF3();
 }
+// ── 🕵 AI Insider: массовое обновление инсайдерских сделок по портфелю ──────
+// Уникальные тикеры портфельных вкладок → worker (Finnhub) → сводки в INSIDER;
+// для новых кластерных покупок шлём Telegram-алерт.
+let _insiderBusy=false;
+function insiderPortTickers(){
+  const seen=new Set(),out=[];
+  v3Tabs().filter(k=>pf3IsPort(k)).forEach(k=>{
+    (DATA[k].rows||[]).forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();
+      if(tk&&!seen.has(tk)){seen.add(tk);out.push({tk,name:r[1],ccy:r[8]||'USD'})}});
+  });
+  return out;
+}
+async function insiderUpdateAll(){
+  if(_insiderBusy)return;
+  _insiderBusy=true;
+  const btn=document.getElementById('insiderBtn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
+  const list=insiderPortTickers();
+  const today=new Date().toISOString().slice(0,10);
+  const from=new Date(Date.now()-30*86400e3).toISOString().slice(0,10);
+  const names={};list.forEach(x=>names[x.tk]=x.name);
+  let done=0,clusters=0,withData=0;
+  try{
+    const tok=await sbToken();
+    for(let i=0;i<list.length;i+=12){
+      const chunk=list.slice(i,i+12);
+      try{
+        const r=await fetch(PRICE_PROXY+'?action=insider',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.tk),from,to:today,windowDays:10})});
+        const j=await r.json();
+        if(j&&!j.error){
+          for(const tk of Object.keys(j)){
+            const v=j[tk];if(!v||v.err)continue;
+            const prev=INSIDER[tk]||{};
+            INSIDER[tk]={...v,name:names[tk]||tk,notified:prev.notified||null};
+            if(v.txCount>0)withData++;
+            // Новый кластер (другая сигнатура) → Telegram-алерт.
+            if(v.cluster){
+              const sig=v.cluster.fromDate+'_'+v.cluster.toDate+'_'+v.cluster.uniqueBuyers;
+              if(prev.notified!==sig){
+                clusters++;INSIDER[tk].notified=sig;
+                try{await fetch(PRICE_PROXY+'?action=insidernotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:names[tk]||tk,uniqueBuyers:v.cluster.uniqueBuyers,sumUSD:v.cluster.sumUSD,windowDays:v.cluster.windowDays,fromDate:v.cluster.fromDate,toDate:v.cluster.toDate})});}catch(e){}
+              }
+            }
+          }
+        }
+      }catch(e){}
+      done+=chunk.length;
+      const b=document.getElementById('insiderBtn');
+      if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
+    }
+    scheduleSave();
+    toast('🕵 '+RT(`Инсайдеры обновлены: ${withData}/${list.length} с данными · ${clusters} нов. кластер.`,`Insiders updated: ${withData}/${list.length} with data · ${clusters} new cluster(s)`));
+  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=insider + FINNHUB_KEY)','Worker unreachable (?action=insider + FINNHUB_KEY)'),true);}
+  finally{_insiderBusy=false;renderAll();}
+}
+function insiderFmtUSD(v){return v==null?'—':'$'+Math.round(v).toLocaleString('en-US')}
+function insiderSetFilter(k,val){insiderFilter[k]=(k==='minUSD')?(parseFloat(val)||0):val;renderPF3();}
+// Панель инсайдеров в карточке акции.
+function insiderHTML(d,r){
+  const tk=String(r[2]||'').trim().toUpperCase();
+  const v=INSIDER[tk];
+  const cluster=v&&v.cluster;
+  const head=`<div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')} ${cluster?`<span class="ins-cluster">🟢 CLUSTER BUY · ${cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${cluster.sumUSD?' · '+insiderFmtUSD(cluster.sumUSD):''}</span>`:''}</span>
+    <span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
+  if(!v||v.err)return`<section class="pf3-panel">${head}<div class="pf3-empty">${v&&v.err==='auth'?RT('Неверный Finnhub-ключ (FINNHUB_KEY)','Invalid Finnhub key'):RT('Нет данных. Нажмите «🕵 AI Insider» на 🏠 Home (Finnhub — только US-бумаги).','No data. Press «🕵 AI Insider» on 🏠 Home (Finnhub — US tickers only).')}</div></section>`;
+  if(!v.txCount)return`<section class="pf3-panel">${head}<div class="pf3-empty">${RT('Инсайдерских сделок за 30 дней не найдено','No insider transactions in the last 30 days')}</div></section>`;
+  // Сводка
+  const cards=`<div class="ins-sum">
+    <div class="ins-card ins-buy"><div class="ins-l">${RT('Покупки','Buys')}</div><div class="ins-v">${insiderFmtUSD(v.buyUSD)}</div><div class="ins-s">${pf3Fmt(v.buyShares)} ${RT('акц.','sh.')}</div></div>
+    <div class="ins-card ins-sell"><div class="ins-l">${RT('Продажи','Sells')}</div><div class="ins-v">${insiderFmtUSD(v.sellUSD)}</div><div class="ins-s">${pf3Fmt(v.sellShares)} ${RT('акц.','sh.')}</div></div>
+    <div class="ins-card"><div class="ins-l">${RT('Нетто','Net')}</div><div class="ins-v ${v.netUSD>=0?'pf3-up':'pf3-down'}">${v.netUSD>=0?'+':''}${insiderFmtUSD(v.netUSD)}</div><div class="ins-s">${RT('покупки − продажи','buys − sells')}</div></div>
+  </div>`;
+  // Фильтры
+  const fl=`<div class="ins-filters">
+    <select onchange="insiderSetFilter('type',this.value)">
+      <option value="all"${insiderFilter.type==='all'?' selected':''}>${RT('Все','All')}</option>
+      <option value="P"${insiderFilter.type==='P'?' selected':''}>${RT('Покупки','Buys')}</option>
+      <option value="S"${insiderFilter.type==='S'?' selected':''}>${RT('Продажи','Sells')}</option>
+    </select>
+    <select onchange="insiderSetFilter('minUSD',this.value)">
+      ${[0,100000,500000,1000000].map(x=>`<option value="${x}"${insiderFilter.minUSD===x?' selected':''}>${x?'≥ '+insiderFmtUSD(x):RT('любая сумма','any size')}</option>`).join('')}
+    </select>
+  </div>`;
+  const tx=(v.tx||[]).filter(t=>(insiderFilter.type==='all'||t.code===insiderFilter.type)&&(!insiderFilter.minUSD||(t.value||0)>=insiderFilter.minUSD));
+  const rows=tx.length?tx.map(t=>`<div class="ins-row">
+    <span class="ins-code ${t.code==='P'?'p':t.code==='S'?'s':''}">${t.code==='P'?'🟢 '+RT('Покупка','Buy'):t.code==='S'?'🔴 '+RT('Продажа','Sell'):t.code}</span>
+    <span class="ins-name">${t.name||'—'}</span>
+    <span class="ins-qty">${pf3Fmt(t.shares)} × ${t.price!=null?pf3Fmt(t.price,2):'—'}</span>
+    <span class="ins-val">${t.value!=null?insiderFmtUSD(t.value):'—'}</span>
+    <span class="ins-date">${t.date||''}</span>
+  </div>`).join(''):`<div class="pf3-empty" style="padding:6px">${RT('Под фильтр ничего не попадает','Nothing matches the filter')}</div>`;
+  return`<section class="pf3-panel">${head}${cards}${fl}<div class="ins-list">${rows}</div></section>`;
+}
+
 // 🔬 AI-разборы: история разборов из обучающей базы STOCK_AI_LOG. Каждая запись
 // сверяется с текущей ценой бумаги (где она есть в данных) — прогноз↔факт.
 function stkLivePrice(tk){
@@ -3178,7 +3275,7 @@ function homeHTML(){
   const chips=Object.entries(stat).sort((a,b)=>a[1].rank-b[1].rank)
     .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
   return`
-  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button></div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (Finnhub)','Insider transactions across the portfolio (Finnhub)')}">🕵 AI Insider</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
   <div class="home-grid">
     ${widget(T('🟢 Покупать / докупать сейчас'),T('цена в ±2% от SMA или поддержки'),cap(buy,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Сейчас никто не стоит у уровня покупки'))}
     ${widget(T('🔴 Продавать — у сопротивления'),T('цена в ±2% от сопротивления'),cap(sell,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('У сопротивления никого нет'))}
@@ -3230,6 +3327,7 @@ function pf3DetailHTML(){
     </section>
     ${pf3RecoHTML(d,r)}
     ${isAdmin()?stockAiHTML(d,r):''}
+    ${isAdmin()?insiderHTML(d,r):''}
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>
       <div class="pf3-health-grid" id="pf3HealthGrid">${pf3Health()}</div>

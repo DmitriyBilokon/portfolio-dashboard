@@ -919,3 +919,20 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* Сворачивание разбора в карточке */
 .stkai-toggle{background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;font-weight:600;padding:4px 0;margin:2px 0 4px}
 .stkai-toggle:hover{text-decoration:underline}
+
+/* 🕵 Инсайдеры в карточке */
+.ins-cluster{font-size:10px;font-weight:800;color:var(--green);background:var(--green-bg);border:1px solid rgba(16,185,129,.4);border-radius:999px;padding:2px 8px;margin-left:6px;letter-spacing:.03em}
+.ins-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0 10px}
+.ins-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 11px}
+.ins-card.ins-buy{border-color:rgba(16,185,129,.3)}.ins-card.ins-sell{border-color:rgba(239,68,68,.3)}
+.ins-l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px}
+.ins-v{font-size:15px;font-weight:700;margin-top:1px}.ins-buy .ins-v{color:var(--green)}.ins-sell .ins-v{color:var(--red)}
+.ins-s{font-size:9.5px;color:var(--text3);font-family:'JetBrains Mono',monospace}
+.ins-filters{display:flex;gap:8px;margin-bottom:8px}
+.ins-filters select{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:4px 8px;font-size:11px}
+.ins-row{display:grid;grid-template-columns:90px 1fr auto auto 84px;gap:8px;align-items:center;font-size:11px;padding:5px 0;border-bottom:1px solid var(--border)}
+.ins-row:last-child{border-bottom:none}
+.ins-code{font-weight:700;white-space:nowrap}.ins-code.p{color:var(--green)}.ins-code.s{color:var(--red)}
+.ins-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
+.ins-qty,.ins-val{font-family:'JetBrains Mono',monospace;white-space:nowrap;text-align:right}
+.ins-date{font-size:9.5px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-align:right}

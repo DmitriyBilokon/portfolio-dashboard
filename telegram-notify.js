@@ -14,7 +14,7 @@
 //  Bot:   message @BotFather → /newbot → copy the token.
 //  Chat:  message @userinfobot → copy your numeric "Id".
 //  Supabase service key: Project Settings → API → service_role (secret!).
-//  Deploy: dash.cloudflare.com → Workers → Create → paste this → Deploy.
+//  Deploy: dash.cl Недооценка по мультипликаторамoudflare.com → Workers → Create → paste this → Deploy.
 //  Variables (Settings → Variables and Secrets):
 //     BOT_TOKEN             (Secret)  – from @BotFather
 //     SUPABASE_SERVICE_KEY  (Secret)  – service_role key
@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-15fi2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-15dash';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1281,6 +1281,50 @@ async function recoAnalyze(env, body){
   return { text: raw, verdict, data, cost: aiCost(j) };
 }
 
+// ── 📊 AI-Dashboard: AI Proto формирует набор карточек с самой полезной
+// информацией для портфеля (web_search свежих новостей/макро + память правил).
+const DASH_SYSTEM = `Ты — AI Proto, главная аналитическая модель этого инвестиционного дашборда (частный инвестор из Швеции, базовая валюта SEK). Твоя сверхзадача — помогать портфелю опережать эталонные индексы (OMXS30, Nasdaq 100, S&P 500).
+
+Тебе передают JSON: снапшот портфеля (позиции с живыми ценами, уровнями SMA/поддержки, таргетами, мультипликаторами, кэшем и плечом), investorRules (твоя накопленная память — строго учитывай) и marketContext (фазы и сводки индексов).
+
+ОБЯЗАТЕЛЬНО используй web_search для самой свежей информации: новости по ключевым позициям и кандидатам, отчёты/гайденс, изменения рейтингов и таргетов аналитиков, и глобальная макрокартина (ставки ФРС/ЕЦБ/Riksbank, инфляция, геополитика, сырьё/валюты, настроение по секторам и индексам).
+
+Сформируй ДАШБОРД — набор компактных карточек с САМОЙ ПОЛЕЗНОЙ информацией для этого портфеля прямо сейчас. Карточки выбери сам (6–9 штук), но покрой по смыслу:
+- общее состояние портфеля и где он относительно эталонных индексов;
+- что важно сегодня / на этой неделе (события, отчёты, свежие новости);
+- возможности: что докупить и какие новые идеи (с уровнями входа и долями в kr);
+- риски: что сократить / продать и почему;
+- макро и рынок — как это влияет на портфель;
+- диверсификация (перевес / недовес секторов или гео);
+- конкретный план действий на ближайшие 1–2 недели с суммами в kr.
+
+Каждая карточка: короткий заголовок + 2–4 пункта с КОНКРЕТИКОЙ (тикеры, уровни, проценты, суммы kr). Без воды. Строго соблюдай investorRules. tone: good (позитив/возможность), warn (внимание), bad (риск), info (нейтрально). Это справочная аналитика, не индивидуальная инвестиционная рекомендация.
+
+Верни ТОЛЬКО машиночитаемый блок — fenced json, открой и закрой его символами ${FENCE} :
+${FENCE}json
+{"asOf":"<YYYY-MM-DD>","headline":"<1–2 предложения: главное о портфеле сейчас>","cards":[{"icon":"<эмодзи>","title":"<заголовок>","tone":"good|warn|bad|info","bullets":["<пункт с конкретикой>","<пункт>"]}]}
+${FENCE}`;
+
+async function dashboardGen(env, snapshot){
+  const today = new Date().toISOString().slice(0, 10);
+  const j = await anthropicRun(env, {
+    model: 'claude-opus-4-8',
+    max_tokens: 9000,
+    thinking: { type: 'adaptive' },
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+    system: DASH_SYSTEM,
+    messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот портфеля (JSON):\n' + JSON.stringify(snapshot || {}) }],
+  });
+  let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if(!raw) throw new Error('Пустой ответ модели');
+  let dash = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){ const rest = raw.slice(i + FENCE.length + 4); const end = rest.indexOf(FENCE); if(end >= 0){ try{ dash = JSON.parse(rest.slice(0, end).trim()); }catch(e){} } }
+  if(!dash){ try{ dash = JSON.parse(raw); }catch(e){} }   // на случай чистого json без fence
+  if(!dash || !Array.isArray(dash.cards)) throw new Error('Не удалось разобрать дашборд');
+  return { dash, cost: aiCost(j) };
+}
+
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 const TARGET_RECENT_COL = 'Таргет 3м';   // свежий срез (последний квартал/месяц)
@@ -1581,7 +1625,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1697,6 +1741,15 @@ export default {
       try{ return json(await stockAnalyze(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
+    if(url.searchParams.get('action') === 'dashboard'){
+      // POST снапшот портфеля → AI Proto формирует карточки дашборда (web_search).
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json(await dashboardGen(env, await request.json())); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
     if(url.searchParams.get('action') === 'reco'){
       // POST снапшот карточки → AI-Рекомендация (вердикт+разбор) с web_search.
       if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
@@ -1741,6 +1794,9 @@ export default {
         { name: '🔄 AI-Рекомендация (RECO_SYSTEM)',
           about: 'Кнопка «🔄 AI-Рекомендация» в карточке акции. Снапшот карточки (техника, фундаментал, оценка, контекст портфеля) + web_search свежих новостей и глобальной макрокартины; возвращает единый вердикт buy/wait/sell/avoid с уверенностью и обоснованием. Отдельно от детерминированного скоринга «Рекомендация».',
           text: RECO_SYSTEM },
+        { name: '📊 AI-Dashboard (DASH_SYSTEM)',
+          about: 'Кнопка «✨ Сгенерировать» на вкладке 📊 AI-Dashboard. AI Proto со снапшотом портфеля, правилами (память) и web_search свежих новостей/макро формирует набор карточек: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю.',
+          text: DASH_SYSTEM },
         { name: '💬 Чат AI Proto (CHAT_SYSTEM)',
           about: 'Диалог с AI Proto. Видит снапшот текущей вкладки и правила инвестора; отвечает кратко с конкретными уровнями. Извлекает из ваших сообщений устойчивые предпочтения и возвращает их в поле memory — так пополняется 🧠 память.',
           text: CHAT_SYSTEM },

@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -73,6 +73,7 @@ function applyRemoteState(s){
   if(s.val&&typeof s.val==='object') VAL=s.val;
   if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
+  if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=s.aiDash;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -178,6 +179,8 @@ let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let AI_SPEND={usd:0,runs:0,in:0,out:0,searches:0};   // 💸 накопленные AI-расходы (sync)
+let AI_DASH=null;   // 📊 AI-Dashboard: {headline,cards,asOf,at,cost} (sync)
+let _aiDashBusy=false;
 let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (sync): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
 let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
 let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
@@ -229,6 +232,7 @@ const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over 
 const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
 const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): виртуальный счёт под управлением Claude
 const STK_KEY='🔬 AI-разборы';      // virtual tab (admin): история разборов акций (обучающая база)
+const AIDASH_KEY='📊 AI-Dashboard'; // virtual tab (admin): AI Proto генерит карточки-дашборд по портфелю
 const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY||!!(DATA[k]&&DATA[k].port==='1');   // вкладки с экономикой позиций
 const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые портфели (мои/семейные, не AI)
 const OMX_IDX='OMXS30';
@@ -301,7 +305,7 @@ function reorderTab(drag,dropKey){
   }
   scheduleSave();init();
 }
-const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY;
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -627,8 +631,8 @@ function migrateAiHistory(){
 function init(){
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
-  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
-  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=n=>{
     const el=document.createElement('div');
@@ -655,6 +659,7 @@ function init(){
   if(isAdmin())t.appendChild(mkVirt(AIP_KEY,TAB_LABEL(AIP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(STK_KEY,TAB_LABEL(STK_KEY)));
+  if(isAdmin())t.appendChild(mkVirt(AIDASH_KEY,TAB_LABEL(AIDASH_KEY)));
   if(keys.includes(PF3_KEY))t.appendChild(mkTab(PF3_KEY));
   // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
   const groups=ensureGroups();
@@ -837,7 +842,7 @@ function restoreXcols(){
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
   if(!name)return;
-  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY||name===STK_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
+  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY||name===STK_KEY||name===AIDASH_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
   DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
   scheduleSave();
   curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
@@ -937,6 +942,13 @@ function renderAll(){
       document.getElementById('smaBanner').innerHTML='';
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${homeHTML()}</div>`;}
+      return;
+    }
+    if(curIdx===AIDASH_KEY){   // 📊 AI-Dashboard (админ): карточки от AI Proto
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${aiDashHTML()}</div>`;}
       return;
     }
     if(curIdx===AIP_KEY)aipSyncTab();   // 🤖: материализовать позиции AI как вкладку
@@ -3705,6 +3717,34 @@ function insiderOpenCard(tk){
   if(!home){toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);return}
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
 }
+// ── 📊 AI-Dashboard: AI Proto формирует карточки по портфелю (web_search + память) ──
+async function aiDashRun(){
+  if(_aiDashBusy)return;_aiDashBusy=true;
+  const btn=document.getElementById('aiDashBtn');if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Генерирую…','Generating…');}
+  renderAll();
+  try{
+    const snap=pf3AiSnapshot(PF3_KEY);   // портфель + investorRules + marketContext
+    const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
+    const j=await r.json();
+    if(j&&j.dash&&Array.isArray(j.dash.cards)){
+      aiSpendAdd(j.cost);
+      AI_DASH={headline:j.dash.headline||'',cards:j.dash.cards,asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};
+      scheduleSave();toast('📊 '+RT('Дашборд готов','Dashboard ready'));
+    }else toast((j&&j.error)||RT('AI не ответил','AI did not respond'),true);
+  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=dashboard)','Worker unreachable (?action=dashboard)'),true);}
+  _aiDashBusy=false;renderAll();
+}
+function aiDashHTML(){
+  const D=AI_DASH,inl=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+  const toneC={good:'dash-good',warn:'dash-warn',bad:'dash-bad',info:'dash-info'};
+  const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun()"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую…','Generating…'):'✨ '+RT('Сгенерировать','Generate')+(D&&D.cards?' · '+RT('обновить','refresh'):'')}</button>`;
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard</span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · свежие новости + память','AI Proto · fresh news + memory')}</span>${btn}</div>${D&&D.headline?`<div class="dash-headline">${inl(D.headline)}</div>`:''}</section>`;
+  if(_aiDashBusy&&(!D||!D.cards))h+=`<div class="pf3-empty" style="padding:24px">⏳ ${RT('AI Proto собирает свежие данные (web-поиск) и формирует дашборд… до 1–2 минут.','AI Proto is gathering fresh data (web search) and building the dashboard… up to 1–2 min.')}</div>`;
+  else if(D&&D.cards&&D.cards.length)h+=`<div class="dash-grid">${D.cards.map(c=>`<section class="dash-card ${toneC[c.tone]||'dash-info'}"><div class="dash-card-hd">${c.icon||'•'} <b>${inl(c.title||'')}</b></div><ul class="dash-bul">${(c.bullets||[]).map(b=>`<li>${inl(b)}</li>`).join('')||`<li class="pf3-asof">—</li>`}</ul></section>`).join('')}</div>`;
+  else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт дашборд по портфелю: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю.','Press «✨ Generate» — AI Proto with web search and your rules builds a portfolio dashboard.')}</div>`;
+  return h;
+}
+
 // 🏆 Лучшие акции-кандидаты для портфеля по горизонтам — детерминированный отбор
 // из ВСЕХ вкладок по обновлённым данным (цена, SMA, таргет, P/E, ROE, рост).
 // 1–3 мес: импульс и точки входа · 3–6 мес: тренд+цена · 6–12 мес: фундаментал+недооценка.

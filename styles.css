@@ -1021,3 +1021,16 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .bp-px{white-space:nowrap;text-align:right}
 .bp-px small{color:var(--text2)}
 .bp-why{color:var(--text2);font-size:12px}
+
+/* 📊 AI-Dashboard */
+.dash-headline{font-size:14px;line-height:1.5;margin-top:8px;color:var(--text)}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:4px}
+.dash-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--border);border-radius:10px;padding:12px 14px}
+.dash-card.dash-good{border-left-color:#10b981}
+.dash-card.dash-warn{border-left-color:#f59e0b}
+.dash-card.dash-bad{border-left-color:#ef4444}
+.dash-card.dash-info{border-left-color:#6366f1}
+.dash-card-hd{font-size:14px;margin-bottom:6px}
+.dash-bul{margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:var(--text2)}
+.dash-bul li{margin:4px 0}
+.dash-bul b{color:var(--text)}

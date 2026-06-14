@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14aiproto';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14aiproto2';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -43,6 +43,7 @@ function exSymbol(ticker, ccy){
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const round2 = n => Math.round(n * 100) / 100;
+const FENCE = String.fromCharCode(96, 96, 96);   // тройная обратная кавычка — для встраивания json-блоков в системные промпты
 const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
 
 // Response helpers shared by every route.
@@ -479,7 +480,9 @@ const AI_SYSTEM = `Ты — AI Proto, главная и самая важная 
 
 ТВОЯ ГЛАВНАЯ ЗАДАЧА — добиться, чтобы портфель ОПЕРЕЖАЛ эталонные индексы (OMXS30, Nasdaq 100, S&P 500) по совокупной доходности на горизонте недель и месяцев. Просто повторить индекс недостаточно: ищи альфу — точки входа у уровней, фиксацию перегретых позиций, перевес сильных секторов и недооценённых качественных бумаг. Опережение достигается дисциплиной и качеством отбора, а не размером риска.
 
-ДАННЫЕ. Тебе передают САМЫЙ СВЕЖИЙ снапшот портфеля и рынка, собранный дашбордом: живые цены, дневные изменения, технические уровни (SMA 50/100/200, поддержка, сопротивление), консенсус-таргеты аналитиков (и свежий срез), мультипликаторы, доли позиций, свободный кэш и кредитное плечо. Опирайся на эти переданные данные и свои знания о компаниях как на самый свежий источник; не выдумывай цифры, которых нет.
+ДАННЫЕ. Тебе передают САМЫЙ СВЕЖИЙ снапшот портфеля и рынка, собранный дашбордом: живые цены, дневные изменения, технические уровни (SMA 50/100/200, поддержка, сопротивление), консенсус-таргеты аналитиков (и свежий срез), мультипликаторы, доли позиций, свободный кэш и кредитное плечо. Опирайся на эти переданные данные и свои знания о компаниях; цифры портфеля бери из снапшота, не выдумывай.
+
+ЖИВЫЕ НОВОСТИ И МАКРО. ОБЯЗАТЕЛЬНО используй web_search, чтобы собрать самые свежие данные: новости по ключевым позициям портфеля и кандидатам на новые покупки (отчёты, гайденс, сделки M&A, рейтинги и таргеты аналитиков, регуляторика) и глобальную макрокартину (ставки ФРС/ЕЦБ/Riksbank, инфляция, геополитика, цены на сырьё и валюты, настроение по секторам и ведущим индексам). Учитывай найденное во всех разделах и рекомендациях; кратко ссылайся на самое важное.
 
 ОБУЧЕНИЕ. Если есть investorRules — это твоя накопленная память (правила, риск-профиль и предпочтения инвестора): строго соблюдай их. Сверяй текущую картину с этими правилами и с прежними решениями; если прошлая логика не сработала — скорректируй подход и прямо скажи об этом. Ты учишься на результатах.
 
@@ -506,9 +509,12 @@ const AI_SYSTEM = `Ты — AI Proto, главная и самая важная 
 ## ✅ План действий
 Нумерованный список конкретных шагов на ближайшие 2–4 недели с суммами в kr.
 
-Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; если есть marketContext — это живая статистика рыночных фаз по всем индексным вкладкам (Nasdaq 100, S&P 500, OMXS30, OMXSPI, DAX 40, CAC 40, FTSE MIB, OBX 25) и сводки их последних AI-обзоров: используй её как актуальную картину рынка (breadth, моментум) в анализе ситуации и при выборе позиций; в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
+Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; если есть marketContext — это живая статистика рыночных фаз по всем индексным вкладкам (Nasdaq 100, S&P 500, OMXS30, OMXSPI, DAX 40, CAC 40, FTSE MIB, OBX 25) и сводки их последних AI-обзоров: используй её как картину рынка (breadth, моментум); в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
 
-Ответ верни строго в JSON по заданной схеме: поле report — весь анализ выше в markdown; поле proposal — машиночитаемый план ребалансировки портфеля: summary (2–3 предложения о целевой структуре, нацеленной на обгон индексов) и actions — упорядоченный список конкретных сделок (action: Купить/Докупить/Сократить/Продать/Держать; details: уровень входа или выхода и краткое обоснование; amountSEK: примерная сумма сделки в кронах или null, если неприменимо).`;
+В САМОМ КОНЦЕ ответа добавь машиночитаемый план ребалансировки (он отображается на вкладке «Предложение») — fenced json, открой и закрой его символами ${FENCE} :
+${FENCE}json
+{"summary":"<2–3 предложения о целевой структуре, нацеленной на обгон индексов>","actions":[{"action":"Купить|Докупить|Сократить|Продать|Держать","name":"<компания>","ticker":"<тикер>","details":"<уровень входа/выхода и краткое обоснование>","amountSEK":<число или null>}]}
+${FENCE}`;
 
 // Structured output: report (markdown) + machine-readable rebalancing proposal
 // for the dashboard's «Предложение» sub-tab.
@@ -567,33 +573,42 @@ const WATCH_SYSTEM = `Ты — опытный рыночный аналитик.
 Ответ верни строго в JSON по схеме: report — анализ в markdown; proposal — summary (1–2 предложения о состоянии индекса) и actions — те же 5–8 самых актуальных акций (action из списка: Купить/Докупить/Сократить/Продать/Держать — подбери ближайшее по смыслу; details: уровни и причина; amountSEK: null).`;
 
 async function aiAnalyze(env, snapshot){
-  const system = (snapshot && snapshot.mode === 'watchlist') ? WATCH_SYSTEM : AI_SYSTEM;
+  const watch = !!(snapshot && snapshot.mode === 'watchlist');
+  const system = watch ? WATCH_SYSTEM : AI_SYSTEM;
   const today = new Date().toISOString().slice(0, 10);
+  const reqBody = {
+    model: 'claude-opus-4-8',
+    max_tokens: 16000,
+    thinking: { type: 'adaptive' },
+    system,
+    messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот (JSON):\n${JSON.stringify(snapshot)}` }],
+  };
+  // Watchlist (индексы) — структурированный вывод. Портфель (AI Proto) — с web_search
+  // по свежим новостям/макро, поэтому план ребалансировки приходит fenced-json.
+  if(watch) reqBody.output_config = { format: { type: 'json_schema', schema: AI_SCHEMA } };
+  else reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }];
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: {
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-opus-4-8',
-      max_tokens: 16000,
-      thinking: { type: 'adaptive' },
-      output_config: { format: { type: 'json_schema', schema: AI_SCHEMA } },
-      system,
-      messages: [{ role: 'user', content: `Сегодня ${today}. Снапшот (JSON):\n${JSON.stringify(snapshot)}` }],
-    }),
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify(reqBody),
   });
   if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
   const j = await r.json();
-  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(watch ? '' : '\n');
   if(!raw) throw new Error('Пустой ответ модели');
-  try{
-    const parsed = JSON.parse(raw);
-    if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null };
-  }catch(e){ /* schema miss — fall back to raw text below */ }
-  return { text: raw, proposal: null };
+  if(watch){
+    try{ const parsed = JSON.parse(raw); if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null }; }catch(e){ /* fall back */ }
+    return { text: raw, proposal: null };
+  }
+  // Портфель: вынуть финальный fenced-json (план ребалансировки) и убрать его из текста отчёта.
+  let text = raw, proposal = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){
+    const rest = raw.slice(i + FENCE.length + 4);
+    const end = rest.indexOf(FENCE);
+    if(end >= 0){ try{ proposal = JSON.parse(rest.slice(0, end).trim()); }catch(e){} text = raw.slice(0, i).trim(); }
+  }
+  return { text, proposal };
 }
 
 // ── AI chat (Портфель 3.0 «AI Assistant»): multi-turn Q&A over the live
@@ -1057,7 +1072,7 @@ function insiderAggregate(rows, windowDays){
 // портфеля (доли по секторам, концентрация, кэш) + журнал прошлых анализов по
 // этому тикеру (для сверки прогноз↔факт — «обучение»). Claude с web_search
 // собирает свежие новости и возвращает структурированный разбор + JSON-сводку.
-const FENCE = String.fromCharCode(96, 96, 96);   // ``` — чтобы не ломать template literal
+// FENCE объявлен в начале файла (нужен и для AI_SYSTEM выше).
 const STOCKAI_SYSTEM = `Ты — старший инвестиционный аналитик. Тебе передают JSON по ОДНОЙ акции: цена, технические уровни (SMA 50/100/200, поддержка, сопротивление), фундаментал (P/E, P/S, выручка, маржа, долг/капитал, рост), консенсус-таргет аналитиков, тип и сектор; контекст портфеля инвестора (текущие доли по секторам, концентрация, свободный кэш в SEK, базовая валюта SEK); и priorAnalyses — твои прошлые разборы этой бумаги с ценой на тот момент (сверь прогноз с фактом — где ошибся, где попал — и откалибруй уверенность).
 
 ОБЯЗАТЕЛЬНО используй web_search для свежих новостей и событий по компании (отчёты, гайденс, сделки, регуляторика, отраслевой фон) — на дату анализа. Кратко сошлись на найденное в разделе новостей.
@@ -1627,7 +1642,7 @@ export default {
       if(!adm.ok) return json({ error: adm.error }, 403);
       return json([
         { name: '🤖 AI Proto — анализ портфеля (AI_SYSTEM)',
-          about: 'Главная модель. Кнопка «🔮 Проанализировать портфель» на вкладке AI Proto. Получает свежий снапшот: позиции с живыми ценами, уровни SMA/поддержки, таргеты, мультипликаторы, кэш и плечо, накопленные правила инвестора (investorRules) и рыночный контекст всех индексов (marketContext). Цель — обогнать OMXS30/Nasdaq 100/S&P 500. Возвращает отчёт (включая раздел «Обгон индексов») + машиночитаемый план ребалансировки для вкладки «Предложение».',
+          about: 'Главная модель. Кнопка «🔮 Проанализировать портфель» на вкладке AI Proto. Получает свежий снапшот: позиции с живыми ценами, уровни SMA/поддержки, таргеты, мультипликаторы, кэш и плечо, накопленные правила инвестора (investorRules) и рыночный контекст всех индексов (marketContext). Через web_search собирает свежие новости по позициям и кандидатам + глобальную макрокартину. Цель — обогнать OMXS30/Nasdaq 100/S&P 500. Возвращает отчёт (включая раздел «Обгон индексов») + машиночитаемый план ребалансировки для вкладки «Предложение».',
           text: AI_SYSTEM },
         { name: '🔥 Анализ индекса (WATCH_SYSTEM)',
           about: 'Кнопка анализа на индексных вкладках. Получает watchlist-снапшот: все акции с уровнями, фазами и сигналами. Выделяет 5–8 самых актуальных бумаг с действиями (Купить/Следить/Фиксировать/Избегать), сильные и слабые сектора, риски.',

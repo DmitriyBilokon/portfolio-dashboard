@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14cost';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14pause';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -63,6 +63,35 @@ const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${m
 const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type, Authorization', 'Content-Type':'application/json; charset=utf-8' };
 const json = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: CORS });
 const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+
+// Вызов Claude с устойчивостью к web_search: при stop_reason='pause_turn'
+// (долгий серверный поиск) ответ приходит без финального текста — продолжаем
+// запрос, докидывая ответ ассистента, пока модель не завершит. usage и
+// текстовые блоки суммируем по всем раундам. Возвращает {content, usage}.
+async function anthropicRun(env, body){
+  let messages = (body.messages || []).slice();
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
+  let content = [];
+  for(let round = 0; round < 6; round++){
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, messages }),
+    });
+    if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+    const j = await r.json();
+    const u = j.usage || {};
+    usage.input_tokens += u.input_tokens || 0;
+    usage.output_tokens += u.output_tokens || 0;
+    usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+    usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
+    usage.server_tool_use.web_search_requests += (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+    content = content.concat(j.content || []);
+    if(j.stop_reason === 'pause_turn'){ messages = messages.concat([{ role: 'assistant', content: j.content }]); continue; }
+    break;
+  }
+  return { content, usage };
+}
 
 // Fetch a Yahoo Finance chart and return chart.result[0] (or null on any failure).
 const YH_HEADERS = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
@@ -600,13 +629,7 @@ async function aiAnalyze(env, snapshot){
   // по свежим новостям/макро, поэтому план ребалансировки приходит fenced-json.
   if(watch) reqBody.output_config = { format: { type: 'json_schema', schema: AI_SCHEMA } };
   else reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }];
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify(reqBody),
-  });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-  const j = await r.json();
+  const j = await anthropicRun(env, reqBody);   // устойчиво к pause_turn (web_search)
   const cost = aiCost(j);
   const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(watch ? '' : '\n');
   if(!raw) throw new Error('Пустой ответ модели');
@@ -1117,20 +1140,14 @@ ${FENCE}
 
 async function stockAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-opus-4-8',
-      max_tokens: 8000,
-      thinking: { type: 'adaptive' },
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-      system: STOCKAI_SYSTEM,
-      messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
-    }),
+  const j = await anthropicRun(env, {
+    model: 'claude-opus-4-8',
+    max_tokens: 8000,
+    thinking: { type: 'adaptive' },
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    system: STOCKAI_SYSTEM,
+    messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
   });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-  const j = await r.json();
   let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
   if(!raw) throw new Error('Пустой ответ модели');
   // Извлечь финальный json-блок (между маркерами FENCE) и убрать его из текста.
@@ -1190,20 +1207,14 @@ ${FENCE}
 
 async function recoAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-opus-4-8',
-      max_tokens: 8000,
-      thinking: { type: 'adaptive' },
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-      system: RECO_SYSTEM,
-      messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
-    }),
+  const j = await anthropicRun(env, {
+    model: 'claude-opus-4-8',
+    max_tokens: 8000,
+    thinking: { type: 'adaptive' },
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    system: RECO_SYSTEM,
+    messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
   });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-  const j = await r.json();
   let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
   if(!raw) throw new Error('Пустой ответ модели');
   let data = null;

@@ -1982,8 +1982,7 @@ function stockReportHTML(d,r){
   const margin = netM!=null?netM:fcfM;
   const marginLbl = netM!=null?'чистая маржа':'FCF-маржа';
   const div = g('Дивид. %');
-  const tgC=h.findIndex(x=>/аналит/i.test(x)); const target=tgC>=0?(parseFloat(r[tgC])||0):0;
-  const upside=(target>0&&price>0)?(target/price-1)*100:null;
+  const upside=pf3EffUpside(d,r);   // устаревший таргет → берём свежий «Таргет 3м»
   const nAn=(TG_META[tk]||{}).n||0;
   const val=VAL[tk]||{};
   const {s200}=smaIdx(d); const sma200=s200>=0?(parseFloat(r[s200])||0):0;
@@ -2521,6 +2520,24 @@ function pf3Criterion(d,r){
 }
 
 // ── 💡 Рекомендация по акции: Покупать / Продавать / Ждать / Не приближаться ──
+// % расхождения, при котором основной «Аналит. таргет» считаем устаревшим.
+const TG_STALE_PCT=10;
+// Эффективный таргет для «потенциала роста»: основной (аналит. таргет), но если
+// он устарел — расходится со свежим срезом «Таргет 3м» на ≥ TG_STALE_PCT% —
+// берём свежий квартальный/месячный.
+function pf3EffTarget(d,r){
+  const h=d.headers;
+  const ti=h.findIndex(x=>/аналит/i.test(x)), ri=h.findIndex(x=>/таргет 3м/i.test(x));
+  const main=ti>=0?(parseFloat(r[ti])||0):0;
+  const recent=ri>=0?(parseFloat(r[ri])||0):0;
+  const stale=main>0&&recent>0&&Math.abs(recent-main)/main*100>=TG_STALE_PCT;
+  return { target: stale?recent:(main||recent), main, recent, stale };
+}
+function pf3EffUpside(d,r){
+  const price=parseFloat(r[7])||0, t=pf3EffTarget(d,r).target;
+  return (t>0&&price>0)?(t/price-1)*100:null;
+}
+
 // Детерминированный скоринг по трём группам факторов из уже загруженных данных:
 // фундаментал (таргет, ROE, рост, D/E, P/E к сектору), техника (фаза рынка +
 // сигнал у уровня), риск (спекулятивный профиль, beta, P/S, масштаб бизнеса).
@@ -2529,7 +2546,7 @@ function pf3Reco(d,r){
   const price=parseFloat(r[7])||0;
   const tgC=d.headers.findIndex(x=>/аналит/i.test(x));
   const target=tgC>=0?parseFloat(r[tgC]):NaN;
-  const up=(isFinite(target)&&target>0&&price>0)?(target-price)/price*100:null;
+  const up=pf3EffUpside(d,r);   // потенциал: устаревший таргет → берём свежий «Таргет 3м»
   const crit=pf3Criterion(d,r),sig=pf3SignalInfo(d,r);
   const tf=pf3TypeFull(d,r);
   const spec=(tf&&(tf.primary==='Спекулятивная'||tf.secondary==='Спекулятивная'))||r[5]==='Спекулятивная';
@@ -2698,7 +2715,7 @@ function pf3XCell(it,k){
     const M={buy:['🟢',RT('Купить','Buy'),'buy'],sell:['🔴',RT('Продать','Sell'),'sell'],wait:['🟡',RT('Ждать','Wait'),'wait'],avoid:['⛔',RT('Опасно','Avoid'),'avoid']}[it.recoV];
     return`<span class="pf3-sig xr-${M[2]}" title="${it.recoHint||''}">${M[0]} ${M[1]}</span>`;
   }
-  if(k==='upside'){const v=it.tg>0&&p>0?(it.tg/p-1)*100:null;return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
+  if(k==='upside'){const v=pf3EffUpside(pf3D(),it.r);return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
   if(k==='tgr'){const v=it.tgr;if(!(v>0)||!(p>0))return'—';const u=(v/p-1)*100;return`<b>${pf3Fmt(v,0)}</b><small class="${u>=0?'pf3-up':'pf3-down'}">${u>=0?'+':''}${u.toFixed(1)}%</small>`}
   const v=it[k];
   if(k==='pe'||k==='ps')return v>0?(+v).toFixed(1):'—';
@@ -2725,7 +2742,7 @@ function pf3Items(){
     const tg=tgC>=0?(parseFloat(r[tgC])||0):0,price=parseFloat(r[7])||0;
     return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
       sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
-      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:tg>0&&price>0?(tg/price-1)*100:0,tgr:num(r,tgrC),
+      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:pf3EffUpside(d,r)||0,tgr:num(r,tgrC),
       ...(()=>{const rc=pf3Reco(d,r);return{reco:({buy:3,wait:2,sell:1,avoid:0})[rc.v]*100+rc.total,recoV:rc.v,recoHint:rc.hint.replace(/"/g,'&quot;')}})()};
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
@@ -3663,9 +3680,8 @@ function pf3DetailHTML(){
   const tgM=TG_META[tk.toUpperCase()]||{};
   // Флаг «устарел»: основной (за всё время) сильно расходится со свежим срезом —
   // значит старые таргеты тянут среднее, ориентир — свежий.
-  const TG_STALE_PCT=10;
   const tgDiv=(hasTarget&&hasTargetR&&target>0)?Math.abs(targetR-target)/target*100:0;
-  const tgStale=tgDiv>=TG_STALE_PCT;
+  const tgStale=tgDiv>=TG_STALE_PCT;   // TG_STALE_PCT — общий модульный порог
   const tf=pf3TypeFull(d,r);
   const typeChip=(()=>{const p=(tf&&tf.primary)||r[5];if(!p||p==='—')return '';const m1=PF3_TYPE_META[p];let txt=`${m1?m1[0]+' ':''}${T(p)}`;if(tf&&tf.secondary){const m2=PF3_TYPE_META[tf.secondary];txt+=` · ${m2?m2[0]+' ':''}${T(tf.secondary)}`}return txt})();
   const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4],typeChip].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');

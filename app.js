@@ -3734,11 +3734,36 @@ async function aiDashRun(){
   }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=dashboard)','Worker unreachable (?action=dashboard)'),true);}
   _aiDashBusy=false;renderAll();
 }
+// Описание вкладки 📊 AI-Dashboard (по клику на «!») — переиспользуем faq-оверлей.
+function aiDashInfoHTML(){
+  const li=s=>`<li>${s}</li>`;
+  return`<button class="faq-close" onclick="toggleFaq()">✕</button>
+  <h2>📊 AI-Dashboard</h2>
+  <div class="faq-body">
+  <p>${RT('Кнопка <b>«✨ Сгенерировать»</b> запускает <b>AI Proto</b> — главную аналитическую модель. Имея самый свежий снапшот портфеля, ваши правила (<b>🧠 память</b>) и веб-поиск свежих новостей и макрокартины, она формирует набор карточек с самой полезной информацией для портфеля прямо сейчас.','The <b>«✨ Generate»</b> button runs <b>AI Proto</b> — the main analytical model. With the freshest portfolio snapshot, your saved rules (<b>🧠 memory</b>) and a web search of fresh news and macro, it builds a set of cards with the most useful information for the portfolio right now.')}</p>
+  <p><b>${RT('Что попадает в дашборд','What the dashboard covers')}:</b></p>
+  <ul class="dash-bul">
+  ${li(RT('общее состояние портфеля и где он относительно эталонных индексов (OMXS30, Nasdaq 100, S&amp;P 500)','overall portfolio state and where it stands vs benchmark indices (OMXS30, Nasdaq 100, S&amp;P 500)'))}
+  ${li(RT('что важно сегодня и на этой неделе — события, отчёты, свежие новости','what matters today and this week — events, earnings, fresh news'))}
+  ${li(RT('возможности: что докупить и какие новые идеи (с уровнями входа и долями в kr)','opportunities: what to add and new ideas (with entry levels and sizing in kr)'))}
+  ${li(RT('риски: что сократить или продать и почему','risks: what to trim or sell and why'))}
+  ${li(RT('макро и рынок — как это влияет на портфель','macro and market — how it affects the portfolio'))}
+  ${li(RT('диверсификация: перевес или недовес секторов и гео','diversification: sector / geo over- and under-weights'))}
+  ${li(RT('конкретный план действий на ближайшие 1–2 недели с суммами в kr','a concrete action plan for the next 1–2 weeks with amounts in kr'))}
+  </ul>
+  <p class="pf3-asof">${RT('Прогон с веб-поиском занимает до 1–2 минут и тарифицируется по токенам (стоимость показывается рядом и идёт в общий AI-расход). Это справочная аналитика, а не индивидуальная инвестиционная рекомендация.','A run with web search takes up to 1–2 minutes and is billed by tokens (cost is shown next to it and added to total AI spend). This is reference analytics, not individual investment advice.')}</p>
+  </div>`;
+}
+function aiDashInfo(){
+  const o=document.getElementById('faqOverlay');if(!o)return;
+  document.getElementById('faqCard').innerHTML=aiDashInfoHTML();
+  o.classList.remove('hidden');
+}
 function aiDashHTML(){
   const D=AI_DASH,inl=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
   const toneC={good:'dash-good',warn:'dash-warn',bad:'dash-bad',info:'dash-info'};
   const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun()"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую…','Generating…'):'✨ '+RT('Сгенерировать','Generate')+(D&&D.cards?' · '+RT('обновить','refresh'):'')}</button>`;
-  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard</span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · свежие новости + память','AI Proto · fresh news + memory')}</span>${btn}</div>${D&&D.headline?`<div class="dash-headline">${inl(D.headline)}</div>`:''}</section>`;
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard <span class="dash-info-btn" onclick="event.stopPropagation();aiDashInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · свежие новости + память','AI Proto · fresh news + memory')}</span>${btn}</div>${D&&D.headline?`<div class="dash-headline">${inl(D.headline)}</div>`:''}</section>`;
   if(_aiDashBusy&&(!D||!D.cards))h+=`<div class="pf3-empty" style="padding:24px">⏳ ${RT('AI Proto собирает свежие данные (web-поиск) и формирует дашборд… до 1–2 минут.','AI Proto is gathering fresh data (web search) and building the dashboard… up to 1–2 min.')}</div>`;
   else if(D&&D.cards&&D.cards.length)h+=`<div class="dash-grid">${D.cards.map(c=>`<section class="dash-card ${toneC[c.tone]||'dash-info'}"><div class="dash-card-hd">${c.icon||'•'} <b>${inl(c.title||'')}</b></div><ul class="dash-bul">${(c.bullets||[]).map(b=>`<li>${inl(b)}</li>`).join('')||`<li class="pf3-asof">—</li>`}</ul></section>`).join('')}</div>`;
   else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт дашборд по портфелю: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю.','Press «✨ Generate» — AI Proto with web search and your rules builds a portfolio dashboard.')}</div>`;

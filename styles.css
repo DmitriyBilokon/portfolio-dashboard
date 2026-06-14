@@ -915,3 +915,7 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .stk-mark.ok{color:var(--green)}.stk-mark.miss{color:var(--red)}
 .stk-exp{color:var(--text3);font-size:12px}
 .stk-body{padding:4px 12px 10px}
+
+/* Сворачивание разбора в карточке */
+.stkai-toggle{background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;font-weight:600;padding:4px 0;margin:2px 0 4px}
+.stkai-toggle:hover{text-decoration:underline}

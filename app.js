@@ -167,6 +167,8 @@ let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
+let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
+function stockAiToggle(sym){_stkCardOpen[sym]=!_stkCardOpen[sym];renderPF3();}
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
 // The visible SMA columns show d (1Y) or w (3Y) per the stock's chosen mode. Persisted in snapshotState.
 let SMA_TF={};
@@ -1694,6 +1696,7 @@ async function stockAiRun(ev){
     const j=await resp.json();
     if(j&&j.text){
       pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString()};
+      _stkCardOpen[sym]=true;
       // Обучающая база: привязка к тикеру, дате, цене.
       STOCK_AI_LOG=[{ticker:sym,name:r[1],ts:pf3StockAi.at,price:snap.price,ccy:snap.ccy,
         verdict:(j.data||{}).verdict||null,target:(j.data||{}).targetPrice||null,horizon:(j.data||{}).horizon||null,
@@ -1781,10 +1784,11 @@ function stockAiHTML(d,r){
     head=`<div class="stkai-verdict v-${data.verdict}">${v[0]} ${v[1]}${data.confidence?` · ${RT('увер.','conf.')} ${data.confidence}`:''}</div>
       <div class="stkai-bits">${bits.map(b=>`<span>${b}</span>`).join('')}</div>`;
   }
+  const open=!!_stkCardOpen[sym];
   const body=loading
     ? `<div class="stkai-load">⏳ ${RT('Анализирую: цены, фундаментал, веб-поиск новостей… (до минуты)','Analysing: prices, fundamentals, web news search… (up to a minute)')}</div>`
     : text
-      ? head+`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`
+      ? head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
       : `<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('AI-анализ акции','AI stock analysis')}</span>

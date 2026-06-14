@@ -3724,6 +3724,8 @@ async function aiDashRun(){
   renderAll();
   try{
     const snap=pf3AiSnapshot(PF3_KEY);   // портфель + investorRules + marketContext
+    snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';
+    snap.recoVerdicts=dashRecoMap();   // согласование picks с вердиктом сайта (вариант B)
     const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const j=await r.json();
     if(j&&j.dash&&Array.isArray(j.dash.cards)){
@@ -3804,6 +3806,26 @@ function aiDashHTML(){
   }
   else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт дашборд по портфелю: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю + лучшие рекомендации по акциям на 1–3 / 3–6 / 6–12 мес.','Press «✨ Generate» — AI Proto with web search and your rules builds a portfolio dashboard plus best stock picks for 1–3 / 3–6 / 6–12 months.')}</div>`;
   return h;
+}
+
+// Карта детерминированных вердиктов скоринга по всем тикерам дашборда —
+// передаётся AI Proto, чтобы его picks были согласованы с вердиктом «Рекомендация»
+// в карточке (вариант B). Компактно: ТИКЕР → [v, upside%, %отSMA50, %отSMA200, P/E, вПортфеле].
+function dashRecoMap(){
+  const seen=new Set(),out={};
+  const portTks=new Set(((DATA[PF3_KEY]&&DATA[PF3_KEY].rows)||[]).map(r=>String(r[2]||'').trim().toUpperCase()));
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
+    const {s50,s200}=smaIdx(d),h=d.headers,peC=h.indexOf('P/E');
+    d.rows.forEach((r,i)=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[7])||0;if(!(price>0))return;recalcPF(i,k);seen.add(tk);
+      let v=null;try{v=pf3Reco(d,r).v}catch(e){}
+      const num=c=>{const x=c>=0?parseFloat(r[c]):NaN;return isFinite(x)?x:null};
+      const D=c=>{const x=num(c);return(x&&x>0)?Math.round((price/x-1)*1000)/10:null};
+      const up=pf3EffUpside(d,r);
+      out[tk]=[v,up!=null?Math.round(up):null,D(s50),D(s200),num(peC),portTks.has(tk)?1:0];
+    });
+  });
+  return out;
 }
 
 // 🏆 Лучшие акции-кандидаты для портфеля по горизонтам — детерминированный отбор

@@ -3556,7 +3556,9 @@ function valSectorMedians(){
   return out;
 }
 // Тикеры портфеля с биржевыми символами (Yahoo/FMP).
-function valPortTickers(){return insiderPortTickers().map(x=>({...x,sym:exSymbol(x.tk,x.ccy)}))}
+// Все вкладки (портфели + индексные watchlist + AI-портфель): больше бумаг на
+// сектор → точнее медианы и шире охват недооценки.
+function valPortTickers(){return insiderAllTickers().map(x=>({...x,sym:exSymbol(x.tk,x.ccy)}))}
 let _valSecCache=null;
 async function valUpdateAll(){
   if(_valBusy)return;_valBusy=true;

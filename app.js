@@ -947,7 +947,7 @@ function renderAll(){
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
-    if(isAip&&!['list','sec','typ','health','aim'].includes(pf3Tab))pf3Tab='list';
+    if(isAip&&!['list','sec','typ','div','health','aim'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','sim','ai'].includes(pf3Tab))pf3Tab='list';
     if(!isAdmin()&&(pf3Tab==='ai'||pf3Tab==='prop'))pf3Tab='list';   // AI-вкладки — только админу
     (isAip

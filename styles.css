@@ -1046,3 +1046,9 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .dash-act.dash-bad{background:rgba(239,68,68,.15);color:#ef4444}
 .dash-act.dash-info{background:rgba(99,102,241,.15);color:#818cf8}
 .dash-card .dash-bul a,.dash-headline a{color:var(--accent,#818cf8)}
+
+/* AI-Dashboard: саб-вкладки портфелей */
+.dash-subtabs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.dash-tab{font-size:12px;font-weight:600;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer}
+.dash-tab:hover{color:var(--text)}
+.dash-tab.active{background:var(--accent,#6366f1);border-color:var(--accent,#6366f1);color:#fff}

@@ -73,7 +73,7 @@ function applyRemoteState(s){
   if(s.val&&typeof s.val==='object') VAL=s.val;
   if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
-  if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=s.aiDash;
+  if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=(s.aiDash.cards||s.aiDash.headline)?{[PF3_KEY]:s.aiDash}:s.aiDash;   // миграция старого одиночного дашборда в карту по портфелям
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -179,8 +179,8 @@ let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let AI_SPEND={usd:0,runs:0,in:0,out:0,searches:0};   // 💸 накопленные AI-расходы (sync)
-let AI_DASH=null;   // 📊 AI-Dashboard: {headline,cards,asOf,at,cost} (sync)
-let _aiDashBusy=false;
+let AI_DASH={};   // 📊 AI-Dashboard: {tabKey:{headline,cards,picks,asOf,at,cost}} — отдельно по портфелям (sync)
+let _aiDashBusy=false,_aiDashSub=null,_aiDashProg='';
 let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (sync): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
 let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
 let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
@@ -1616,7 +1616,8 @@ function pf3AiSnapshot(key){
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
   // Индексные вкладки: watchlist-снапшот — все акции с уровнями, фазой и
   // сигналом; AI выделяет самые актуальные и рекомендует действия.
-  if(key!==PF3_KEY){
+  // Любой портфель (мой, Anna, AIP) идёт в портфельную ветку ниже.
+  if(!pf3IsPort(key)){
     const peC=h.indexOf('P/E'),psC=h.indexOf('P/S');
     const nm=v=>{const n=parseFloat(v);return isFinite(n)&&n!==0?n:null};
     return{
@@ -1654,7 +1655,7 @@ function pf3AiSnapshot(key){
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
     // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
     // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.
-    marketContext:v3Tabs().filter(k=>k!==PF3_KEY&&DATA[k]).map(k=>{
+    marketContext:v3Tabs().filter(k=>!pf3IsPort(k)&&DATA[k]).map(k=>{
       const di=DATA[k],phases={};
       di.rows.forEach(r=>{const c=pf3Criterion(di,r);phases[c.label]=(phases[c.label]||0)+1});
       const last=(di.aiHistory||[])[0];
@@ -3717,24 +3718,35 @@ function insiderOpenCard(tk){
   if(!home){toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);return}
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
 }
-// ── 📊 AI-Dashboard: AI Proto формирует карточки по портфелю (web_search + память) ──
+// Портфели, для которых строится отдельный дашборд (мой + Anna + любые семейные).
+function dashPortTabs(){return v3Tabs().filter(k=>pf3MyPort(k))}
+// ── 📊 AI-Dashboard: AI Proto формирует ОТДЕЛЬНЫЙ дашборд по каждому портфелю ──
 async function aiDashRun(){
-  if(_aiDashBusy)return;_aiDashBusy=true;
-  const btn=document.getElementById('aiDashBtn');if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Генерирую…','Generating…');}
+  if(_aiDashBusy)return;_aiDashBusy=true;_aiDashProg='';
+  const tabs=dashPortTabs();
   renderAll();
+  let ok=0;
   try{
-    const snap=pf3AiSnapshot(PF3_KEY);   // портфель + investorRules + marketContext
-    snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';
-    snap.recoVerdicts=dashRecoMap();   // согласование picks с вердиктом сайта (вариант B)
-    const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
-    const j=await r.json();
-    if(j&&j.dash&&Array.isArray(j.dash.cards)){
-      aiSpendAdd(j.cost);
-      AI_DASH={headline:j.dash.headline||'',cards:j.dash.cards,picks:Array.isArray(j.dash.picks)?j.dash.picks:[],asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};
-      scheduleSave();toast('📊 '+RT('Дашборд готов','Dashboard ready'));
-    }else toast((j&&j.error)||RT('AI не ответил','AI did not respond'),true);
-  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=dashboard)','Worker unreachable (?action=dashboard)'),true);}
-  _aiDashBusy=false;renderAll();
+    for(let i=0;i<tabs.length;i++){
+      const k=tabs[i];
+      _aiDashProg=`${i+1}/${tabs.length} · ${TAB_LABEL(k)}`;
+      const btn=document.getElementById('aiDashBtn');if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Генерирую','Generating')+' '+_aiDashProg+'…';}
+      const snap=pf3AiSnapshot(k);   // портфель k + investorRules + marketContext
+      snap.portfolioName=TAB_LABEL(k);
+      snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';
+      snap.recoVerdicts=dashRecoMap(k);   // согласование picks с вердиктом сайта (вариант B)
+      try{
+        const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
+        const j=await r.json();
+        if(j&&j.dash&&Array.isArray(j.dash.cards)){
+          aiSpendAdd(j.cost);
+          AI_DASH[k]={headline:j.dash.headline||'',cards:j.dash.cards,picks:Array.isArray(j.dash.picks)?j.dash.picks:[],asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};
+          ok++;scheduleSave();if(!_aiDashSub)_aiDashSub=k;renderAll();
+        }else toast((j&&j.error||RT('AI не ответил','AI did not respond'))+' · '+TAB_LABEL(k),true);
+      }catch(e){toast(RT('Worker недоступен (нужен ?action=dashboard)','Worker unreachable (?action=dashboard)')+' · '+TAB_LABEL(k),true);}
+    }
+    if(ok)toast('📊 '+RT('Готово дашбордов','Dashboards ready')+': '+ok+'/'+tabs.length);
+  }finally{_aiDashBusy=false;_aiDashProg='';renderAll();}
 }
 // Описание вкладки 📊 AI-Dashboard (по клику на «!») — переиспользуем faq-оверлей.
 function aiDashInfoHTML(){
@@ -3794,26 +3806,31 @@ function aiDashPicksHTML(picks){
     +tbl('long','🥉 '+RT('6–12 мес','6–12 months'),RT('фундаментал и недооценка','fundamentals & value'));
 }
 function aiDashHTML(){
-  const D=AI_DASH;
+  const tabs=dashPortTabs();
+  if(!_aiDashSub||!tabs.includes(_aiDashSub))_aiDashSub=tabs[0]||PF3_KEY;
+  const sub=_aiDashSub,D=AI_DASH[sub];
   const toneC={good:'dash-good',warn:'dash-warn',bad:'dash-bad',info:'dash-info'};
   const cardBullets=c=>{const b=Array.isArray(c.bullets)?c.bullets:(c.bullets!=null?[c.bullets]:(c.text!=null?[c.text]:[]));return b.map(x=>dashMd(x)).filter(Boolean)};
-  const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun()"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую…','Generating…'):'✨ '+RT('Сгенерировать','Generate')+(D&&D.cards?' · '+RT('обновить','refresh'):'')}</button>`;
-  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard <span class="dash-info-btn" onclick="event.stopPropagation();aiDashInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · свежие новости + память','AI Proto · fresh news + memory')}</span>${btn}</div>${D&&D.headline?`<div class="dash-headline">${dashMd(D.headline)}</div>`:''}</section>`;
-  if(_aiDashBusy&&(!D||!D.cards))h+=`<div class="pf3-empty" style="padding:24px">⏳ ${RT('AI Proto собирает свежие данные (web-поиск) и формирует дашборд… до 1–2 минут.','AI Proto is gathering fresh data (web search) and building the dashboard… up to 1–2 min.')}</div>`;
+  const anyDone=tabs.some(k=>AI_DASH[k]&&AI_DASH[k].cards);
+  const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun()"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую','Generating')+(_aiDashProg?' '+_aiDashProg:'')+'…':'✨ '+RT('Сгенерировать','Generate')+(anyDone?' · '+RT('обновить','refresh'):'')+(tabs.length>1?' ('+tabs.length+')':'')}</button>`;
+  // Шапка + саб-вкладки по портфелям.
+  const subTabs=tabs.map(k=>{const dd=AI_DASH[k];const dot=dd&&dd.cards?'●':'○';return`<button class="dash-tab${k===sub?' active':''}" onclick="_aiDashSub=${JSON.stringify(k).replace(/"/g,'&quot;')};renderAll()">${dot} ${dashMd(TAB_LABEL(k))}</button>`}).join('');
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard <span class="dash-info-btn" onclick="event.stopPropagation();aiDashInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · отдельный анализ по каждому портфелю','AI Proto · separate analysis per portfolio')}</span>${btn}</div>${tabs.length>1?`<div class="dash-subtabs">${subTabs}</div>`:''}${D&&D.headline?`<div class="dash-headline">${dashMd(D.headline)}</div>`:''}</section>`;
+  if(_aiDashBusy&&(!D||!D.cards))h+=`<div class="pf3-empty" style="padding:24px">⏳ ${RT('AI Proto анализирует портфель','AI Proto is analysing the portfolio')} «${dashMd(TAB_LABEL(sub))}» ${RT('(web-поиск)… до 1–2 минут на портфель.','(web search)… up to 1–2 min per portfolio.')}</div>`;
   else if(D&&D.cards&&D.cards.length){
     h+=`<div class="dash-grid">${D.cards.map(c=>{const bl=cardBullets(c);return`<section class="dash-card ${toneC[String(c.tone||'').toLowerCase()]||'dash-info'}"><div class="dash-card-hd">${dashMd(c.icon||'•')} <b>${dashMd(c.title||'')}</b></div><ul class="dash-bul">${bl.map(b=>`<li>${b}</li>`).join('')||`<li class="pf3-asof">—</li>`}</ul></section>`}).join('')}</div>`;
     h+=aiDashPicksHTML(D.picks);
   }
-  else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт дашборд по портфелю: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю + лучшие рекомендации по акциям на 1–3 / 3–6 / 6–12 мес.','Press «✨ Generate» — AI Proto with web search and your rules builds a portfolio dashboard plus best stock picks for 1–3 / 3–6 / 6–12 months.')}</div>`;
+  else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт ОТДЕЛЬНЫЙ дашборд по каждому портфелю (мой и Anna): состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю + лучшие рекомендации на 1–3 / 3–6 / 6–12 мес. Переключайтесь между портфелями вкладками выше.','Press «✨ Generate» — AI Proto builds a SEPARATE dashboard per portfolio. Switch portfolios with the tabs above.')}</div>`;
   return h;
 }
 
 // Карта детерминированных вердиктов скоринга по всем тикерам дашборда —
 // передаётся AI Proto, чтобы его picks были согласованы с вердиктом «Рекомендация»
 // в карточке (вариант B). Компактно: ТИКЕР → [v, upside%, %отSMA50, %отSMA200, P/E, вПортфеле].
-function dashRecoMap(){
+function dashRecoMap(portKey){
   const seen=new Set(),out={};
-  const portTks=new Set(((DATA[PF3_KEY]&&DATA[PF3_KEY].rows)||[]).map(r=>String(r[2]||'').trim().toUpperCase()));
+  const portTks=new Set(((DATA[portKey||PF3_KEY]&&DATA[portKey||PF3_KEY].rows)||[]).map(r=>String(r[2]||'').trim().toUpperCase()));
   v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
     const {s50,s200}=smaIdx(d),h=d.headers,peC=h.indexOf('P/E');
     d.rows.forEach((r,i)=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;

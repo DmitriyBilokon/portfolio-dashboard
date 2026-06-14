@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14retry';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-15fi';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1115,6 +1115,47 @@ function insiderAggregate(rows, windowDays){
   };
 }
 
+// 🇸🇪 Реестр инсайдерской торговли Швеции — Finansinspektionen (Insynshandel),
+// официальный, бесплатный, без ключа. CSV-экспорт UTF-16LE, разделитель ';',
+// поиск по имени эмитента (Utgivare). Karaktär: Förvärv/Teckning → покупка (P),
+// Avyttring → продажа (S). Возвращает строки в формате finnhubInsider().
+const fiIssuer = name => String(name || '')
+  .replace(/\s+(ser\.?\s*)?[A-D]$/i, '')           // класс акции: «B», «ser. A»
+  .replace(/\s+(pref|stam)$/i, '')
+  .replace(/\s+(AB|ASA|A\/S|OYJ|PLC)\b\.?/i, '')   // юр. форма — FI ищет по основе
+  .trim();
+async function fiInsider(issuer, from, to){
+  if(!issuer) return { data: [] };
+  try{
+    const url = `https://marknadssok.fi.se/Publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&Utgivare=${encodeURIComponent(issuer)}&Transaktionsdatum.From=${from}&Transaktionsdatum.To=${to}&button=export&Page=1`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/csv' } });
+    if(!r.ok) return { err: 'http ' + r.status };
+    const text = new TextDecoder('utf-16le').decode(await r.arrayBuffer());
+    const lines = text.split(/\r?\n/).filter(l => l.indexOf(';') >= 0);
+    if(lines.length <= 1) return { data: [] };
+    const numSe = s => { const n = parseFloat(String(s || '').replace(/[\s ]/g, '').replace(',', '.')); return isFinite(n) ? n : null; };
+    const out = [];
+    for(let i = 1; i < lines.length; i++){
+      const c = lines[i].split(';');   // 0 Publ · 1 Emittent · 4 PDMR · 11 Karaktär · 15 TxDate · 16 Volym · 18 Pris
+      if(c.length < 20) continue;
+      const kar = String(c[11] || '').toLowerCase();
+      const code = /f[öo]rv[äa]rv|teckn/.test(kar) ? 'P' : /avyttr/.test(kar) ? 'S' : null;
+      if(!code) continue;
+      const shares = numSe(c[16]);
+      if(!(shares > 0)) continue;
+      out.push({
+        name: String(c[4] || c[3] || '').slice(0, 60),
+        transactionCode: code,
+        change: shares,
+        transactionPrice: numSe(c[18]),
+        transactionDate: String(c[15] || '').slice(0, 10) || null,
+        filingDate: String(c[0] || '').slice(0, 10) || null,
+      });
+    }
+    return { data: out };
+  }catch(e){ return { err: 'net' }; }
+}
+
 // ── 🔬 AI-анализ одной акции с веб-поиском новостей (карточка → кнопка) ─────
 // Клиент шлёт снапшот акции (цена, SMA, уровни, фундаментал, таргет) + контекст
 // портфеля (доли по секторам, концентрация, кэш) + журнал прошлых анализов по
@@ -1539,7 +1580,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets · valuation · reco · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1574,26 +1615,33 @@ export default {
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'insider'){
-      // POST {symbols:[...], from, to, windowDays}: батч инсайдерских сводок.
+      // POST {items:[{tk,name,ccy}] | symbols:[...], from, to, windowDays}: батч сводок.
+      // US (Finnhub, нужен FINNHUB_KEY) + SE/Nordic в SEK (Finansinspektionen, без ключа).
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      if(!env.FINNHUB_KEY) return json({ error: 'FINNHUB_KEY не задан — добавьте Secret в настройках worker' }, 500);
       try{
         const body = await request.json();
-        const syms = (Array.isArray(body.symbols) ? body.symbols : []).slice(0, 25).map(s => String(s).trim().toUpperCase()).filter(Boolean);
+        const items = (Array.isArray(body.items) ? body.items
+            : (Array.isArray(body.symbols) ? body.symbols : []).map(s => ({ tk: s })))
+          .slice(0, 25)
+          .map(x => ({ tk: String(x.tk || '').trim().toUpperCase(), name: String(x.name || '').trim(), ccy: String(x.ccy || '').trim().toUpperCase() }))
+          .filter(x => x.tk);
         const today = new Date().toISOString().slice(0, 10);
         const from = body.from || new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
         const to = body.to || today;
         const out = {};
-        // Параллельно, но чанками по 8 — щадим Finnhub (60/min) и subrequest-лимит.
-        for(let i = 0; i < syms.length; i += 8){
-          const chunk = syms.slice(i, i + 8);
-          await Promise.all(chunk.map(async s => {
-            const r = await finnhubInsider(s, from, to, env.FINNHUB_KEY);
-            out[s] = r.err ? { err: r.err } : { ...insiderAggregate(r.data, body.windowDays), from, to, at: new Date().toISOString() };
+        for(let i = 0; i < items.length; i += 8){
+          const chunk = items.slice(i, i + 8);
+          await Promise.all(chunk.map(async it => {
+            const swedish = it.ccy === 'SEK' || /\.ST$/i.test(it.tk);
+            let r, src, valCcy;
+            if(swedish){ r = await fiInsider(fiIssuer(it.name || it.tk), from, to); src = 'fi'; valCcy = 'SEK'; }
+            else if(env.FINNHUB_KEY){ r = await finnhubInsider(it.tk, from, to, env.FINNHUB_KEY); src = 'finnhub'; valCcy = 'USD'; }
+            else { r = { err: 'no-key' }; src = 'finnhub'; valCcy = 'USD'; }
+            out[it.tk] = r.err ? { err: r.err, src } : { ...insiderAggregate(r.data, body.windowDays), from, to, at: new Date().toISOString(), src, valCcy };
           }));
-          if(i + 8 < syms.length) await sleep(300);
+          if(i + 8 < items.length) await sleep(300);
         }
         return json(out);
       }catch(e){ return json({ error: String(e.message || e) }, 500); }

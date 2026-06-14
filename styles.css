@@ -1006,3 +1006,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .dv-bar>span{display:block;height:100%;background:linear-gradient(90deg,#6366f1,#a855f7)}
 .dv-tbl tr.dv-hot .dv-bar>span{background:linear-gradient(90deg,#f59e0b,#ef4444)}
 .dv-missing{font-size:12px;color:var(--text2);margin-top:8px}
+
+/* 🇸🇪 Источник инсайдеров (Finansinspektionen) */
+.ins-src{font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,.15);color:#818cf8;vertical-align:middle}

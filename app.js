@@ -1843,7 +1843,7 @@ async function insiderUpdateAll(){
     for(let i=0;i<list.length;i+=12){
       const chunk=list.slice(i,i+12);
       try{
-        const r=await fetch(PRICE_PROXY+'?action=insider',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.tk),from,to:today,windowDays:10})});
+        const r=await fetch(PRICE_PROXY+'?action=insider',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({items:chunk.map(x=>({tk:x.tk,name:x.name,ccy:x.ccy})),from,to:today,windowDays:10})});
         const j=await r.json();
         if(j&&!j.error){
           for(const tk of Object.keys(j)){
@@ -1868,25 +1868,27 @@ async function insiderUpdateAll(){
     }
     scheduleSave();
     toast('🕵 '+RT(`Инсайдеры обновлены: ${withData}/${list.length} с данными · ${clusters} нов. кластер.`,`Insiders updated: ${withData}/${list.length} with data · ${clusters} new cluster(s)`));
-  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=insider + FINNHUB_KEY)','Worker unreachable (?action=insider + FINNHUB_KEY)'),true);}
+  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=insider)','Worker unreachable (?action=insider)'),true);}
   finally{_insiderBusy=false;renderAll();}
 }
-function insiderFmtUSD(v){return v==null?'—':'$'+Math.round(v).toLocaleString('en-US')}
+function insiderFmtUSD(v,ccy){if(v==null)return'—';const n=Math.round(v);return ccy==='SEK'?n.toLocaleString('sv-SE')+' kr':'$'+n.toLocaleString('en-US')}
 function insiderSetFilter(k,val){insiderFilter[k]=(k==='minUSD')?(parseFloat(val)||0):val;renderPF3();}
 // Панель инсайдеров в карточке акции.
 function insiderHTML(d,r){
   const tk=String(r[2]||'').trim().toUpperCase();
   const v=INSIDER[tk];
+  const cc=v&&v.valCcy;
   const cluster=v&&v.cluster;
-  const head=`<div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')} ${cluster?`<span class="ins-cluster">🟢 CLUSTER BUY · ${cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${cluster.sumUSD?' · '+insiderFmtUSD(cluster.sumUSD):''}</span>`:''}</span>
+  const srcL=v&&v.src==='fi'?' <span class="ins-src">FI 🇸🇪</span>':'';
+  const head=`<div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')}${srcL} ${cluster?`<span class="ins-cluster">🟢 CLUSTER BUY · ${cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${cluster.sumUSD?' · '+insiderFmtUSD(cluster.sumUSD,cc):''}</span>`:''}</span>
     <span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
-  if(!v||v.err)return`<section class="pf3-panel">${head}<div class="pf3-empty">${v&&v.err==='auth'?RT('Неверный Finnhub-ключ (FINNHUB_KEY)','Invalid Finnhub key'):RT('Нет данных. Нажмите «🕵 AI Insider» на 🏠 Home (Finnhub — только US-бумаги).','No data. Press «🕵 AI Insider» on 🏠 Home (Finnhub — US tickers only).')}</div></section>`;
+  if(!v||v.err)return`<section class="pf3-panel">${head}<div class="pf3-empty">${v&&v.err==='auth'?RT('Неверный Finnhub-ключ (FINNHUB_KEY)','Invalid Finnhub key'):v&&v.err==='no-key'?RT('Для US-бумаг нужен FINNHUB_KEY в воркере.','FINNHUB_KEY needed in the worker for US tickers.'):RT('Нет данных. Нажмите «🕵 AI Insider» на 🏠 Home (US — Finnhub, SE — Finansinspektionen).','No data. Press «🕵 AI Insider» on 🏠 Home (US — Finnhub, SE — Finansinspektionen).')}</div></section>`;
   if(!v.txCount)return`<section class="pf3-panel">${head}<div class="pf3-empty">${RT('Инсайдерских сделок за 30 дней не найдено','No insider transactions in the last 30 days')}</div></section>`;
   // Сводка
   const cards=`<div class="ins-sum">
-    <div class="ins-card ins-buy"><div class="ins-l">${RT('Покупки','Buys')}</div><div class="ins-v">${insiderFmtUSD(v.buyUSD)}</div><div class="ins-s">${pf3Fmt(v.buyShares)} ${RT('акц.','sh.')}</div></div>
-    <div class="ins-card ins-sell"><div class="ins-l">${RT('Продажи','Sells')}</div><div class="ins-v">${insiderFmtUSD(v.sellUSD)}</div><div class="ins-s">${pf3Fmt(v.sellShares)} ${RT('акц.','sh.')}</div></div>
-    <div class="ins-card"><div class="ins-l">${RT('Нетто','Net')}</div><div class="ins-v ${v.netUSD>=0?'pf3-up':'pf3-down'}">${v.netUSD>=0?'+':''}${insiderFmtUSD(v.netUSD)}</div><div class="ins-s">${RT('покупки − продажи','buys − sells')}</div></div>
+    <div class="ins-card ins-buy"><div class="ins-l">${RT('Покупки','Buys')}</div><div class="ins-v">${insiderFmtUSD(v.buyUSD,cc)}</div><div class="ins-s">${pf3Fmt(v.buyShares)} ${RT('акц.','sh.')}</div></div>
+    <div class="ins-card ins-sell"><div class="ins-l">${RT('Продажи','Sells')}</div><div class="ins-v">${insiderFmtUSD(v.sellUSD,cc)}</div><div class="ins-s">${pf3Fmt(v.sellShares)} ${RT('акц.','sh.')}</div></div>
+    <div class="ins-card"><div class="ins-l">${RT('Нетто','Net')}</div><div class="ins-v ${v.netUSD>=0?'pf3-up':'pf3-down'}">${v.netUSD>=0?'+':''}${insiderFmtUSD(v.netUSD,cc)}</div><div class="ins-s">${RT('покупки − продажи','buys − sells')}</div></div>
   </div>`;
   // Фильтры
   const fl=`<div class="ins-filters">
@@ -1904,7 +1906,7 @@ function insiderHTML(d,r){
     <span class="ins-code ${t.code==='P'?'p':t.code==='S'?'s':''}">${t.code==='P'?'🟢 '+RT('Покупка','Buy'):t.code==='S'?'🔴 '+RT('Продажа','Sell'):t.code}</span>
     <span class="ins-name">${t.name||'—'}</span>
     <span class="ins-qty">${pf3Fmt(t.shares)} × ${t.price!=null?pf3Fmt(t.price,2):'—'}</span>
-    <span class="ins-val">${t.value!=null?insiderFmtUSD(t.value):'—'}</span>
+    <span class="ins-val">${t.value!=null?insiderFmtUSD(t.value,cc):'—'}</span>
     <span class="ins-date">${t.date||''}</span>
   </div>`).join(''):`<div class="pf3-empty" style="padding:6px">${RT('Под фильтр ничего не попадает','Nothing matches the filter')}</div>`;
   return`<section class="pf3-panel">${head}${cards}${fl}<div class="ins-list">${rows}</div></section>`;
@@ -3662,15 +3664,15 @@ function homeInsiderHTML(){
   const withData=ents.filter(e=>e.txCount>0);
   const anyAt=ents.map(e=>e.at).filter(Boolean).sort().pop();
   if(!ents.length)return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')}</span></div>
-    <div class="pf3-empty">${RT('Нажмите «🕵 AI Insider», чтобы собрать инсайдерские сделки по портфелю. Finnhub отдаёт данные только по US-бумагам.','Press «🕵 AI Insider» to pull insider trades across the portfolio. Finnhub covers US tickers only.')}</div></section>`;
+    <div class="pf3-empty">${RT('Нажмите «🕵 AI Insider», чтобы собрать инсайдерские сделки по портфелю. US — Finnhub, шведские (SEK) — Finansinspektionen.','Press «🕵 AI Insider» to pull insider trades across the portfolio. US via Finnhub, Swedish (SEK) via Finansinspektionen.')}</div></section>`;
   const clusters=withData.filter(e=>e.cluster).sort((a,b)=>b.cluster.uniqueBuyers-a.cluster.uniqueBuyers);
   const netBuy=withData.filter(e=>!e.cluster&&e.netUSD>0).sort((a,b)=>b.netUSD-a.netUSD);
   const row=(e,extra)=>`<div class="home-row" onclick="insiderOpenCard('${e.tk}')">
     ${logoHTML(e.tk,e.ccy,'pf3-row-logo')}
     <div class="pf3-row-name"><b>${e.name||e.tk}</b><span>${e.tk}</span></div>
     <div style="flex:1">${extra}</div></div>`;
-  const clHtml=clusters.length?clusters.map(e=>row(e,`<span class="ins-cluster">🟢 CLUSTER BUY · ${e.cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${e.cluster.sumUSD?' · '+insiderFmtUSD(e.cluster.sumUSD):''}</span>`)).join(''):'';
-  const nbHtml=netBuy.length?netBuy.slice(0,12).map(e=>row(e,`<span class="pf3-up" style="font-weight:700">+${insiderFmtUSD(e.netUSD)}</span> <span class="pf3-asof">${RT('нетто-покупка','net buy')}</span>`)).join(''):'';
+  const clHtml=clusters.length?clusters.map(e=>row(e,`<span class="ins-cluster">🟢 CLUSTER BUY · ${e.cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${e.cluster.sumUSD?' · '+insiderFmtUSD(e.cluster.sumUSD,e.valCcy):''}</span>`)).join(''):'';
+  const nbHtml=netBuy.length?netBuy.slice(0,12).map(e=>row(e,`<span class="pf3-up" style="font-weight:700">+${insiderFmtUSD(e.netUSD,e.valCcy)}</span> <span class="pf3-asof">${RT('нетто-покупка','net buy')}</span>`)).join(''):'';
   const sub=`${withData.length}/${ents.length} ${RT('с данными','with data')}${anyAt?' · '+RT('обновлено','updated')+' '+pf3DtRu(anyAt):''}`;
   let body='';
   if(clHtml)body+=`<div class="home-ins-sec"><div class="home-ins-h">🟢 ${RT('Кластерные покупки','Cluster buys')}</div>${clHtml}</div>`;
@@ -3705,7 +3707,7 @@ function homeHTML(){
   const chips=Object.entries(stat).sort((a,b)=>a[1].rank-b[1].rank)
     .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
   return`
-  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (Finnhub)','Insider transactions across the portfolio (Finnhub)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (US: Finnhub · SE: Finansinspektionen)','Insider transactions across the portfolio (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
   ${isAdmin()?homeValHTML():''}
   ${isAdmin()?homeInsiderHTML():''}
   <div class="home-grid">

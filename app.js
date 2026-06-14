@@ -823,6 +823,31 @@ function migrateFamilyPortfolios(){
     });
     d.count=d.rows.length;changed=true;
   }
+  // «Portfolio (Sergei)» — третий полноценный портфель (port:'1'), позиции со
+  // скрина US-брокера 2026-06-14, все суммы в USD. Кол-во выведено из Cost Basis
+  // ÷ Avg Price; кэш ≈ 26.7K USD пересчитан в SEK (база дашборда).
+  const SK='Portfolio (Sergei)';
+  if(!DATA[SK]){
+    const d=DATA[SK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:SK,cashFree:238851};
+    const SEED=[
+      // [тикер, название, сектор, валюта, флаг, кол-во, ср. цена покупки (avg), тип]
+      ['NVO','Novo Nordisk','Фармацевтика','USD','🇺🇸',11,65.69,'Акция'],
+      ['NVDA','NVIDIA','ИИ / Чипы','USD','🇺🇸',52,169.05,'Акция'],
+      ['MSFT','Microsoft','Технологии / ПО','USD','🇺🇸',13,385.47,'Акция'],
+      ['META','Meta Platforms','Технологии / Соцсети','USD','🇺🇸',7,589.44,'Акция'],
+      ['MA','Mastercard','Финансы / Платежи','USD','🇺🇸',4,488.12,'Акция'],
+      ['GOOGL','Alphabet','Технологии / Интернет','USD','🇺🇸',13,153.63,'Акция'],
+      ['AVGO','Broadcom','Полупроводники','USD','🇺🇸',10,391.80,'Акция'],
+      ['AMZN','Amazon','Технологии / E-commerce','USD','🇺🇸',9,214.88,'Акция'],
+    ];
+    SEED.forEach(([tk,name,sec,ccy,flag,qty,buy,typ])=>{
+      const row=new Array(d.headers.length).fill('');
+      row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]=typ;
+      row[6]=qty;row[7]=0;row[8]=ccy;row[9]=buy;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
+      d.rows.push(row);
+    });
+    d.count=d.rows.length;changed=true;
+  }
   if(changed&&!applyingRemote)scheduleSave();
 }
 // Восстановление выбора доп. колонок из localStorage, если облачная копия

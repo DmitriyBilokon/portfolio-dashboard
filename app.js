@@ -1820,10 +1820,23 @@ function aiRecoHTML(d,r){
 // Уникальные тикеры портфельных вкладок → worker (Finnhub) → сводки в INSIDER;
 // для новых кластерных покупок шлём Telegram-алерт.
 let _insiderBusy=false;
+// Только портфельные вкладки (для Valuation Check — секторные медианы по портфелю).
 function insiderPortTickers(){
   const seen=new Set(),out=[];
   v3Tabs().filter(k=>pf3IsPort(k)).forEach(k=>{
     (DATA[k].rows||[]).forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();
+      if(tk&&!seen.has(tk)){seen.add(tk);out.push({tk,name:r[1],ccy:r[8]||'USD'})}});
+  });
+  return out;
+}
+// ВСЕ вкладки с бумагами (портфели + индексные watchlist + AI-портфель) —
+// для кнопки «🕵 AI Insider»: проходим по US (Finnhub) и SE (Finansinspektionen).
+function insiderAllTickers(){
+  const seen=new Set(),out=[];
+  const keys=[...v3Tabs()];
+  if(DATA[AIP_KEY]&&Array.isArray(DATA[AIP_KEY].rows))keys.push(AIP_KEY);
+  keys.forEach(k=>{const d=DATA[k];if(!d)return;
+    (d.rows||[]).forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();
       if(tk&&!seen.has(tk)){seen.add(tk);out.push({tk,name:r[1],ccy:r[8]||'USD'})}});
   });
   return out;
@@ -1833,7 +1846,7 @@ async function insiderUpdateAll(){
   _insiderBusy=true;
   const btn=document.getElementById('insiderBtn');
   if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
-  const list=insiderPortTickers();
+  const list=insiderAllTickers();   // все вкладки: US (Finnhub) + SE (Finansinspektionen)
   const today=new Date().toISOString().slice(0,10);
   const from=new Date(Date.now()-30*86400e3).toISOString().slice(0,10);
   const names={};list.forEach(x=>names[x.tk]=x.name);

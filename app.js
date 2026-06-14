@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -72,6 +72,7 @@ function applyRemoteState(s){
   if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
   if(s.val&&typeof s.val==='object') VAL=s.val;
   if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
+  if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -176,6 +177,7 @@ let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evE
 let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
+let AI_SPEND={usd:0,runs:0,in:0,out:0,searches:0};   // 💸 накопленные AI-расходы (sync)
 let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (sync): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
 let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
 let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
@@ -1676,7 +1678,8 @@ async function pf3AiRun(){
     const j=await r.json();
     if(j&&j.text){
       const d=DATA[key];
-      const entry={text:j.text,proposal:j.proposal||null,at:new Date().toISOString()};
+      aiSpendAdd(j.cost);
+      const entry={text:j.text,proposal:j.proposal||null,at:new Date().toISOString(),cost:j.cost||null};
       d.aiHistory=[entry,...(d.aiHistory||(d.aiReport?[d.aiReport]:[]))].slice(0,10);   // keep the last 10 runs
       delete d.aiReport;   // superseded by aiHistory
       scheduleSave();
@@ -1732,12 +1735,13 @@ async function stockAiRun(ev){
     const resp=await fetch(PRICE_PROXY+'?action=stockai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const j=await resp.json();
     if(j&&j.text){
-      pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString()};
+      aiSpendAdd(j.cost);
+      pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString(),cost:j.cost||null};
       _stkCardOpen[sym]=true;
       // Обучающая база: привязка к тикеру, дате, цене.
       STOCK_AI_LOG=[{ticker:sym,name:r[1],ts:pf3StockAi.at,price:snap.price,ccy:snap.ccy,
         verdict:(j.data||{}).verdict||null,target:(j.data||{}).targetPrice||null,horizon:(j.data||{}).horizon||null,
-        data:j.data||null,text:j.text},...(STOCK_AI_LOG||[])].slice(0,300);
+        cost:j.cost||null,data:j.data||null,text:j.text},...(STOCK_AI_LOG||[])].slice(0,300);
       scheduleSave();
       toast('🔬 '+RT('Анализ готов','Analysis ready'));
     }else{pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast((j&&j.error)||'AI не ответил',true);}
@@ -1747,6 +1751,11 @@ async function stockAiRun(ev){
 // ── 🔄 AI-Рекомендация: единый вердикт по карточке (техника+фундаментал+оценка
 // +новости+макро) с web_search. Отдельно от детерминированного скоринга.
 const AI_RECO_META={buy:['🟢',RT('Купить','Buy'),'buy'],wait:['🟡',RT('Ждать','Wait'),'wait'],sell:['🔴',RT('Продать','Sell'),'sell'],avoid:['⛔',RT('Избегать','Avoid'),'avoid']};
+// 💸 Учёт стоимости AI-прогонов (приходит в поле cost ответа воркера).
+function aiSpendAdd(c){if(!c)return;AI_SPEND.usd=(AI_SPEND.usd||0)+(c.usd||0);AI_SPEND.runs=(AI_SPEND.runs||0)+1;AI_SPEND.in=(AI_SPEND.in||0)+(c.inTok||0);AI_SPEND.out=(AI_SPEND.out||0)+(c.outTok||0);AI_SPEND.searches=(AI_SPEND.searches||0)+(c.searches||0);}
+const costUsd=c=>(c&&typeof c.usd==='number')?'$'+c.usd.toFixed(c.usd<1?3:2):'';
+function costLine(c){if(!c||typeof c.usd!=='number')return'';const k=n=>n>=1000?Math.round(n/1000)+'k':(n||0);return`${costUsd(c)} · ${k(c.inTok)}→${k(c.outTok)} ${RT('ток.','tok')}${c.searches?' · '+c.searches+' '+RT('поиск.','search'):''}`;}
+function aiSpendLine(){if(!AI_SPEND||!AI_SPEND.runs)return'';return`💸 ${RT('AI-расходы','AI spend')}: $${(AI_SPEND.usd||0).toFixed(2)} · ${AI_SPEND.runs} ${RT('прогон.','runs')}`;}
 async function aiRecoRun(ev){
   if(ev)ev.stopPropagation();
   if(_aiRecoLoading)return;
@@ -1759,10 +1768,11 @@ async function aiRecoRun(ev){
     const resp=await fetch(PRICE_PROXY+'?action=reco',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const j=await resp.json();
     if(j&&j.text){
+      aiSpendAdd(j.cost);
       const D=j.data||{};
       AI_RECO[tk]={verdict:j.verdict||null,confidence:D.confidence||null,headline:D.headline||null,
         entryLow:D.entryLow??null,entryHigh:D.entryHigh??null,keyRisks:Array.isArray(D.keyRisks)?D.keyRisks:[],
-        text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString()};
+        text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null};
       _aiRecoOpen[tk]=true;
       scheduleSave();
       toast('🔄 '+RT('AI-Рекомендация готова','AI recommendation ready'));
@@ -1776,7 +1786,7 @@ function aiRecoHTML(d,r){
   const loading=_aiRecoLoading===tk;
   const v=AI_RECO[tk];
   const btn=`<button class="pf3-btn pf3-btn-sm" onclick="aiRecoRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`;
-  const hd=`<div class="pf3-panel-hd"><span>🔄 ${RT('AI-Рекомендация','AI recommendation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span>${btn}</div>`;
+  const hd=`<div class="pf3-panel-hd"><span>🔄 ${RT('AI-Рекомендация','AI recommendation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at)+(v.cost?' · '+costUsd(v.cost):''):''}</span>${btn}</div>`;
   let body;
   if(loading)body=`<div class="stkai-load">⏳ ${RT('Анализирую: техника, фундаментал, новости и мировой контекст… (до минуты)','Analysing: technicals, fundamentals, news and global context… (up to a minute)')}</div>`;
   else if(v){
@@ -1957,6 +1967,7 @@ function stockAiHTML(d,r){
   const text=cur&&cur.text?cur.text:(saved?saved.text:null);
   const data=cur&&cur.data?cur.data:(saved?saved.data:null);
   const at=cur&&cur.at?cur.at:(saved?saved.ts:null);
+  const cost=cur&&cur.cost?cur.cost:(saved?saved.cost:null);
   const VB={add:['🟢',RT('Добавлять','Add')],watch:['🟡',RT('Наблюдать','Watch')],avoid:['🔴',RT('Не добавлять','Avoid')]};
   let head='';
   if(data&&VB[data.verdict]){
@@ -1973,7 +1984,7 @@ function stockAiHTML(d,r){
   const body=loading
     ? `<div class="stkai-load">⏳ ${RT('Анализирую: цены, фундаментал, веб-поиск новостей… (до минуты)','Analysing: prices, fundamentals, web news search… (up to a minute)')}</div>`
     : text
-      ? head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
+      ? head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
       : `<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('AI-анализ акции','AI stock analysis')}</span>
@@ -2011,6 +2022,7 @@ async function aiChatSend(){
       body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:AI_PREFS,snapshot:pf3AiSnapshot()})});
     const j=await r.json();
     if(j&&j.reply){
+      aiSpendAdd(j.cost);
       AI_CHAT.push({role:'assistant',content:j.reply,at:new Date().toISOString()});
       AI_CHAT=AI_CHAT.slice(-40);   // держим последние 40 сообщений
       (j.memory||[]).forEach(m=>{const t=String(m).trim();if(t&&!AI_PREFS.includes(t)){AI_PREFS.push(t);toast('🧠 Запомнил: '+t)}});
@@ -2034,12 +2046,13 @@ function aiChatScroll(){const b=document.getElementById('aiChatBox');if(b)b.scro
 function pf3AiHTML(){
   const H=pf3AiHist(),last=H[0];
   let h=`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${T('🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>
+    <div class="pf3-panel-hd"><span>${T('🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at)+(last.cost?' · '+costLine(last.cost):''):''}</span></div>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?T('⏳ Анализирую… (30–60 сек)'):T('🔮 Проанализировать портфель')}</button>
       <span class="pf3-ai-note">${v3Key===PF3_KEY?RT('Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков, кэш и ваши правила (🧠) — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»).','Claude gets your holdings, live prices, SMA/support levels, analyst targets, cash and your rules (🧠) — and returns a report with recommendations plus a rebalancing plan (the ⚖️ Proposal tab).'):RT(`Claude получит все ${pf3D().rows.length} акций вкладки с живыми ценами, уровнями, фазами и таргетами — и выделит самые актуальные с рекомендациями (правила 🧠 учитываются).`,`Claude gets all ${pf3D().rows.length} stocks of this tab with live prices, levels, phases and targets — and highlights the most relevant ones with recommendations (your 🧠 rules apply).`)}</span>
     </div>
     ${last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
+    ${aiSpendLine()?`<div class="pf3-ai-note pf3-spend" title="${RT('Накоплено по всем AI-прогонам (анализ, рекомендации, чат). Оценка по тарифу Opus 4.8.','Accumulated across all AI runs. Estimated at Opus 4.8 pricing.')}">${aiSpendLine()}</div>`:''}
   </section>`;
   // Чат: вопросы по портфелю и рынку; ассистент сам выносит устойчивые
   // пожелания в память (список правил ниже).
@@ -2065,7 +2078,7 @@ function pf3AiHTML(){
   if(H.length>1){
     h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('📜 История запросов')}</span><span class="pf3-asof">${H.length-1} пред.</span></div>`;
     H.slice(1).forEach(e=>{
-      h+=`<details class="pf3-ai-hist"><summary>🗓 ${pf3DtRu(e.at)}</summary><div class="pf3-ai-report" style="margin-top:10px">${pf3Md(e.text)}</div></details>`;
+      h+=`<details class="pf3-ai-hist"><summary>🗓 ${pf3DtRu(e.at)}${e.cost?' · '+costUsd(e.cost):''}</summary><div class="pf3-ai-report" style="margin-top:10px">${pf3Md(e.text)}</div></details>`;
     });
     h+='</section>';
   }

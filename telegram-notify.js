@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14aiproto2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14cost';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -44,6 +44,19 @@ function exSymbol(ticker, ccy){
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const round2 = n => Math.round(n * 100) / 100;
 const FENCE = String.fromCharCode(96, 96, 96);   // тройная обратная кавычка — для встраивания json-блоков в системные промпты
+// Стоимость одного прогона из usage ответа Anthropic. Тариф Opus 4.8: $5 / $25
+// за 1М входных/выходных токенов; web_search ≈ $0.01 за запрос. Кэш — дешевле
+// (creation ×1.25, read ×0.1), но в этих вызовах кэш не используется.
+const AI_PRICE = { in: 5, out: 25, search: 0.01 };
+function aiCost(j){
+  const u = (j && j.usage) || {};
+  const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  const outTok = u.output_tokens || 0;
+  const searches = (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+  const billIn = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) * 1.25 + (u.cache_read_input_tokens || 0) * 0.1;
+  const usd = Math.round((billIn / 1e6 * AI_PRICE.in + outTok / 1e6 * AI_PRICE.out + searches * AI_PRICE.search) * 10000) / 10000;
+  return { inTok, outTok, searches, usd };
+}
 const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`;
 
 // Response helpers shared by every route.
@@ -594,11 +607,12 @@ async function aiAnalyze(env, snapshot){
   });
   if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
   const j = await r.json();
+  const cost = aiCost(j);
   const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(watch ? '' : '\n');
   if(!raw) throw new Error('Пустой ответ модели');
   if(watch){
-    try{ const parsed = JSON.parse(raw); if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null }; }catch(e){ /* fall back */ }
-    return { text: raw, proposal: null };
+    try{ const parsed = JSON.parse(raw); if(parsed && parsed.report) return { text: parsed.report, proposal: parsed.proposal || null, cost }; }catch(e){ /* fall back */ }
+    return { text: raw, proposal: null, cost };
   }
   // Портфель: вынуть финальный fenced-json (план ребалансировки) и убрать его из текста отчёта.
   let text = raw, proposal = null;
@@ -608,7 +622,7 @@ async function aiAnalyze(env, snapshot){
     const end = rest.indexOf(FENCE);
     if(end >= 0){ try{ proposal = JSON.parse(rest.slice(0, end).trim()); }catch(e){} text = raw.slice(0, i).trim(); }
   }
-  return { text, proposal };
+  return { text, proposal, cost };
 }
 
 // ── AI chat (Портфель 3.0 «AI Assistant»): multi-turn Q&A over the live
@@ -652,11 +666,12 @@ async function aiChat(env, body){
   const j = await r.json();
   const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
   if(!raw) throw new Error('Пустой ответ модели');
+  const cost = aiCost(j);
   try{
     const parsed = JSON.parse(raw);
-    if(parsed && parsed.reply) return { reply: parsed.reply, memory: Array.isArray(parsed.memory) ? parsed.memory : [] };
+    if(parsed && parsed.reply) return { reply: parsed.reply, memory: Array.isArray(parsed.memory) ? parsed.memory : [], cost };
   }catch(e){ /* schema miss — fall back to raw text */ }
-  return { reply: raw, memory: [] };
+  return { reply: raw, memory: [], cost };
 }
 
 // ── 🤖 AI Портфель: виртуальный портфель под управлением Claude ────────────
@@ -1126,7 +1141,7 @@ async function stockAnalyze(env, body){
     const end = rest.indexOf(FENCE);
     if(end >= 0){ try{ data = JSON.parse(rest.slice(0, end).trim()); }catch(e){} raw = raw.slice(0, i).trim(); }
   }
-  return { text: raw, data };
+  return { text: raw, data, cost: aiCost(j) };
 }
 
 // ── 🔄 AI-Рекомендация: единый вердикт по карточке акции (техника+фундаментал+
@@ -1200,7 +1215,7 @@ async function recoAnalyze(env, body){
   }
   const V = new Set(['buy', 'wait', 'sell', 'avoid']);
   const verdict = data && V.has(String(data.verdict)) ? data.verdict : null;
-  return { text: raw, verdict, data };
+  return { text: raw, verdict, data, cost: aiCost(j) };
 }
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──

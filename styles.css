@@ -978,3 +978,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* 💸 AI-расходы */
 .pf3-spend{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-weight:600;color:var(--text2)}
+
+/* ⚠️ Флаг «устарел»: «Рекомендация» изменилась после AI-анализа */
+.ai-stale{display:inline-block;font-size:12px;font-weight:700;color:#f59e0b;background:rgba(245,158,11,.13);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:4px 9px;margin-bottom:8px;cursor:help}

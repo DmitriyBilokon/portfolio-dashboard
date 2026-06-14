@@ -1736,12 +1736,12 @@ async function stockAiRun(ev){
     const j=await resp.json();
     if(j&&j.text){
       aiSpendAdd(j.cost);
-      pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString(),cost:j.cost||null};
+      pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString(),cost:j.cost||null,recoAt:snap.recoVerdict||null};
       _stkCardOpen[sym]=true;
       // Обучающая база: привязка к тикеру, дате, цене.
       STOCK_AI_LOG=[{ticker:sym,name:r[1],ts:pf3StockAi.at,price:snap.price,ccy:snap.ccy,
         verdict:(j.data||{}).verdict||null,target:(j.data||{}).targetPrice||null,horizon:(j.data||{}).horizon||null,
-        cost:j.cost||null,data:j.data||null,text:j.text},...(STOCK_AI_LOG||[])].slice(0,300);
+        cost:j.cost||null,recoAt:snap.recoVerdict||null,data:j.data||null,text:j.text},...(STOCK_AI_LOG||[])].slice(0,300);
       scheduleSave();
       toast('🔬 '+RT('Анализ готов','Analysis ready'));
     }else{pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast((j&&j.error)||'AI не ответил',true);}
@@ -1751,6 +1751,14 @@ async function stockAiRun(ev){
 // ── 🔄 AI-Рекомендация: единый вердикт по карточке (техника+фундаментал+оценка
 // +новости+макро) с web_search. Отдельно от детерминированного скоринга.
 const AI_RECO_META={buy:['🟢',RT('Купить','Buy'),'buy'],wait:['🟡',RT('Ждать','Wait'),'wait'],sell:['🔴',RT('Продать','Sell'),'sell'],avoid:['⛔',RT('Избегать','Avoid'),'avoid']};
+// Текущий детерминированный вердикт «Рекомендация» по строке (для флага «устарел»).
+function recoNowV(d,r){try{return pf3Reco(d,r).v}catch(e){return null}}
+const recoLbl=v=>(AI_RECO_META[v]||['','—'])[1];
+// Флаг «устарел»: «Рекомендация» изменилась после того, как сделали AI-анализ.
+function aiStaleBadge(recoAt,recoNow){
+  if(!recoAt||!recoNow||recoAt===recoNow)return'';
+  return`<div class="ai-stale" title="${RT('Детерминированная «Рекомендация» изменилась после этого AI-анализа — выводы могли устареть, запустите заново.','The deterministic recommendation changed after this AI analysis — it may be outdated; rerun it.')}">⚠️ ${RT('устарел','outdated')} · ${RT('Рекомендация','Reco')}: ${recoLbl(recoAt)} → ${recoLbl(recoNow)}</div>`;
+}
 // 💸 Учёт стоимости AI-прогонов (приходит в поле cost ответа воркера).
 function aiSpendAdd(c){if(!c)return;AI_SPEND.usd=(AI_SPEND.usd||0)+(c.usd||0);AI_SPEND.runs=(AI_SPEND.runs||0)+1;AI_SPEND.in=(AI_SPEND.in||0)+(c.inTok||0);AI_SPEND.out=(AI_SPEND.out||0)+(c.outTok||0);AI_SPEND.searches=(AI_SPEND.searches||0)+(c.searches||0);}
 const costUsd=c=>(c&&typeof c.usd==='number')?'$'+c.usd.toFixed(c.usd<1?3:2):'';
@@ -1772,7 +1780,7 @@ async function aiRecoRun(ev){
       const D=j.data||{};
       AI_RECO[tk]={verdict:j.verdict||null,confidence:D.confidence||null,headline:D.headline||null,
         entryLow:D.entryLow??null,entryHigh:D.entryHigh??null,keyRisks:Array.isArray(D.keyRisks)?D.keyRisks:[],
-        text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null};
+        text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null,recoAt:snap.recoVerdict||null};
       _aiRecoOpen[tk]=true;
       scheduleSave();
       toast('🔄 '+RT('AI-Рекомендация готова','AI recommendation ready'));
@@ -1795,7 +1803,7 @@ function aiRecoHTML(d,r){
     const entry=(v.entryLow!=null||v.entryHigh!=null)?`<span class="airk-bit">${RT('вход','entry')} ${[v.entryLow,v.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${v.ccy||''}</span>`:'';
     const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>E(String(x))).join(' · ')}</div>`:'';
     const open=!!_aiRecoOpen[tk];
-    body=`<div class="airk-head">
+    body=`${aiStaleBadge(v.recoAt,recoNowV(d,r))}<div class="airk-head">
         <span class="airk-verdict xr-${M[2]}">${M[0]} ${M[1]}</span>
         ${v.confidence?`<span class="airk-conf">${RT('увер.','conf.')} ${v.confidence}</span>`:''}
         ${entry}
@@ -1968,6 +1976,7 @@ function stockAiHTML(d,r){
   const data=cur&&cur.data?cur.data:(saved?saved.data:null);
   const at=cur&&cur.at?cur.at:(saved?saved.ts:null);
   const cost=cur&&cur.cost?cur.cost:(saved?saved.cost:null);
+  const recoAt=cur&&cur.recoAt?cur.recoAt:(saved?saved.recoAt:null);
   const VB={add:['🟢',RT('Добавлять','Add')],watch:['🟡',RT('Наблюдать','Watch')],avoid:['🔴',RT('Не добавлять','Avoid')]};
   let head='';
   if(data&&VB[data.verdict]){
@@ -1984,7 +1993,7 @@ function stockAiHTML(d,r){
   const body=loading
     ? `<div class="stkai-load">⏳ ${RT('Анализирую: цены, фундаментал, веб-поиск новостей… (до минуты)','Analysing: prices, fundamentals, web news search… (up to a minute)')}</div>`
     : text
-      ? head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
+      ? aiStaleBadge(recoAt,recoNowV(d,r))+head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
       : `<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('AI-анализ акции','AI stock analysis')}</span>

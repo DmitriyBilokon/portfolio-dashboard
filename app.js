@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -71,6 +71,7 @@ function applyRemoteState(s){
   if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
   if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
   if(s.val&&typeof s.val==='object') VAL=s.val;
+  if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -175,6 +176,9 @@ let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evE
 let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
+let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (sync): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
+let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
+let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
 let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
 function stockAiToggle(sym){_stkCardOpen[sym]=!_stkCardOpen[sym];renderPF3();}
 // Per-stock SMA timeframe: SMA_TF[ticker] = { mode:'1Y'|'3Y', d:[s50,s100,s200] (daily), w:[…] (weekly) }.
@@ -315,7 +319,7 @@ const I18N_EN={
 '📊 Рынок сейчас':'📊 Market now','рыночные фазы по технике и фундаменталу':'market phases by technicals & fundamentals','🟢 Покупать / докупать сейчас':'🟢 Buy / add now','цена в ±2% от SMA или поддержки':'price within ±2% of an SMA or support','🔴 Продавать — у сопротивления':'🔴 Sell — at resistance','цена в ±2% от сопротивления':'price within ±2% of resistance','🎯 Подходят к уровню покупки':'🎯 Approaching a buy level','до ближайшего уровня ≤ 5%':'≤ 5% to the nearest level','🔪 Падающие ножи':'🔪 Falling knives','не ловить — ждать стабилизации':'do not catch — wait for stabilization','⚡ Движения дня':'⚡ Top movers','самые сильные изменения за сессию':'biggest moves of the session','в портфеле':'in portfolio','акц.':'stk.','портфеля':'of portfolio','ср. за день':'avg day',
 'Сейчас никто не стоит у уровня покупки':'No stock sits at a buy level right now','У сопротивления никого нет':'Nothing at resistance','Никто не приближается к уровням':'Nothing approaching a level','Свободных падений нет — хороший знак':'No free falls — a good sign','Рынок спит':'The market is quiet','Нет данных':'No data',
 '🧪 Симуляция':'🧪 Simulation','тестовый режим — без реальных денег':'test mode — no real money','Цена покупки':'Buy price','🧪 Купить (тест)':'🧪 Buy (test)','🧪 Тестовый портфель':'🧪 Paper portfolio','покупка — в карточке акции, кнопка «Купить (тест)»':'buy from a stock card via “Buy (test)”','Вложено (тест)':'Invested (test)','Стоимость сейчас':'Value now','по живым ценам и курсу':'at live prices and FX','Результат':'Result','позиц.':'pos.','Вложено':'Invested','П/У':'P/L','куплено':'bought',
-'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
+'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','🔄 AI-Рекомендация':'🔄 AI recommendation','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
 'Календарь — отчёты и дивиденды':'Calendar — earnings & dividends','Сегодня':'Today','отчёт':'earnings','экс-дата':'ex-div','выплата':'payout','клик по событию открывает карточку':'click an event to open the card','💰 Дивиденды':'💰 Dividends','kr/год по текущим позициям':'kr/yr at current positions','Дивид./год':'Div./yr','Доходность':'Yield','Экс-дата':'Ex-date','Выплата':'Pay date','Мне в год':'My yearly','Дивидендных бумаг в портфеле нет':'No dividend payers here','Дат отчётов пока нет':'No earnings dates yet','Загружаю календарь отчётов и дивидендов…':'Loading the earnings & dividends calendar…',
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
 '🤖 AI Assistant — анализ портфеля и рекомендации':'🤖 AI Assistant — portfolio analysis & recommendations','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с ассистентом':'💬 Assistant chat','видит портфель, цены и ваши правила':'sees your portfolio, prices and rules','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память ассистента — правила инвестора':'🧠 Assistant memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
@@ -1093,6 +1097,12 @@ function faqHTML(){
    +row('<b>горизонт</b>','Ожидаемый срок реализации идеи — недели или месяцы.')
    +row('<b>🤖 AI-анализ / обновить</b>','Запускает свежий разбор: Claude собирает цены, уровни, фундаментал и через веб-поиск — последние новости компании. Каждый разбор сохраняется в обучающую базу (вкладка 🔬 AI-разборы), и при следующем анализе модель сверяет прошлый прогноз с фактом.')):''}
 
+  ${isAdmin()?sec(T('🔄 AI-Рекомендация'),
+    row('<b>Что это</b>','Кнопка «🔄 AI-Рекомендация» в карточке: Claude взвешивает ВСЁ вместе — технику (SMA, уровни, фаза), фундаментал (ROE, рост, долг, FCF), оценку (P/E, мультипликаторы vs сектор и история), плюс через веб-поиск свежие новости компании и глобальную макрокартину (ставки, инфляция, геополитика, настроение по сектору) — и выдаёт единый вердикт.')
+   +row('🟢 Купить · 🟡 Ждать · 🔴 Продать · ⛔ Избегать','Вердикт по тем же четырём значениям, что и скоринговая «Рекомендация», но с учётом новостей и мира. <b>buy</b> — техника и фундаментал за покупку, цена у входа; <b>wait</b> — смешанно или далеко от входа; <b>sell</b> — у сопротивления/выше таргета/перегрев/негатив; <b>avoid</b> — падающий нож или серьёзный риск.')
+   +row('<b>увер. low/medium/high</b>','Самооценка уверенности модели в вердикте. Рядом — заголовок-суть, зона входа и ключевые риски; «Показать разбор» раскрывает полный текст с разделами Новости/Техника/Фундаментал.')
+   +row('<b>Чем отличается от «Рекомендации»</b>','«Рекомендация» (выше в карточке) — мгновенный детерминированный скоринг сайта по технике+фундаменталу, считается всегда и бесплатно. «AI-Рекомендация» — отдельное поле: запускается вручную, учитывает живые новости и макро, стоит один AI-вызов на бумагу. Они не заменяют друг друга — смотрите оба.')):''}
+
   ${isAdmin()?sec(T('📐 Оценка — мультипликаторы (Valuation Check)'),
     row('<b>Кнопка «📐 Оценка»</b>','На 🏠 Home собирает мультипликаторы сразу по всему портфелю (Yahoo — живые значения, покрывает Nordic; FMP — историческая медиана). Результат — в карточке каждой акции и сводкой на Home. Finnhub /metric не используется (US-only).')
    +row('<b>P/E (TTM) · Forward P/E</b>','Цена / прибыль за 12 мес и по прогнозу на след. год. «n/a», если прибыль ≤ 0 — тогда смотрят на P/S.')
@@ -1734,6 +1744,59 @@ async function stockAiRun(ev){
   }catch(e){pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast(RT('Worker недоступен (нужен эндпоинт ?action=stockai)','Worker unreachable (?action=stockai)'),true);}
   renderPF3();
 }
+// ── 🔄 AI-Рекомендация: единый вердикт по карточке (техника+фундаментал+оценка
+// +новости+макро) с web_search. Отдельно от детерминированного скоринга.
+const AI_RECO_META={buy:['🟢',RT('Купить','Buy'),'buy'],wait:['🟡',RT('Ждать','Wait'),'wait'],sell:['🔴',RT('Продать','Sell'),'sell'],avoid:['⛔',RT('Избегать','Avoid'),'avoid']};
+async function aiRecoRun(ev){
+  if(ev)ev.stopPropagation();
+  if(_aiRecoLoading)return;
+  const d=pf3D(),r=d.rows[pf3SelIdx()];if(!r)return;
+  const tk=String(r[2]||'').toUpperCase();
+  _aiRecoLoading=tk;renderPF3();
+  try{
+    await pf3LoadFundamentals().catch(()=>{});   // подтянуть фундаментал в снапшот
+    const snap=stockAiSnapshot(d,r);
+    const resp=await fetch(PRICE_PROXY+'?action=reco',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
+    const j=await resp.json();
+    if(j&&j.text){
+      const D=j.data||{};
+      AI_RECO[tk]={verdict:j.verdict||null,confidence:D.confidence||null,headline:D.headline||null,
+        entryLow:D.entryLow??null,entryHigh:D.entryHigh??null,keyRisks:Array.isArray(D.keyRisks)?D.keyRisks:[],
+        text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString()};
+      _aiRecoOpen[tk]=true;
+      scheduleSave();
+      toast('🔄 '+RT('AI-Рекомендация готова','AI recommendation ready'));
+    }else toast((j&&j.error)||'AI не ответил',true);
+  }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=reco)','Worker unreachable (?action=reco)'),true);}
+  _aiRecoLoading=null;renderPF3();
+}
+function aiRecoToggle(tk){_aiRecoOpen[tk]=!_aiRecoOpen[tk];renderPF3();}
+function aiRecoHTML(d,r){
+  const tk=String(r[2]||'').toUpperCase();
+  const loading=_aiRecoLoading===tk;
+  const v=AI_RECO[tk];
+  const btn=`<button class="pf3-btn pf3-btn-sm" onclick="aiRecoRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`;
+  const hd=`<div class="pf3-panel-hd"><span>🔄 ${RT('AI-Рекомендация','AI recommendation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span>${btn}</div>`;
+  let body;
+  if(loading)body=`<div class="stkai-load">⏳ ${RT('Анализирую: техника, фундаментал, новости и мировой контекст… (до минуты)','Analysing: technicals, fundamentals, news and global context… (up to a minute)')}</div>`;
+  else if(v){
+    const M=AI_RECO_META[v.verdict]||['❔',v.verdict||'—','wait'];
+    const entry=(v.entryLow!=null||v.entryHigh!=null)?`<span class="airk-bit">${RT('вход','entry')} ${[v.entryLow,v.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${v.ccy||''}</span>`:'';
+    const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>esc(String(x))).join(' · ')}</div>`:'';
+    const open=!!_aiRecoOpen[tk];
+    body=`<div class="airk-head">
+        <span class="airk-verdict xr-${M[2]}">${M[0]} ${M[1]}</span>
+        ${v.confidence?`<span class="airk-conf">${RT('увер.','conf.')} ${v.confidence}</span>`:''}
+        ${entry}
+      </div>
+      ${v.headline?`<div class="airk-headline">${esc(String(v.headline))}</div>`:''}
+      ${risks}
+      <button class="stkai-toggle" onclick="aiRecoToggle('${tk}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
+      ${open?`<div class="pf3-ai-report">${pf3Md(v.text)}</div>`:''}`;
+  }else body=`<div class="pf3-empty">${RT('Нажмите «🔄 AI-Рекомендация» — Claude взвесит технику, фундаментал, оценку, свежие новости и мировую ситуацию и даст единый вердикт. Детерминированный скоринг «Рекомендация» выше остаётся как есть.','Press «🔄 AI recommendation» — Claude weighs technicals, fundamentals, valuation, fresh news and the global picture into one verdict. The deterministic «Рекомендация» score above stays as is.')}</div>`;
+  return`<section class="pf3-panel">${hd}${body}</section>`;
+}
+
 // ── 🕵 AI Insider: массовое обновление инсайдерских сделок по портфелю ──────
 // Уникальные тикеры портфельных вкладок → worker (Finnhub) → сводки в INSIDER;
 // для новых кластерных покупок шлём Telegram-алерт.
@@ -3524,6 +3587,7 @@ function pf3DetailHTML(){
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
     ${pf3RecoHTML(d,r)}
+    ${isAdmin()?aiRecoHTML(d,r):''}
     ${isAdmin()?stockAiHTML(d,r):''}
     ${isAdmin()?valHTML(d,r):''}
     ${isAdmin()?insiderHTML(d,r):''}

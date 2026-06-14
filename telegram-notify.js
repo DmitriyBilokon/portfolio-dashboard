@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14valuation';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14reco';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1105,6 +1105,80 @@ async function stockAnalyze(env, body){
   return { text: raw, data };
 }
 
+// ── 🔄 AI-Рекомендация: единый вердикт по карточке акции (техника+фундаментал+
+// оценка+новости+макро) с веб-поиском. Отдельно от детерминированного скоринга.
+const RECO_SYSTEM = `Ты — старший инвестиционный аналитик. Твоя задача — вынести ЕДИНЫЙ вердикт «Рекомендация» по ОДНОЙ акции для частного инвестора из Швеции (базовая валюта SEK), синтезируя ВСЕ доступные данные: технику, фундаментал, оценку, свежие новости и глобальную макрокартину. Не опирайся на один блок — взвешивай их вместе.
+
+Тебе передают JSON-снапшот карточки акции:
+- Идентификация: тикер, компания, биржа/валюта, сектор, тип (Качественная / Рост / Дивидендная / Защитная / Циклическая / Спекулятивная).
+- Цена и техника: текущая цена, изменение за день, позиция относительно SMA 50/100/200, поддержка/сопротивление, близость к уровням входа/выхода.
+- Фундаментал: P/E (TTM и forward), P/S, EV/EBITDA, PEG, ROE, маржа, рост выручки (YoY и CAGR), долг/капитал (D/E), свободный денежный поток (FCF).
+- Оценка: аналит. таргет (консенсус и свежий срез), потенциал к таргету в %, мультипликаторы относительно медианы сектора и собственной истории.
+- Контекст портфеля: доля позиции, концентрация по секторам, свободный кэш в SEK.
+- recoVerdict — текущий детерминированный вердикт скоринга сайта (техника+фундаментал+риск) и priorAnalyses — твои прошлые разборы: держи последовательность, меняй мнение только при новых данных и объясняй, что изменилось.
+
+ОБЯЗАТЕЛЬНО используй web_search (на дату анализа):
+1) Свежие новости и события по компании: отчёты, гайденс, сделки M&A, регуляторика, изменения рейтингов и таргетов аналитиков, инсайдерские сделки.
+2) Глобальная макрокартина: ставки ФРС / ЕЦБ / Riksbank, инфляция, геополитика, цены на сырьё и валюты, настроение по сектору и ведущим индексам — и как именно это влияет на ЭТУ бумагу.
+
+Методика вердикта (учти каждый блок, отметь, что перевесило):
+- ТЕХНИКА: тренд относительно SMA, фаза, расстояние до уровней. Падающий нож и перегрев — против покупки; цена у SMA 50/200 или поддержки при здоровом тренде — за покупку.
+- ФУНДАМЕНТАЛ: прибыльность (ROE, маржа), темп роста, долговая нагрузка, качество FCF.
+- ОЦЕНКА: дорого/дёшево к таргету, к медиане сектора и к собственной истории; PEG < 1 — рост недооценён. Низкие мультипликаторы часто бывают на ПИКЕ цикла — не путай дешевизну с возможностью.
+- НОВОСТИ: меняют ли свежие события инвестиционный тезис (позитив / негатив / нейтрально).
+- МАКРО: благоприятна ли среда для сектора и географии бумаги прямо сейчас.
+- РИСК И ПОРТФЕЛЬ: перевес сектора, концентрация, тип бумаги (для Спекулятивной планка для «buy» выше; для Защитной/Дивидендной важнее стабильность, а не апсайд).
+
+Выбери ОДИН вердикт строго из набора:
+- "buy"   — покупать/докупать: техника и фундаментал на стороне покупателя, цена у уровня входа, новости и макро не противоречат тезису.
+- "wait"  — ждать/держать: картина смешанная, или цена далеко от уровня входа, или ждём триггер (отчёт/событие) — явного перевеса нет.
+- "sell"  — сократить/продать: цена у сопротивления / выше таргета / перегрев, либо ухудшение фундаментала или негативные новости.
+- "avoid" — избегать/опасно: падающий нож, серьёзный негатив (новости/макро/фундаментал), высокий риск без компенсации.
+
+Правила: опирайся на переданные цифры и результаты веб-поиска, не выдумывай данные; будь конкретен — называй уровни и проценты; если сигналы противоречат друг другу, прямо скажи, что перевесило и почему. Цены — в торговой валюте бумаги.
+
+Сначала дай краткий разбор на русском языке в markdown по разделам:
+## 📰 Новости и макро
+## 📊 Техника
+## 💪 Фундаментал и оценка
+## 🎯 Вердикт и обоснование
+
+В САМОМ КОНЦЕ ответа добавь машиночитаемый блок (пользователю не показывается) — fenced json, открой и закрой его символами ${FENCE} :
+${FENCE}json
+{"verdict":"buy|wait|sell|avoid","confidence":"low|medium|high","headline":"<одна строка — суть вердикта>","entryLow":<число или null>,"entryHigh":<число или null>,"keyRisks":["<риск 1>","<риск 2>"],"asOf":"<YYYY-MM-DD>"}
+${FENCE}
+В конце основного текста одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»`;
+
+async function recoAnalyze(env, body){
+  const today = new Date().toISOString().slice(0, 10);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 8000,
+      thinking: { type: 'adaptive' },
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+      system: RECO_SYSTEM,
+      messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  const j = await r.json();
+  let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if(!raw) throw new Error('Пустой ответ модели');
+  let data = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){
+    const rest = raw.slice(i + FENCE.length + 4);
+    const end = rest.indexOf(FENCE);
+    if(end >= 0){ try{ data = JSON.parse(rest.slice(0, end).trim()); }catch(e){} raw = raw.slice(0, i).trim(); }
+  }
+  const V = new Set(['buy', 'wait', 'sell', 'avoid']);
+  const verdict = data && V.has(String(data.verdict)) ? data.verdict : null;
+  return { text: raw, verdict, data };
+}
+
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 const TARGET_RECENT_COL = 'Таргет 3м';   // свежий срез (последний квартал/месяц)
@@ -1405,7 +1479,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets · valuation · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets · valuation · reco · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1514,6 +1588,15 @@ export default {
       try{ return json(await stockAnalyze(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
+    if(url.searchParams.get('action') === 'reco'){
+      // POST снапшот карточки → AI-Рекомендация (вердикт+разбор) с web_search.
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json(await recoAnalyze(env, await request.json())); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
     if(url.searchParams.get('action') === 'aipreset'){
       // ♻️ Обнуление AI-портфеля (кнопка на вкладке 🤖, только админ).
       const adm = await requireAdmin(request, env);
@@ -1546,6 +1629,9 @@ export default {
         { name: '🔬 AI-анализ акции (STOCKAI_SYSTEM)',
           about: 'Кнопка «🤖 AI-анализ» в карточке акции. Снапшот бумаги + контекст портфеля + прошлые разборы; через web_search — свежие новости; возвращает разбор и вердикт (добавлять/наблюдать/избегать), размер позиции, зоны входа, целевую цену, горизонт.',
           text: STOCKAI_SYSTEM },
+        { name: '🔄 AI-Рекомендация (RECO_SYSTEM)',
+          about: 'Кнопка «🔄 AI-Рекомендация» в карточке акции. Снапшот карточки (техника, фундаментал, оценка, контекст портфеля) + web_search свежих новостей и глобальной макрокартины; возвращает единый вердикт buy/wait/sell/avoid с уверенностью и обоснованием. Отдельно от детерминированного скоринга «Рекомендация».',
+          text: RECO_SYSTEM },
         { name: '💬 Чат ассистента (CHAT_SYSTEM)',
           about: 'Диалог в AI Assistant. Видит снапшот текущей вкладки и правила инвестора; отвечает кратко с конкретными уровнями. Извлекает из ваших сообщений устойчивые предпочтения и возвращает их в поле memory — так пополняется 🧠 память.',
           text: CHAT_SYSTEM },

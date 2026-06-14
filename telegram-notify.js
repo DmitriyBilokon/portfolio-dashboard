@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14insider';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14targets';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1107,6 +1107,7 @@ async function stockAnalyze(env, body){
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
+const TARGET_RECENT_COL = 'Таргет 3м';   // свежий срез (последний квартал/месяц)
 // Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
 // Off by default: restricting to these would blank most Nordic/EU holdings.
 const TARGET_FIRMS = new Set([
@@ -1173,6 +1174,30 @@ async function fmpTarget(symbol, env){
     return { err: 'no recent target' };
   }catch(e){ return { err: 'exc ' + String(e.message || '').slice(0, 24) }; }
 }
+// Полная картина по таргету из FMP price-target-summary: all-time консенсус
+// ПЛЮС свежий срез (последний квартал, иначе последний месяц) — чтобы устаревшее
+// среднее за всё время можно было сверить с актуальными таргетами.
+// Возвращает { avg, count, recent, recentCount, recentSpan('q'|'m'), src }, или null.
+async function fmpTargetFull(symbol, env){
+  try{
+    if(!env.FMP_KEY) return null;
+    const r = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
+    if(!r.ok) return null;
+    const arr = await r.json();
+    const d = Array.isArray(arr) ? arr[0] : arr;
+    if(!d) return null;
+    const pos = v => (typeof v === 'number' && v > 0) ? v : null;
+    const all = pos(d.allTimeAvgPriceTarget);
+    const allN = d.allTimeCount ?? d.allTime ?? 0;
+    let rec = null, recN = 0, span = null;
+    if(pos(d.lastQuarterAvgPriceTarget)){ rec = d.lastQuarterAvgPriceTarget; recN = d.lastQuarterCount ?? d.lastQuarter ?? 0; span = 'q'; }
+    else if(pos(d.lastMonthAvgPriceTarget)){ rec = d.lastMonthAvgPriceTarget; recN = d.lastMonthCount ?? d.lastMonth ?? 0; span = 'm'; }
+    const avg = all ?? rec;            // если allTime пуст — основным становится свежий
+    if(avg == null) return null;
+    return { avg: round2(avg), count: all ? allN : recN,
+             recent: rec != null ? round2(rec) : null, recentCount: recN, recentSpan: span, src: 'fmp' };
+  }catch(e){ return null; }
+}
 // Резерв AI-портфеля в таблице ai_state: клиенты её не трогают (RLS без
 // политик, доступ только у service-роли). Пока SQL не выполнен — try/catch
 // и фолбэк на snap.aiPortBak.
@@ -1224,9 +1249,9 @@ async function updateTargets(env){
     for(const r of pf.rows){
       const sym = exSymbol(r[2], r[8]);
       if(cache[sym] !== undefined) continue;
-      let res = await fmpTarget(sym, env);
+      let res = await fmpTargetFull(sym, env);   // FMP: all-time + свежий срез
       if(!(res && typeof res.avg === 'number')){
-        const y = await yahooTarget(sym);   // EU/Nordic → Yahoo/Refinitiv consensus
+        const y = await yahooTarget(sym);   // EU/Nordic → Yahoo/Refinitiv consensus (только avg)
         if(y) res = y;
       }
       cache[sym] = res;
@@ -1242,11 +1267,16 @@ async function updateTargets(env){
   for(const pf of tabsOf(fresh.snap)){
     let ti = pf.headers.indexOf(TARGET_COL);
     if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
+    let tri = pf.headers.indexOf(TARGET_RECENT_COL);
+    if(tri === -1){ pf.headers.push(TARGET_RECENT_COL); tri = pf.headers.length - 1; changed = true; }
     pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
     for(const r of pf.rows){
       total++;
       const res = cache[exSymbol(r[2], r[8])];
-      if(res && typeof res.avg === 'number'){ r[ti] = res.avg; updated++; changed = true; }
+      if(res && typeof res.avg === 'number'){
+        r[ti] = res.avg; updated++; changed = true;
+        if(typeof res.recent === 'number') r[tri] = res.recent;
+      }
     }
   }
   if(changed) await writeRow(env, fresh.userId, fresh.snap);
@@ -1332,7 +1362,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets(FMP all-time+свежий) · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1507,16 +1537,26 @@ export default {
       const syms = url.searchParams.get('targets').split(',').map(s => s.trim()).filter(Boolean);
       const out = {};
       await Promise.all(syms.map(async s => {
-        const qs = await yQuoteSummary(s, 'financialData,summaryDetail,price');
-        if(!qs){ out[s] = null; return; }
-        const fd = qs.financialData || {}, sd = qs.summaryDetail || {}, pr = qs.price || {};
-        const avg = yRaw(fd.targetMeanPrice);
+        // Основной таргет — FMP (all-time консенсус + свежий срез за квартал/месяц);
+        // Yahoo даёт метрики оценки и служит фолбэком для EU/Nordic, которых нет в FMP.
+        const [qs, fmp] = await Promise.all([
+          yQuoteSummary(s, 'financialData,summaryDetail,price'),
+          fmpTargetFull(s, env),
+        ]);
+        if(!qs && !fmp){ out[s] = null; return; }
+        const fd = (qs && qs.financialData) || {}, sd = (qs && qs.summaryDetail) || {}, pr = (qs && qs.price) || {};
         const pct = v => (typeof v === 'number' && isFinite(v)) ? round2(v * 100) : null;
+        const yAvg = yRaw(fd.targetMeanPrice);
+        let avg = null, count = 0, recent = null, recentCount = 0, recentSpan = null, src = null;
+        if(fmp && typeof fmp.avg === 'number'){
+          avg = fmp.avg; count = fmp.count; recent = fmp.recent; recentCount = fmp.recentCount; recentSpan = fmp.recentSpan; src = 'fmp';
+        }else if(typeof yAvg === 'number' && yAvg > 0){
+          avg = round2(yAvg); count = yRaw(fd.numberOfAnalystOpinions) || 0; src = 'yahoo';
+        }
         out[s] = {
-          avg: (typeof avg === 'number' && avg > 0) ? round2(avg) : null,
-          count: yRaw(fd.numberOfAnalystOpinions) || 0,
+          avg, count, recent, recentCount, recentSpan, src,
           pe: yRaw(sd.trailingPE), ps: yRaw(sd.priceToSalesTrailing12Months),
-          divy: yRaw(sd.dividendYield), src: 'yahoo',
+          divy: yRaw(sd.dividendYield),
           // Метрики для классификации типов (по правилам MSCI/S&P/Morningstar):
           beta: yRaw(sd.beta),
           roe: pct(yRaw(fd.returnOnEquity)),                               // %

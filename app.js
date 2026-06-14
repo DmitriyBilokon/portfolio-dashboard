@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -69,6 +69,7 @@ function applyRemoteState(s){
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
   if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
+  if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -168,6 +169,7 @@ let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
 let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
+let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
@@ -320,7 +322,7 @@ const I18N_EN={
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
 'Долг/капитал':'Debt/equity','Ликвидность':'Liquidity','Кэш':'Cash','на конец квартала':'at quarter end','Свободный CF':'Free CF','Операционный CF':'Operating CF','за 12 мес (TTM)':'TTM (12 mo)','за фин. год':'fiscal year','Выручка CAGR':'Revenue CAGR','лет':'yr','Квартал г/г':'Quarter YoY','Год к году':'Year over year','Выручка':'Revenue',
-'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)','🔁 Дубли':'🔁 Duplicates','Потенциал %':'Upside %','Дивид. %':'Div. %','Колонки':'Columns','Доп. колонки списка':'Extra list columns','значения приходят с обновлением акций':'values arrive with the stock refresh',
+'отчёт от':'report of','заполняется worker-ом (cron / ?action=targets)':'filled by the worker (cron / ?action=targets)','появится при обновлении акций (🔄, раз в сутки)':'arrives with the stock refresh (🔄, once a day)','🔁 Дубли':'🔁 Duplicates','Потенциал %':'Upside %','Таргет 3м':'Target 3m','Дивид. %':'Div. %','Колонки':'Columns','Доп. колонки списка':'Extra list columns','значения приходят с обновлением акций':'values arrive with the stock refresh',
 'Загружаю отчётность…':'Loading financials…','Загрузка…':'Loading…','Загружаю календарь отчётов…':'Loading the earnings calendar…',
 'Дата отчёта':'Earnings date','Ожидание: EPS':'Estimate: EPS','Ожидание: выручка':'Estimate: revenue','консенсус аналитиков':'analyst consensus','сегодня':'today','завтра':'tomorrow','Прошлый отчёт':'Last report','к прогнозу':'vs estimate','Дата следующего отчёта ещё не объявлена':'Next earnings date not announced yet',
 'Здоровье портфеля:':'Portfolio health:','Состояние компании:':'Company health:','🧩 Диверсификация':'🧩 Diversification','💱 Валюты':'💱 Currencies','💵 Кэш и плечо':'💵 Cash & leverage','📈 Тренд и качество':'📈 Trend & quality','🏭 Распределение по секторам':'🏭 Sector allocation','💱 Распределение по валютам':'💱 Currency allocation','💡 Рекомендации':'💡 Recommendations',
@@ -1065,7 +1067,7 @@ function faqHTML(){
   ${sec(T('📐 Технические уровни и колонки'),
     row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')
    +row('<b>Поддержка / Сопротивление</b>','Минимум и максимум цены за последние ~3 месяца торгов.')
-   +row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков (консенсус FMP / Yahoo-Refinitiv) в валюте торгов. Рядом — потенциал в % к текущей цене.')
+   +row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков в валюте торгов: основной — консенсус FMP за всё время (для EU/Nordic — фолбэк Yahoo/Refinitiv), под ним «Таргет 3м» — свежий срез за последний квартал/месяц, чтобы старые таргеты не искажали среднее. Рядом — потенциал в % к цене и число аналитиков.')
    +row('<b>1д %</b>','Изменение цены к закрытию предыдущей сессии.')
    +row('<b>Доля</b>','Вес позиции в общей стоимости акций портфеля.'))}
 
@@ -2435,7 +2437,7 @@ function pf3ListHead(){
 const PF3_XDEF=[
   ['sma50','SMA 50'],['sma100','SMA 100'],['sma200','SMA 200'],
   ['sup','Поддержка'],['res','Сопротивление'],
-  ['upside','Потенциал %'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
+  ['upside','Потенциал %'],['tgr','Таргет 3м'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
   ['reco','Рекомендация'],
 ];
 let pf3XMenuOpen=false;
@@ -2503,6 +2505,7 @@ function pf3XCell(it,k){
     return`<span class="pf3-sig xr-${M[2]}" title="${it.recoHint||''}">${M[0]} ${M[1]}</span>`;
   }
   if(k==='upside'){const v=it.tg>0&&p>0?(it.tg/p-1)*100:null;return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
+  if(k==='tgr'){const v=it.tgr;if(!(v>0)||!(p>0))return'—';const u=(v/p-1)*100;return`<b>${pf3Fmt(v,0)}</b><small class="${u>=0?'pf3-up':'pf3-down'}">${u>=0?'+':''}${u.toFixed(1)}%</small>`}
   const v=it[k];
   if(k==='pe'||k==='ps')return v>0?(+v).toFixed(1):'—';
   if(k==='beta')return v?(+v).toFixed(2):'—';
@@ -2520,6 +2523,7 @@ function pf3Items(){
   const {s50,s100,s200}=smaIdx(d);
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление');
   const peC=h.indexOf('P/E'),psC=h.indexOf('P/S'),dyC=h.indexOf('Дивид. %');
+  const tgrC=h.findIndex(x=>/таргет 3м/i.test(x));
   const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
   const items=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
@@ -2527,7 +2531,7 @@ function pf3Items(){
     const tg=tgC>=0?(parseFloat(r[tgC])||0):0,price=parseFloat(r[7])||0;
     return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
       sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
-      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:tg>0&&price>0?(tg/price-1)*100:0,
+      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:tg>0&&price>0?(tg/price-1)*100:0,tgr:num(r,tgrC),
       ...(()=>{const rc=pf3Reco(d,r);return{reco:({buy:3,wait:2,sell:1,avoid:0})[rc.v]*100+rc.total,recoV:rc.v,recoHint:rc.hint.replace(/"/g,'&quot;')}})()};
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
@@ -3328,6 +3332,10 @@ function pf3DetailHTML(){
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
   const target=tgC>=0?parseFloat(r[tgC]):NaN;
   const hasTarget=isFinite(target)&&target>0&&price>0;
+  const tgrC=h.findIndex(x=>/таргет 3м/i.test(x));
+  const targetR=tgrC>=0?parseFloat(r[tgrC]):NaN;
+  const hasTargetR=isFinite(targetR)&&targetR>0&&price>0;
+  const tgM=TG_META[tk.toUpperCase()]||{};
   const tf=pf3TypeFull(d,r);
   const typeChip=(()=>{const p=(tf&&tf.primary)||r[5];if(!p||p==='—')return '';const m1=PF3_TYPE_META[p];let txt=`${m1?m1[0]+' ':''}${T(p)}`;if(tf&&tf.secondary){const m2=PF3_TYPE_META[tf.secondary];txt+=` · ${m2?m2[0]+' ':''}${T(tf.secondary)}`}return txt})();
   const chips=[tk+(ccy==='USD'?' · NASDAQ':''),r[3],r[4],typeChip].filter(c=>c&&c!=='—').map(c=>`<span class="pf3-chip">${c}</span>`).join('');
@@ -3354,7 +3362,7 @@ function pf3DetailHTML(){
       ${pf3MyPort(v3Key)?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
       <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>`:''}
-      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал'):T('появится при обновлении акций (🔄, раз в сутки)')}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}${tgM.src?`<span class="tg-src">${tgM.src==='fmp'?'FMP':'Yahoo/Refinitiv'}</span>`:''}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал')+(tgM.n?` · ${tgM.n} `+RT('аналит.','an.'):''):T('появится при обновлении акций (🔄, раз в сутки)')}</div>${hasTargetR?`<div class="pf3-card-sub"><span class="tg-recent-l">${tgM.span==='m'?RT('за месяц','last mo'):RT('за квартал','last qtr')}</span> <b>${pf3Fmt(targetR,0)}</b> <small>${ccy}</small> <span class="${targetR>=price?'pf3-up':'pf3-down'}">${targetR>=price?'+':''}${((targetR-price)/price*100).toFixed(1)}%</span>${tgM.nr?` · ${tgM.nr} `+RT('аналит.','an.'):''}</div>`:''}</div>
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
@@ -3464,11 +3472,13 @@ async function pf3RefreshTargets(d){
   const tgC=ensurePFCol(d,'Аналит. таргет');
   const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
   const chunks=[];
-  for(let i=0;i<syms.length;i+=40)chunks.push(syms.slice(i,i+40).join(','));
+  // По 20: воркер делает 2 подзапроса на тикер (Yahoo + FMP), лимит Cloudflare — 50/запрос.
+  for(let i=0;i<syms.length;i+=20)chunks.push(syms.slice(i,i+20).join(','));
   const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?targets='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
   const good=parts.filter(p=>p&&typeof p==='object'&&!p.error);
   if(!good.length){_tgEndpointDown=true;return;}
   const tg=Object.assign({},...good);
+  const tgrC=ensurePFCol(d,'Таргет 3м');
   const peC=ensurePFCol(d,'P/E'),psC=ensurePFCol(d,'P/S'),dyC=ensurePFCol(d,'Дивид. %');
   const beC=ensurePFCol(d,'Beta'),roC=ensurePFCol(d,'ROE'),deC=ensurePFCol(d,'D/E'),rgC=ensurePFCol(d,'Рост выручки'),poC=ensurePFCol(d,'Payout');
   const rvC=ensurePFCol(d,'Выручка TTM'),cpC=ensurePFCol(d,'Кап-я');
@@ -3477,6 +3487,8 @@ async function pf3RefreshTargets(d){
     const q=tg[exSymbol(r[2],r[8])];
     if(!q)return;
     if(typeof q.avg==='number'&&q.avg>0)r[tgC]=q.avg;
+    if(typeof q.recent==='number'&&q.recent>0)r[tgrC]=q.recent;
+    if(typeof q.avg==='number'&&q.avg>0)TG_META[String(r[2]||'').trim().toUpperCase()]={n:q.count||0,nr:q.recentCount||0,span:q.recentSpan||null,src:q.src||null,at:Date.now()};
     if(typeof q.pe==='number'&&q.pe>0)r[peC]=Math.round(q.pe*10)/10;
     if(typeof q.ps==='number'&&q.ps>0)r[psC]=Math.round(q.ps*10)/10;
     if(typeof q.divy==='number'&&q.divy>0)r[dyC]=Math.round(q.divy*1000)/10;   // доля → %

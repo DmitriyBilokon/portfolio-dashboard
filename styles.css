@@ -354,8 +354,9 @@ body.v3 .sub-tabs{display:none}
 .pf3-summary{grid-template-columns:repeat(auto-fit,minmax(175px,1fr))}
 
 /* Портфель 3.0 — колонка «Сигнал» (уровни покупки/докупки/продажи) */
-.pf3-c-sig{text-align:right;overflow:visible}
-.pf3-lhead .pf3-c-sig{text-align:right}
+.pf3-c-sig{text-align:right;overflow:hidden;min-width:0;display:flex;justify-content:flex-end;align-items:center}
+.pf3-lhead .pf3-c-sig{text-align:right;display:block}
+.pf3-c-sig .pf3-sig{min-width:0;flex:0 1 auto}   /* пилюля сигнала ужимается с многоточием, не вылезая на колонку действий */
 .pf3-sig{font:700 10px 'JetBrains Mono',monospace;border-radius:999px;padding:4px 9px;white-space:nowrap;display:inline-block}
 .pf3-sig-buy{background:var(--green-bg);color:var(--green-t)}
 .pf3-sig-sell{background:var(--red-bg);color:var(--red-t)}
@@ -512,8 +513,8 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Колонка «Критерий» — рыночная фаза (падающий нож / импульс / тренд / оценка) */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px 124px 138px 52px}
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px 124px 142px 52px}
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px 124px minmax(150px,178px) 52px}
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px 124px minmax(150px,178px) 52px}
 @media(min-width:901px){
   .pf3-typelay .pf3-row{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 46px 62px 90px 86px 50px 124px 138px 52px}
   .pf3-typelay .pf3-row.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 92px 70px 92px 124px 142px 52px}

@@ -2758,8 +2758,8 @@ function pf3GridTpl(port,xc){
   if(!arr.length)return'';
   const x=arr.map(k=>k==='reco'?' 96px':' 82px').join('');
   return`grid-template-columns:${port
-    ?`40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px${x} 124px 138px 52px`
-    :`40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px${x} 124px 142px 52px`}`;
+    ?`40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px${x} 124px minmax(150px,178px) 52px`
+    :`40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px${x} 124px minmax(150px,178px) 52px`}`;
 }
 function pf3XCell(it,k){
   const p=it.price;

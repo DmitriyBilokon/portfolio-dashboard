@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-15fi';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-15fi2';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1136,8 +1136,9 @@ async function fiInsider(issuer, from, to){
     const numSe = s => { const n = parseFloat(String(s || '').replace(/[\s ]/g, '').replace(',', '.')); return isFinite(n) ? n : null; };
     const out = [];
     for(let i = 1; i < lines.length; i++){
-      const c = lines[i].split(';');   // 0 Publ · 1 Emittent · 4 PDMR · 11 Karaktär · 15 TxDate · 16 Volym · 18 Pris
+      const c = lines[i].split(';');   // 0 Publ · 1 Emittent · 4 PDMR · 11 Karaktär · 12 Instrumenttyp · 15 TxDate · 16 Volym · 18 Pris
       if(c.length < 20) continue;
+      if(!/aktie/i.test(c[12] || '')) continue;   // только акции — НЕ свопы/облигации/деривативы (там Volym = номинал, не штуки)
       const kar = String(c[11] || '').toLowerCase();
       const code = /f[öo]rv[äa]rv|teckn/.test(kar) ? 'P' : /avyttr/.test(kar) ? 'S' : null;
       if(!code) continue;

@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-12i';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14stockai';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -981,6 +981,68 @@ async function aiPortfolioRun(env, force){
     (ap.lastNote ? `\n💭 ${ap.lastNote}` : '');
 }
 
+// ── 🔬 AI-анализ одной акции с веб-поиском новостей (карточка → кнопка) ─────
+// Клиент шлёт снапшот акции (цена, SMA, уровни, фундаментал, таргет) + контекст
+// портфеля (доли по секторам, концентрация, кэш) + журнал прошлых анализов по
+// этому тикеру (для сверки прогноз↔факт — «обучение»). Claude с web_search
+// собирает свежие новости и возвращает структурированный разбор + JSON-сводку.
+const FENCE = String.fromCharCode(96, 96, 96);   // ``` — чтобы не ломать template literal
+const STOCKAI_SYSTEM = `Ты — старший инвестиционный аналитик. Тебе передают JSON по ОДНОЙ акции: цена, технические уровни (SMA 50/100/200, поддержка, сопротивление), фундаментал (P/E, P/S, выручка, маржа, долг/капитал, рост), консенсус-таргет аналитиков, тип и сектор; контекст портфеля инвестора (текущие доли по секторам, концентрация, свободный кэш в SEK, базовая валюта SEK); и priorAnalyses — твои прошлые разборы этой бумаги с ценой на тот момент (сверь прогноз с фактом — где ошибся, где попал — и откалибруй уверенность).
+
+ОБЯЗАТЕЛЬНО используй web_search для свежих новостей и событий по компании (отчёты, гайденс, сделки, регуляторика, отраслевой фон) — на дату анализа. Кратко сошлись на найденное в разделе новостей.
+
+Дай разбор на русском языке в markdown строго по разделам:
+
+## 📰 Новости и события
+3–5 пунктов: самое важное из веб-поиска за последние недели, с влиянием на кейс.
+
+## 📊 Состояние акции
+Техника (тренд относительно SMA, близость к уровням) + фундаментал (оценка, рост, прибыльность, долг) в 3–5 предложениях.
+
+## 🚀 Драйверы роста
+2–4 конкретных катализатора.
+
+## ⚠️ Риски
+2–4 главных риска.
+
+## 🎯 Рекомендация
+Чёткий вердикт: ДОБАВЛЯТЬ / НАБЛЮДАТЬ / НЕ ДОБАВЛЯТЬ — с обоснованием. Учитывай диверсификацию: если сектор уже перевешен в портфеле — скажи это. Укажи рекомендуемый размер позиции (% от капитала и сумму в SEK от свободного кэша), целевые зоны входа (ценовые уровни для покупки), целевую цену и потенциал роста (%), горизонт (недели/месяцы).
+
+В САМОМ КОНЦЕ ответа добавь машиночитаемый блок (он не показывается пользователю) — fenced json, открой и закрой его символами ${FENCE} :
+${FENCE}json
+{"verdict":"add|watch|avoid","sizePct":<число или null>,"sizeSEK":<число или null>,"entryLow":<число или null>,"entryHigh":<число или null>,"targetPrice":<число или null>,"upsidePct":<число или null>,"horizon":"<строка>","confidence":"low|medium|high"}
+${FENCE}
+Цены — в торговой валюте бумаги. В конце основного текста одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»`;
+
+async function stockAnalyze(env, body){
+  const today = new Date().toISOString().slice(0, 10);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 8000,
+      thinking: { type: 'adaptive' },
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+      system: STOCKAI_SYSTEM,
+      messages: [{ role: 'user', content: 'Сегодня ' + today + '. Снапшот акции и контекст (JSON):\n' + JSON.stringify(body || {}) }],
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
+  const j = await r.json();
+  let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if(!raw) throw new Error('Пустой ответ модели');
+  // Извлечь финальный json-блок (между маркерами FENCE) и убрать его из текста.
+  let data = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){
+    const rest = raw.slice(i + FENCE.length + 4);
+    const end = rest.indexOf(FENCE);
+    if(end >= 0){ try{ data = JSON.parse(rest.slice(0, end).trim()); }catch(e){} raw = raw.slice(0, i).trim(); }
+  }
+  return { text: raw, data };
+}
+
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 // Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
@@ -1242,6 +1304,14 @@ export default {
       try{ return json(await aiChat(env, await request.json())); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
+    if(url.searchParams.get('action') === 'stockai'){
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json(await stockAnalyze(env, await request.json())); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
     if(url.searchParams.get('action') === 'aipreset'){
       // ♻️ Обнуление AI-портфеля (кнопка на вкладке 🤖, только админ).
       const adm = await requireAdmin(request, env);
@@ -1271,6 +1341,9 @@ export default {
         { name: '🤖 AI Портфель (AIPORT_SYSTEM)',
           about: 'Часовой цикл worker-крона. Получает виртуальный портфель (кэш, позиции с живыми ценами и P&L, журнал сделок), стратегию и вселенную всех акций дашборда. Возвращает торговые решения {action, ticker, qty, reason, trigger} — worker исполняет их по живым ценам и шлёт уведомления в Telegram.',
           text: AIPORT_SYSTEM },
+        { name: '🔬 AI-анализ акции (STOCKAI_SYSTEM)',
+          about: 'Кнопка «🤖 AI-анализ» в карточке акции. Снапшот бумаги + контекст портфеля + прошлые разборы; через web_search — свежие новости; возвращает разбор и вердикт (добавлять/наблюдать/избегать), размер позиции, зоны входа, целевую цену, горизонт.',
+          text: STOCKAI_SYSTEM },
         { name: '💬 Чат ассистента (CHAT_SYSTEM)',
           about: 'Диалог в AI Assistant. Видит снапшот текущей вкладки и правила инвестора; отвечает кратко с конкретными уровнями. Извлекает из ваших сообщений устойчивые предпочтения и возвращает их в поле memory — так пополняется 🧠 память.',
           text: CHAT_SYSTEM },

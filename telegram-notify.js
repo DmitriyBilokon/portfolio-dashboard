@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14pause';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14retry';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -73,13 +73,23 @@ async function anthropicRun(env, body){
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
   let content = [];
   for(let round = 0; round < 6; round++){
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ ...body, messages }),
-    });
-    if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-    const j = await r.json();
+    // Ретрай временных ошибок (429 / 5xx — перегрузка, таймаут вроде 529/542).
+    let j = null, lastErr = '';
+    for(let attempt = 0; attempt < 4; attempt++){
+      let r;
+      try{
+        r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ ...body, messages }),
+        });
+      }catch(e){ lastErr = 'Claude API сеть: ' + (e.message || e); if(attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; } throw new Error(lastErr); }
+      if(r.ok){ j = await r.json(); break; }
+      lastErr = 'Claude API ' + r.status + ': ' + (await r.text()).slice(0, 200);
+      if((r.status === 429 || r.status >= 500) && attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; }
+      throw new Error(lastErr);
+    }
+    if(!j) throw new Error(lastErr || 'Claude API: нет ответа после ретраев');
     const u = j.usage || {};
     usage.input_tokens += u.input_tokens || 0;
     usage.output_tokens += u.output_tokens || 0;

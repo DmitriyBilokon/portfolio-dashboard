@@ -1966,6 +1966,92 @@ function stkLogHTML(){
     ${rows}
   </section>`;
 }
+// 🔎 «Анализ акции» — детерминированный разбор по уже собранным метрикам
+// (долг, маржа, рост, оценка, покрытие) + стратегический вердикт. БЕЗ Claude
+// и без оплаты токенов — в отличие от 🔬 AI-анализа.
+function stockReportHTML(d,r){
+  const h=d.headers, tk=String(r[2]||'').trim().toUpperCase();
+  const price=parseFloat(r[7])||0, sector=String(r[4]||'—');
+  const g=name=>{const i=h.indexOf(name);const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
+  const num=v=>(typeof v==='number'&&isFinite(v))?v:null;
+  const F=pf3FundData()||{};
+  const de   = g('D/E') ?? num(F.debtToEquity);
+  const revG = g('Рост выручки') ?? num(F.revenueYoY);
+  const netM = (num(F.netIncome)!=null && num(F.revenue)>0) ? F.netIncome/F.revenue*100 : null;
+  const fcfM = (num(F.freeCashFlow)!=null && num(F.revenue)>0) ? F.freeCashFlow/F.revenue*100 : null;
+  const margin = netM!=null?netM:fcfM;
+  const marginLbl = netM!=null?'чистая маржа':'FCF-маржа';
+  const div = g('Дивид. %');
+  const tgC=h.findIndex(x=>/аналит/i.test(x)); const target=tgC>=0?(parseFloat(r[tgC])||0):0;
+  const upside=(target>0&&price>0)?(target/price-1)*100:null;
+  const nAn=(TG_META[tk]||{}).n||0;
+  const val=VAL[tk]||{};
+  const {s200}=smaIdx(d); const sma200=s200>=0?(parseFloat(r[s200])||0):0;
+  const vs200=(sma200>0&&price>0)?(price/sma200-1)*100:null;
+  const reco=(()=>{try{return pf3Reco(d,r)}catch(e){return null}})();
+  const have=(num(F.revenue)!=null)||(de!=null)||(margin!=null);
+  const p=(v,dg=1)=>v==null?'н/д':`${v>0?'+':''}${v.toFixed(dg)}%`;
+  const B=[];
+  if(de!=null){
+    const lvl=de>2?'очень высокий':de>1?'повышенный':de>0.5?'умеренный':'низкий';
+    const ctx=(margin!=null&&margin<0)
+      ?' В контексте отрицательной маржи такой долг заметно усиливает риски неплатёжеспособности и удорожания обслуживания, особенно при росте ставок.'
+      :(de>1?' Повышенная долговая нагрузка чувствительна к ставкам и циклу.':' Долговая нагрузка под контролем.');
+    B.push(`<b>Долг к капиталу (D/E): ${de.toFixed(2)}</b> — ${lvl} уровень.${ctx}`);
+  }
+  if(margin!=null||revG!=null){
+    let s='';
+    if(margin!=null){
+      if(margin<0) s+=`Отрицательная ${marginLbl} (${p(margin)})${revG!=null&&revG>0?` при росте выручки (${p(revG)})`:''} указывает на серьёзные проблемы с эффективностью бизнес-модели — каждый доллар продаж приносит убыток, что ставит под сомнение долгосрочную устойчивость.`;
+      else if(margin<5) s+=`Тонкая ${marginLbl} (${p(margin)}) — мало запаса прочности.`;
+      else if(margin<15) s+=`Здоровая ${marginLbl} (${p(margin)}).`;
+      else s+=`Сильная ${marginLbl} (${p(margin)}) — бизнес прибыльный и эффективный.`;
+    }
+    if(revG!=null && !(margin!=null&&margin<0)) s+=` ${revG>=15?`Выручка растёт уверенно (${p(revG)}).`:revG>=5?`Умеренный рост выручки (${p(revG)}).`:revG>=0?`Слабый рост выручки (${p(revG)}).`:`Выручка снижается (${p(revG)}).`}`;
+    B.push(`<b>Финансовая устойчивость:</b> ${s.trim()}`);
+  }
+  {
+    let s=`Сектор — ${sector}.`;
+    const sm=val.sector?(_valSecCache||valSectorMedians())[val.sector]:null;
+    const c=sm?valCmp(val,sm):null;
+    const peDim=c&&c.dims?c.dims.find(x=>x.k==='pe'&&x.cur>0):null;
+    if(peDim&&peDim.secPct!=null){
+      s+= peDim.secPct<=-10?` По мультипликаторам компания дешевле медианы сектора (${p(peDim.secPct,0)}).`
+        : peDim.secPct>=10?` По мультипликаторам дороже сектора (+${peDim.secPct.toFixed(0)}%).`
+        : ` Оценка примерно на уровне сектора.`;
+    } else s+=` Детальных данных по конкурентам нет; в зрелых секторах конкуренция обычно интенсивна, с доминированием крупных игроков, что осложняет положение убыточных компаний.`;
+    B.push(`<b>Конкурентная среда:</b> ${s}`);
+  }
+  {
+    let s='';
+    if(nAn===0) s='Нет покрытия аналитиками — повышенный информационный риск и неопределённость, меньше внешних ориентиров.';
+    else { s=`Покрытие ~${nAn} аналит.`; if(upside!=null) s+= upside>=10?` Потенциал к консенсус-таргету ${p(upside,0)}.`:upside<=-5?` Цена выше таргета на ${Math.abs(upside).toFixed(0)}%.`:` Цена близко к консенсус-таргету.`; }
+    if(div!=null) s+= div>0?` Дивиденд ${div.toFixed(1)}%.`:' Дивиденды не выплачиваются.';
+    B.push(`<b>Покрытие и оценка:</b> ${s}`);
+  }
+  const VM={buy:['BUY',RT('Покупать','Buy'),'buy'],wait:['HOLD',RT('Держать / наблюдать','Hold'),'wait'],sell:['SELL',RT('Сокращать / продавать','Sell'),'sell'],avoid:['AVOID',RT('Избегать','Avoid'),'avoid']};
+  const vk=reco?reco.v:'wait', VV=VM[vk]||VM.wait;
+  const lead={buy:'привлекательный профиль для входа: ',wait:'смешанная картина, явного перевеса нет: ',sell:'повышенные риски для долгосрочного инвестора: ',avoid:'высокорискованный актив, перевес негативных факторов: '}[vk];
+  const dr=[];
+  if(revG!=null&&revG>=10) dr.push(`сильный рост выручки (${p(revG)})`);
+  if(margin!=null&&margin<0) dr.push(`отрицательная ${marginLbl} (${p(margin)}) — критическая неэффективность основной деятельности`);
+  else if(margin!=null&&margin>=15) dr.push(`высокая маржа (${p(margin)})`);
+  if(de!=null&&de>1) dr.push(`высокий долг (D/E ${de.toFixed(2)}) — риски ликвидности`);
+  if(upside!=null&&upside>=15) dr.push(`потенциал к таргету ${p(upside,0)}`);
+  else if(upside!=null&&upside<=-5) dr.push('цена выше консенсус-таргета');
+  if(vs200!=null) dr.push(vs200>=0?`цена выше SMA200 (${p(vs200,0)})`:`цена ниже SMA200 (${p(vs200,0)})`);
+  if(div!=null&&div<=0&&margin!=null&&margin<0) dr.push('отсутствие дивидендов оправдано убытками, но подчёркивает неспособность генерировать прибыль');
+  const horizon='Для долгосрочного горизонта (3–5 лет) такой профиль '+(vk==='avoid'||vk==='sell'?'ассоциируется с повышенными рисками потери капитала.':vk==='buy'?'выглядит привлекательно при контроле риска.':'требует наблюдения и подтверждения тренда.');
+  const verdict=`<b>${VV[0]}</b> — ${lead}${dr.join('; ')||'факторы сбалансированы'}. ${horizon}`;
+  const hd=`<div class="pf3-panel-hd"><span>🔎 ${RT('Анализ акции','Stock analysis')}</span><span class="pf3-asof">${RT('по данным дашборда · без AI','from dashboard data · no AI')}</span></div>`;
+  if(!have) return`<section class="pf3-panel">${hd}<div class="pf3-empty">${pf3Fund.loading?T('Загружаю отчётность…'):RT('Нужен фундаментал — открывается автоматически или обновите акции 🔄.','Fundamentals needed — loads automatically or refresh 🔄.')}</div></section>`;
+  return`<section class="pf3-panel">${hd}
+    <ul class="sr-list">${B.map(b=>`<li>${b}</li>`).join('')}</ul>
+    <div class="sr-verdict sr-${VV[2]}">🎯 ${RT('Стратегический вердикт','Strategic verdict')}: ${verdict}</div>
+    <div class="pf3-ai-note">${RT('Детерминированный разбор по метрикам дашборда — бесплатно. Для свежих новостей и веб-поиска используйте 🔬 AI-анализ.','Deterministic analysis from dashboard metrics — free. For fresh news use 🔬 AI analysis.')}</div>
+  </section>`;
+}
+
 function stockAiHTML(d,r){
   const sym=String(r[2]||'').toUpperCase();
   const cur=pf3StockAi.sym===sym?pf3StockAi:null;
@@ -3610,6 +3696,7 @@ function pf3DetailHTML(){
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
     ${pf3RecoHTML(d,r)}
+    ${stockReportHTML(d,r)}
     ${isAdmin()?aiRecoHTML(d,r):''}
     ${isAdmin()?stockAiHTML(d,r):''}
     ${isAdmin()?valHTML(d,r):''}

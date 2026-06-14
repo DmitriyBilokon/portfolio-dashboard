@@ -981,3 +981,13 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* ⚠️ Флаг «устарел»: «Рекомендация» изменилась после AI-анализа */
 .ai-stale{display:inline-block;font-size:12px;font-weight:700;color:#f59e0b;background:rgba(245,158,11,.13);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:4px 9px;margin-bottom:8px;cursor:help}
+
+/* 🔎 Анализ акции (детерминированный, без AI) */
+.sr-list{margin:4px 0 10px;padding-left:18px;font-size:13px;line-height:1.5}
+.sr-list li{margin:7px 0}
+.sr-list b{color:var(--text)}
+.sr-verdict{font-size:13px;line-height:1.55;padding:10px 12px;border-radius:8px;border-left:3px solid var(--border);background:var(--bg3)}
+.sr-verdict.sr-buy{border-left-color:#10b981;background:rgba(16,185,129,.08)}
+.sr-verdict.sr-wait{border-left-color:#f59e0b;background:rgba(245,158,11,.07)}
+.sr-verdict.sr-sell{border-left-color:#ef4444;background:rgba(239,68,68,.07)}
+.sr-verdict.sr-avoid{border-left-color:#b91c1c;background:rgba(185,28,28,.09)}

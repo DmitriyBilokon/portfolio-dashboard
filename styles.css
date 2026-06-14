@@ -952,3 +952,18 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* ⚠️ Флаг устаревшего таргета (расхождение all-time vs свежий) */
 .tg-stale{margin-left:6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:4px;background:rgba(245,158,11,.16);color:#f59e0b;cursor:help;vertical-align:middle}
 .pf3-card-sub.tg-hi{background:rgba(245,158,11,.08);margin:6px -6px 0;padding:6px 8px 5px;border-radius:6px;border-top-color:rgba(245,158,11,.35)}
+
+/* 📐 Valuation Check */
+.val-sec{font-size:12px;color:var(--text2);margin-bottom:6px}
+.val-both{display:inline-block;font-size:12px;font-weight:700;color:#10b981;background:rgba(16,185,129,.12);padding:3px 9px;border-radius:6px;margin-bottom:8px}
+.val-both-tag{font-size:11px;font-weight:700;color:#10b981}
+.val-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.val-tbl th{text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:var(--text2);font-weight:600;padding:2px 6px}
+.val-tbl th:first-child{text-align:left}
+.val-tbl td{text-align:right;padding:4px 6px;border-top:1px solid var(--border)}
+.val-tbl td.val-l{text-align:left;font-weight:600}
+.val-na{color:var(--text2);opacity:.6}
+.val-mid{color:var(--text2)}
+.val-extra{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin:8px 0 2px}
+.val-extra b{color:var(--text)}
+.val-caveat{font-size:11px;color:var(--text2);background:rgba(245,158,11,.08);border-radius:6px;padding:6px 8px;margin-top:8px;line-height:1.4}

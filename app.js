@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -70,6 +70,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
   if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
   if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
+  if(s.val&&typeof s.val==='object') VAL=s.val;
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
@@ -170,6 +171,8 @@ let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состоян
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
 let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
 let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
+let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
+let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
@@ -312,7 +315,7 @@ const I18N_EN={
 '📊 Рынок сейчас':'📊 Market now','рыночные фазы по технике и фундаменталу':'market phases by technicals & fundamentals','🟢 Покупать / докупать сейчас':'🟢 Buy / add now','цена в ±2% от SMA или поддержки':'price within ±2% of an SMA or support','🔴 Продавать — у сопротивления':'🔴 Sell — at resistance','цена в ±2% от сопротивления':'price within ±2% of resistance','🎯 Подходят к уровню покупки':'🎯 Approaching a buy level','до ближайшего уровня ≤ 5%':'≤ 5% to the nearest level','🔪 Падающие ножи':'🔪 Falling knives','не ловить — ждать стабилизации':'do not catch — wait for stabilization','⚡ Движения дня':'⚡ Top movers','самые сильные изменения за сессию':'biggest moves of the session','в портфеле':'in portfolio','акц.':'stk.','портфеля':'of portfolio','ср. за день':'avg day',
 'Сейчас никто не стоит у уровня покупки':'No stock sits at a buy level right now','У сопротивления никого нет':'Nothing at resistance','Никто не приближается к уровням':'Nothing approaching a level','Свободных падений нет — хороший знак':'No free falls — a good sign','Рынок спит':'The market is quiet','Нет данных':'No data',
 '🧪 Симуляция':'🧪 Simulation','тестовый режим — без реальных денег':'test mode — no real money','Цена покупки':'Buy price','🧪 Купить (тест)':'🧪 Buy (test)','🧪 Тестовый портфель':'🧪 Paper portfolio','покупка — в карточке акции, кнопка «Купить (тест)»':'buy from a stock card via “Buy (test)”','Вложено (тест)':'Invested (test)','Стоимость сейчас':'Value now','по живым ценам и курсу':'at live prices and FX','Результат':'Result','позиц.':'pos.','Вложено':'Invested','П/У':'P/L','куплено':'bought',
-'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
+'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
 'Календарь — отчёты и дивиденды':'Calendar — earnings & dividends','Сегодня':'Today','отчёт':'earnings','экс-дата':'ex-div','выплата':'payout','клик по событию открывает карточку':'click an event to open the card','💰 Дивиденды':'💰 Dividends','kr/год по текущим позициям':'kr/yr at current positions','Дивид./год':'Div./yr','Доходность':'Yield','Экс-дата':'Ex-date','Выплата':'Pay date','Мне в год':'My yearly','Дивидендных бумаг в портфеле нет':'No dividend payers here','Дат отчётов пока нет':'No earnings dates yet','Загружаю календарь отчётов и дивидендов…':'Loading the earnings & dividends calendar…',
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
 '🤖 AI Assistant — анализ портфеля и рекомендации':'🤖 AI Assistant — portfolio analysis & recommendations','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с ассистентом':'💬 Assistant chat','видит портфель, цены и ваши правила':'sees your portfolio, prices and rules','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память ассистента — правила инвестора':'🧠 Assistant memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
@@ -1088,7 +1091,17 @@ function faqHTML(){
    +row('<b>вход</b>','Ценовая зона для покупки (уровни входа) в валюте торгов бумаги.')
    +row('<b>цель</b>','Целевая цена Claude и потенциал роста к ней в %. Это собственная оценка модели — может отличаться от консенсус-таргета аналитиков.')
    +row('<b>горизонт</b>','Ожидаемый срок реализации идеи — недели или месяцы.')
-   +row('<b>🤖 AI-анализ / обновить</b>','Запускает свежий разбор: Claude собирает цены, уровни, фундаментал и через веб-поиск — последние новости компании. Каждый разбор сохраняется в обучающую базу (вкладка 🔬 AI-разборы), и при следующем анализе модель сверяет прошлый прогноз с фактом.')):''}`;
+   +row('<b>🤖 AI-анализ / обновить</b>','Запускает свежий разбор: Claude собирает цены, уровни, фундаментал и через веб-поиск — последние новости компании. Каждый разбор сохраняется в обучающую базу (вкладка 🔬 AI-разборы), и при следующем анализе модель сверяет прошлый прогноз с фактом.')):''}
+
+  ${isAdmin()?sec(T('📐 Оценка — мультипликаторы (Valuation Check)'),
+    row('<b>Кнопка «📐 Оценка»</b>','На 🏠 Home собирает мультипликаторы сразу по всему портфелю (Yahoo — живые значения, покрывает Nordic; FMP — историческая медиана). Результат — в карточке каждой акции и сводкой на Home. Finnhub /metric не используется (US-only).')
+   +row('<b>P/E (TTM) · Forward P/E</b>','Цена / прибыль за 12 мес и по прогнозу на след. год. «n/a», если прибыль ≤ 0 — тогда смотрят на P/S.')
+   +row('<b>P/S (TTM)</b>','Цена / выручка за 12 мес — работает и для убыточных компаний.')
+   +row('<b>EV/EBITDA</b>','Стоимость бизнеса / EBITDA — нивелирует разницу в долге и амортизации. «n/a» при отрицательной EBITDA.')
+   +row('<b>PEG</b>','Forward P/E ÷ ожидаемый рост EPS. PEG &lt; 1 — рост недооценён рынком. Неприменим при росте ≤ 0.')
+   +row('<b>сектор</b>','Медиана мультипликатора по бумагам того же сектора в портфеле (медиана устойчивее к выбросам, чем среднее). Рядом — дисконт/премия в %: <span class="pf3-up">зелёное</span> = дешевле сектора, <span class="pf3-down">красное</span> = дороже.')
+   +row('<b>история 5y</b>','Историческая медиана самой бумаги за 5 лет (FMP). Дисконт/премия показывает, дёшево или дорого относительно своей нормы. Для бумаг без покрытия FMP (часть Nordic) — «—».')
+   +row('🟢 <b>Дёшево по обоим измерениям</b>','Бумага одновременно ниже медианы сектора <b>и</b> ниже собственной истории по ≥2 мультипликаторам. Сильнейший статистический сигнал недооценки — но это наблюдение, а не сигнал к покупке: низкие мультипликаторы часто бывают на пике цикла, когда прибыль временно завышена.')):''}`;
 }
 // ===== 📜 Промпты (админ): названия и тексты AI-промптов из worker'а =====
 function togglePrompts(){
@@ -3271,6 +3284,135 @@ async function homeUpdateAll(){
     renderAll();
   }
 }
+// ── 📐 Valuation Check: мультипликаторы vs медиана сектора и собственная история ──
+function valFmt(v){return(v==null||!isFinite(v))?'—':(+v).toFixed(1)}
+function valMedian(arr){const a=arr.filter(v=>typeof v==='number'&&isFinite(v)&&v>0).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2}
+// Медианы мультипликаторов по секторам — из всех бумаг портфеля, у которых есть VAL.
+function valSectorMedians(){
+  const bySec={};
+  Object.values(VAL).forEach(v=>{const s=v&&v.sector;if(!s)return;(bySec[s]=bySec[s]||[]).push(v)});
+  const out={};
+  Object.keys(bySec).forEach(s=>{const g=bySec[s];out[s]={
+    pe:valMedian(g.map(v=>v.pe)),fwdPe:valMedian(g.map(v=>v.fwdPe)),ps:valMedian(g.map(v=>v.ps)),
+    evEbitda:valMedian(g.map(v=>v.evEbitda)),peg:valMedian(g.map(v=>v.peg)),n:g.length};});
+  return out;
+}
+// Тикеры портфеля с биржевыми символами (Yahoo/FMP).
+function valPortTickers(){return insiderPortTickers().map(x=>({...x,sym:exSymbol(x.tk,x.ccy)}))}
+let _valSecCache=null;
+async function valUpdateAll(){
+  if(_valBusy)return;_valBusy=true;
+  const btn=document.getElementById('valBtn');if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
+  const list=valPortTickers();const bySym={};list.forEach(x=>bySym[x.sym]=x);
+  let done=0,withData=0,cheap=0;
+  try{
+    const tok=await sbToken();
+    for(let i=0;i<list.length;i+=12){
+      const chunk=list.slice(i,i+12);
+      try{
+        const r=await fetch(PRICE_PROXY+'?action=valuation',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
+        const j=await r.json();
+        if(j&&!j.error){
+          for(const sym of Object.keys(j)){
+            const v=j[sym];if(!v)continue;const x=bySym[sym];if(!x)continue;
+            const prev=VAL[x.tk]||{};
+            VAL[x.tk]={...v,name:x.name||x.tk,ccy:x.ccy,notified:prev.notified||null};
+            if(v.pe||v.fwdPe||v.ps||v.evEbitda)withData++;
+          }
+        }
+      }catch(e){}
+      done+=chunk.length;const b=document.getElementById('valBtn');if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
+    }
+    _valSecCache=valSectorMedians();
+    // Алерты «дёшево по обоим измерениям» (новые) → Telegram, дедуп по подписи.
+    for(const tk of Object.keys(VAL)){
+      const v=VAL[tk];const c=valCmp(v,_valSecCache[v.sector]);
+      if(c&&c.bothCount>=2){
+        const sig='cheap_'+c.bothCount;
+        if(v.notified!==sig){
+          cheap++;VAL[tk].notified=sig;
+          try{await fetch(PRICE_PROXY+'?action=valnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:v.name||tk,detail:c.detail})});}catch(e){}
+        }
+      }else if(v.notified){VAL[tk].notified=null;}
+    }
+    scheduleSave();
+    toast('📐 '+RT(`Оценка обновлена: ${withData}/${list.length} с данными${cheap?` · ${cheap} нов. недооценк.`:''}`,`Valuation updated: ${withData}/${list.length} with data${cheap?` · ${cheap} new undervalued`:''}`));
+  }catch(e){toast(RT('Worker недоступен (нужен ?action=valuation)','Worker unreachable (?action=valuation)'),true);}
+  finally{_valBusy=false;renderAll();}
+}
+// Сравнение бумаги: дисконт/премия к медиане сектора и к собственной истории по
+// каждому мультипликатору; «дёшево по обоим» — ниже сектора И ниже истории.
+function valCmp(v,secMed){
+  if(!v)return null;
+  const BAND=10;   // ±% полоса «на уровне»
+  const dims=[
+    {k:'pe',label:'P/E',cur:v.fwdPe||v.pe,sec:secMed&&(secMed.fwdPe||secMed.pe),hist:(v.hist&&(v.hist.pe5||v.hist.pe3))||null},
+    {k:'ps',label:'P/S',cur:v.ps,sec:secMed&&secMed.ps,hist:(v.hist&&(v.hist.ps5||v.hist.ps3))||null},
+    {k:'ev',label:'EV/EBITDA',cur:v.evEbitda,sec:secMed&&secMed.evEbitda,hist:(v.hist&&(v.hist.ev5||v.hist.ev3))||null},
+  ];
+  let bothCount=0;const parts=[];
+  dims.forEach(d=>{
+    if(!(d.cur>0))return;
+    const dSec=(d.sec>0)?(d.cur/d.sec-1)*100:null;
+    const dHist=(d.hist>0)?(d.cur/d.hist-1)*100:null;
+    d.secPct=dSec;d.histPct=dHist;
+    const belowSec=dSec!=null&&dSec<=-BAND, belowHist=dHist!=null&&dHist<=-BAND;
+    d.belowSec=belowSec;d.belowHist=belowHist;
+    if(belowSec&&belowHist){bothCount++;parts.push(d.label);}
+  });
+  return{dims,bothCount,detail:parts.length?`${parts.join(', ')}: ниже медианы сектора и собственной истории`:''};
+}
+function valChip(pct){if(pct==null)return'<span class="val-na">—</span>';const cheap=pct<=-10,rich=pct>=10;const cls=cheap?'pf3-up':(rich?'pf3-down':'val-mid');return`<span class="${cls}">${pct>=0?'+':''}${pct.toFixed(0)}%</span>`}
+// Панель Valuation Check в карточке акции.
+function valHTML(d,r){
+  const tk=String(r[2]||'').trim().toUpperCase();
+  const v=VAL[tk];
+  const hd=`<div class="pf3-panel-hd"><span>📐 ${RT('Оценка — мультипликаторы','Valuation — multiples')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
+  if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))
+    return`<section class="pf3-panel">${hd}<div class="pf3-empty">${v?RT('Нет данных по мультипликаторам для этой бумаги.','No multiples data for this stock.'):RT('Нажмите «📐 Оценка» на 🏠 Home — соберём мультипликаторы по всему портфелю.','Press «📐 Valuation» on 🏠 Home to pull multiples across the portfolio.')}</div></section>`;
+  const secMed=(_valSecCache||valSectorMedians())[v.sector]||null;
+  const c=valCmp(v,secMed);
+  const rowsHTML=c.dims.map(dm=>{
+    if(!(dm.cur>0))return'';
+    return`<tr><td class="val-l">${dm.label}</td><td>${valFmt(dm.cur)}</td><td>${dm.sec>0?valFmt(dm.sec)+' '+valChip(dm.secPct):'<span class="val-na">—</span>'}</td><td>${dm.hist>0?valFmt(dm.hist)+' '+valChip(dm.histPct):'<span class="val-na">—</span>'}</td></tr>`;
+  }).join('');
+  // Доп. строки без сравнения по секции (Forward P/E уже учтён в P/E; PEG отдельно).
+  const extra=[];
+  if(v.pe&&v.fwdPe)extra.push(`Forward P/E <b>${valFmt(v.fwdPe)}</b> · TTM ${valFmt(v.pe)}`);
+  if(v.peg)extra.push(`PEG <b>${valFmt(v.peg)}</b>${v.peg<1?' · <span class="pf3-up">'+RT('рост недооценён','growth underpriced')+'</span>':''}`);
+  const both=c.bothCount>=2?`<div class="val-both">🟢 ${RT('Дёшево по обоим измерениям','Cheap on both dimensions')} · ${c.bothCount}/3 ${RT('мультипл.','multiples')}</div>`:'';
+  const caveat=both?`<div class="val-caveat">⚠️ ${RT('Низкие мультипликаторы часто бывают на пике цикла (прибыль временно завышена). Это статистическое наблюдение, не сигнал к покупке.','Low multiples often occur at the cycle peak (temporarily inflated earnings). A statistical observation, not a buy signal.')}</div>`:'';
+  return`<section class="pf3-panel">${hd}
+    ${v.sector?`<div class="val-sec">${RT('Сектор','Sector')}: <b>${v.sector}</b>${secMed&&secMed.n?` · ${RT('медиана по','median of')} ${secMed.n} ${RT('бум.','co.')}`:''}</div>`:''}
+    ${both}
+    <table class="val-tbl"><thead><tr><th></th><th>${RT('тек.','now')}</th><th>${RT('сектор','sector')}</th><th>${RT('история 5y','5y hist')}</th></tr></thead><tbody>${rowsHTML}</tbody></table>
+    ${extra.length?`<div class="val-extra">${extra.map(e=>`<span>${e}</span>`).join('')}</div>`:''}
+    ${caveat}
+    <div class="pf3-ai-note">${RT('Yahoo (живые мультипл.) + FMP (история). Finnhub /metric — US-only, не используется. n/a при EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), росте≤0 (PEG).','Yahoo (live multiples) + FMP (history). Finnhub /metric is US-only, unused. n/a when EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), growth≤0 (PEG).')}</div>
+  </section>`;
+}
+
+// 📐 Сводка недооценки на Home — результат кнопки «Оценка».
+function homeValHTML(){
+  const ents=Object.keys(VAL||{}).map(tk=>({tk,...VAL[tk]}));
+  const withData=ents.filter(e=>e.pe||e.fwdPe||e.ps||e.evEbitda);
+  const anyAt=ents.map(e=>e.at).filter(Boolean).sort().pop();
+  if(!ents.length)return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📐 ${RT('Оценка','Valuation')}</span></div>
+    <div class="pf3-empty">${RT('Нажмите «📐 Оценка», чтобы собрать мультипликаторы по портфелю и сравнить с медианой сектора и историей.','Press «📐 Valuation» to pull multiples across the portfolio and compare with sector median and history.')}</div></section>`;
+  const sec=_valSecCache||valSectorMedians();
+  const scored=withData.map(e=>({e,c:valCmp(e,sec[e.sector])})).filter(x=>x.c).sort((a,b)=>b.c.bothCount-a.c.bothCount);
+  const cheap=scored.filter(x=>x.c.bothCount>=2);
+  const row=x=>{const e=x.e;return`<div class="home-row" onclick="insiderOpenCard('${e.tk}')">
+    ${logoHTML(e.tk,e.ccy,'pf3-row-logo')}
+    <div class="pf3-row-name"><b>${e.name||e.tk}</b><span>${e.tk}${e.sector?' · '+e.sector:''}</span></div>
+    <div style="flex:1"><span class="val-both-tag">🟢 ${RT('дёшево','cheap')} · ${x.c.bothCount}/3</span> ${x.c.dims.filter(d=>d.belowSec&&d.belowHist).map(d=>`<span class="pf3-asof">${d.label}</span>`).join(' ')}</div></div>`};
+  const sub=`${withData.length}/${ents.length} ${RT('с данными','with data')}${anyAt?' · '+RT('обновлено','updated')+' '+pf3DtRu(anyAt):''}`;
+  const body=cheap.length
+    ? `<div class="home-ins-sec"><div class="home-ins-h">🟢 ${RT('Дёшево по сектору и истории','Cheap vs sector & history')}</div>${cheap.slice(0,12).map(row).join('')}</div>`
+    : `<div class="pf3-empty">${RT('Сильной недооценки не найдено. Откройте карточку акции — там полная разбивка по мультипликаторам.','No strong undervaluation found. Open a stock card for the full multiples breakdown.')}</div>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📐 ${RT('Недооценка по мультипликаторам','Undervaluation by multiples')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
+}
+
 // 🕵 Сводка инсайдерской активности на Home — результат кнопки «AI Insider».
 function homeInsiderHTML(){
   const ents=Object.keys(INSIDER||{}).map(tk=>({tk,...INSIDER[tk]}));
@@ -3320,7 +3462,8 @@ function homeHTML(){
   const chips=Object.entries(stat).sort((a,b)=>a[1].rank-b[1].rank)
     .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
   return`
-  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (Finnhub)','Insider transactions across the portfolio (Finnhub)')}">🕵 AI Insider</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (Finnhub)','Insider transactions across the portfolio (Finnhub)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  ${isAdmin()?homeValHTML():''}
   ${isAdmin()?homeInsiderHTML():''}
   <div class="home-grid">
     ${widget(T('🟢 Покупать / докупать сейчас'),T('цена в ±2% от SMA или поддержки'),cap(buy,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Сейчас никто не стоит у уровня покупки'))}
@@ -3382,6 +3525,7 @@ function pf3DetailHTML(){
     </section>
     ${pf3RecoHTML(d,r)}
     ${isAdmin()?stockAiHTML(d,r):''}
+    ${isAdmin()?valHTML(d,r):''}
     ${isAdmin()?insiderHTML(d,r):''}
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>

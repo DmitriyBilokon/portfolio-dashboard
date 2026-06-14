@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-14targets';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-14valuation';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1198,6 +1198,49 @@ async function fmpTargetFull(symbol, env){
              recent: rec != null ? round2(rec) : null, recentCount: recN, recentSpan: span, src: 'fmp' };
   }catch(e){ return null; }
 }
+
+// ── 📐 Valuation Check: текущие мультипликаторы (Yahoo) + историческая медиана (FMP) ──
+// Yahoo покрывает US и Nordic/EU, поэтому он основной для живых мультипликаторов;
+// Finnhub /stock/metric — US-only, поэтому не используется. P/E n/a при EPS≤0,
+// EV/EBITDA n/a при EBITDA<0, PEG n/a при росте≤0 — отрицательные значения отсекаем.
+async function yValuation(sym){
+  const qs = await yQuoteSummary(sym, 'summaryDetail,defaultKeyStatistics,assetProfile');
+  if(!qs) return null;
+  const sd = qs.summaryDetail || {}, ks = qs.defaultKeyStatistics || {}, ap = qs.assetProfile || {};
+  const pos = v => { const n = yRaw(v); return (typeof n === 'number' && isFinite(n) && n > 0) ? round2(n) : null; };
+  return {
+    pe: pos(sd.trailingPE),
+    fwdPe: pos(sd.forwardPE),
+    ps: pos(sd.priceToSalesTrailing12Months),
+    evEbitda: pos(ks.enterpriseToEbitda),
+    peg: pos(ks.pegRatio) ?? pos(ks.trailingPegRatio),
+    sector: ap.sector || null,
+    industry: ap.industry || null,
+  };
+}
+// Историческая медиана мультипликаторов самой бумаги за 3 и 5 лет (FMP annual ratios).
+// FMP покрывает в основном US; для Nordic вернётся null (в карточке — «нет истории»).
+async function fmpRatiosHist(sym, env){
+  try{
+    if(!env.FMP_KEY) return null;
+    const r = await fetch(`https://financialmodelingprep.com/stable/ratios?symbol=${encodeURIComponent(sym)}&period=annual&limit=5&apikey=${env.FMP_KEY}`);
+    if(!r.ok) return null;
+    const arr = await r.json();
+    if(!Array.isArray(arr) || !arr.length) return null;   // newest first
+    const pick = (row, keys) => { for(const k of keys){ const v = row[k]; if(typeof v === 'number' && isFinite(v) && v > 0) return v; } return null; };
+    const series = keys => arr.map(row => pick(row, keys)).filter(v => v != null);
+    const med = a => { if(!a.length) return null; const s = [...a].sort((x, y) => x - y), m = Math.floor(s.length / 2); return round2(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2); };
+    const pe = series(['priceToEarningsRatio', 'priceEarningsRatio', 'peRatio']);
+    const ps = series(['priceToSalesRatio', 'priceSalesRatio']);
+    const ev = series(['enterpriseValueMultiple', 'evToEbitda', 'enterpriseValueOverEBITDA']);
+    if(!pe.length && !ps.length && !ev.length) return null;
+    return {
+      pe3: med(pe.slice(0, 3)), pe5: med(pe.slice(0, 5)),
+      ps3: med(ps.slice(0, 3)), ps5: med(ps.slice(0, 5)),
+      ev3: med(ev.slice(0, 3)), ev5: med(ev.slice(0, 5)),
+    };
+  }catch(e){ return null; }
+}
 // Резерв AI-портфеля в таблице ai_state: клиенты её не трогают (RLS без
 // политик, доступ только у service-роли). Пока SQL не выполнен — try/catch
 // и фолбэк на snap.aiPortBak.
@@ -1362,7 +1405,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets(FMP all-time+свежий) · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider · targets · valuation · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1429,6 +1472,37 @@ export default {
         const b = await request.json();
         const sum = b.sumUSD ? ` · объём ≈ $${Number(b.sumUSD).toLocaleString('en-US')}` : '';
         await sendTelegram(env, `🕵 <b>CLUSTER BUY — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${b.uniqueBuyers} инсайдер${b.uniqueBuyers >= 5 ? 'ов' : (b.uniqueBuyers >= 2 ? 'а' : '')} купили в окне ${b.windowDays || 10} дн.${sum}\n📅 ${b.fromDate || ''} — ${b.toDate || ''}`);
+        return json({ ok: true });
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'valuation'){
+      // POST {symbols:[биржевые символы]}: батч мультипликаторов + историческая медиана.
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{
+        const body = await request.json();
+        const syms = (Array.isArray(body.symbols) ? body.symbols : []).slice(0, 18).map(s => String(s).trim()).filter(Boolean);
+        const out = {};
+        // Чанк по 6 (2 подзапроса/символ: Yahoo + FMP) — щадим лимиты.
+        for(let i = 0; i < syms.length; i += 6){
+          const chunk = syms.slice(i, i + 6);
+          await Promise.all(chunk.map(async s => {
+            const [val, hist] = await Promise.all([yValuation(s), fmpRatiosHist(s, env)]);
+            out[s] = (val || hist) ? { ...(val || {}), hist: hist || null, at: new Date().toISOString() } : null;
+          }));
+          if(i + 6 < syms.length) await sleep(250);
+        }
+        return json(out);
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'valnotify'){
+      // POST {ticker,name,detail}: Telegram-алерт о сильной недооценке (дёшево по обоим измерениям).
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{
+        const b = await request.json();
+        await sendTelegram(env, `📐 <b>НЕДООЦЕНКА — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.detail || 'дёшево относительно сектора и собственной истории'))}\n<i>Статистическое наблюдение, не сигнал к покупке.</i>`);
         return json({ ok: true });
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }

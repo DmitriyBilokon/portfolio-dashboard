@@ -212,6 +212,7 @@ const pf3D=()=>DATA[v3Key];
 const HOME_KEY='🏠 Home';           // virtual tab: signal/level widgets over the v3 tabs
 const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересечения составов индексов
 const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): виртуальный счёт под управлением Claude
+const STK_KEY='🔬 AI-разборы';      // virtual tab (admin): история разборов акций (обучающая база)
 const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY||!!(DATA[k]&&DATA[k].port==='1');   // вкладки с экономикой позиций
 const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые портфели (мои/семейные, не AI)
 const OMX_IDX='OMXS30';
@@ -284,7 +285,7 @@ function reorderTab(drag,dropKey){
   }
   scheduleSave();init();
 }
-const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY;
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -309,7 +310,7 @@ const I18N_EN={
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
 '🤖 AI Assistant — анализ портфеля и рекомендации':'🤖 AI Assistant — portfolio analysis & recommendations','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с ассистентом':'💬 Assistant chat','видит портфель, цены и ваши правила':'sees your portfolio, prices and rules','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память ассистента — правила инвестора':'🧠 Assistant memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
 '❓ Справка':'❓ Help','Нажмите на раздел, чтобы развернуть его':'Click a section to expand it','🗂 Вкладки и виды':'🗂 Tabs & views','🏷 Тип акции':'🏷 Stock type','📊 Критерий — рыночная фаза (техника + фундаментал)':'📊 Criterion — market phase (technicals + fundamentals)','🎯 Сигнал — цена у технического уровня (±2%)':'🎯 Signal — price at a technical level (±2%)','🧪 Симуляция — тестовые покупки':'🧪 Simulation — paper trades','📐 Технические уровни и колонки':'📐 Technical levels & columns','💼 Портфельные значения':'💼 Portfolio values','💪 Здоровье бизнеса (карточка акции)':'💪 Business health (stock card)',
-'Нажмите на строку — карточка с полными данными откроется слева от списка':'Click a row — the full card opens to the left of the list','📋 Акции':'📋 Stocks','🔄 Обновить акции':'🔄 Refresh stocks','Рекомендация':'Recommendation','🤖 AI Портфель':'🤖 AI Portfolio',
+'Нажмите на строку — карточка с полными данными откроется слева от списка':'Click a row — the full card opens to the left of the list','📋 Акции':'📋 Stocks','🔄 Обновить акции':'🔄 Refresh stocks','Рекомендация':'Recommendation','🤖 AI Портфель':'🤖 AI Portfolio','🔬 AI-разборы':'🔬 AI analyses',
 'Критично':'Critical','Слабо':'Weak','Средне':'Fair','Хорошо':'Good','Отлично':'Excellent',
 'Критическое':'Critical','Слабое':'Weak','Среднее':'Fair','Хорошее':'Good','Отличное':'Excellent',
 'Устойчивый баланс':'Solid balance sheet','Положительный денежный поток':'Positive cash flow','Долгосрочный рост':'Long-term growth',
@@ -610,8 +611,8 @@ function migrateAiHistory(){
 function init(){
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
-  if((curIdx===DUP_KEY||curIdx===AIP_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
-  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=n=>{
     const el=document.createElement('div');
@@ -637,6 +638,7 @@ function init(){
   t.appendChild(mkVirt(HOME_KEY,HOME_KEY));
   if(isAdmin())t.appendChild(mkVirt(AIP_KEY,TAB_LABEL(AIP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
+  if(isAdmin())t.appendChild(mkVirt(STK_KEY,TAB_LABEL(STK_KEY)));
   if(keys.includes(PF3_KEY))t.appendChild(mkTab(PF3_KEY));
   // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
   const groups=ensureGroups();
@@ -819,7 +821,7 @@ function restoreXcols(){
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
   if(!name)return;
-  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
+  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY||name===STK_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
   DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
   scheduleSave();
   curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
@@ -905,6 +907,13 @@ function renderAll(){
       document.getElementById('smaBanner').innerHTML='';
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${dupHTML()}</div>`;}
+      return;
+    }
+    if(curIdx===STK_KEY){   // 🔬 AI-разборы (админ): история разборов акций из обучающей базы
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${stkLogHTML()}</div>`;}
       return;
     }
     if(curIdx===HOME_KEY){   // virtual home dashboard — no sub-tabs, aggregates both v3 tabs
@@ -1694,6 +1703,62 @@ async function stockAiRun(ev){
     }else{pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast((j&&j.error)||'AI не ответил',true);}
   }catch(e){pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast(RT('Worker недоступен (нужен эндпоинт ?action=stockai)','Worker unreachable (?action=stockai)'),true);}
   renderPF3();
+}
+// 🔬 AI-разборы: история разборов из обучающей базы STOCK_AI_LOG. Каждая запись
+// сверяется с текущей ценой бумаги (где она есть в данных) — прогноз↔факт.
+function stkLivePrice(tk){
+  const U=String(tk).toUpperCase();
+  for(const key of v3Tabs()){
+    const dd=DATA[key];if(!dd)continue;
+    const r=(dd.rows||[]).find(x=>String(x[2]||'').trim().toUpperCase()===U);
+    if(r&&parseFloat(r[7])>0)return parseFloat(r[7]);
+  }
+  return null;
+}
+function stkDelete(ts){
+  STOCK_AI_LOG=(STOCK_AI_LOG||[]).filter(e=>e.ts!==ts);
+  scheduleSave();renderPF3();
+}
+let _stkOpen={};
+function stkToggle(ts){_stkOpen[ts]=!_stkOpen[ts];renderPF3();}
+function stkLogHTML(){
+  const log=STOCK_AI_LOG||[];
+  if(!log.length)return `<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔬 ${RT('AI-разборы акций','AI stock analyses')}</span></div>
+    <div class="pf3-empty">${RT('Пока пусто. Откройте карточку любой акции и нажмите «🤖 AI-анализ» — разбор сохранится сюда.','Empty yet. Open any stock card and press «🤖 AI-анализ» — the analysis is saved here.')}</div></section>`;
+  const VB={add:['🟢',RT('Добавлять','Add'),'add'],watch:['🟡',RT('Наблюдать','Watch'),'watch'],avoid:['🔴',RT('Не добавлять','Avoid'),'avoid']};
+  const rows=log.map(e=>{
+    const v=VB[e.verdict]||['⚪','—',''];
+    const now=stkLivePrice(e.ticker);
+    const dlt=(now!=null&&e.price>0)?(now/e.price-1)*100:null;
+    // Сверка прогноза: для «add» рост подтверждает, падение — мимо; для «avoid» наоборот.
+    let mark='';
+    if(dlt!=null&&(e.verdict==='add'||e.verdict==='avoid')){
+      const good=e.verdict==='add'?dlt>=0:dlt<0;
+      mark=`<span class="stk-mark ${good?'ok':'miss'}" title="${RT('сверка прогноза с фактом','forecast vs actual')}">${good?'✓':'✕'} ${dlt>=0?'+':''}${dlt.toFixed(1)}%</span>`;
+    }else if(dlt!=null){
+      mark=`<span class="stk-mark">${dlt>=0?'+':''}${dlt.toFixed(1)}% ${RT('с разбора','since')}</span>`;
+    }
+    const bits=[];const D=e.data||{};
+    if(D.sizePct!=null)bits.push(`${RT('размер','size')} ${D.sizePct}%`);
+    if(D.targetPrice!=null)bits.push(`${RT('цель','target')} ${pf3Fmt(D.targetPrice,2)}${D.upsidePct!=null?` (+${D.upsidePct}%)`:''}`);
+    if(e.horizon)bits.push(`${RT('горизонт','horizon')} ${e.horizon}`);
+    const open=!!_stkOpen[e.ts];
+    return `<div class="stk-row">
+      <div class="stk-head" onclick="stkToggle('${e.ts}')">
+        ${logoHTML(e.ticker,e.ccy,'pf3-row-logo')}
+        <div class="stk-id"><b>${e.name||e.ticker}</b><span>${e.ticker} · ${pf3DtRu(e.ts)}</span></div>
+        <span class="stkai-verdict v-${v[2]}" style="margin:0;font-size:12px;padding:3px 9px">${v[0]} ${v[1]}</span>
+        <span class="stk-px">${e.price!=null?pf3Fmt(e.price,2)+' '+(e.ccy||''):''}${mark}</span>
+        <span class="stk-exp">${open?'▾':'▸'}</span>
+      </div>
+      ${bits.length?`<div class="stkai-bits" style="padding:0 4px 6px">${bits.map(b=>`<span>${b}</span>`).join('')}</div>`:''}
+      ${open?`<div class="pf3-ai-report stk-body">${pf3Md(e.text||'')}</div><div style="text-align:right"><button class="pf3-btn pf3-btn-sm btn-del" onclick="stkDelete('${e.ts}')">🗑 ${RT('Удалить','Delete')}</button></div>`:''}
+    </div>`;
+  }).join('');
+  return `<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🔬 ${RT('AI-разборы акций','AI stock analyses')}</span><span class="pf3-asof">${log.length} ${RT('записей · прогноз сверяется с текущей ценой','entries · forecast vs current price')}</span></div>
+    ${rows}
+  </section>`;
 }
 function stockAiHTML(d,r){
   const sym=String(r[2]||'').toUpperCase();

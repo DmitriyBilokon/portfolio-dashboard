@@ -513,8 +513,8 @@ body.v3 .sub-tab.active{background:linear-gradient(90deg,var(--v3-acc),#8b5cf6);
 }
 
 /* Колонка «Критерий» — рыночная фаза (падающий нож / импульс / тренд / оценка) */
-.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 112px 46px 62px 90px 86px 50px 124px minmax(150px,178px) 52px}
-.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 112px 92px 70px 92px 124px minmax(150px,178px) 52px}
+.pf3-row,.pf3-lhead{grid-template-columns:40px minmax(104px,1.4fr) minmax(64px,0.85fr) 104px 44px 60px 86px 82px 48px 108px minmax(118px,1fr) 50px}
+.pf3-row.idx,.pf3-lhead.idx{grid-template-columns:40px minmax(110px,1.5fr) minmax(78px,1fr) 104px 88px 66px 88px 112px minmax(118px,1fr) 50px}
 @media(min-width:901px){
   .pf3-typelay .pf3-row{grid-template-columns:40px minmax(105px,1.5fr) minmax(68px,0.9fr) 46px 62px 90px 86px 50px 124px 138px 52px}
   .pf3-typelay .pf3-row.idx{grid-template-columns:40px minmax(120px,1.6fr) minmax(85px,1fr) 92px 70px 92px 124px 142px 52px}
@@ -882,10 +882,11 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* ── Фиксы списка: масштабируемость, полная обводка строк, бейджи не режутся ── */
 /* Основной экран тянется под ширину окна (раньше был жёсткий потолок 1100px) */
 .pf3-wrap{max-width:min(1680px,calc(100vw - 32px))}
-/* Горизонтальный скролл списка: обводка строки охватывает ВСЕ колонки,
-   включая Сигнал и доп. колонки, а не обрезается на ширине контейнера */
+/* Список заполняет контейнер: гибкие колонки (Компания/Сектор/Сигнал)
+   ужимаются с многоточием, таблица не вылезает за правый край. На совсем
+   узких экранах остаётся горизонтальный скролл (overflow-x:auto). */
 .pf3-list{overflow-x:auto}
-.pf3-list>.pf3-row,.pf3-list>.pf3-lhead{min-width:max-content}
+.pf3-list>.pf3-row,.pf3-list>.pf3-lhead{min-width:0}
 .pf3-list .pf3-row-name,.pf3-list .pf3-c-sec{max-width:240px}
 .pf3-row-name b,.pf3-row-name span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Тип/Критерий: ячейка растёт под бейдж — низ букв больше не обрезается */

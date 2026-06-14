@@ -1743,7 +1743,7 @@ async function insiderUpdateAll(){
           for(const tk of Object.keys(j)){
             const v=j[tk];if(!v||v.err)continue;
             const prev=INSIDER[tk]||{};
-            INSIDER[tk]={...v,name:names[tk]||tk,notified:prev.notified||null};
+            INSIDER[tk]={...v,name:names[tk]||tk,notified:prev.notified||null,at:new Date().toISOString()};
             if(v.txCount>0)withData++;
             // Новый кластер (другая сигнатура) → Telegram-алерт.
             if(v.cluster){
@@ -3258,6 +3258,38 @@ async function homeUpdateAll(){
     renderAll();
   }
 }
+// 🕵 Сводка инсайдерской активности на Home — результат кнопки «AI Insider».
+function homeInsiderHTML(){
+  const ents=Object.keys(INSIDER||{}).map(tk=>({tk,...INSIDER[tk]}));
+  const withData=ents.filter(e=>e.txCount>0);
+  const anyAt=ents.map(e=>e.at).filter(Boolean).sort().pop();
+  if(!ents.length)return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')}</span></div>
+    <div class="pf3-empty">${RT('Нажмите «🕵 AI Insider», чтобы собрать инсайдерские сделки по портфелю. Finnhub отдаёт данные только по US-бумагам.','Press «🕵 AI Insider» to pull insider trades across the portfolio. Finnhub covers US tickers only.')}</div></section>`;
+  const clusters=withData.filter(e=>e.cluster).sort((a,b)=>b.cluster.uniqueBuyers-a.cluster.uniqueBuyers);
+  const netBuy=withData.filter(e=>!e.cluster&&e.netUSD>0).sort((a,b)=>b.netUSD-a.netUSD);
+  const row=(e,extra)=>`<div class="home-row" onclick="insiderOpenCard('${e.tk}')">
+    ${logoHTML(e.tk,e.ccy,'pf3-row-logo')}
+    <div class="pf3-row-name"><b>${e.name||e.tk}</b><span>${e.tk}</span></div>
+    <div style="flex:1">${extra}</div></div>`;
+  const clHtml=clusters.length?clusters.map(e=>row(e,`<span class="ins-cluster">🟢 CLUSTER BUY · ${e.cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${e.cluster.sumUSD?' · '+insiderFmtUSD(e.cluster.sumUSD):''}</span>`)).join(''):'';
+  const nbHtml=netBuy.length?netBuy.slice(0,12).map(e=>row(e,`<span class="pf3-up" style="font-weight:700">+${insiderFmtUSD(e.netUSD)}</span> <span class="pf3-asof">${RT('нетто-покупка','net buy')}</span>`)).join(''):'';
+  const sub=`${withData.length}/${ents.length} ${RT('с данными','with data')}${anyAt?' · '+RT('обновлено','updated')+' '+pf3DtRu(anyAt):''}`;
+  let body='';
+  if(clHtml)body+=`<div class="home-ins-sec"><div class="home-ins-h">🟢 ${RT('Кластерные покупки','Cluster buys')}</div>${clHtml}</div>`;
+  if(nbHtml)body+=`<div class="home-ins-sec"><div class="home-ins-h">📈 ${RT('Нетто-покупки инсайдеров','Net insider buying')}</div>${nbHtml}</div>`;
+  if(!body)body=`<div class="pf3-empty">${RT('Инсайдерских покупок не найдено. Откройте карточку акции — там полная сводка по каждой бумаге.','No insider buying found. Open a stock card for the full per-stock breakdown.')}</div>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдерская активность','Insider activity')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
+}
+function insiderHomeTab(tk){
+  const U=String(tk).toUpperCase();
+  for(const k of v3Tabs()){const dd=DATA[k];if(dd&&(dd.rows||[]).some(r=>String(r[2]||'').trim().toUpperCase()===U))return k}
+  return null;
+}
+function insiderOpenCard(tk){
+  const home=insiderHomeTab(tk);
+  if(!home){toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);return}
+  curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
+}
 function homeHTML(){
   const items=homeItems();
   const lvl=s=>`<div class="home-lvl"><span>${T(s.n)} <b>${pf3Fmt(s.v,2)}</b></span><span class="pf3-lvl-dist ${s.dist>=0?'pf3-up-bg':'pf3-down-bg'}">${s.dist>=0?'▲':'▼'} ${Math.abs(s.dist).toFixed(1)}%</span></div>`;
@@ -3276,6 +3308,7 @@ function homeHTML(){
     .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
   return`
   <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (Finnhub)','Insider transactions across the portfolio (Finnhub)')}">🕵 AI Insider</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+  ${isAdmin()?homeInsiderHTML():''}
   <div class="home-grid">
     ${widget(T('🟢 Покупать / докупать сейчас'),T('цена в ±2% от SMA или поддержки'),cap(buy,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Сейчас никто не стоит у уровня покупки'))}
     ${widget(T('🔴 Продавать — у сопротивления'),T('цена в ±2% от сопротивления'),cap(sell,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('У сопротивления никого нет'))}

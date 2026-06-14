@@ -1780,16 +1780,17 @@ function aiRecoHTML(d,r){
   let body;
   if(loading)body=`<div class="stkai-load">⏳ ${RT('Анализирую: техника, фундаментал, новости и мировой контекст… (до минуты)','Analysing: technicals, fundamentals, news and global context… (up to a minute)')}</div>`;
   else if(v){
+    const E=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const M=AI_RECO_META[v.verdict]||['❔',v.verdict||'—','wait'];
     const entry=(v.entryLow!=null||v.entryHigh!=null)?`<span class="airk-bit">${RT('вход','entry')} ${[v.entryLow,v.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${v.ccy||''}</span>`:'';
-    const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>esc(String(x))).join(' · ')}</div>`:'';
+    const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>E(String(x))).join(' · ')}</div>`:'';
     const open=!!_aiRecoOpen[tk];
     body=`<div class="airk-head">
         <span class="airk-verdict xr-${M[2]}">${M[0]} ${M[1]}</span>
         ${v.confidence?`<span class="airk-conf">${RT('увер.','conf.')} ${v.confidence}</span>`:''}
         ${entry}
       </div>
-      ${v.headline?`<div class="airk-headline">${esc(String(v.headline))}</div>`:''}
+      ${v.headline?`<div class="airk-headline">${E(String(v.headline))}</div>`:''}
       ${risks}
       <button class="stkai-toggle" onclick="aiRecoToggle('${tk}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
       ${open?`<div class="pf3-ai-report">${pf3Md(v.text)}</div>`:''}`;

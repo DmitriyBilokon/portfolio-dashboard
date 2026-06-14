@@ -2981,6 +2981,7 @@ function renderPF3(){
     drawChart(pf3State,'pf3ChartBox','pf3Legend');
     pf3LoadFundamentals();   // no-op when cached; re-renders the health cards when done
     pf3LoadEarnings();       // same for the earnings calendar panel
+    pf3RefreshCardPrice(d,r);   // живая цена → актуальный «потенциал роста»
   }else if(v3Key===PF3_KEY)pfPerfDraw();   // график развития портфеля под сводкой
 }
 
@@ -3792,6 +3793,38 @@ async function pf3Refresh(silent){
   // Don't redraw under the user's cursor while they edit qty / buy price.
   const ae=document.activeElement,area=document.getElementById('pf3Area');
   if(!(silent&&ae&&ae.tagName==='INPUT'&&area&&area.contains(ae)))renderPF3();
+}
+
+// Живая цена ОДНОЙ бумаги при открытии карточки — чтобы «потенциал роста»
+// (таргет/цена) считался по актуальной цене, а не по последнему обновлению
+// вкладки. Дёшево: один тикер; не чаще раза в 2 мин на символ.
+let _cardPxAt={};
+async function pf3RefreshCardPrice(d,r){
+  const sym=exSymbol(r[2],r[8]);if(!sym)return;
+  if(_cardPxAt[sym]&&Date.now()-_cardPxAt[sym]<120000)return;
+  _cardPxAt[sym]=Date.now();
+  try{
+    const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(sym)).then(x=>x.json()).catch(()=>null);
+    const q=j&&j[sym];
+    if(!(q&&typeof q.price==='number')){_cardPxAt[sym]=0;return;}
+    const i=d.rows.indexOf(r);if(i<0)return;
+    const {s50,s100,s200}=smaIdx(d);
+    const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
+    r[7]=q.price;
+    if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
+    const tk=String(r[2]||''),mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
+    SMA_TF[tk]={mode,d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
+    const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
+    if(s50>=0&&set[0]!=null)r[s50]=set[0];
+    if(s100>=0&&set[1]!=null)r[s100]=set[1];
+    if(s200>=0&&set[2]!=null)r[s200]=set[2];
+    if(q.support!=null)r[supI]=q.support;
+    if(q.resistance!=null)r[resI]=q.resistance;
+    recalcPF(i,v3Key);scheduleSave();
+    // Перерисовать только если карточка той же бумаги ещё открыта и пользователь не печатает.
+    const ae=document.activeElement;
+    if(isV3()&&pf3Sel===tk&&!(ae&&ae.tagName==='INPUT'))renderPF3();
+  }catch(e){_cardPxAt[sym]=0;}
 }
 
 // Аналит. таргеты (Yahoo/Refinitiv-консенсус) для текущей вкладки: worker-эндпоинт

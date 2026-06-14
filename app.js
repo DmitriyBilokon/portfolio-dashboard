@@ -1717,10 +1717,10 @@ function stkLivePrice(tk){
 }
 function stkDelete(ts){
   STOCK_AI_LOG=(STOCK_AI_LOG||[]).filter(e=>e.ts!==ts);
-  scheduleSave();renderPF3();
+  scheduleSave();renderAll();   // вкладка STK_KEY рисуется в renderAll, не в renderPF3
 }
 let _stkOpen={};
-function stkToggle(ts){_stkOpen[ts]=!_stkOpen[ts];renderPF3();}
+function stkToggle(ts){_stkOpen[ts]=!_stkOpen[ts];renderAll();}
 function stkLogHTML(){
   const log=STOCK_AI_LOG||[];
   if(!log.length)return `<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔬 ${RT('AI-разборы акций','AI stock analyses')}</span></div>

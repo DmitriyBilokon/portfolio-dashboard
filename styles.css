@@ -1009,3 +1009,15 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* 🇸🇪 Источник инсайдеров (Finansinspektionen) */
 .ins-src{font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,.15);color:#818cf8;vertical-align:middle}
+
+/* 🏆 Лучшие акции по горизонтам (Home) */
+.bp-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.bp-tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:var(--text2);font-weight:600;padding:3px 8px}
+.bp-tbl td{padding:6px 8px;border-top:1px solid var(--border);vertical-align:middle;cursor:pointer}
+.bp-tbl tr:hover td{background:var(--bg3)}
+.bp-n{color:var(--text2);width:24px;text-align:center}
+.bp-name b{font-weight:600}
+.bp-tk{font-size:11px;color:var(--text2)}
+.bp-px{white-space:nowrap;text-align:right}
+.bp-px small{color:var(--text2)}
+.bp-why{color:var(--text2);font-size:12px}

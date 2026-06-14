@@ -3705,33 +3705,79 @@ function insiderOpenCard(tk){
   if(!home){toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);return}
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();
 }
-function homeHTML(){
-  const items=homeItems();
-  const lvl=s=>`<div class="home-lvl"><span>${T(s.n)} <b>${pf3Fmt(s.v,2)}</b></span><span class="pf3-lvl-dist ${s.dist>=0?'pf3-up-bg':'pf3-down-bg'}">${s.dist>=0?'▲':'▼'} ${Math.abs(s.dist).toFixed(1)}%</span></div>`;
-  const widget=(title,sub,rows,empty)=>`<section class="pf3-panel home-w"><div class="pf3-panel-hd"><span>${title}</span><span class="pf3-asof">${sub}</span></div>${rows||`<div class="pf3-empty">${empty}</div>`}</section>`;
-  const cap=(arr,n)=>arr.slice(0,n);
-  // Сигналы: цена в ±2% от уровня покупки / сопротивления; «подходят» — до 5% над уровнем.
-  const buy=items.filter(x=>x.sig.type==='buy').sort((a,b)=>Math.abs(a.sig.dist)-Math.abs(b.sig.dist));
-  const sell=items.filter(x=>x.sig.type==='sell').sort((a,b)=>Math.abs(a.sig.dist)-Math.abs(b.sig.dist));
-  const near=items.filter(x=>x.sig.type==='wait'&&x.sig.dist<=5).sort((a,b)=>a.sig.dist-b.sig.dist);
-  const knives=items.filter(x=>x.crit.rank===0);
-  const movers=items.filter(x=>isFinite(x.day)&&x.day!==0).sort((a,b)=>Math.abs(b.day)-Math.abs(a.day));
-  // Статистика рыночных фаз по всем акциям.
-  const stat={};
-  items.forEach(x=>{const k=x.crit.ico+' '+T(x.crit.label);stat[k]=(stat[k]||{n:0,rank:x.crit.rank,cls:x.crit.cls});stat[k].n++});
-  const chips=Object.entries(stat).sort((a,b)=>a[1].rank-b[1].rank)
-    .map(([k,v])=>`<span class="pf3-crit ${v.cls} home-chip">${k} · ${v.n}</span>`).join('');
+// 🏆 Лучшие акции-кандидаты для портфеля по горизонтам — детерминированный отбор
+// из ВСЕХ вкладок по обновлённым данным (цена, SMA, таргет, P/E, ROE, рост).
+// 1–3 мес: импульс и точки входа · 3–6 мес: тренд+цена · 6–12 мес: фундаментал+недооценка.
+function homeBestPicks(){
+  const seen=new Set(),all=[];
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
+    const h=d.headers,{s50,s100,s200}=smaIdx(d);
+    const peC=h.indexOf('P/E'),roC=h.indexOf('ROE'),rgC=h.indexOf('Рост выручки'),psC=h.indexOf('P/S'),supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление');
+    d.rows.forEach((r,i)=>{
+      const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[7])||0;if(!(price>0))return;
+      recalcPF(i,k);seen.add(tk);
+      const num=c=>{const v=c>=0?parseFloat(r[c]):NaN;return isFinite(v)?v:null};
+      const D=c=>{const v=num(c);return(v&&v>0)?(price/v-1)*100:null};
+      let knife=false;try{knife=pf3Criterion(d,r).rank===0}catch(e){}
+      let reco=null;try{reco=pf3Reco(d,r).v}catch(e){}
+      all.push({tk,name:r[1]||tk,ccy:r[8]||'',price,
+        d50:D(s50),d100:D(s100),d200:D(s200),dSup:D(supC),dRes:D(resC),
+        up:pf3EffUpside(d,r),pe:num(peC),roe:num(roC),revg:num(rgC),ps:num(psC),day:num(10),knife,reco});
+    });
+  });
+  const near=x=>{const a=[x.d50,x.d100,x.dSup].filter(v=>v!=null).map(Math.abs);return a.length?Math.min(...a):null};
+  const sShort=x=>{if(x.knife)return -99;let s=0;
+    if(x.d50>0)s+=1.5;if(x.d200>0)s+=1.5;
+    const n=near(x);if(n!=null){if(n<=3)s+=4;else if(n<=7)s+=2;}
+    if(x.day!=null){if(x.day>0&&x.day<6)s+=1;else if(x.day>=6)s-=1;}
+    if(x.d200!=null&&x.d200>=30)s-=2;
+    if(x.up!=null&&x.up<=-5)s-=2;
+    if(x.reco==='buy')s+=2;else if(x.reco==='sell'||x.reco==='avoid')s-=2;
+    if(x.d200!=null&&x.d200<0)s-=1.5;return s;};
+  const sMed=x=>{if(x.knife)return -99;let s=0;
+    if(x.d200>0)s+=2;
+    if(x.up!=null){if(x.up>=10&&x.up<=40)s+=3;else if(x.up>40)s+=1;else if(x.up<0)s-=2;}
+    if(x.pe!=null&&x.pe>0){if(x.pe<=30)s+=1;else if(x.pe>=45)s-=1;}
+    if(x.roe!=null&&x.roe>=12)s+=1;
+    if(x.revg!=null&&x.revg>=8)s+=1;
+    if(x.reco==='buy')s+=2;else if(x.reco==='avoid')s-=2;
+    if(x.d200!=null&&x.d200>=30)s-=1;return s;};
+  const sLong=x=>{let s=0;
+    if(x.roe!=null){if(x.roe>=15)s+=2;else if(x.roe>=10)s+=1;else if(x.roe<0)s-=2;}
+    if(x.revg!=null){if(x.revg>=15)s+=2;else if(x.revg>=8)s+=1;else if(x.revg<0)s-=1;}
+    if(x.up!=null){if(x.up>=25)s+=3;else if(x.up>=10)s+=1;else if(x.up<=-10)s-=1;}
+    if(x.pe!=null&&x.pe>0&&x.pe<=18)s+=1;
+    if(x.ps!=null&&x.ps>0&&x.ps<=4)s+=0.5;
+    if(x.reco==='avoid')s-=2;if(x.knife)s-=1.5;return s;};
+  const top=fn=>all.map(x=>({...x,_s:fn(x)})).filter(x=>x._s>0).sort((a,b)=>b._s-a._s).slice(0,10);
+  return{all,short:top(sShort),medium:top(sMed),long:top(sLong)};
+}
+function bpWhyShort(x){const a=[];const n=[x.d50,x.d100,x.dSup].filter(v=>v!=null).map(Math.abs);const nn=n.length?Math.min(...n):null;
+  if(nn!=null&&nn<=7)a.push(RT('у уровня входа','near entry'));if(x.d50>0&&x.d200>0)a.push(RT('аптренд','uptrend'));
+  if(x.day!=null&&x.day>0&&x.day<6)a.push(`+${x.day.toFixed(1)}%/${RT('день','d')}`);if(x.up!=null&&x.up>0)a.push(`+${x.up.toFixed(0)}% ${RT('к таргету','to target')}`);
+  return a.slice(0,3).join(' · ')||RT('тех. сетап','technical setup');}
+function bpWhyMed(x){const a=[];if(x.d200>0)a.push(RT('тренд вверх','trend up'));if(x.up!=null&&x.up>=10)a.push(`+${x.up.toFixed(0)}% ${RT('к таргету','to target')}`);
+  if(x.roe!=null&&x.roe>=12)a.push(`ROE ${x.roe.toFixed(0)}%`);if(x.revg!=null&&x.revg>=8)a.push(`${RT('рост','growth')} ${x.revg.toFixed(0)}%`);
+  return a.slice(0,3).join(' · ')||RT('баланс роста и цены','growth + value');}
+function bpWhyLong(x){const a=[];if(x.roe!=null&&x.roe>=12)a.push(`ROE ${x.roe.toFixed(0)}%`);if(x.revg!=null&&x.revg>=8)a.push(`${RT('рост','growth')} ${x.revg.toFixed(0)}%`);
+  if(x.up!=null&&x.up>=15)a.push(`+${x.up.toFixed(0)}% ${RT('к таргету','to target')}`);if(x.pe!=null&&x.pe>0&&x.pe<=18)a.push(`P/E ${x.pe.toFixed(0)}`);
+  return a.slice(0,3).join(' · ')||RT('качество и оценка','quality + value');}
+function homeBestHTML(){
+  const P=homeBestPicks();
+  const tbl=(title,sub,arr,why)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title}</span><span class="pf3-asof">${sub}</span></div>${arr.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Почему','Why')}</th></tr></thead><tbody>${arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="bp-why">${why(x)}</td></tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Подходящих кандидатов нет — нажмите «🔄 Обновить всё».','No suitable candidates — press «🔄 Update all».')}</div>`}</section>`;
   return`
-  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${T('📊 Рынок сейчас').replace('📊 ','')}</span><span class="pf3-asof">${items.length} ${T('акц.')} · ${T('рыночные фазы по технике и фундаменталу')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по портфелю (US: Finnhub · SE: Finansinspektionen)','Insider transactions across the portfolio (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div><div class="home-chips">${chips||'<div class="pf3-empty">Нет данных</div>'}</div></section>
+    ${tbl('🥇 '+RT('Лучшие на 1–3 мес','Best 1–3 months'),RT('импульс и точки входа','momentum & entry'),P.short,bpWhyShort)}
+    ${tbl('🥈 '+RT('Лучшие на 3–6 мес','Best 3–6 months'),RT('тренд + разумная цена','trend + fair value'),P.medium,bpWhyMed)}
+    ${tbl('🥉 '+RT('Лучшие на 6–12 мес','Best 6–12 months'),RT('фундаментал и недооценка','fundamentals & value'),P.long,bpWhyLong)}
+    <div class="pf3-ai-note">${RT('Детерминированный отбор из всех вкладок по обновлённым данным. Справочно, не инвестиционная рекомендация.','Deterministic screen across all tabs from refreshed data. Reference only, not investment advice.')}</div>`;
+}
+function homeHTML(){
+  return`
+  <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${RT('Рынок сейчас','Market now')}</span><span class="pf3-asof">${RT('лучшие кандидаты по горизонтам','best candidates by horizon')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div></section>
+  ${homeBestHTML()}
   ${isAdmin()?homeValHTML():''}
-  ${isAdmin()?homeInsiderHTML():''}
-  <div class="home-grid">
-    ${widget(T('🟢 Покупать / докупать сейчас'),T('цена в ±2% от SMA или поддержки'),cap(buy,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Сейчас никто не стоит у уровня покупки'))}
-    ${widget(T('🔴 Продавать — у сопротивления'),T('цена в ±2% от сопротивления'),cap(sell,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('У сопротивления никого нет'))}
-    ${widget(T('🎯 Подходят к уровню покупки'),T('до ближайшего уровня ≤ 5%'),cap(near,10).map(x=>homeRowHTML(x,lvl(x.sig))).join(''),T('Никто не приближается к уровням'))}
-    ${widget(T('🔪 Падающие ножи'),T('не ловить — ждать стабилизации'),cap(knives,10).map(x=>homeRowHTML(x,x.crit.html)).join(''),T('Свободных падений нет — хороший знак'))}
-    ${widget(T('⚡ Движения дня'),T('самые сильные изменения за сессию'),cap(movers,10).map(x=>homeRowHTML(x,x.crit.html)).join(''),T('Рынок спит'))}
-  </div>`;
+  ${isAdmin()?homeInsiderHTML():''}`;
 }
 
 function pf3DetailHTML(){

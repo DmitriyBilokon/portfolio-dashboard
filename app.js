@@ -349,6 +349,14 @@ function rowCcy(row){const ci=DATA[curIdx].headers.findIndex(x=>/валют/i.te
 function getOrd(){const n=DATA[curIdx].headers.length;if(!colOrders[curIdx])colOrders[curIdx]=DATA[curIdx].headers.map((_,i)=>i);else for(let i=0;i<n;i++)if(!colOrders[curIdx].includes(i))colOrders[curIdx].push(i);return colOrders[curIdx]}
 function recalcPF(i,idx){const d=DATA[idx||curIdx],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0}
 function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
+// Базовая валюта вкладки: по умолчанию SEK (kr); у Sergei — USD (без перевода в кроны).
+// Денежные суммы позиций считаются в SEK (r[13]); для показа конвертируем в базовую.
+// d.cashFree и d.leverage хранятся уже в БАЗОВОЙ валюте вкладки.
+const pf3Base=d=>String((d&&d.baseCcy)||'SEK').toUpperCase();
+const pf3BaseFx=d=>{const b=pf3Base(d);return b==='SEK'?1:(FX[b]||1)};   // SEK за 1 единицу базовой
+const pf3BaseUnit=d=>{const b=pf3Base(d);return b==='SEK'?'kr':b};        // подпись валюты
+const pf3Cv=(d,sek)=>{const f=pf3BaseFx(d);return f===1?sek:sek/f};       // SEK → базовая (число)
+const pf3Money=(d,sek,dec)=>`${pf3Fmt(pf3Cv(d,sek),dec)} ${pf3BaseUnit(d)}`;   // SEK → «X kr» / «X USD»
 
 // Ensure the portfolio has the analyst-target column (added by a feature update).
 function migratePortfolio(){
@@ -828,7 +836,7 @@ function migrateFamilyPortfolios(){
   // ÷ Avg Price; кэш ≈ 26.7K USD пересчитан в SEK (база дашборда).
   const SK='Portfolio (Sergei)';
   if(!DATA[SK]){
-    const d=DATA[SK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:SK,cashFree:238851};
+    const d=DATA[SK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:SK,baseCcy:'USD',cashFree:26747};
     const SEED=[
       // [тикер, название, сектор, валюта, флаг, кол-во, ср. цена покупки (avg), тип]
       ['NVO','Novo Nordisk','Фармацевтика','USD','🇺🇸',11,65.69,'Акция'],
@@ -848,6 +856,11 @@ function migrateFamilyPortfolios(){
     });
     d.count=d.rows.length;changed=true;
   }
+  // Миграция уже созданного Sergei: база USD + кэш в USD (а не пересчёт в кроны).
+  const sk=DATA[SK];
+  if(sk&&sk.baseCcy!=='USD'){sk.baseCcy='USD';sk.cashFree=26747;delete sk.leverage;changed=true;}
+  // Плечо — только у Dima; у семейных портфелей убираем.
+  [AK,SK].forEach(k=>{if(DATA[k]&&DATA[k].leverage!=null){delete DATA[k].leverage;changed=true;}});
   if(changed&&!applyingRemote)scheduleSave();
 }
 // Восстановление выбора доп. колонок из localStorage, если облачная копия
@@ -1676,7 +1689,7 @@ function pf3AiSnapshot(key){
   return{
     baseCurrency:'SEK',fxToSEK:FX,positions,
     allocation:{bySector:group('sector'),byCurrency:group('ccy')},
-    totals:{stocksSEK:Math.round(totalVal),freeCashSEK:num(d.cashFree)||0,leverageSEK:num(d.leverage)||0},
+    totals:{stocksSEK:Math.round(totalVal),freeCashSEK:Math.round((num(d.cashFree)||0)*pf3BaseFx(d)),leverageSEK:Math.round((key===PF3_KEY?(num(d.leverage)||0):0)*pf3BaseFx(d))},
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
     // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
     // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.
@@ -1960,7 +1973,7 @@ function insiderHTML(d,r){
     <span class="ins-val">${t.value!=null?insiderFmtUSD(t.value,cc):'—'}</span>
     <span class="ins-date">${t.date||''}</span>
   </div>`).join(''):`<div class="pf3-empty" style="padding:6px">${RT('Под фильтр ничего не попадает','Nothing matches the filter')}</div>`;
-  return`<section class="pf3-panel">${head}${cards}${fl}<div class="ins-list">${rows}</div></section>`;
+  return`<section class="pf3-panel">${head}${cards}<details class="ins-details"><summary class="ins-summary">📋 ${RT('Сделки инсайдеров','Insider trades')} · ${v.txCount}<span class="ins-chevron">▾</span></summary>${fl}<div class="ins-list">${rows}</div></details></section>`;
 }
 
 // 🔬 AI-разборы: история разборов из обучающей базы STOCK_AI_LOG. Каждая запись
@@ -2312,8 +2325,10 @@ function pf3RiskHTML(){
   <div class="pf3-risk-note">${RT(`по дневным доходностям за последний год (${R.days} торг. дней), веса — текущие доли позиций`,`from daily returns over the past year (${R.days} trading days), weighted by current position shares`)}</div>`;
 }
 function pf3HealthTab(){
-  const d=pf3D(),{s200}=smaIdx(d);
-  const free=parseFloat(d.cashFree)||0,lev=parseFloat(d.leverage)||0;
+  const d=pf3D(),{s200}=smaIdx(d),fxB=pf3BaseFx(d);
+  // cashFree/leverage хранятся в базовой валюте вкладки — приводим к SEK,
+  // т.к. стоимость позиций (val) считается в SEK; иначе доли кэша/плеча врут.
+  const free=(parseFloat(d.cashFree)||0)*fxB,lev=(v3Key===PF3_KEY?(parseFloat(d.leverage)||0):0)*fxB;
   const rows=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
     const price=parseFloat(r[7])||0,sma=s200>=0?parseFloat(r[s200]):NaN;
@@ -2356,7 +2371,7 @@ function pf3HealthTab(){
     [T('🧩 Диверсификация'),divS,RT(`${rows.length} позиций · топ-1 <b>${top1Pct.toFixed(1)}%</b> (${top1.name}) · топ-3 <b>${top3Pct.toFixed(0)}%</b>`,`${rows.length} positions · top-1 <b>${top1Pct.toFixed(1)}%</b> (${top1.name}) · top-3 <b>${top3Pct.toFixed(0)}%</b>`)],
     [T('🏭 Сектора'),secS,RT(`${secs.length} секторов · крупнейший <b>${secs[0].k}</b> — <b>${secs[0].pct.toFixed(0)}%</b>`,`${secs.length} sectors · largest <b>${secs[0].k}</b> — <b>${secs[0].pct.toFixed(0)}%</b>`)],
     [T('💱 Валюты'),ccyS,ccys.slice(0,4).map(c=>`${c.k} <b>${c.pct.toFixed(0)}%</b>`).join(' · ')],
-    [T('💵 Кэш и плечо'),liqS,RT(`кэш <b>${cashPct.toFixed(1)}%</b> капитала · плечо <b>${levPct.toFixed(1)}%</b>`,`cash <b>${cashPct.toFixed(1)}%</b> of equity · leverage <b>${levPct.toFixed(1)}%</b>`)],
+    [v3Key===PF3_KEY?T('💵 Кэш и плечо'):RT('💵 Свободный кэш','💵 Free cash'),liqS,v3Key===PF3_KEY?RT(`кэш <b>${cashPct.toFixed(1)}%</b> капитала · плечо <b>${levPct.toFixed(1)}%</b>`,`cash <b>${cashPct.toFixed(1)}%</b> of equity · leverage <b>${levPct.toFixed(1)}%</b>`):RT(`кэш <b>${cashPct.toFixed(1)}%</b> капитала`,`cash <b>${cashPct.toFixed(1)}%</b> of equity`)],
     [T('📈 Тренд и качество'),trS,RT(`выше SMA 200: <b>${abovePct!=null?abovePct.toFixed(0)+'%':'—'}</b> акций · в прибыли: <b>${profitPct.toFixed(0)}%</b> позиций`,`above SMA 200: <b>${abovePct!=null?abovePct.toFixed(0)+'%':'—'}</b> of stocks · profitable: <b>${profitPct.toFixed(0)}%</b> of positions`)],
   ];
   const valid=parts.filter(p=>p[1]!=null);
@@ -2414,18 +2429,22 @@ function pf3Summary(){
   d.rows.forEach((r,i)=>{recalcPF(i,v3Key);totalVal+=parseFloat(r[13])||0;totalProfit+=parseFloat(r[11])||0});
   const cost=totalVal-totalProfit;
   const pct=cost>0?totalProfit/cost*100:0;
-  const free=parseFloat(d.cashFree)||0,lev=parseFloat(d.leverage)||0;
-  const equity=totalVal+free;   // чистый капитал: акции + свободный кэш
-  const withLev=equity+lev;     // покупательная способность с кредитным плечом
+  const unit=pf3BaseUnit(d);
+  const isDima=v3Key===PF3_KEY;                    // плечо — только в портфеле Dima
+  const free=parseFloat(d.cashFree)||0;            // уже в базовой валюте вкладки
+  const lev=isDima?(parseFloat(d.leverage)||0):0;
+  const totalValB=pf3Cv(d,totalVal),totalProfitB=pf3Cv(d,totalProfit);
+  const equity=totalValB+free;   // чистый капитал в базовой валюте: акции + свободный кэш
+  const withLev=equity+lev;      // покупательная способность с кредитным плечом
   const num=(key,val,cls)=>`<input class="pf3-cash-input${cls?' '+cls:''}" type="number" step="any" min="0" value="${val}" onchange="pf3SetNum('${key}',this.value)" title="Нажмите, чтобы изменить">`;
   const fxChip=c=>typeof FX[c]==='number'?`<span class="pf3-chip">1 ${c} = <b>${(+FX[c]).toFixed(2)}</b> kr</span>`:'';
   return`<section class="pf3-summary">
-    <div class="pf3-card pf3-sum-hero"><div class="pf3-card-l">${T('Чистый капитал')}</div><div class="pf3-card-v">${pf3Fmt(equity)} kr</div><div class="pf3-card-s">${T('акции + свободный кэш')}</div></div>
-    <div class="pf3-card"><div class="pf3-card-l">${T('Акции')}</div><div class="pf3-card-v">${pf3Fmt(totalVal)} kr</div><div class="pf3-card-s">${d.rows.length} ${T('позиций')} · ${equity>0?(totalVal/equity*100).toFixed(1):'—'}%</div></div>
-    <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${totalProfit>=0?'pf3-up':'pf3-down'}">${totalProfit>0?'+':''}${pf3Fmt(totalProfit)} kr</div><div class="pf3-card-s ${pct>=0?'pf3-up':'pf3-down'}">${pct>0?'+':''}${pct.toFixed(1)}% ${T('от вложений')}</div></div>
-    <div class="pf3-card"><div class="pf3-card-l">${T('Свободный кэш')}</div><div class="pf3-card-v">${num('cashFree',free)} <small>kr</small></div><div class="pf3-card-s">${equity>0&&free>0?(free/equity*100).toFixed(1)+'% '+T('% капитала · доступно для покупок').replace('% of equity','of equity').replace('% капитала','капитала'):T('нажмите, чтобы изменить')}</div></div>
-    <div class="pf3-card"><div class="pf3-card-l">${T('Кредитное плечо')}</div><div class="pf3-card-v">${lev>0?'+':''}${num('leverage',lev)} <small>kr</small></div><div class="pf3-card-s">${T('доступный кредит сверх капитала')}</div></div>
-    <div class="pf3-card"><div class="pf3-card-l">${T('Доступно с плечом')}</div><div class="pf3-card-v">${pf3Fmt(withLev)} kr</div><div class="pf3-card-s">${T('капитал + кредитное плечо')}</div></div>
+    <div class="pf3-card pf3-sum-hero"><div class="pf3-card-l">${T('Чистый капитал')}</div><div class="pf3-card-v">${pf3Fmt(equity)} ${unit}</div><div class="pf3-card-s">${T('акции + свободный кэш')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${T('Акции')}</div><div class="pf3-card-v">${pf3Fmt(totalValB)} ${unit}</div><div class="pf3-card-s">${d.rows.length} ${T('позиций')} · ${equity>0?(totalValB/equity*100).toFixed(1):'—'}%</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${totalProfit>=0?'pf3-up':'pf3-down'}">${totalProfit>0?'+':''}${pf3Fmt(totalProfitB)} ${unit}</div><div class="pf3-card-s ${pct>=0?'pf3-up':'pf3-down'}">${pct>0?'+':''}${pct.toFixed(1)}% ${T('от вложений')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${T('Свободный кэш')}</div><div class="pf3-card-v">${num('cashFree',free)} <small>${unit}</small></div><div class="pf3-card-s">${equity>0&&free>0?(free/equity*100).toFixed(1)+'% '+T('% капитала · доступно для покупок').replace('% of equity','of equity').replace('% капитала','капитала'):T('нажмите, чтобы изменить')}</div></div>
+    ${isDima?`<div class="pf3-card"><div class="pf3-card-l">${T('Кредитное плечо')}</div><div class="pf3-card-v">${lev>0?'+':''}${num('leverage',lev)} <small>${unit}</small></div><div class="pf3-card-s">${T('доступный кредит сверх капитала')}</div></div>
+    <div class="pf3-card"><div class="pf3-card-l">${T('Доступно с плечом')}</div><div class="pf3-card-v">${pf3Fmt(withLev)} ${unit}</div><div class="pf3-card-s">${T('капитал + кредитное плечо')}</div></div>`:''}
   </section>
   <div class="pf3-fx"><span class="pf3-fx-l">${T('💱 Курсы')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')}<span class="pf3-fx-note">${T('живые курсы ECB · база SEK')}</span></div>`;
 }
@@ -2493,11 +2512,11 @@ function pf3CalendarHTML(){
     <div class="cal-grid">${dows.map(x=>`<div class="cal-dow">${x}</div>`).join('')}${cells}</div>
     <div class="cal-legend">📊 ${T('отчёт')} · 🪙 ${T('экс-дата')} · 💰 ${T('выплата')} · ${T('клик по событию открывает карточку')}</div>
   </section>`;
-  h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('💰 Дивиденды')}</span><span class="pf3-asof">≈${pf3Fmt(annualDiv)} ${T('kr/год по текущим позициям')}</span></div>`;
+  h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('💰 Дивиденды')}</span><span class="pf3-asof">≈${pf3Money(d,annualDiv)} ${RT('в год по текущим позициям','/year on current positions')}</span></div>`;
   if(dv.length){
     h+=`<div class="pf3-divhead"><span>${T('Компания')}</span><span>${T('Дивид./год')}</span><span>${T('Доходность')}</span><span>${T('Экс-дата')}</span><span>${T('Выплата')}</span><span>${T('Мне в год')}</span></div>`;
     dv.forEach(x=>{
-      h+=`<div class="pf3-div-row"><b>${x.name} <span class="pf3-cal-tk">${x.tk}</span></b><span>${x.rate.toFixed(2)} ${x.ccy}</span><span class="pf3-up">${x.yld!=null?x.yld.toFixed(1)+'%':'—'}</span><span>${x.exDiv?pf3DateRu(x.exDiv):'—'}</span><span>${x.pay?pf3DateRu(x.pay):'—'}</span><span><b>${pf3Fmt(x.annual)} kr</b></span></div>`;
+      h+=`<div class="pf3-div-row"><b>${x.name} <span class="pf3-cal-tk">${x.tk}</span></b><span>${x.rate.toFixed(2)} ${x.ccy}</span><span class="pf3-up">${x.yld!=null?x.yld.toFixed(1)+'%':'—'}</span><span>${x.exDiv?pf3DateRu(x.exDiv):'—'}</span><span>${x.pay?pf3DateRu(x.pay):'—'}</span><span><b>${pf3Money(d,x.annual)}</b></span></div>`;
     });
   }else h+=`<div class="pf3-empty">${T('Дивидендных бумаг в портфеле нет')}</div>`;
   h+='</section>';
@@ -2821,7 +2840,7 @@ function pf3RowHTML(d,it,port,xc){
     ?`<div class="pf3-c pf3-c-qty">${pf3Fmt(qty)}</div>
     <div class="pf3-c pf3-c-buy">${buy>0?pf3Fmt(buy,2):'—'}</div>
     <div class="pf3-row-price"><b>${price>0?pf3Fmt(price,2):'—'} ${ccy}</b>${isFinite(day)?`<span class="${day>=0?'pf3-up':'pf3-down'}">${day>0?'+':''}${day.toFixed(2)}%</span>`:''}</div>
-    <div class="pf3-row-val"><b>${pf3Fmt(val)} kr</b><span class="${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}%</span></div>
+    <div class="pf3-row-val"><b>${pf3Money(d,val)}</b><span class="${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}%</span></div>
     <div class="pf3-c pf3-c-share">${share>0?share.toFixed(1)+'%':'—'}</div>`
     :`<div class="pf3-row-price"><b>${price>0?pf3Fmt(price,2):'—'} ${ccy}</b></div>
     <div class="pf3-c pf3-c-day"><span class="${day>=0?'pf3-up':'pf3-down'}">${isFinite(day)?(day>0?'+':'')+day.toFixed(2)+'%':'—'}</span></div>
@@ -2912,7 +2931,7 @@ function pf3DiversHTML(){
   const hhiPct=(D.hhi*100).toFixed(0),eff=(1/D.hhi).toFixed(1);
   const vd=D.hhi<=0.18?['🟢',RT('Хорошо диверсифицирован','Well diversified')]:D.hhi<=0.30?['🟡',RT('Умеренная концентрация','Moderate concentration')]:['🔴',RT('Высокая концентрация','High concentration')];
   const bar=p=>`<div class="dv-bar"><span style="width:${Math.min(100,p).toFixed(1)}%"></span></div>`;
-  const rows=D.sectors.map(s=>{const hot=s.pct>=D.threshold;return`<tr class="${hot?'dv-hot':''}"><td>${s.gics}${s.gics===GICS_OTHER?' ⚠️':''}</td><td class="dv-pct"><span>${s.pct.toFixed(1)}%</span>${bar(s.pct)}</td><td>${pf3Fmt(s.sum)} kr</td><td>${s.n}</td><td>${hot?'🔴 '+RT('концентр.','conc.'):''}</td></tr>`}).join('');
+  const rows=D.sectors.map(s=>{const hot=s.pct>=D.threshold;return`<tr class="${hot?'dv-hot':''}"><td>${s.gics}${s.gics===GICS_OTHER?' ⚠️':''}</td><td class="dv-pct"><span>${s.pct.toFixed(1)}%</span>${bar(s.pct)}</td><td>${pf3Money(d,s.sum)}</td><td>${s.n}</td><td>${hot?'🔴 '+RT('концентр.','conc.'):''}</td></tr>`}).join('');
   const unc=D.sectors.find(s=>s.gics===GICS_OTHER);
   return`<section class="pf3-panel">${hd}
     <div class="dv-top">${vd[0]} <b>${vd[1]}</b> · ${RT('индекс концентрации (HHI)','concentration index (HHI)')} ${hhiPct}/100 · ≈${eff} ${RT('эфф. секторов','eff. sectors')}${D.top?` · ${RT('топ','top')}: ${D.top.pct.toFixed(0)}% ${D.top.gics}`:''}</div>
@@ -2936,10 +2955,10 @@ function pf3Groups(key){
   list.forEach(x=>x.arr.sort((a,b)=>port?b.val-a.val:b.day-a.day));
   return {d,port,totalVal,list};
 }
-function pf3GroupSub(x,port,totalVal){
+function pf3GroupSub(x,port,totalVal,d){
   const avgDay=x.arr.reduce((a,it)=>a+it.day,0)/x.arr.length;
   return port
-    ?`${x.arr.length} ${T('акц.')} · ${pf3Fmt(x.val)} kr · ${totalVal>0?(x.val/totalVal*100).toFixed(1):'0'}% ${T('портфеля')}`
+    ?`${x.arr.length} ${T('акц.')} · ${pf3Money(d||pf3D(),x.val)} · ${totalVal>0?(x.val/totalVal*100).toFixed(1):'0'}% ${T('портфеля')}`
     :`${x.arr.length} ${T('акц.')} · ${T('ср. за день')} ${(avgDay>0?'+':'')+avgDay.toFixed(2)}%`;
 }
 
@@ -2953,12 +2972,12 @@ function pf3GroupedHTML(key){
   const sel=list.find(x=>x.g===pf3TypeSel)||list[0];
   const nav=list.map(x=>`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${x.g.replace(/'/g,"\\'")}')">
       <span class="pf3-typenav-ico">${ico(x.g)}</span>
-      <span class="pf3-typenav-name">${T(x.g)}<small>${port?pf3Fmt(x.val)+' kr · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' '+T('акц.')}</small></span>
+      <span class="pf3-typenav-name">${T(x.g)}<small>${port?pf3Money(d,x.val)+' · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' '+T('акц.')}</small></span>
       <span class="pf3-typenav-cnt">${x.arr.length}</span>
     </div>`).join('');
   return`<div class="pf3-typelay ${key}">
     <aside class="pf3-panel pf3-typenav"><div class="pf3-panel-hd"><span>${key==='sec'?T('Сектора'):T('Типы')}</span></div>${nav}</aside>
-    <section class="pf3-panel"><div class="pf3-panel-hd"><span>${ico(sel.g)} ${T(sel.g)}</span><span class="pf3-asof">${pf3GroupSub(sel,port,totalVal)}</span></div><div class="pf3-glist">${sel.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>
+    <section class="pf3-panel"><div class="pf3-panel-hd"><span>${ico(sel.g)} ${T(sel.g)}</span><span class="pf3-asof">${pf3GroupSub(sel,port,totalVal,d)}</span></div><div class="pf3-glist">${sel.arr.map(it=>pf3RowHTML(d,it,port)).join('')}</div></section>
   </div>`;
 }
 
@@ -2985,11 +3004,12 @@ function pf3Add(e){
   // Покупка списывает деньги со свободного кэша (кэш → акции, чистый капитал
   // не меняется). Только мои/семейные портфели; AI-портфель сюда не попадает
   // (форма скрыта). Кэш может уйти в минус — это плечо, оставляем как есть.
-  const cost=port?Math.round((sh||0)*(buy||0)*(FX[ccy]||1)):0;
+  const cost=port?Math.round((sh||0)*(buy||0)*(FX[ccy]||1)):0;   // SEK
   let cashMsg='';
   if(cost>0&&d.cashFree!=null&&d.cashFree!==''){
-    d.cashFree=Math.round((parseFloat(d.cashFree)||0)-cost);
-    cashMsg=` · −${pf3Fmt(cost)} kr ${RT('из кэша','from cash')}`;
+    const costBase=pf3Cv(d,cost);   // списываем со свободного кэша в БАЗОВОЙ валюте вкладки
+    d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-costBase)*100)/100;
+    cashMsg=` · −${pf3Money(d,cost)} ${RT('из кэша','from cash')}`;
   }
   scheduleSave();
   init();   // rebuild tabs (count badge) + re-render
@@ -3980,15 +4000,15 @@ function pf3DetailHTML(){
         </div>
       </div>
       <div class="pf3-quote">
-        <div class="pf3-price">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
+        <div class="pf3-price${isFinite(day)?(day>=0?' pf3-up':' pf3-down'):''}">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
         ${isFinite(day)?`<div class="pf3-day ${day>=0?'pf3-up-bg':'pf3-down-bg'}">${day>0?'+':''}${day.toFixed(2)}% ${T('за день')}</div>`:''}
         <button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить цену')}</button>
       </div>
     </section>
     <section class="pf3-cards">
-      ${pf3MyPort(v3Key)?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Fmt(valSEK)} kr</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
-      <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Fmt(profit)} kr</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
-      <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Fmt(qty*buy*(FX[ccy]||1))} kr</div></div>`:''}
+      ${pf3MyPort(v3Key)?`<div class="pf3-card"><div class="pf3-card-l">${T('Стоимость позиции')}</div><div class="pf3-card-v">${pf3Money(d,valSEK)}</div><div class="pf3-card-s">${pf3Fmt(qty)} акц. × ${pf3Fmt(price,2)} ${ccy}</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${profit>=0?'pf3-up':'pf3-down'}">${profit>0?'+':''}${pf3Money(d,profit)}</div><div class="pf3-card-s ${ppct>=0?'pf3-up':'pf3-down'}">${ppct>0?'+':''}${ppct.toFixed(1)}% от покупки</div></div>
+      <div class="pf3-card"><div class="pf3-card-l">${T('Цена покупки')}</div><div class="pf3-card-v">${pf3Fmt(buy,2)} <small>${ccy}</small></div><div class="pf3-card-s">вложено ${pf3Money(d,qty*buy*(FX[ccy]||1))}</div></div>`:''}
       <div class="pf3-card"><div class="pf3-card-l">${T('Аналит. таргет')}${tgM.src?`<span class="tg-src">${tgM.src==='fmp'?'FMP':'Yahoo/Refinitiv'}</span>`:''}${tgStale?`<span class="tg-stale" title="${RT(`Среднее за всё время расходится со свежим срезом на ${tgDiv.toFixed(0)}% — старые таргеты тянут его. Ориентир — свежий.`,`All-time mean diverges from the recent slice by ${tgDiv.toFixed(0)}% — old targets drag it. Trust the recent one.`)}">⚠️ ${RT('устарел','stale')}</span>`:''}</div><div class="pf3-card-v">${hasTarget?pf3Fmt(target,0)+' <small>'+ccy+'</small>':'—'}</div><div class="pf3-card-s ${hasTarget&&target>=price?'pf3-up':'pf3-down'}">${hasTarget?(target>=price?'+':'')+((target-price)/price*100).toFixed(1)+'% '+T('потенциал')+(tgM.n?` · ${tgM.n} `+RT('аналит.','an.'):''):T('появится при обновлении акций (🔄, раз в сутки)')}</div>${hasTargetR?`<div class="pf3-card-sub${tgStale?' tg-hi':''}"><span class="tg-recent-l">${tgM.span==='m'?RT('за месяц','last mo'):RT('за квартал','last qtr')}</span> <b>${pf3Fmt(targetR,0)}</b> <small>${ccy}</small> <span class="${targetR>=price?'pf3-up':'pf3-down'}">${targetR>=price?'+':''}${((targetR-price)/price*100).toFixed(1)}%</span>${tgM.nr?` · ${tgM.nr} `+RT('аналит.','an.'):''}</div>`:''}</div>
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>

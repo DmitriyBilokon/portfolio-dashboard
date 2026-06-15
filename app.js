@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -65,6 +65,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
+  if(Array.isArray(s.aiPlaybook)) AI_PLAYBOOK=s.aiPlaybook;
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
@@ -178,6 +179,58 @@ let TG_ALERTS={};
 let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
+
+// 📚 Инвест-плейбук: курируемая методичка «как обгонять индекс». Редактируется
+// инвестором, синхронизируется (aiPlaybook) и передаётся во все анализы AI Proto.
+const DEFAULT_PLAYBOOK=[
+  'Цель — риск-скорректированное опережение индекса (OMXS30/Nasdaq 100/S&P 500), а не максимальная доходность любой ценой.',
+  'Победителям давай расти; не режь сильные прибыльные позиции ради ребаланса — недовес закрывай кэшем и новыми идеями.',
+  'Перевешивай качество: высокий и стабильный ROE/ROIC, низкий долг, растущие выручка и маржа, устойчивое конкурентное преимущество (moat).',
+  'Комбинируй факторы: качество + моментум (цена выше SMA 200, здоровый тренд) исторически обгоняют «дёшево, но падает».',
+  'Дисциплина входа: добавляй у поддержки/SMA, а не на вершине у сопротивления; усредняйся вверх по тренду, а не вниз по падающему ножу.',
+  'Дисциплина оценки: цена сильно выше таргета/мультипликаторов + перегрев по технике — повод фиксировать часть, а не наращивать.',
+  'Сайзинг по убеждённости и риску; одна идея не должна решать судьбу портфеля — контролируй концентрацию.',
+  'Режь убытки быстро, давай прибыли течь: ломается тезис/тренд — сокращай; работает — держи.',
+  'Кэш — это позиция: держи резерв для просадок и лучших точек входа; не торгуй ради торговли.',
+  'Избегай типовых ошибок: погоня за хайпом, усреднение убытка без нового тезиса, переторговля, продажа победителей и удержание проигравших (disposition effect).',
+  'Опережение чаще даёт перевес 1–2 сильных тем/секторов и избегание явных проигравших, а не попытка переиграть всё.',
+  'Учитывай издержки и налоги: лишние сделки съедают альфу — меняй портфель, когда ожидаемая выгода превышает трение.',
+  'Сверяйся с трек-рекордом: усиливай подходы, которые сбывались; пересматривай те, что нет.',
+  'Диверсификация — для снижения риска, а не самоцель; обычно 15–25 качественных имён достаточно.',
+];
+let AI_PLAYBOOK=[];
+function aiPlaybookEnsure(){ if(!Array.isArray(AI_PLAYBOOK)||!AI_PLAYBOOK.length)AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice(); return AI_PLAYBOOK; }
+
+// 🎯 Трек-рекорд прошлых разборов: сбывались ли вердикты (по направлению цены).
+// Считается из STOCK_AI_LOG (цена на момент совета) и текущих цен из вкладок.
+function aiTrackRecord(){
+  const log=Array.isArray(STOCK_AI_LOG)?STOCK_AI_LOG:[];
+  if(!log.length)return null;
+  const px={};
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').toUpperCase();const p=parseFloat(r[7]);if(tk&&isFinite(p)&&p>0&&px[tk]==null)px[tk]=p})});
+  const agg={buy:{n:0,hit:0,sum:0},wait:{n:0,hit:0,sum:0},sell:{n:0,hit:0,sum:0},avoid:{n:0,hit:0,sum:0}},recent=[];
+  log.slice(0,80).forEach(e=>{
+    const tk=String(e.ticker||'').toUpperCase(),rec=parseFloat(e.price),cur=px[tk],v=String(e.verdict||'').toLowerCase();
+    if(!tk||!isFinite(rec)||rec<=0||!isFinite(cur)||!agg[v])return;
+    const ret=(cur/rec-1)*100,good=(v==='buy'||v==='wait')?ret>0:ret<0;
+    agg[v].n++;agg[v].sum+=ret;if(good)agg[v].hit++;
+    if(recent.length<12)recent.push({ticker:tk,verdict:v,date:String(e.ts||'').slice(0,10),retPct:Math.round(ret*10)/10,good});
+  });
+  const byVerdict={};let total=0,hits=0;
+  Object.entries(agg).forEach(([v,a])=>{if(a.n){byVerdict[v]={n:a.n,hitRate:Math.round(a.hit/a.n*100),avgRetPct:Math.round(a.sum/a.n*10)/10};total+=a.n;hits+=a.hit}});
+  if(!total)return null;
+  return{note:'успех = направление цены с момента совета совпало с вердиктом (buy/wait→рост, sell/avoid→падение); доходность абсолютная, не к индексу',overallHitRate:Math.round(hits/total*100),samples:total,byVerdict,recent};
+}
+
+// 🆚 Состав бенчмарков по секторам (доля по числу бумаг) — чтобы AI видел недовес.
+function aiBenchmarks(){
+  return ['OMXS30','Nasdaq 100','S&P 500'].filter(k=>DATA[k]&&Array.isArray(DATA[k].rows)&&DATA[k].rows.length).map(k=>{
+    const sec={};let n=0;
+    DATA[k].rows.forEach(r=>{const s=String(r[4]||'').trim();if(!s||s==='—')return;sec[s]=(sec[s]||0)+1;n++});
+    const sectors=Object.entries(sec).map(([s,c])=>({sector:s,pct:n?Math.round(c/n*1000)/10:0})).sort((a,b)=>b.pct-a.pct).slice(0,8);
+    return{index:k,basis:'доля по числу бумаг (не по капитализации)',sectors};
+  });
+}
 let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
 let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
 let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
@@ -680,6 +733,7 @@ function migrateAiHistory(){
   if(n&&!applyingRemote)scheduleSave();
 }
 function init(){
+  aiPlaybookEnsure();   // 📚 засеять плейбук стандартными принципами при первом запуске
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
@@ -1767,6 +1821,8 @@ function pf3AiSnapshot(key){
           phase:c.label,signal:sig.type!=='none'?`${sig.type}${sig.n?' '+sig.n:''}${typeof sig.dist==='number'?' '+sig.dist.toFixed(1)+'%':''}`:null};
       }),
       investorRules:AI_PREFS,
+      playbook:aiPlaybookEnsure(),
+      trackRecord:aiTrackRecord(),
     };
   }
   let totalVal=0;
@@ -1793,6 +1849,9 @@ function pf3AiSnapshot(key){
     // ПЕРЕД советами: не предлагать обратное недавнему действию без причины и т.д.
     recentTrades:trades,realizedPLSEK,
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
+    playbook:aiPlaybookEnsure(),   // 📚 методичка «как обгонять индекс» — применяй
+    trackRecord:aiTrackRecord(),   // 🎯 сбывались ли прошлые вердикты — учись на результатах
+    benchmarks:aiBenchmarks(),     // 🆚 состав индексов по секторам — для оценки недовеса
     // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
     // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.
     marketContext:v3Tabs().filter(k=>!pf3IsPort(k)&&DATA[k]).map(k=>{
@@ -2351,8 +2410,38 @@ function aiPrefAdd(){
   inp.value='';scheduleSave();renderPF3();
 }
 function aiPrefDel(i){AI_PREFS.splice(i,1);scheduleSave();renderPF3()}
+function aiPlaybookAdd(){const inp=document.getElementById('aiPbInp');const t=(inp&&inp.value||'').trim();if(!t)return;aiPlaybookEnsure();if(!AI_PLAYBOOK.includes(t))AI_PLAYBOOK.push(t);inp.value='';scheduleSave();renderPF3()}
+function aiPlaybookDel(i){aiPlaybookEnsure();AI_PLAYBOOK.splice(i,1);scheduleSave();renderPF3()}
+function aiPlaybookReset(){if(confirm(RT('Вернуть плейбук к стандартному набору принципов?','Reset the playbook to the default principles?'))){AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice();scheduleSave();renderPF3()}}
 function aiChatScroll(){const b=document.getElementById('aiChatBox');if(b)b.scrollTop=b.scrollHeight}
 
+function pf3PlaybookHTML(){
+  aiPlaybookEnsure();
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>${RT('📚 Инвест-плейбук — методичка «как обгонять индекс»','📚 Investing playbook — how to beat the index')}</span><span class="pf3-asof"><a href="#" onclick="aiPlaybookReset();return false">${RT('сбросить к стандарту','reset to default')}</a></span></div>
+    <div class="pf3-ai-note">${RT('Передаётся во все анализы AI Proto как стратегические принципы. Редактируйте под себя.','Sent to every AI Proto analysis as strategic principles. Edit to your taste.')}</div>
+    ${AI_PLAYBOOK.map((p,i)=>`<div class="ai-pref"><span>• ${esc(p)}</span><button class="pf3-del" onclick="aiPlaybookDel(${i})" title="${RT('Удалить принцип','Remove principle')}">🗑</button></div>`).join('')||`<div class="pf3-empty">${RT('Плейбук пуст','Playbook is empty')}</div>`}
+    <form class="ai-chat-form" onsubmit="event.preventDefault();aiPlaybookAdd()">
+      <input id="aiPbInp" placeholder="${RT('Добавить принцип…','Add a principle…')}" autocomplete="off">
+      <button class="pf3-btn" type="submit">${RT('➕ Добавить','➕ Add')}</button>
+    </form>
+  </section>`;
+}
+function pf3TrackHTML(){
+  const tr=aiTrackRecord();
+  const vlabel={buy:['Покупать','Buy'],wait:['Ждать','Wait'],sell:['Сократить','Trim'],avoid:['Избегать','Avoid']};
+  const vl=v=>RT((vlabel[v]||[v,v])[0],(vlabel[v]||[v,v])[1]);
+  if(!tr)return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${RT('🎯 Трек-рекорд разборов','🎯 Analysis track record')}</span></div><div class="pf3-empty">${RT('Пока мало данных — появится после AI-разборов акций (🔬) с известной ценой входа.','Not enough data yet — appears after stock AI analyses (🔬) with a known entry price.')}</div></section>`;
+  const rows=Object.entries(tr.byVerdict).map(([v,a])=>`<div class="tr-row"><span class="tr-act ${v==='sell'||v==='avoid'?'sell':'buy'}">${vl(v)}</span><span>${a.n}</span><span class="${a.hitRate>=50?'pf3-up':'pf3-down'}">${RT('точн.','hit')} ${a.hitRate}%</span><span class="${a.avgRetPct>=0?'pf3-up':'pf3-down'}">${RT('ср.','avg')} ${a.avgRetPct>=0?'+':''}${a.avgRetPct}%</span></div>`).join('');
+  const recent=tr.recent.map(e=>`<div class="tr-row"><span class="tr-qty">${e.ticker}</span><span class="pf3-asof">${e.date}</span><span>${vl(e.verdict)}</span><span class="${e.good?'pf3-up':'pf3-down'}">${e.good?'✓':'✕'} ${e.retPct>=0?'+':''}${e.retPct}%</span></div>`).join('');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>${RT('🎯 Трек-рекорд разборов','🎯 Analysis track record')}</span><span class="pf3-asof">${RT('общая точность','overall hit')} ${tr.overallHitRate}% · ${tr.samples} ${RT('разборов','calls')}</span></div>
+    <div class="pf3-ai-note">${RT('Сбывались ли прошлые вердикты по направлению цены (абсолют, не к индексу). Передаётся AI Proto — он учится на результатах.','Whether past verdicts matched price direction (absolute, not vs index). Sent to AI Proto so it learns from outcomes.')}</div>
+    ${rows}
+    ${recent?`<div class="pf3-ai-note" style="margin-top:6px">${RT('Последние','Recent')}:</div>${recent}`:''}
+  </section>`;
+}
 function pf3AiHTML(){
   const H=pf3AiHist(),last=H[0];
   let h=`<section class="pf3-panel">
@@ -2384,7 +2473,9 @@ function pf3AiHTML(){
       <input id="aiPrefInp" placeholder="${T('Добавить правило вручную…')}" autocomplete="off">
       <button class="pf3-btn" type="submit">${T('➕ Запомнить')}</button>
     </form>
-  </section>`;
+  </section>
+  ${pf3PlaybookHTML()}
+  ${pf3TrackHTML()}`;
   if(H.length>1){
     h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('📜 История запросов')}</span><span class="pf3-asof">${H.length-1} пред.</span></div>`;
     H.slice(1).forEach(e=>{

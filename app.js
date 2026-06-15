@@ -1806,7 +1806,13 @@ async function pf3AiRun(){
     // Fresh prices + SMA/levels first — so the AI snapshot, the signals column
     // and the «Состояние портфеля» tab all reflect the current market state.
     await pf3Refresh(true);
-    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(pf3AiSnapshot(key))});
+    const snap=pf3AiSnapshot(key);
+    // Вариант B: детерминированные вердикты скоринга сайта по всем тикерам —
+    // чтобы «Предложение» AI было согласовано с вердиктом «Рекомендация» в карточке
+    // и таблицах. Расхождение допускается, но AI обязан развести его по горизонтам.
+    snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке/таблицах). Это КРАТКОСРОЧНО-технический вердикт.';
+    snap.recoVerdicts=dashRecoMap(key);
+    const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const j=await r.json();
     if(j&&j.text){
       const d=DATA[key];

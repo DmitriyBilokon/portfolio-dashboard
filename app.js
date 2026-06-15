@@ -3957,7 +3957,6 @@ async function aipResetRemote(ev){
 function aipSaveSettings(){
   if(!AI_PORT)return;
   const g=id=>document.getElementById(id);
-  AI_PORT.strategy=(g('aipStrategy')&&g('aipStrategy').value||'').trim()||AI_PORT.strategy;
   AI_PORT.intervalMin=parseInt(g('aipInterval')&&g('aipInterval').value)||60;
   AI_PORT.enabled=!!(g('aipEnabled')&&g('aipEnabled').checked);
   scheduleSave();
@@ -4025,8 +4024,8 @@ function aipManageHTML(){
     ${trRows||`<div class="pf3-empty">${RT('Сделок ещё не было','No trades yet')}</div>`}
   </section>
   <section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>⚙️ ${RT('Стратегия и управление','Strategy & controls')}</span></div>
-    <textarea id="aipStrategy" class="aip-strategy" rows="4">${(ap.strategy||'').replace(/</g,'&lt;')}</textarea>
+    <div class="pf3-panel-hd"><span>⚙️ ${RT('Управление','Controls')}</span><span class="pf3-asof">${RT('управляет AI Proto автономно','managed by AI Proto autonomously')}</span></div>
+    <div class="pf3-ai-note">${RT('Этим портфелем управляет AI Proto самостоятельно — по своей методичке (📚 Плейбук) и фактам рынка. Личные правила и пользовательский промпт-стратегия здесь НЕ применяются.','AI Proto manages this portfolio on its own — by its playbook (📚) and market facts. Personal rules and a custom strategy prompt are NOT applied here.')}</div>
     <div class="aip-controls">
       <label>${RT('Цикл решений','Decision cycle')}:
         <select id="aipInterval">${[30,60,120].map(v=>`<option value="${v}"${(ap.intervalMin||60)==v?' selected':''}>${v} ${RT('мин','min')}</option>`).join('')}</select>

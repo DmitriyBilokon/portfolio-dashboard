@@ -1102,3 +1102,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .fut-px{font:800 19px 'JetBrains Mono',monospace;color:var(--text1);margin-top:5px;letter-spacing:-.5px}
 .fut-ch{font:700 12px 'JetBrains Mono',monospace;margin-top:2px}
 
+
+/* 🧪 Симуляция (агрегированная): ярлык исходного портфеля у позиции */
+.sim-port{color:var(--v3-acc);font-weight:600}

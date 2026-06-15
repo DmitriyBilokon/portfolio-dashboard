@@ -233,6 +233,7 @@ const DUP_KEY='🔁 Дубли';           // virtual tab (admin): пересе�
 const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): виртуальный счёт под управлением Claude
 const STK_KEY='🔬 AI-разборы';      // virtual tab (admin): история разборов акций (обучающая база)
 const AIDASH_KEY='📊 AI-Dashboard'; // virtual tab (admin): AI Proto генерит карточки-дашборд по портфелю
+const SIM_KEY='🧪 Симуляция';      // virtual tab: все тестовые позиции (SIM) со всех вкладок вместе
 const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY||!!(DATA[k]&&DATA[k].port==='1');   // вкладки с экономикой позиций
 const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые портфели (мои/семейные, не AI)
 const OMX_IDX='OMXS30';
@@ -305,7 +306,7 @@ function reorderTab(drag,dropKey){
   }
   scheduleSave();init();
 }
-const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY;
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SIM_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -640,7 +641,7 @@ function init(){
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
-  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&curIdx!==SIM_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=(n,lbl,noDrag)=>{
     const el=document.createElement('div');
@@ -668,12 +669,13 @@ function init(){
   if(isAdmin())t.appendChild(mkVirt(STK_KEY,TAB_LABEL(STK_KEY)));
   if(isAdmin())t.appendChild(mkVirt(AIDASH_KEY,TAB_LABEL(AIDASH_KEY)));
   // 💼 Группа портфелей: Dima · AI-Portfolio · Anna · Sergei (в одном месте).
-  const portShort=k=>k===AIP_KEY?'AI-Portfolio':TAB_LABEL(k).replace(/^Portfolio\s*\((.+)\)$/i,'$1');
+  const portShort=k=>k===AIP_KEY?'AI-Portfolio':k===SIM_KEY?'🧪 '+RT('Симуляция','Simulation'):TAB_LABEL(k).replace(/^Portfolio\s*\((.+)\)$/i,'$1');
   const portTabs=[];
   if(keys.includes(PF3_KEY))portTabs.push(PF3_KEY);            // Dima
   if(isAdmin())portTabs.push(AIP_KEY);                          // AI-Portfolio (виртуальная)
   keys.filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].port==='1').forEach(k=>portTabs.push(k));   // Anna, Sergei, …
-  const portMembers=new Set(portTabs.filter(k=>k!==AIP_KEY));  // DATA-вкладки портфелей (исключить из стран/негруппированных)
+  portTabs.push(SIM_KEY);                                       // 🧪 Симуляция — все тестовые позиции вместе
+  const portMembers=new Set(portTabs.filter(k=>k!==AIP_KEY&&k!==SIM_KEY));  // DATA-вкладки портфелей (исключить из стран/негруппированных)
   if(portTabs.length){
     const GN='💼 Portfolio',pcol=!!_grpCollapsed[GN];
     const hd=document.createElement('div');
@@ -681,7 +683,7 @@ function init(){
     hd.textContent=(pcol?'▸ ':'▾ ')+GN;
     hd.onclick=()=>grpToggleCollapse(GN);
     t.appendChild(hd);
-    if(!pcol)portTabs.forEach(k=>t.appendChild(k===AIP_KEY?mkVirt(AIP_KEY,portShort(AIP_KEY)):mkTab(k,portShort(k),true)));
+    if(!pcol)portTabs.forEach(k=>t.appendChild((k===AIP_KEY||k===SIM_KEY)?mkVirt(k,portShort(k)):mkTab(k,portShort(k),true)));
   }
   // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
   const groups=ensureGroups();
@@ -894,7 +896,7 @@ function restoreXcols(){
 function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
   if(!name)return;
-  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY||name===STK_KEY||name===AIDASH_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
+  if(DATA[name]||name===HOME_KEY||name===DUP_KEY||name===AIP_KEY||name===STK_KEY||name===AIDASH_KEY||name===SIM_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
   DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
   scheduleSave();
   curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
@@ -996,6 +998,13 @@ function renderAll(){
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${homeHTML()}</div>`;}
       homeFutStart();   // лайв-фьючерсы (поллинг каждые 20с, пока открыт Home)
+      return;
+    }
+    if(curIdx===SIM_KEY){   // 🧪 Симуляция: все тестовые позиции со всех вкладок
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${simTabHTML(true)}</div>`;}
       return;
     }
     if(curIdx===AIDASH_KEY){   // 📊 AI-Dashboard (админ): карточки от AI Proto
@@ -3455,9 +3464,12 @@ function simSection(tk,price,ccy){
   </section>`;
 }
 // Саб-вкладка «Симуляция»: весь бумажный портфель с итогами в kr.
-function simTabHTML(){
+// all=true — агрегированная вкладка 🧪 Симуляция: позиции со ВСЕХ вкладок вместе
+// (с ярлыком исходного портфеля у каждой строки).
+function simTabHTML(all){
   let inv=0,val=0,known=true;
-  const mine=SIM.map((s,i)=>({s,i})).filter(x=>(x.s.tab||PF3_KEY)===v3Key);
+  const portNm=tab=>{const k=tab||PF3_KEY;return k===AIP_KEY?'AI-Portfolio':String(TAB_LABEL(k)||k).replace(/^Portfolio\s*\((.+)\)$/i,'$1')};
+  const mine=SIM.map((s,i)=>({s,i})).filter(x=>all||(x.s.tab||PF3_KEY)===v3Key);
   const rows=mine.map(({s,i})=>{
     const q=simQuote(s.tk),price=q&&q.price>0?q.price:0,fx=FX[s.ccy]||1;
     const invS=s.qty*s.buy*fx,valS=price>0?s.qty*price*fx:null;
@@ -3465,7 +3477,7 @@ function simTabHTML(){
     const plp=valS!=null&&invS>0?(valS/invS-1)*100:null;
     return`<div class="sim-trow" onclick="simOpen('${s.tk}')">
       ${logoHTML(s.tk,s.ccy,'pf3-row-logo')}
-      <div class="pf3-row-name"><b>${q?q.flag:''}${s.name||s.tk}</b><span>${s.tk} · ${T('куплено')} ${s.date}</span></div>
+      <div class="pf3-row-name"><b>${q?q.flag:''}${s.name||s.tk}</b><span>${s.tk} · ${T('куплено')} ${s.date}${all?` · <span class="sim-port">💼 ${portNm(s.tab)}</span>`:''}</span></div>
       <div class="pf3-c">${pf3Fmt(s.qty)}</div>
       <div class="pf3-c">${pf3Fmt(s.buy,2)} ${s.ccy}</div>
       <div class="pf3-c">${price>0?pf3Fmt(price,2)+' '+s.ccy:'—'}${q&&isFinite(q.day)?`<small class="${q.day>=0?'pf3-up':'pf3-down'}"> ${q.day>0?'+':''}${q.day.toFixed(2)}%</small>`:''}</div>
@@ -3482,7 +3494,7 @@ function simTabHTML(){
     <div class="pf3-card"><div class="pf3-card-l">${T('Результат')}</div><div class="pf3-card-v ${pl>=0?'pf3-up':'pf3-down'}">${known?(pl>0?'+':'')+pf3Fmt(pl)+' kr':'—'}</div><div class="pf3-card-s ${plp>=0?'pf3-up':'pf3-down'}">${known?(plp>0?'+':'')+plp.toFixed(1)+'%':''}</div></div>
   </section>`:'';
   return`${sum}<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${T('🧪 Тестовый портфель')} — ${TAB_LABEL(v3Key)}</span><span class="pf3-asof">${T('покупка — в карточке акции, кнопка «Купить (тест)»')}</span></div>
+    <div class="pf3-panel-hd"><span>${all?RT('🧪 Симуляция — все портфели','🧪 Simulation — all portfolios'):T('🧪 Тестовый портфель')+' — '+TAB_LABEL(v3Key)}</span><span class="pf3-asof">${T('покупка — в карточке акции, кнопка «Купить (тест)»')}</span></div>
     <div class="sim-thead"><span></span><span>${T('Акция')}</span><span>${T('Кол-во')}</span><span>${T('Покупка')}</span><span>${T('Цена')}</span><span>${T('Вложено')}</span><span>${T('Стоимость')}</span><span>${T('П/У')}</span><span></span></div>
     ${rows||'<div class="pf3-empty">Пока пусто. Откройте карточку любой акции и нажмите «🧪 Купить (тест)» — позиция появится здесь.</div>'}
   </section>`;

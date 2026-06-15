@@ -956,6 +956,7 @@ function grpAssign(tab,gi){
 }
 
 function renderAll(){
+  if(curIdx!==HOME_KEY)homeFutStop();   // лайв-фьючерсы крутятся только на Home
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
   const st=document.getElementById('subTabs');st.innerHTML='';
   document.body.classList.toggle('v3',isV3());   // Портфель 3.0 restyles the whole site
@@ -980,6 +981,7 @@ function renderAll(){
       document.getElementById('smaBanner').innerHTML='';
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${homeHTML()}</div>`;}
+      homeFutStart();   // лайв-фьючерсы (поллинг каждые 20с, пока открыт Home)
       return;
     }
     if(curIdx===AIDASH_KEY){   // 📊 AI-Dashboard (админ): карточки от AI Proto
@@ -4106,8 +4108,36 @@ function homeBestHTML(){
     ${tbl('🥉 '+RT('Лучшие на 6–12 мес','Best 6–12 months'),RT('фундаментал и недооценка','fundamentals & value'),P.long,bpWhyLong)}
     <div class="pf3-ai-note">${RT('Детерминированный отбор из всех вкладок по обновлённым данным. Справочно, не инвестиционная рекомендация.','Deterministic screen across all tabs from refreshed data. Reference only, not investment advice.')}</div>`;
 }
+// ── 📈 Фьючерсы на основные индексы (лайв) ──
+// Непрерывные фьючерсы Yahoo трейдятся ~23ч и двигаются вне кэш-сессии — живой
+// барометр риска. Тянем те же ?symbols= (yahoo даёт цену + дневное изменение %).
+const HOME_FUTURES=[['ES=F','S&P 500'],['NQ=F','Nasdaq 100'],['YM=F','Dow Jones'],['RTY=F','Russell 2000']];
+let HOME_FUT={},_homeFutTimer=null,_homeFutLoading=false,_homeFutAt=0;
+async function homeLoadFutures(){
+  if(_homeFutLoading)return;_homeFutLoading=true;
+  try{
+    const syms=HOME_FUTURES.map(x=>x[0]).join(',');
+    const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
+    if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY){el.innerHTML=homeFutTiles();const t=document.getElementById('homeFutAt');if(t)t.textContent=homeFutAtLbl();}}
+  }catch(e){}
+  _homeFutLoading=false;
+}
+function homeFutStart(){homeLoadFutures();if(_homeFutTimer)return;_homeFutTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadFutures();},20000);}
+function homeFutStop(){if(_homeFutTimer){clearInterval(_homeFutTimer);_homeFutTimer=null;}}
+function homeFutAtLbl(){return _homeFutAt?RT('обновлено','updated')+' '+new Date(_homeFutAt).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):RT('загрузка…','loading…');}
+function homeFutTiles(){
+  return HOME_FUTURES.map(([sym,name])=>{
+    const q=HOME_FUT[sym],p=q&&typeof q.price==='number'?q.price:null,pct=q&&typeof q.pct==='number'?q.pct:null;
+    const cls=pct==null?'':pct>=0?'pf3-up':'pf3-down';
+    return`<div class="fut-tile"><div class="fut-name">${name}</div><div class="fut-px">${p!=null?pf3Fmt(p,2):'—'}</div><div class="fut-ch ${cls}">${pct!=null?(pct>=0?'▲ +':'▼ ')+pct.toFixed(2)+'%':'…'}</div></div>`;
+  }).join('');
+}
+function homeFuturesHTML(){
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📈 ${RT('Фьючерсы на индексы','Index futures')} <span class="fut-live">● LIVE</span></span><span class="pf3-asof" id="homeFutAt">${homeFutAtLbl()}</span></div><div class="fut-grid" id="homeFutWrap">${homeFutTiles()}</div></section>`;
+}
 function homeHTML(){
   return`
+  ${homeFuturesHTML()}
   <section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${RT('Рынок сейчас','Market now')}</span><span class="pf3-asof">${RT('лучшие кандидаты по горизонтам','best candidates by horizon')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div></section>
   ${homeBestHTML()}
   ${isAdmin()?homeValHTML():''}

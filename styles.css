@@ -1092,3 +1092,13 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-hz-b+.pf3-hz-b{border-left:1px solid var(--border)}
 .pf3-hz-b:hover{color:var(--text1)}
 .pf3-hz-b.on{background:var(--v3-acc);color:#fff}
+
+/* 📈 Фьючерсы на индексы (Home, лайв) */
+.fut-live{font:800 9px 'JetBrains Mono',monospace;color:#10b981;letter-spacing:.5px;animation:futpulse 2s ease-in-out infinite;margin-left:4px}
+@keyframes futpulse{0%,100%{opacity:1}50%{opacity:.35}}
+.fut-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:4px}
+.fut-tile{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;min-width:0}
+.fut-name{font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fut-px{font:800 19px 'JetBrains Mono',monospace;color:var(--text1);margin-top:5px;letter-spacing:-.5px}
+.fut-ch{font:700 12px 'JetBrains Mono',monospace;margin-top:2px}
+@media(max-width:760px){.fut-grid{grid-template-columns:repeat(2,1fr)}}

@@ -1834,7 +1834,8 @@ async function pf3AiRun(){
     snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке/таблицах). Это КРАТКОСРОЧНО-технический вердикт.';
     snap.recoVerdicts=dashRecoMap(key);
     const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
-    const j=await r.json();
+    const bodyText=await r.text();
+    let j=null;try{j=JSON.parse(bodyText)}catch(_){}
     if(j&&j.text){
       const d=DATA[key];
       aiSpendAdd(j.cost);
@@ -1843,8 +1844,13 @@ async function pf3AiRun(){
       delete d.aiReport;   // superseded by aiHistory
       scheduleSave();
       toast('🤖 '+RT('Анализ готов — отчёт сохранён в «'+TAB_LABEL(key)+'»','Analysis ready — saved to '+TAB_LABEL(key)));
-    }else toast((j&&j.error)||'AI не ответил',true);
-  }catch(e){toast('Worker недоступен или не обновлён (нужен эндпоинт ?action=ai)',true);}
+    }else{
+      // Показать НАСТОЯЩУЮ причину от воркера (раньше пряталась за общим тостом).
+      const msg=(j&&j.error)||(bodyText?bodyText.slice(0,220):('HTTP '+r.status));
+      console.warn('AI run failed:',r.status,bodyText);
+      toast('AI ('+TAB_LABEL(key)+'): '+msg,true);
+    }
+  }catch(e){toast('AI: '+(e&&e.message||RT('сеть/worker недоступен','network/worker unreachable')),true);}
   pf3Ai.loading=false;
   if(isV3())renderPF3();
 }
@@ -4066,13 +4072,13 @@ async function aiDashRun(onlyKey){
       snap.recoVerdicts=dashRecoMap(k);   // согласование picks с вердиктом сайта (вариант B)
       try{
         const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
-        const j=await r.json();
+        const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
         if(j&&j.dash&&Array.isArray(j.dash.cards)){
           aiSpendAdd(j.cost);
           AI_DASH[k]={headline:j.dash.headline||'',cards:j.dash.cards,picks:Array.isArray(j.dash.picks)?j.dash.picks:[],asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};
           ok++;scheduleSave();if(!_aiDashSub)_aiDashSub=k;renderAll();
-        }else toast((j&&j.error||RT('AI не ответил','AI did not respond'))+' · '+TAB_LABEL(k),true);
-      }catch(e){toast(RT('Worker недоступен (нужен ?action=dashboard)','Worker unreachable (?action=dashboard)')+' · '+TAB_LABEL(k),true);}
+        }else{const msg=(j&&j.error)||(bodyText?bodyText.slice(0,220):('HTTP '+r.status));console.warn('Dashboard failed:',k,r.status,bodyText);toast(TAB_LABEL(k)+': '+msg,true);}
+      }catch(e){toast(TAB_LABEL(k)+': '+(e&&e.message||RT('сеть/worker недоступен','network/worker unreachable')),true);}
     }
     if(ok)toast('📊 '+RT('Готово дашбордов','Dashboards ready')+': '+ok+'/'+tabs.length);
   }finally{_aiDashBusy=false;_aiDashProg='';renderAll();}

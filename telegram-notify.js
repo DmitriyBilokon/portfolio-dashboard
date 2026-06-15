@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16futures';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16prepost';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -417,6 +417,25 @@ async function calendarInfo(sym){
     payDate: ev.dividendDate?.fmt || null,
     divRate: yRaw(sd.dividendRate) ?? yRaw(sd.trailingAnnualDividendRate),
     divYield: yRaw(sd.dividendYield),
+  };
+}
+
+// ── Pre/post-market цена (Yahoo quoteSummary price): для карточки акции, лайв ──
+// marketState: PRE/PREPRE · REGULAR · POST/POSTPOST · CLOSED. changePercent в .raw
+// приходит долей (0.012 = 1.2%) → ×100. Для не-US пре/пост обычно нет → null.
+async function prePost(sym){
+  const qs = await yQuoteSummary(sym, 'price');
+  const p = qs && qs.price;
+  if(!p) return null;
+  const pr = v => { const n = yRaw(v); return (typeof n === 'number' && n > 0) ? round2(n) : null; };
+  const pct = v => { const n = yRaw(v); return (typeof n === 'number') ? round2(n * 100) : null; };
+  const pre = pr(p.preMarketPrice), post = pr(p.postMarketPrice);
+  return {
+    state: p.marketState || null,
+    ccy: p.currency || null,
+    regular: pr(p.regularMarketPrice),
+    pre: pre != null ? { price: pre, pct: pct(p.preMarketChangePercent) } : null,
+    post: post != null ? { price: post, pct: pct(p.postMarketChangePercent) } : null,
   };
 }
 
@@ -1686,7 +1705,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
@@ -1961,6 +1980,11 @@ export default {
       const range = (url.searchParams.get('range') || '2y').trim();
       const h = await dailyHistory(url.searchParams.get('history').trim(), range);
       return json(h || { t: [], c: [] });
+    }
+    if(url.searchParams.has('prepost')){
+      // Pre/post-market цена одной бумаги → лайв-блок в карточке акции.
+      const pp = await prePost(url.searchParams.get('prepost').trim());
+      return json(pp || {});
     }
     if(url.searchParams.get('action') === 'chart'){
       // Manual test: send the CHART_TICKER chart photo to Telegram now.

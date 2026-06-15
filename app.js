@@ -3299,6 +3299,7 @@ function renderPF3(){
     pf3LoadFundamentals();   // no-op when cached; re-renders the health cards when done
     pf3LoadEarnings();       // same for the earnings calendar panel
     pf3RefreshCardPrice(d,r);   // живая цена → актуальный «потенциал роста»
+    cardPPStart(String(r[2]||''),exSymbol(r[2],r[8]));   // лайв pre/post-маркет
   }else if(v3Key===PF3_KEY)pfPerfDraw();   // график развития портфеля под сводкой
 }
 
@@ -4229,6 +4230,7 @@ function pf3DetailHTML(){
       <div class="pf3-quote">
         <div class="pf3-price${isFinite(day)?(day>=0?' pf3-up':' pf3-down'):''}">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
         ${isFinite(day)?`<div class="pf3-day ${day>=0?'pf3-up-bg':'pf3-down-bg'}">${day>0?'+':''}${day.toFixed(2)}% ${T('за день')}</div>`:''}
+        <div id="pf3PrePost" class="pf3-pp">${cardPPInner(exSymbol(tk,ccy))}</div>
         <button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить цену')}</button>
       </div>
     </section>
@@ -4369,6 +4371,41 @@ async function pf3RefreshCardPrice(d,r){
     const ae=document.activeElement;
     if(isV3()&&pf3Sel===tk&&!(ae&&ae.tagName==='INPUT'))renderPF3();
   }catch(e){_cardPxAt[sym]=0;}
+}
+
+// ── 🌅/🌙 Pre/post-market в карточке акции (лайв) ──
+// Опрос ?prepost= каждые 20с, пока карточка этой бумаги открыта; блок обновляется
+// in-place. Сам останавливается, когда карточка закрыта/сменилась.
+let CARD_PP={},_cardPPTimer=null,_cardPPTk=null,_cardPPSym=null,_cardPPLoading=false;
+function cardPPStop(){if(_cardPPTimer){clearInterval(_cardPPTimer);_cardPPTimer=null;}_cardPPTk=null;_cardPPSym=null;}
+function cardPPStart(tk,sym){
+  if(!tk||!sym)return;
+  if(_cardPPTk===tk&&_cardPPTimer)return;   // уже опрашиваем эту бумагу
+  cardPPStop();_cardPPTk=tk;_cardPPSym=sym;
+  cardPPLoad();
+  _cardPPTimer=setInterval(cardPPLoad,20000);
+}
+async function cardPPLoad(){
+  const tk=_cardPPTk,sym=_cardPPSym;
+  if(!tk||!sym)return;
+  if(!(isV3()&&pf3Sel===tk)){cardPPStop();return;}   // карточка закрыта/сменилась — стоп
+  if(document.hidden||_cardPPLoading)return;
+  _cardPPLoading=true;
+  try{
+    const j=await fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null);
+    if(j&&typeof j==='object'){CARD_PP[sym]={...j,at:Date.now()};const el=document.getElementById('pf3PrePost');if(el&&pf3Sel===tk)el.innerHTML=cardPPInner(sym);}
+  }catch(e){}
+  _cardPPLoading=false;
+}
+function cardPPInner(sym){
+  const d=CARD_PP[sym];if(!d)return'';
+  const st=String(d.state||'').toUpperCase();
+  const seg=(o,ru,en)=>{if(!o||!(o.price>0))return'';const c=o.pct==null?'':o.pct>=0?'pf3-up':'pf3-down';return`<span class="pf3-pp-l">${RT(ru,en)}</span> <span class="pf3-pp-v ${c}">${pf3Fmt(o.price,2)} <small>${d.ccy||''}</small>${o.pct!=null?` (${o.pct>=0?'+':''}${o.pct.toFixed(2)}%)`:''}</span>`};
+  let body='';
+  if(st.indexOf('PRE')>=0)body=seg(d.pre,'🌅 Пре-маркет','🌅 Pre-market');
+  else if(st.indexOf('POST')>=0)body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours');
+  else if(st==='CLOSED')body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours')||seg(d.pre,'🌅 Пре-маркет','🌅 Pre-market');
+  return body?`<span class="pf3-pp-live">●</span> ${body}`:'';
 }
 
 // Аналит. таргеты (Yahoo/Refinitiv-консенсус) для текущей вкладки: worker-эндпоинт

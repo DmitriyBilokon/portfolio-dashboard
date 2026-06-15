@@ -1112,3 +1112,10 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pfp-color::-webkit-color-swatch{border:1px solid var(--border);border-radius:4px}
 .pfp-color::-moz-color-swatch{border:1px solid var(--border);border-radius:4px}
 .pfp-chip-b{border:none;background:none;color:inherit;font:inherit;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:5px}
+
+/* 🌅/🌙 Pre/post-market в карточке (лайв) */
+.pf3-pp{font:600 12px 'JetBrains Mono',monospace;color:var(--text2);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+.pf3-pp:empty{display:none}
+.pf3-pp-live{color:#10b981;font-size:9px;animation:futpulse 2s ease-in-out infinite}
+.pf3-pp-l{color:var(--text3);font-weight:700}
+.pf3-pp-v small{color:var(--text3)}

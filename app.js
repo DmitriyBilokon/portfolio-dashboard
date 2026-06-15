@@ -1831,6 +1831,7 @@ async function aiRecoRun(ev){
       const D=j.data||{};
       AI_RECO[tk]={verdict:j.verdict||null,confidence:D.confidence||null,headline:D.headline||null,
         entryLow:D.entryLow??null,entryHigh:D.entryHigh??null,keyRisks:Array.isArray(D.keyRisks)?D.keyRisks:[],
+        horizons:(D.horizons&&typeof D.horizons==='object')?D.horizons:null,
         text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null,recoAt:snap.recoVerdict||null};
       _aiRecoOpen[tk]=true;
       scheduleSave();
@@ -1860,6 +1861,15 @@ function aiRecoHTML(d,r){
         ${entry}
       </div>
       ${v.headline?`<div class="airk-headline">${E(String(v.headline))}</div>`:''}
+      ${(()=>{const H=v.horizons;if(!H)return'';const cc=v.ccy||'';
+        const HZ=[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9 '+RT('мес','mo')],['long','🚀 '+RT('Лонг','Long')]];
+        const cells=HZ.map(([k,lbl])=>{const o=H[k];if(!o||typeof o!=='object')return'';
+          const m=AI_RECO_META[o.verdict]||['❔',o.verdict||'—','wait'];
+          const tgt=(o.target!=null&&isFinite(o.target))?`${RT('таргет','tgt')} ${pf3Fmt(o.target,2)} ${cc}${(o.upside!=null&&isFinite(o.upside))?` <span class="${o.upside>=0?'pf3-up':'pf3-down'}">${o.upside>=0?'+':''}${(+o.upside).toFixed(0)}%</span>`:''}`:'';
+          const ent=(o.entryLow!=null||o.entryHigh!=null)?`${RT('вход','entry')} ${[o.entryLow,o.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${cc}`:'';
+          return`<div class="airk-hz-it"><div class="airk-hz-l">${lbl}</div><div class="airk-hz-v"><span class="pf3-sig xr-${m[2]}">${m[0]} ${m[1]}</span></div>${tgt||ent?`<div class="airk-hz-x">${[tgt,ent].filter(Boolean).join(' · ')}</div>`:''}${o.note?`<div class="airk-hz-n">${E(String(o.note))}</div>`:''}</div>`;
+        }).filter(Boolean).join('');
+        return cells?`<div class="airk-hz">${cells}</div>`:'';})()}
       ${risks}
       <button class="stkai-toggle" onclick="aiRecoToggle('${tk}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
       ${open?`<div class="pf3-ai-report">${pf3Md(v.text)}</div>`:''}`;

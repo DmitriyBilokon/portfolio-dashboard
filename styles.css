@@ -1068,3 +1068,12 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .ins-details[open]>summary .ins-chevron{transform:rotate(180deg)}
 .ins-details[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
 .ins-details .ins-filters{margin-top:8px}
+
+/* 🔄 AI-Рекомендация: три горизонта (Сейчас / 6–9м / Лонг) */
+.airk-hz{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.airk-hz-it{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;min-width:0}
+.airk-hz-l{font-size:10.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px}
+.airk-hz-v{margin-bottom:5px}
+.airk-hz-x{font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-bottom:3px}
+.airk-hz-n{font-size:11.5px;color:var(--text2);line-height:1.4}
+@media(max-width:560px){.airk-hz{grid-template-columns:1fr}}

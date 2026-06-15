@@ -1729,6 +1729,22 @@ function pf3Health(){
 let pf3Ai={loading:false};
 
 // Everything the model needs: positions with live prices, levels, targets, shares + capital.
+// Последние реально исполненные сделки по портфелю (журнал) для AI-снапшота:
+// семейные портфели — из PF_TRADES (фильтр по вкладке), AI-портфель — из AI_PORT.trades.
+// Компактно и newest-first, до 40 записей; plSEK — реализованный P/L по продаже.
+function pfRecentTrades(key){
+  key=key||v3Key;
+  const n=v=>{const x=parseFloat(v);return isFinite(x)?x:null};
+  let src=[];
+  if(key===AIP_KEY){
+    src=((AI_PORT&&AI_PORT.trades)||[]).map((t,i)=>({date:t.ts?new Date(t.ts).toISOString().slice(0,10):'',act:t.action,ticker:String(t.ticker||'').toUpperCase(),qty:n(t.qty),price:n(t.price),ccy:t.ccy||'SEK',plSEK:typeof t.plSEK==='number'?Math.round(t.plSEK):null,trigger:t.trigger||null,_o:t.ts||i}));
+  }else{
+    src=(PF_TRADES||[]).map((t,i)=>({...t,_o:i})).filter(t=>(t.tab||PF3_KEY)===key)
+      .map(t=>({date:t.date,act:t.act,ticker:String(t.tk||'').toUpperCase(),qty:n(t.qty),price:n(t.price),ccy:t.ccy||'SEK',plSEK:t.plNative!=null?Math.round(t.plNative*(FX[t.ccy]||1)):null,_o:t._o}));
+  }
+  src.sort((a,b)=>(a.date<b.date?1:a.date>b.date?-1:(b._o-a._o)));
+  return src.slice(0,40).map(({_o,...t})=>t);
+}
 function pf3AiSnapshot(key){
   key=key||v3Key;
   const d=DATA[key],h=d.headers,{s50,s100,s200}=smaIdx(d);
@@ -1767,10 +1783,15 @@ function pf3AiSnapshot(key){
   }));
   // Allocation summary — the same numbers the «Состояние портфеля» tab shows.
   const group=key=>{const m={};positions.forEach(p=>{const k=p[key]||'—';m[k]=(m[k]||0)+(p.valueSEK||0)});return Object.entries(m).map(([k,v])=>({name:k,pct:totalVal>0?Math.round(v/totalVal*1000)/10:0})).sort((a,b)=>b.pct-a.pct)};
+  const trades=pfRecentTrades(key);
+  const realizedPLSEK=Math.round(trades.reduce((a,t)=>a+(t.plSEK||0),0));
   return{
     baseCurrency:'SEK',fxToSEK:FX,positions,
     allocation:{bySector:group('sector'),byCurrency:group('ccy')},
     totals:{stocksSEK:Math.round(totalVal),freeCashSEK:Math.round((num(d.cashFree)||0)*pf3BaseFx(d)),leverageSEK:Math.round((key===PF3_KEY?(num(d.leverage)||0):0)*pf3BaseFx(d))},
+    // Уже СОВЕРШЁННЫЕ сделки по этому портфелю (журнал) — AI обязан учитывать их
+    // ПЕРЕД советами: не предлагать обратное недавнему действию без причины и т.д.
+    recentTrades:trades,realizedPLSEK,
     investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
     // Живой рыночный контекст: статистика фаз по индексным вкладкам + сводки
     // их последних AI-обзоров — портфельный анализ опирается на состояние рынка.

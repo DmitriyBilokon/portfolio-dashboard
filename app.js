@@ -2123,6 +2123,8 @@ function stockReportHTML(d,r){
   return`<section class="pf3-panel">${hd}
     <ul class="sr-list">${B.map(b=>`<li>${b}</li>`).join('')}</ul>
     <div class="sr-verdict sr-${VV[2]}">🎯 ${RT('Стратегический вердикт','Strategic verdict')}: ${verdict}</div>
+    <div class="pf3-reco-hz-l">${RT('Рекомендация по горизонтам','Recommendation by horizon')}</div>
+    ${pf3HorizonsHTML(d,r)}
     <div class="pf3-ai-note">${RT('Детерминированный разбор по метрикам дашборда — бесплатно. Для свежих новостей и веб-поиска используйте 🔬 AI-анализ.','Deterministic analysis from dashboard metrics — free. For fresh news use 🔬 AI analysis.')}</div>
   </section>`;
 }
@@ -2680,6 +2682,67 @@ function pf3Reco(d,r){
   else{v='wait';hint=RT('факторы смешанные — дождитесь уровня или подтверждения тренда','mixed factors — wait for a level or trend confirmation');}
   return{v,hint,total,fs,ts,rs,F,T:TT,R};
 }
+// Детерминированная рекомендация по ТРЁМ горизонтам из уже собранных метрик
+// (без AI/токенов): ⏱ Момент (сейчас) · 📅 6–9 мес · 🚀 Лонг (12+ мес).
+function pf3RecoHorizons(d,r){
+  const price=parseFloat(r[7])||0,m=pf3TypeMetrics(d,r);
+  const crit=pf3Criterion(d,r),sig=pf3SignalInfo(d,r);
+  const up=pf3EffUpside(d,r),eff=pf3EffTarget(d,r);
+  const {s50,s100,s200}=smaIdx(d),h=d.headers;
+  const num=c=>{const v=c>=0?parseFloat(r[c]):NaN;return isFinite(v)?v:null};
+  const dist=v=>(v&&v>0&&price>0)?(price/v-1)*100:null;
+  const sma50=num(s50),sma100=num(s100),sma200=num(s200),sup=num(h.indexOf('Поддержка'));
+  const d200=dist(sma200),dSup=dist(sup);
+  const avg=PF3_VAL_AVG[pf3MacroSector(String(r[4]||''))]||[22,3];
+  const spec=r[5]==='Спекулятивная',knife=crit.label==='Падающий нож';
+  const overheat=crit.label==='Перегрев'||(d200!=null&&d200>=30);
+  const noData=up==null&&m.roe==null&&m.pe==null&&m.beta==null;
+  // ближайший уровень входа (SMA 50/100/поддержка)
+  const lv=[[ 'SMA 50',sma50,dist(sma50)],['SMA 100',sma100,dist(sma100)],[RT('поддержка','support'),sup,dSup]]
+    .filter(x=>x[1]>0).sort((a,b)=>Math.abs(a[2])-Math.abs(b[2]))[0];
+  const entry=lv?lv[1]:null;
+  // ⏱ Момент (сейчас) — техника и точка входа
+  let now;
+  if(noData)now={v:'wait',note:RT('недостаточно данных — обновите акции','not enough data — refresh stocks')};
+  else if(knife)now={v:'avoid',note:RT('падающий нож — ждать стабилизации у поддержки','falling knife — wait for support to hold')};
+  else if(sig.type==='sell'||(up!=null&&up<=-5))now={v:'sell',note:RT('у сопротивления / выше таргета — зона фиксации','at resistance / above target — take-profit')};
+  else if(overheat)now={v:'sell',note:RT('перегрев — далеко над средними, ждать остывания','overheated — far above averages')};
+  else if(sig.type==='buy'&&(d200==null||d200>=0))now={v:'buy',entry,note:RT(`цена у уровня ${sig.n||'входа'} в восходящем тренде`,`price at level ${sig.n||'entry'} in uptrend`)};
+  else if(sig.type==='buy')now={v:'wait',entry,note:RT(`у уровня ${sig.n}, тренд слабый — нужно подтверждение`,`at level ${sig.n}, weak trend — need confirmation`)};
+  else now={v:'wait',entry,note:RT(`до уровня входа ${sig.dist!=null?'≈ '+sig.dist.toFixed(1)+'%':'далеко'}`,`${sig.dist!=null?sig.dist.toFixed(1)+'% to entry':'far from entry'}`)};
+  // 📅 6–9 месяцев — тренд + оценка + апсайд
+  let ms=0;
+  if(d200!=null)ms+=d200>0?1.5:-1;
+  if(up!=null){if(up>=15)ms+=2;else if(up>=5)ms+=1;else if(up<=-5)ms-=1.5;}
+  if(m.roe!=null&&m.roe>=12)ms+=1;if(m.revg!=null&&m.revg>=8)ms+=1;
+  if(m.pe!=null&&m.pe>0){if(m.pe<=avg[0])ms+=0.5;else if(m.pe>=avg[0]*1.5)ms-=0.5;}
+  if(knife)ms-=1;if(overheat)ms-=0.5;
+  const midV=noData?'wait':ms>=2.5?'buy':ms<=-2?'sell':'wait';
+  const mid={v:midV,target:eff.target>0?eff.target:null,up,note:noData?RT('нужны метрики','need metrics'):midV==='buy'?RT('тренд и потенциал к таргету за вход','trend + upside support an entry'):midV==='sell'?RT('слабый тренд / нет апсайда — сокращать','weak trend / no upside — trim'):RT('смешанно — ждать отчёт или вход у уровня','mixed — await earnings or a level')};
+  // 🚀 Лонг (12+ мес) — фундаментал и недооценка
+  let ls=0;
+  if(m.roe!=null){if(m.roe>=15)ls+=2;else if(m.roe>=10)ls+=1;else if(m.roe<0)ls-=2;}
+  if(m.revg!=null){if(m.revg>=15)ls+=2;else if(m.revg>=8)ls+=1;else if(m.revg<0)ls-=1;}
+  if(up!=null){if(up>=25)ls+=2;else if(up>=10)ls+=1;else if(up<=-15)ls-=1;}
+  if(m.pe!=null&&m.pe>0){if(m.pe<=avg[0])ls+=1;else if(m.pe>=avg[0]*1.8)ls-=1;}
+  if(m.de!=null&&m.de>2)ls-=0.5;if(spec)ls-=1;
+  const longV=noData?'wait':ls>=2.5?'buy':ls<=-2?'avoid':'wait';
+  const ln=[];if(m.roe!=null)ln.push(`ROE ${m.roe.toFixed(0)}%`);if(m.revg!=null)ln.push(RT('рост','growth')+` ${m.revg.toFixed(0)}%`);if(up!=null)ln.push(`${up>=0?'+':''}${up.toFixed(0)}% ${RT('к таргету','to tgt')}`);
+  const long={v:longV,note:noData?RT('нужны метрики','need metrics'):(ln.slice(0,3).join(' · ')||RT('по фундаменталу','on fundamentals'))};
+  return{now,mid,long};
+}
+// Общий рендер трёх горизонтов (используют и 💡 Рекомендация, и 🔎 Анализ акции).
+function pf3HorizonsHTML(d,r){
+  const hz=pf3RecoHorizons(d,r),ccy=r[8]||'';
+  const E=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const META={buy:['🟢',RT('Покупать','Buy'),'buy'],sell:['🔴',RT('Сокращать','Trim'),'sell'],wait:['🟡',RT('Ждать','Wait'),'wait'],avoid:['⛔',RT('Избегать','Avoid'),'avoid']};
+  const HZ=[['⏱ '+RT('Сейчас','Now'),hz.now],['📅 6–9 '+RT('мес','mo'),hz.mid],['🚀 '+RT('Лонг','Long'),hz.long]];
+  const cell=([lbl,o])=>{const mt=META[o.v]||META.wait;
+    const x=(o.target!=null&&isFinite(o.target))?`${RT('таргет','tgt')} ${pf3Fmt(o.target,2)} ${ccy}${(o.up!=null&&isFinite(o.up))?` <span class="${o.up>=0?'pf3-up':'pf3-down'}">${o.up>=0?'+':''}${o.up.toFixed(0)}%</span>`:''}`:(o.entry!=null?`${RT('вход','entry')} ≈ ${pf3Fmt(o.entry,2)} ${ccy}`:'');
+    return`<div class="airk-hz-it"><div class="airk-hz-l">${lbl}</div><div class="airk-hz-v"><span class="pf3-sig xr-${mt[2]}">${mt[0]} ${mt[1]}</span></div>${x?`<div class="airk-hz-x">${x}</div>`:''}<div class="airk-hz-n">${E(o.note||'')}</div></div>`;
+  };
+  return`<div class="airk-hz">${HZ.map(cell).join('')}</div>`;
+}
 // Вердикт скоринга → колонка данных «Реком. скоринг» (buy/wait/sell/avoid).
 // Worker передаёт её Claude в universe AI-портфеля как мягкий фактор.
 function pf3WriteReco(d){
@@ -2695,6 +2758,8 @@ function pf3RecoHTML(d,r){
   return`<section class="pf3-panel pf3-reco">
     <div class="pf3-panel-hd"><span>${RT('💡 Рекомендация','💡 Recommendation')}</span><span class="pf3-asof">${RT('балл','score')} ${sgn(rc.total)}</span></div>
     <div class="pf3-reco-verdict rv-${rc.v}">${ico} ${label}<small>${rc.hint}</small></div>
+    <div class="pf3-reco-hz-l">${RT('По горизонтам','By horizon')}</div>
+    ${pf3HorizonsHTML(d,r)}
     <div class="pf3-reco-grid">
       ${dim(RT('📊 Фундаментал','📊 Fundamentals'),rc.fs,rc.F)}
       ${dim(RT('📈 Техника','📈 Technicals'),rc.ts,rc.T)}

@@ -1476,13 +1476,22 @@ const PF3_VAL_AVG={'Полупроводники':[28,7],'Софт и облак
 function pf3ValCard(kind){
   const F=pf3FundData()||(pf3Fund.cache.annual||{}).data||(pf3Fund.cache.quarter||{}).data;
   const r=pf3D().rows[pf3SelIdx()];
-  const sec=pf3MacroSector(String(r[4]||''));
-  const avg=(PF3_VAL_AVG[sec]||[22,3])[kind==='pe'?0:1];
-  const v=F?(kind==='pe'?F.pe:F.ps):null;
+  const tk=String(r[2]||'').trim().toUpperCase(),vv=VAL[tk]||{};
   const label=kind==='pe'?'P/E':'P/S';
-  if(v==null||!(v>0))return`<div class="pf3-card-l">${label}</div><div class="pf3-card-v">—</div><div class="pf3-card-s">${F?RT('нет данных / компания убыточна','no data / loss-making'):RT('загрузка…','loading…')}</div>`;
+  // Число акции: предпочитаем VAL (тот же источник, что 📐 Оценка), иначе fundamentals.
+  const vvN=kind==='pe'?vv.pe:vv.ps, fN=F?(kind==='pe'?F.pe:F.ps):null;
+  const v=(vvN>0)?vvN:(fN>0?fN:null);
+  if(v==null||!(v>0))return`<div class="pf3-card-l">${label}</div><div class="pf3-card-v">—</div><div class="pf3-card-s">${(F||VAL[tk])?RT('нет данных / компания убыточна','no data / loss-making'):RT('загрузка…','loading…')}</div>`;
+  // Эталон сектора: живая медиана из 📐 Оценки (если загружена и в секторе ≥2 бумаг),
+  // иначе — статичная константа PF3_VAL_AVG по макро-сектору.
+  const med=vv.sector?(_valSecCache||valSectorMedians())[vv.sector]:null;
+  const lm=med?(kind==='pe'?med.pe:med.ps):null;
+  const live=lm!=null&&lm>0&&med.n>=2;
+  const avg=live?lm:(PF3_VAL_AVG[pf3MacroSector(String(r[4]||''))]||[22,3])[kind==='pe'?0:1];
+  const avgStr=avg>=10?Math.round(avg):Math.round(avg*10)/10;
   const diff=(v/avg-1)*100,cheap=diff<=0;
-  return`<div class="pf3-card-l">${label}</div><div class="pf3-card-v">${v.toFixed(1)}</div><div class="pf3-card-s ${cheap?'pf3-up':'pf3-down'}">${RT(`сектор ≈${avg} · на ${Math.abs(diff).toFixed(0)}% ${cheap?'дешевле сектора':'дороже сектора'}`,`sector ≈${avg} · ${Math.abs(diff).toFixed(0)}% ${cheap?'below sector avg':'above sector avg'}`)}</div>`;
+  const ttl=live?RT(`живая медиана сектора «${vv.sector}» по дашборду · ${med.n} бум.`,`live sector median «${vv.sector}» across the dashboard · ${med.n} stocks`):RT('типичная медиана сектора (ориентир) — запустите 📐 Оценку для живой','typical sector median (reference) — run 📐 Valuation for the live one');
+  return`<div class="pf3-card-l">${label}</div><div class="pf3-card-v">${v.toFixed(1)}</div><div class="pf3-card-s ${cheap?'pf3-up':'pf3-down'}" title="${ttl}">${RT(`сектор ≈${avgStr} · на ${Math.abs(diff).toFixed(0)}% ${cheap?'дешевле сектора':'дороже сектора'}`,`sector ≈${avgStr} · ${Math.abs(diff).toFixed(0)}% ${cheap?'below sector avg':'above sector avg'}`)}</div>`;
 }
 async function pf3LoadFundamentals(){
   const sym=pf3Sym(),per=pf3Fund.period,c=pf3Fund.cache[per];

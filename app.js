@@ -1023,13 +1023,13 @@ function renderAll(){
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
     if(isAip&&!['list','sec','typ','div','health','aim'].includes(pf3Tab))pf3Tab='list';
-    else if(!isPort&&!isAip&&!['list','cal','sec','typ','sim','ai'].includes(pf3Tab))pf3Tab='list';
+    else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
     if(!isAdmin()&&(pf3Tab==='ai'||pf3Tab==='prop'))pf3Tab='list';   // AI-вкладки — только админу
     (isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],[T('🧪 Симуляция'),'sim'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
-      :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],[T('🧪 Симуляция'),'sim'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
+      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
+      :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>isAdmin()||(k!=='ai'&&k!=='prop')).forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
     renderPF3();
@@ -3455,7 +3455,7 @@ function simSection(tk,price,ccy){
   }).join('');
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>${T('🧪 Симуляция')}</span><span class="pf3-asof">${T('тестовый режим — без реальных денег')}</span></div>
-    ${rows||'<div class="pf3-empty">Тестовых позиций по этой акции нет — купите ниже и следите за результатом здесь и в саб-вкладке «Симуляция»</div>'}
+    ${rows||'<div class="pf3-empty">Тестовых позиций по этой акции нет — купите ниже и следите за результатом здесь и во вкладке «🧪 Симуляция» (группа Portfolio)</div>'}
     <form class="sim-form" onsubmit="event.preventDefault();simAdd('${tk}')">
       <label>${T('Кол-во')} <input id="simQty" type="number" step="any" min="0" placeholder="10"></label>
       <label>${T('Цена покупки')} (${ccy}) <input id="simPrice" type="number" step="any" min="0" value="${price>0?price:''}"></label>

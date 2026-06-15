@@ -4108,33 +4108,37 @@ function homeBestHTML(){
     ${tbl('🥉 '+RT('Лучшие на 6–12 мес','Best 6–12 months'),RT('фундаментал и недооценка','fundamentals & value'),P.long,bpWhyLong)}
     <div class="pf3-ai-note">${RT('Детерминированный отбор из всех вкладок по обновлённым данным. Справочно, не инвестиционная рекомендация.','Deterministic screen across all tabs from refreshed data. Reference only, not investment advice.')}</div>`;
 }
-// ── 📈 Фьючерсы на основные индексы (лайв) ──
-// Непрерывные фьючерсы Yahoo трейдятся ~23ч и двигаются вне кэш-сессии — живой
-// барометр риска. Тянем те же ?symbols= (yahoo даёт цену + дневное изменение %).
-const HOME_FUTURES=[['ES=F','S&P 500'],['NQ=F','Nasdaq 100'],['YM=F','Dow Jones'],['RTY=F','Russell 2000']];
+// ── 📈 Лайв-рынки на Home: фьючерсы + сырьё + мировые индексы ──
+// Фьючерсы (=F) трейдятся ~23ч → живой барометр риска; спот-индексы (^…) —
+// в часы своей биржи. Всё тянем одним ?symbols= (yahoo: цена + дневное изм. %).
+const HOME_MKT_FUT=[['ES=F','S&P 500','S&P 500'],['NQ=F','Nasdaq 100','Nasdaq 100'],['YM=F','Dow Jones','Dow Jones'],['RTY=F','Russell 2000','Russell 2000'],['GC=F','Золото','Gold'],['CL=F','Нефть WTI','WTI Oil'],['^VIX','VIX','VIX']];
+const HOME_MKT_IDX=[['^OMX','OMXS30','OMXS30'],['^GDAXI','DAX','DAX'],['^STOXX50E','Euro Stoxx 50','Euro Stoxx 50'],['^FCHI','CAC 40','CAC 40'],['^FTSE','FTSE 100','FTSE 100'],['^N225','Nikkei 225','Nikkei 225']];
 let HOME_FUT={},_homeFutTimer=null,_homeFutLoading=false,_homeFutAt=0;
 async function homeLoadFutures(){
   if(_homeFutLoading)return;_homeFutLoading=true;
   try{
-    const syms=HOME_FUTURES.map(x=>x[0]).join(',');
+    const syms=HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0]).join(',');
     const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
-    if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY){el.innerHTML=homeFutTiles();const t=document.getElementById('homeFutAt');if(t)t.textContent=homeFutAtLbl();}}
+    if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();}
   }catch(e){}
   _homeFutLoading=false;
 }
 function homeFutStart(){homeLoadFutures();if(_homeFutTimer)return;_homeFutTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadFutures();},20000);}
 function homeFutStop(){if(_homeFutTimer){clearInterval(_homeFutTimer);_homeFutTimer=null;}}
 function homeFutAtLbl(){return _homeFutAt?RT('обновлено','updated')+' '+new Date(_homeFutAt).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):RT('загрузка…','loading…');}
-function homeFutTiles(){
-  return HOME_FUTURES.map(([sym,name])=>{
+function homeFutTiles(list){
+  return list.map(([sym,ru,en])=>{
     const q=HOME_FUT[sym],p=q&&typeof q.price==='number'?q.price:null,pct=q&&typeof q.pct==='number'?q.pct:null;
     const cls=pct==null?'':pct>=0?'pf3-up':'pf3-down';
-    return`<div class="fut-tile"><div class="fut-name">${name}</div><div class="fut-px">${p!=null?pf3Fmt(p,2):'—'}</div><div class="fut-ch ${cls}">${pct!=null?(pct>=0?'▲ +':'▼ ')+pct.toFixed(2)+'%':'…'}</div></div>`;
+    return`<div class="fut-tile"><div class="fut-name">${RT(ru,en)}</div><div class="fut-px">${p!=null?pf3Fmt(p,2):'—'}</div><div class="fut-ch ${cls}">${pct!=null?(pct>=0?'▲ +':'▼ ')+pct.toFixed(2)+'%':'…'}</div></div>`;
   }).join('');
 }
-function homeFuturesHTML(){
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📈 ${RT('Фьючерсы на индексы','Index futures')} <span class="fut-live">● LIVE</span></span><span class="pf3-asof" id="homeFutAt">${homeFutAtLbl()}</span></div><div class="fut-grid" id="homeFutWrap">${homeFutTiles()}</div></section>`;
+function homeMktInner(){
+  const sec=(title,list,sub)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} <span class="fut-live">● LIVE</span></span><span class="pf3-asof">${sub}</span></div><div class="fut-grid">${homeFutTiles(list)}</div></section>`;
+  return sec('📈 '+RT('Фьючерсы и сырьё','Futures & commodities'),HOME_MKT_FUT,homeFutAtLbl())
+    +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи','spot · during market hours'));
 }
+function homeFuturesHTML(){return`<div id="homeFutWrap">${homeMktInner()}</div>`;}
 function homeHTML(){
   return`
   ${homeFuturesHTML()}

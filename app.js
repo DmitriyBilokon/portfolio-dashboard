@@ -501,6 +501,26 @@ const pf3BaseUnit=d=>{const b=pf3Base(d);return b==='SEK'?'kr':b};        // п�
 const pf3Cv=(d,sek)=>{const f=pf3BaseFx(d);return f===1?sek:sek/f};       // SEK → базовая (число)
 const pf3Money=(d,sek,dec)=>`${pf3Fmt(pf3Cv(d,sek),dec)} ${pf3BaseUnit(d)}`;   // SEK → «X kr» / «X USD»
 
+// 💸 Комиссия сделки (Avanza «Small»): courtage 0.15% от суммы, но не меньше
+// lägsta courtage в местной валюте; + валютная надбавка 0.25% за конвертацию
+// (для бумаг не в SEK); + налог на покупку (UK stamp 0.5% + £1.5 свыше £10k).
+// Возвращает компоненты и total В ВАЛЮТЕ БУМАГИ. Примечание: страновые налоги
+// внутри EUR (Франция 0.4%, Италия/Испания 0.2%) по валюте не определяются и не
+// применяются автоматически.
+const COURTAGE_MIN={USD:6,CAD:7,EUR:6,CHF:6,GBP:6,SEK:1};   // lägsta courtage, местная валюта
+const COURTAGE_PCT=0.15, FX_FEE_PCT=0.25;
+function tradeFeeNative(ccy,amount,isBuy){
+  ccy=String(ccy||'USD').toUpperCase();
+  if(!(amount>0))return{courtage:0,fx:0,tax:0,total:0};
+  const min=COURTAGE_MIN[ccy]!=null?COURTAGE_MIN[ccy]:6;
+  const courtage=Math.max(amount*COURTAGE_PCT/100,min);
+  const fx=ccy==='SEK'?0:amount*FX_FEE_PCT/100;
+  let tax=0;
+  if(isBuy&&ccy==='GBP')tax=amount*0.5/100+(amount>10000?1.5:0);
+  const r2=x=>Math.round(x*100)/100;
+  return{courtage:r2(courtage),fx:r2(fx),tax:r2(tax),total:r2(courtage+fx+tax)};
+}
+
 // Ensure the portfolio has the analyst-target column (added by a feature update).
 function migratePortfolio(){
   const pf = DATA['💼 Портфель 2.0']; if(!pf) return;
@@ -4559,11 +4579,12 @@ function pf3DetailHTML(){
         </div>
         <div class="pf3-panel-hd" style="margin-top:14px"><span>💸 ${RT('Сделка','Trade')}</span><span class="pf3-asof">${RT('купля/продажа · пишется в историю с P&L','buy/sell · logged to history with P&L')}</span></div>
         <form class="sim-form" onsubmit="event.preventDefault();return false">
-          <label>${RT('Кол-во','Qty')} <input id="pfTrQty" type="number" step="any" min="0" placeholder="10"></label>
-          <label>${RT('Цена','Price')} (${ccy}) <input id="pfTrPrice" type="number" step="any" min="0" value="${price>0?price:''}"></label>
+          <label>${RT('Кол-во','Qty')} <input id="pfTrQty" type="number" step="any" min="0" placeholder="10" oninput="pfTrPreview('${ccy}')"></label>
+          <label>${RT('Цена','Price')} (${ccy}) <input id="pfTrPrice" type="number" step="any" min="0" value="${price>0?price:''}" oninput="pfTrPreview('${ccy}')"></label>
           <button type="button" class="pf3-btn tr-buy" onclick="pfTrade('buy')">🟢 ${RT('Купить','Buy')}</button>
           <button type="button" class="pf3-btn tr-sell" onclick="pfTrade('sell')">🔴 ${RT('Продать','Sell')}</button>
-        </form>`:''}
+        </form>
+        <div id="pfTrFee" class="pf3-reco-note"></div>`:''}
       </div>
     </section>
     ${(pf3MyPort(v3Key)||v3Key===AIP_KEY)?pfTradesHTML(tk):''}
@@ -4576,28 +4597,38 @@ function pf3DetailHTML(){
 function pf3Edit(ci,v){const ri=pf3SelIdx(),n=parseFloat(v);pf3D().rows[ri][ci]=isNaN(n)?0:n;recalcPF(ri,v3Key);scheduleSave();renderPF3()}
 // ── 📜 Сделки портфеля: купля/продажа с реализованным P&L по продаже ──
 const pfPortShort=tab=>{const k=tab||PF3_KEY;return k===AIP_KEY?'AI':String(TAB_LABEL(k)||k).replace(/^Portfolio\s*\((.+)\)$/i,'$1')};
+// Лайв-превью комиссии в блоке «💸 Сделка» карточки.
+function pfTrPreview(ccy){
+  const el=document.getElementById('pfTrFee');if(!el)return;
+  const q=parseFloat((document.getElementById('pfTrQty')||{}).value),p=parseFloat((document.getElementById('pfTrPrice')||{}).value);
+  if(!(q>0)||!(p>0)){el.textContent='';return;}
+  const amt=q*p,fb=tradeFeeNative(ccy,amt,true),fs=tradeFeeNative(ccy,amt,false);
+  el.innerHTML=`${RT('Сумма','Amount')}: <b>${pf3Fmt(amt,2)} ${ccy}</b> · ${RT('комиссия','fee')} ${RT('покупка','buy')} ~${pf3Fmt(fb.total,2)} ${ccy} → ${RT('итого','total')} ${pf3Fmt(amt+fb.total,2)} ${ccy} · ${RT('продажа','sell')} ~${pf3Fmt(fs.total,2)} ${ccy}`;
+}
 function pfTrade(act){
   const ri=pf3SelIdx(),d=pf3D();if(ri<0||!d)return;const r=d.rows[ri];if(!r)return;
   const qty=parseFloat((document.getElementById('pfTrQty')||{}).value),price=parseFloat((document.getElementById('pfTrPrice')||{}).value);
   if(!(qty>0)||!(price>0)){toast(RT('Укажите количество и цену сделки','Enter trade quantity and price'),true);return;}
   const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD',fx=FX[ccy]||1;
   const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
-  let plNative=null,tq=qty;
+  let plNative=null,tq=qty,feeNative=0;
   if(act==='sell'){
     tq=Math.min(qty,curQty);
     if(!(tq>0)){toast(RT('Нет позиции для продажи','No position to sell'),true);return;}
-    plNative=Math.round((price-avg)*tq*100)/100;
+    feeNative=tradeFeeNative(ccy,tq*price,false).total;
+    plNative=Math.round(((price-avg)*tq-feeNative)*100)/100;   // P&L нетто, за вычетом комиссии продажи
     r[6]=Math.round((curQty-tq)*1e6)/1e6;   // уменьшаем позицию, средняя не меняется
-    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)+pf3Cv(d,tq*price*fx))*100)/100;   // выручка → кэш
+    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)+pf3Cv(d,(tq*price-feeNative)*fx))*100)/100;   // выручка − комиссия → кэш
   }else{
+    feeNative=tradeFeeNative(ccy,qty*price,true).total;
     const nq=curQty+qty;
-    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя
+    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя (без комиссии)
     r[6]=nq;
-    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,qty*price*fx))*100)/100;   // списываем с кэша
+    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,(qty*price+feeNative)*fx))*100)/100;   // сумма + комиссия с кэша
   }
-  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,date:new Date().toISOString().slice(0,10)});
+  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,feeNative,date:new Date().toISOString().slice(0,10)});
   recalcPF(ri,v3Key);scheduleSave();renderPF3();
-  toast((act==='sell'?'🔴 '+RT('Продано','Sold'):'🟢 '+RT('Куплено','Bought'))+` ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*fx)}`:''));
+  toast((act==='sell'?'🔴 '+RT('Продано','Sold'):'🟢 '+RT('Куплено','Bought'))+` ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(feeNative?` · ${RT('комиссия','fee')} ${pf3Fmt(feeNative,2)} ${ccy}`:'')+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*fx)}`:''));
 }
 function pfTradeDel(id){
   const i=PF_TRADES.findIndex(t=>t.id===id);if(i<0)return;
@@ -4623,7 +4654,8 @@ function pfTradesHTML(filterTk){
     const plSEK=t.plSEK;
     if(plSEK!=null){realizedSEK+=plSEK;hasSell=true;}
     const cls=plSEK==null?'':plSEK>=0?'pf3-up':'pf3-down';
-    const sub=fk?(t.date+(t.note?' · '+t.note:'')):`${t.tk} · ${t.date}${isAi?(t.note?' · '+t.note:''):` · <span class="sim-port">💼 ${pfPortShort(t.tab)}</span>`}`;
+    const feeTxt=t.feeNative?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeNative,1)} ${t.ccy}`:(typeof t.feeSEK==='number'&&t.feeSEK?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeSEK,0)} kr`:'');
+    const sub=fk?(t.date+feeTxt+(t.note?' · '+t.note:'')):`${t.tk} · ${t.date}${feeTxt}${isAi?(t.note?' · '+t.note:''):` · <span class="sim-port">💼 ${pfPortShort(t.tab)}</span>`}`;
     return`<div class="sim-trow tr-row">
       <span class="tr-act ${t.act}">${t.act==='sell'?'🔴 '+RT('Продажа','Sell'):'🟢 '+RT('Покупка','Buy')}</span>
       <span class="pf3-row-name">${fk?'':`<b>${t.name||t.tk}</b>`}<span>${sub}</span></span>

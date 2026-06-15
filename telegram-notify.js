@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16aiproto';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16courtage';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -851,6 +851,7 @@ const AIPORT_SYSTEM = `Ты — AI Proto, главная аналитическ�
 - Торгуй ТОЛЬКО тикерами из universe или из своих позиций.
 - Торгуй ТОЛЬКО бумагами, чей рынок сейчас ОТКРЫТ — смотри marketsOpen по валюте бумаги (true = биржа торгует). Решения по закрытым рынкам будут отклонены исполнением.
 - qty — целое число акций; сумма сделки ≥ minTradeSEK; не покупай, если не хватает cashSEK.
+- ИЗДЕРЖКИ. Каждая сделка облагается комиссией: courtage 0.15% от суммы, но НЕ меньше ~6 единиц местной валюты (USD/EUR/CHF/GBP, 7 CAD), плюс ~0.25% валютная надбавка за конвертацию для бумаг не в SEK (≈0.5% за круг покупка+продажа), плюс налог на покупку для UK (0.5%). Минимум «кусается» на мелких сделках (порог 6 достигается лишь около 4000 в валюте). Поэтому НЕ дроби позиции на мелкие сделки, избегай частой переторговли и меняй портфель только когда ожидаемая выгода уверенно превышает издержки round-trip.
 - Держи кэш-резерв ≥5% от equity; одна позиция ≤15% equity, если стратегия не требует иного.
 - ПОБЕДИТЕЛЕЙ НЕ РЕЖЬ РАДИ ДИВЕРСИФИКАЦИИ. Сильную прибыльную растущую позицию (если она не пробила лимит ≤15% и нет объективной причины — перегрев/выше таргета/слом тренда/ухудшение фундаментала) НЕ сокращай только ради «ровных долей» или закрытия недовеса. Недовес секторов/типов закрывай в первую очередь кэшем и НОВЫМИ позициями, ротацией из слабых/застойных бумаг — а не продажей того, что работает. Давай победителям расти.
 - Триггеры: цена у SMA 50/200 или поддержки при здоровом тренде — покупка/докупка; у сопротивления, выше таргета или при перегреве — фиксация; падающий нож и Спекулятивная без явного сетапа — избегать; стоп-дисциплина: позиция глубже −12% от средней без улучшения картины — сокращай.
@@ -1008,6 +1009,20 @@ async function aiPortfolioReset(env){
   return 'AI портфель обнулён ✓ Счёт 300 000 kr, настройки сохранены. Нажмите ▶ или ждите следующего тика крона.';
 }
 
+// 💸 Комиссия сделки (Avanza «Small»), В ВАЛЮТЕ БУМАГИ: courtage 0.15% но не
+// меньше lägsta в местной валюте; + валютная надбавка 0.25% (не-SEK); + налог на
+// покупку (UK stamp 0.5% + £1.5 свыше £10k). Та же модель, что на клиенте.
+const AIPORT_COURTAGE_MIN = { USD: 6, CAD: 7, EUR: 6, CHF: 6, GBP: 6, SEK: 1 };
+function tradeFeeNativeW(ccy, amount, isBuy){
+  ccy = String(ccy || 'USD').toUpperCase();
+  if(!(amount > 0)) return 0;
+  const min = AIPORT_COURTAGE_MIN[ccy] != null ? AIPORT_COURTAGE_MIN[ccy] : 6;
+  const courtage = Math.max(amount * 0.15 / 100, min);
+  const fxFee = ccy === 'SEK' ? 0 : amount * 0.25 / 100;
+  let tax = 0;
+  if(isBuy && ccy === 'GBP') tax = amount * 0.5 / 100 + (amount > 10000 ? 1.5 : 0);
+  return courtage + fxFee + tax;   // в валюте бумаги
+}
 // Результат AI-портфеля с начала vs эталонные индексы (для самооценки бота).
 // Тянет дневные закрытия ^OMX/^NDX/^GSPC и считает их доходность с даты старта.
 async function aipBenchmarks(env, startMs){
@@ -1147,9 +1162,9 @@ async function aiPortfolioRun(env, force){
       if(!(q && q.price > 0)){ skipped.push(`sell ${tk}: нет котировки`); continue; }
       const sellQty = Math.min(qty, p.qty), f = fx[p.ccy] || 1;
       const gross = sellQty * q.price * f;
-      const fee = Math.round(gross * (ap.commissionPct || 0) / 100);
+      const fee = Math.round(tradeFeeNativeW(p.ccy, sellQty * q.price, false) * f);
       ap.cashSEK = (ap.cashSEK || 0) + gross - fee;
-      const pl = Math.round((q.price - p.avgBuy) * sellQty * f);
+      const pl = Math.round((q.price - p.avgBuy) * sellQty * f - fee);   // P&L нетто
       p.qty -= sellQty;
       if(p.qty <= 0) positions.splice(positions.indexOf(p), 1);
       trades.push({ id: 't' + now + '_' + trades.length, ts: now, action: 'sell', ticker: p.ticker, name: p.name, qty: sellQty, price: q.price, ccy: p.ccy, fx: f, amountSEK: Math.round(gross), feeSEK: fee, plSEK: pl, reason: String(dec.reason || '').slice(0, 300), trigger: String(dec.trigger || '').slice(0, 120) });
@@ -1164,7 +1179,7 @@ async function aiPortfolioRun(env, force){
       if(!(q && q.price > 0)){ skipped.push(`buy ${tk}: нет котировки`); continue; }
       const f = fx[ccy] || 1;
       const gross = qty * q.price * f;
-      const fee = Math.round(gross * (ap.commissionPct || 0) / 100);
+      const fee = Math.round(tradeFeeNativeW(ccy, qty * q.price, true) * f);
       if(gross < (ap.minTradeSEK || 5000)){ skipped.push(`buy ${tk}: ${Math.round(gross)} kr < мин. сделки`); continue; }
       if(gross + fee > (ap.cashSEK || 0)){ skipped.push(`buy ${tk}: не хватает кэша (${Math.round(gross)} > ${Math.round(ap.cashSEK)})`); continue; }
       ap.cashSEK -= gross + fee;

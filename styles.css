@@ -1080,3 +1080,15 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* Заголовок блока «По горизонтам» в 💡 Рекомендация / 🔎 Анализ акции */
 .pf3-reco-hz-l{font:700 10.5px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin:14px 2px 2px}
+
+/* Горизонты: кликабельные карточки + выбранная подсветка */
+.airk-hz-it{cursor:pointer;transition:border-color .15s,background .15s}
+.airk-hz-it:hover{border-color:var(--v3-acc)}
+.airk-hz-it.sel{border-color:var(--v3-acc);background:linear-gradient(180deg,rgba(99,102,241,.10),var(--bg2))}
+.airk-hz-it.sel .airk-hz-l{color:var(--v3-acc)}
+/* Сегментированный переключатель горизонта в шапке списка */
+.pf3-hz-seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;margin-right:6px}
+.pf3-hz-b{border:0;background:var(--bg2);color:var(--text2);font:600 11px 'DM Sans',sans-serif;padding:5px 9px;cursor:pointer;white-space:nowrap}
+.pf3-hz-b+.pf3-hz-b{border-left:1px solid var(--border)}
+.pf3-hz-b:hover{color:var(--text1)}
+.pf3-hz-b.on{background:var(--v3-acc);color:#fff}

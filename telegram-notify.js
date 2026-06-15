@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16budget';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16budget2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -83,7 +83,11 @@ const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-T
 // (долгий серверный поиск) ответ приходит без финального текста — продолжаем
 // запрос, докидывая ответ ассистента, пока модель не завершит. usage и
 // текстовые блоки суммируем по всем раундам. Возвращает {content, usage}.
-const AI_RESEARCH_MS = 5 * 60 * 1000;   // ≤5 мин на веб-ресёрч; затем финальный проход БЕЗ поиска (только резюме) — чтобы не жечь деньги
+// Бюджет веб-ресёрча. ВАЖНО: это синхронный HTTP-запрос, а Cloudflare рвёт
+// соединение примерно через 100с (ошибка 524) → клиент видит «Failed to fetch».
+// Поэтому держим ресёрч коротким (≈55с): после дедлайна — финальный проход БЕЗ
+// поиска (резюме), и весь ответ укладывается в окно Cloudflare. Это и дешевле.
+const AI_RESEARCH_MS = 55 * 1000;
 async function anthropicRun(env, body){
   const started = Date.now();
   let messages = (body.messages || []).slice();
@@ -710,7 +714,7 @@ async function aiAnalyze(env, snapshot){
   // Watchlist (индексы) — структурированный вывод. Портфель (AI Proto) — с web_search
   // по свежим новостям/макро, поэтому план ребалансировки приходит fenced-json.
   if(watch) reqBody.output_config = { format: { type: 'json_schema', schema: AI_SCHEMA } };
-  else reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }];
+  else reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
   const j = await anthropicRun(env, reqBody);   // устойчиво к pause_turn (web_search)
   const cost = aiCost(j);
   const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join(watch ? '' : '\n');

@@ -1126,3 +1126,15 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
   /* Под-вкладки выровнены по левому краю контента (контент центрируется на широких экранах) */
   html.ui2 .sub-tabs{margin-left:calc(254px + max(0px,(100vw - 268px - min(1680px,100vw - 32px))/2))}
 }
+
+/* 📜 История сделок портфеля (купля/продажа + реализованный P&L) */
+.tr-row{display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border);cursor:default}
+.tr-row:last-child{border-bottom:none}
+.tr-act{font:700 11px 'DM Sans',sans-serif;white-space:nowrap;flex-shrink:0;min-width:84px}
+.tr-act.buy{color:var(--green)}
+.tr-act.sell{color:var(--red)}
+.tr-row .pf3-row-name{flex:1;min-width:0}
+.tr-qty{font:600 11.5px 'JetBrains Mono',monospace;color:var(--text2);white-space:nowrap}
+.tr-pl{font:700 12.5px 'JetBrains Mono',monospace;white-space:nowrap;min-width:70px;text-align:right}
+.pf3-btn.tr-buy{color:var(--green);font-weight:700}
+.pf3-btn.tr-sell{color:var(--red);font-weight:700}

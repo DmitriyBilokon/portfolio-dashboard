@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -62,6 +62,7 @@ function applyRemoteState(s){
   if(s.hiddenCols) hiddenCols=s.hiddenCols;
   if(s.smaTf) SMA_TF=s.smaTf;
   if(Array.isArray(s.sim)) SIM=s.sim;
+  if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
@@ -163,6 +164,9 @@ let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52,CAD:7.0,GBP:12.6,AUD:6.2};
 // Бумажный (тестовый) портфель: [{tab,tk,name,ccy,qty,buy,date}] — у каждой
 // v3-вкладки свои тестовые покупки (tab), синхронизируется с остальным состоянием.
 let SIM=[];
+// 📜 Журнал реальных сделок по портфелям: [{id,tab,tk,name,ccy,act:'buy'|'sell',
+// qty,price,plNative,date}] — plNative = реализованный P&L в валюте бумаги (для продаж).
+let PF_TRADES=[];
 // Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
 // свои сохранения, чтобы push дашборда не стирал память бота.
 let TG_ALERTS={};
@@ -1030,7 +1034,7 @@ function renderAll(){
     (isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
+      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>isAdmin()||(k!=='ai'&&k!=='prop')).forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
@@ -3254,6 +3258,10 @@ function renderPF3(){
     pf3LoadCalendar();   // no-op when cached; re-renders this tab when done
     return;
   }
+  if(pf3Tab==='trades'){
+    el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pfTradesHTML()}</div>`;
+    return;
+  }
   if(pf3Tab==='health'){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3HealthTab()}</div>`;
     pf3LoadRisk();   // Шарп/CAGR/волатильность — догружаются и подставляются в pf3RiskBox
@@ -4271,9 +4279,17 @@ function pf3DetailHTML(){
         <div class="pf3-edit">
           <label>${T('Кол-во акций')} <input type="number" step="any" min="0" value="${qty}" onchange="pf3Edit(6,this.value)"></label>
           <label>${T('Цена покупки')} (${ccy}) <input type="number" step="any" min="0" value="${buy}" onchange="pf3Edit(9,this.value)"></label>
-        </div>`:''}
+        </div>
+        <div class="pf3-panel-hd" style="margin-top:14px"><span>💸 ${RT('Сделка','Trade')}</span><span class="pf3-asof">${RT('купля/продажа · пишется в историю с P&L','buy/sell · logged to history with P&L')}</span></div>
+        <form class="sim-form" onsubmit="event.preventDefault();return false">
+          <label>${RT('Кол-во','Qty')} <input id="pfTrQty" type="number" step="any" min="0" placeholder="10"></label>
+          <label>${RT('Цена','Price')} (${ccy}) <input id="pfTrPrice" type="number" step="any" min="0" value="${price>0?price:''}"></label>
+          <button type="button" class="pf3-btn tr-buy" onclick="pfTrade('buy')">🟢 ${RT('Купить','Buy')}</button>
+          <button type="button" class="pf3-btn tr-sell" onclick="pfTrade('sell')">🔴 ${RT('Продать','Sell')}</button>
+        </form>`:''}
       </div>
     </section>
+    ${pf3MyPort(v3Key)?pfTradesHTML(tk):''}
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>${T('🛒 Уровни покупки / докупки')}</span><span class="pf3-asof">${T('по техданным · авто-обновление каждые 5 мин')}</span></div>
       ${pf3BuySection(r,h,price,ccy)}
@@ -4281,6 +4297,62 @@ function pf3DetailHTML(){
     ${simSection(tk,price,ccy)}`;
 }
 function pf3Edit(ci,v){const ri=pf3SelIdx(),n=parseFloat(v);pf3D().rows[ri][ci]=isNaN(n)?0:n;recalcPF(ri,v3Key);scheduleSave();renderPF3()}
+// ── 📜 Сделки портфеля: купля/продажа с реализованным P&L по продаже ──
+const pfPortShort=tab=>{const k=tab||PF3_KEY;return k===AIP_KEY?'AI':String(TAB_LABEL(k)||k).replace(/^Portfolio\s*\((.+)\)$/i,'$1')};
+function pfTrade(act){
+  const ri=pf3SelIdx(),d=pf3D();if(ri<0||!d)return;const r=d.rows[ri];if(!r)return;
+  const qty=parseFloat((document.getElementById('pfTrQty')||{}).value),price=parseFloat((document.getElementById('pfTrPrice')||{}).value);
+  if(!(qty>0)||!(price>0)){toast(RT('Укажите количество и цену сделки','Enter trade quantity and price'),true);return;}
+  const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD',fx=FX[ccy]||1;
+  const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
+  let plNative=null,tq=qty;
+  if(act==='sell'){
+    tq=Math.min(qty,curQty);
+    if(!(tq>0)){toast(RT('Нет позиции для продажи','No position to sell'),true);return;}
+    plNative=Math.round((price-avg)*tq*100)/100;
+    r[6]=Math.round((curQty-tq)*1e6)/1e6;   // уменьшаем позицию, средняя не меняется
+    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)+pf3Cv(d,tq*price*fx))*100)/100;   // выручка → кэш
+  }else{
+    const nq=curQty+qty;
+    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя
+    r[6]=nq;
+    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,qty*price*fx))*100)/100;   // списываем с кэша
+  }
+  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,date:new Date().toISOString().slice(0,10)});
+  recalcPF(ri,v3Key);scheduleSave();renderPF3();
+  toast((act==='sell'?'🔴 '+RT('Продано','Sold'):'🟢 '+RT('Куплено','Bought'))+` ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*fx)}`:''));
+}
+function pfTradeDel(id){
+  const i=PF_TRADES.findIndex(t=>t.id===id);if(i<0)return;
+  if(!confirm(RT('Удалить запись о сделке? (позиция и кэш НЕ изменятся)','Delete this trade record? (position & cash stay)')))return;
+  PF_TRADES.splice(i,1);scheduleSave();renderPF3();
+}
+// filterTk — компактная история одной бумаги (карточка); без него — все сделки портфеля.
+function pfTradesHTML(filterTk){
+  const d=pf3D();
+  const fk=filterTk!==undefined?String(filterTk).toUpperCase():null;
+  const mine=PF_TRADES.map((t,idx)=>({t,idx})).filter(x=>(x.t.tab||PF3_KEY)===v3Key&&(!fk||String(x.t.tk).toUpperCase()===fk))
+    .sort((a,b)=>(a.t.date<b.t.date?1:a.t.date>b.t.date?-1:b.idx-a.idx));
+  let realizedSEK=0,hasSell=false;
+  const rows=mine.map(({t})=>{
+    const plSEK=t.plNative!=null?t.plNative*(FX[t.ccy]||1):null;
+    if(plSEK!=null){realizedSEK+=plSEK;hasSell=true;}
+    const cls=plSEK==null?'':plSEK>=0?'pf3-up':'pf3-down';
+    const sub=fk?t.date:`${t.tk} · ${t.date} · <span class="sim-port">💼 ${pfPortShort(t.tab)}</span>`;
+    return`<div class="sim-trow tr-row">
+      <span class="tr-act ${t.act}">${t.act==='sell'?'🔴 '+RT('Продажа','Sell'):'🟢 '+RT('Покупка','Buy')}</span>
+      <span class="pf3-row-name">${fk?'':`<b>${t.name||t.tk}</b>`}<span>${sub}</span></span>
+      <span class="tr-qty">${pf3Fmt(t.qty)} × ${pf3Fmt(t.price,2)} ${t.ccy}</span>
+      <span class="tr-pl ${cls}">${plSEK!=null?(plSEK>=0?'+':'')+pf3Money(d,plSEK):'—'}</span>
+      <button class="pf3-del" onclick="pfTradeDel('${t.id}')" title="${RT('Удалить запись','Delete record')}">🗑</button>
+    </div>`;
+  }).join('');
+  const tot=hasSell?`<span class="pf3-asof">${RT('Реализованный P&L','Realized P&L')}: <b class="${realizedSEK>=0?'pf3-up':'pf3-down'}">${realizedSEK>=0?'+':''}${pf3Money(d,realizedSEK)}</b></span>`:'';
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>📜 ${RT('История сделок','Trade history')}${fk?'':' — '+TAB_LABEL(v3Key)}</span>${tot}</div>
+    ${mine.length?`<div class="sim-list">${rows}</div>`:`<div class="pf3-empty">${RT('Сделок пока нет. Купите или продайте в блоке «💸 Сделка» в карточке акции.','No trades yet. Buy or sell in the «💸 Trade» box on a stock card.')}</div>`}
+  </section>`;
+}
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
 // ОДНОЙ вкладки. Batched in chunks of 20 — the worker makes 2 Yahoo calls per

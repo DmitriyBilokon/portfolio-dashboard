@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16stream';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16bgjobs';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -605,13 +605,34 @@ async function requireAdmin(request, env){
     if(!r.ok) return { ok:false, error:'Сессия недействительна — войдите заново' };
     const u = await r.json();
     const email = String(u.email || '').toLowerCase();
-    if(ADMIN_EMAILS.includes(email)) return { ok:true, email };
+    if(ADMIN_EMAILS.includes(email)) return { ok:true, email, uid: u.id };
     const q = await fetch(`${env.SUPABASE_URL}/rest/v1/user_access?user_id=eq.${u.id}&select=role`,
       { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
     const rows = q.ok ? await q.json() : [];
-    if(rows[0] && rows[0].role === 'admin') return { ok:true, email };
+    if(rows[0] && rows[0].role === 'admin') return { ok:true, email, uid: u.id };
     return { ok:false, error:'AI Proto доступен только администратору' };
   }catch(e){ return { ok:false, error:'Не удалось проверить доступ' }; }
+}
+
+// ── Фоновый AI: результат пишется в таблицу ai_jobs, клиент её опрашивает ──
+// (см. supabase-ai-jobs.sql). Воркер пишет service-ролью (обходит RLS); клиент
+// читает только свои строки. Долгие прогоны (3–5 мин) больше не держат соединение.
+async function aiJobWrite(env, uid, jobId, kind, key, status, result, error){
+  try{
+    await fetch(`${env.SUPABASE_URL}/rest/v1/ai_jobs`, {
+      method: 'POST',
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ job_id: jobId, user_id: uid, kind, key: key || '', status, result: result || null, error: error || null, updated_at: new Date().toISOString() }),
+    });
+  }catch(e){ /* таблицы ещё нет — клиент покажет таймаут опроса */ }
+}
+// Запустить работу в фоне (ctx.waitUntil) и отметить результат в ai_jobs.
+function aiJobStart(ctx, env, uid, jobId, kind, key, workFn){
+  ctx.waitUntil((async () => {
+    try{ const out = await workFn(); await aiJobWrite(env, uid, jobId, kind, key, 'done', out, null); }
+    catch(e){ await aiJobWrite(env, uid, jobId, kind, key, 'error', null, String((e && e.message) || e)); }
+  })());
 }
 
 // ── AI Assistant: portfolio analysis via the Claude API ─────────────────────
@@ -1756,7 +1777,7 @@ export default {
   // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
   // GET ?action=chart            → send the CHART_TICKER chart photo to Telegram now (manual test).
   // GET with no query             → run the alert report now (manual test).
-  async fetch(request, env){
+  async fetch(request, env, ctx){
     const url = new URL(request.url);
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if(url.searchParams.get('action') === 'version'){
@@ -1784,7 +1805,13 @@ export default {
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{
         const snapshot = await request.json();
-        return streamJson(() => aiAnalyze(env, snapshot));   // стрим: не упереться в таймаут Cloudflare
+        // Фоновый режим: клиент прислал jobId → считаем в ctx.waitUntil, результат пишем
+        // в ai_jobs, клиент опрашивает. Длинные прогоны больше не держат соединение.
+        if(snapshot && snapshot.jobId){
+          aiJobStart(ctx, env, adm.uid, snapshot.jobId, 'ai', snapshot.portfolioKey, () => aiAnalyze(env, snapshot));
+          return json({ queued: true, jobId: snapshot.jobId });
+        }
+        return streamJson(() => aiAnalyze(env, snapshot));   // legacy: стрим без фонового режима
       }catch(e){
         return json({ error: String(e.message || e) }, 500);
       }
@@ -1886,8 +1913,14 @@ export default {
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ const b = await request.json(); return streamJson(() => dashboardGen(env, b)); }
-      catch(e){ return json({ error: String(e.message || e) }, 500); }
+      try{
+        const b = await request.json();
+        if(b && b.jobId){
+          aiJobStart(ctx, env, adm.uid, b.jobId, 'dashboard', b.portfolioKey, () => dashboardGen(env, b));
+          return json({ queued: true, jobId: b.jobId });
+        }
+        return streamJson(() => dashboardGen(env, b));
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'reco'){
       // POST снапшот карточки → AI-Рекомендация (вердикт+разбор) с web_search.

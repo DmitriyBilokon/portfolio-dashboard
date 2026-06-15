@@ -1818,6 +1818,25 @@ const pf3DtRu=iso=>{const d=new Date(iso);return isNaN(d)?'':pf3DateRu(String(is
 async function sbToken(){
   try{const{data}=await sb.auth.getSession();return (data&&data.session&&data.session.access_token)||''}catch(e){return''}
 }
+// ── Фоновый AI: воркер считает в ctx.waitUntil и пишет результат в ai_jobs;
+// клиент опрашивает таблицу до status='done'/'error'. Снимает лимит по времени. ──
+function aiJobId(){try{return crypto.randomUUID()}catch(_){return 'job-'+Date.now()+'-'+Math.floor(Math.random()*1e9)}}
+async function aiJobPoll(jobId,opt){
+  const timeoutMs=(opt&&opt.timeoutMs)||6*60*1000,intervalMs=(opt&&opt.intervalMs)||4000;
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+    await new Promise(r=>setTimeout(r,intervalMs));
+    if(!sb)break;
+    try{
+      const{data}=await sb.from('ai_jobs').select('status,result,error').eq('job_id',jobId).maybeSingle();
+      if(data){
+        if(data.status==='done')return{ok:true,result:data.result};
+        if(data.status==='error')return{ok:false,error:data.error||'AI error'};
+      }
+    }catch(_){/* сеть/таблицы нет — продолжаем опрос до дедлайна */}
+  }
+  return{ok:false,error:RT('таймаут ожидания результата (фоновый прогон не записался — создана ли таблица ai_jobs?)','result wait timeout (was ai_jobs table created?)')};
+}
 async function pf3AiRun(){
   if(pf3Ai.loading)return;
   const key=v3Key;   // отчёт сохраняется во вкладку, где НАЖАЛИ кнопку, даже если переключились
@@ -1833,9 +1852,14 @@ async function pf3AiRun(){
     // и таблицах. Расхождение допускается, но AI обязан развести его по горизонтам.
     snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке/таблицах). Это КРАТКОСРОЧНО-технический вердикт.';
     snap.recoVerdicts=dashRecoMap(key);
+    snap.jobId=aiJobId();snap.portfolioKey=key;   // фоновый режим: воркер посчитает и запишет в ai_jobs
     const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const bodyText=await r.text();
     let j=null;try{j=JSON.parse(bodyText)}catch(_){}
+    if(j&&j.queued){   // фоновый прогон — ждём результат из ai_jobs
+      const res=await aiJobPoll(j.jobId);
+      if(res.ok&&res.result)j=res.result;else{toast('AI ('+TAB_LABEL(key)+'): '+(res.error||'нет результата'),true);pf3Ai.loading=false;if(isV3())renderPF3();return;}
+    }
     if(j&&j.text){
       const d=DATA[key];
       aiSpendAdd(j.cost);
@@ -4070,9 +4094,11 @@ async function aiDashRun(onlyKey){
       snap.portfolioName=TAB_LABEL(k);
       snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';
       snap.recoVerdicts=dashRecoMap(k);   // согласование picks с вердиктом сайта (вариант B)
+      snap.jobId=aiJobId();snap.portfolioKey=k;   // фоновый режим
       try{
         const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
         const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
+        if(j&&j.queued){const res=await aiJobPoll(j.jobId);if(res.ok&&res.result)j=res.result;else{toast(TAB_LABEL(k)+': '+(res.error||'нет результата'),true);continue;}}
         if(j&&j.dash&&Array.isArray(j.dash.cards)){
           aiSpendAdd(j.cost);
           AI_DASH[k]={headline:j.dash.headline||'',cards:j.dash.cards,picks:Array.isArray(j.dash.picks)?j.dash.picks:[],asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};

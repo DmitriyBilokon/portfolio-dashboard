@@ -201,25 +201,53 @@ const DEFAULT_PLAYBOOK=[
 let AI_PLAYBOOK=[];
 function aiPlaybookEnsure(){ if(!Array.isArray(AI_PLAYBOOK)||!AI_PLAYBOOK.length)AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice(); return AI_PLAYBOOK; }
 
-// 🎯 Трек-рекорд прошлых разборов: сбывались ли вердикты (по направлению цены).
-// Считается из STOCK_AI_LOG (цена на момент совета) и текущих цен из вкладок.
+// 📈 История индексов-бенчмарков (дневные закрытия) — для расчёта АЛЬФЫ трек-рекорда.
+let IDX_HIST={},_idxHistLoading=false;
+const AI_BENCH_SYM={USD:'^NDX',SEK:'^OMX'};   // бенчмарк по торговой валюте бумаги
+async function aiLoadIdxHist(){
+  await Promise.all(['^OMX','^NDX'].map(async sym=>{
+    const cur=IDX_HIST[sym];if(cur&&cur._at&&Date.now()-cur._at<6*3600e3)return;   // кэш 6ч
+    try{
+      const j=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(sym)+'&range=1y').then(r=>r.json());
+      if(j&&Array.isArray(j.t)&&Array.isArray(j.c)){
+        const m={_at:Date.now(),_last:null};
+        for(let i=0;i<j.t.length;i++){const c=j.c[i];if(c==null)continue;m[new Date(j.t[i]*1000).toISOString().slice(0,10)]=c;m._last=c}
+        IDX_HIST[sym]=m;
+      }
+    }catch(e){}
+  }));
+}
+function aiEnsureIdxHist(){ if(_idxHistLoading||(IDX_HIST['^OMX']&&IDX_HIST['^NDX']))return; _idxHistLoading=true; aiLoadIdxHist().then(()=>{_idxHistLoading=false;if(isV3()&&pf3Tab==='ai')renderPF3()}); }
+function idxCloseOn(sym,dateStr){
+  const m=IDX_HIST[sym];if(!m||!dateStr)return null;let d=dateStr;
+  for(let k=0;k<7;k++){if(m[d]!=null)return m[d];const dt=new Date(d+'T00:00:00Z');dt.setUTCDate(dt.getUTCDate()-1);d=dt.toISOString().slice(0,10)}
+  return null;
+}
+
+// 🎯 Трек-рекорд прошлых разборов: сбывались ли вердикты (направление цены) И
+// АЛЬФА к индексу (бумага минус бенчмарк за тот же период, если история загружена).
 function aiTrackRecord(){
   const log=Array.isArray(STOCK_AI_LOG)?STOCK_AI_LOG:[];
   if(!log.length)return null;
   const px={};
   v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').toUpperCase();const p=parseFloat(r[7]);if(tk&&isFinite(p)&&p>0&&px[tk]==null)px[tk]=p})});
-  const agg={buy:{n:0,hit:0,sum:0},wait:{n:0,hit:0,sum:0},sell:{n:0,hit:0,sum:0},avoid:{n:0,hit:0,sum:0}},recent=[];
+  const mk=()=>({n:0,hit:0,sum:0,aN:0,aHit:0,aSum:0});
+  const agg={buy:mk(),wait:mk(),sell:mk(),avoid:mk()},recent=[];
   log.slice(0,80).forEach(e=>{
-    const tk=String(e.ticker||'').toUpperCase(),rec=parseFloat(e.price),cur=px[tk],v=String(e.verdict||'').toLowerCase();
+    const tk=String(e.ticker||'').toUpperCase(),rec=parseFloat(e.price),cur=px[tk],v=String(e.verdict||'').toLowerCase(),date=String(e.ts||'').slice(0,10);
     if(!tk||!isFinite(rec)||rec<=0||!isFinite(cur)||!agg[v])return;
-    const ret=(cur/rec-1)*100,good=(v==='buy'||v==='wait')?ret>0:ret<0;
-    agg[v].n++;agg[v].sum+=ret;if(good)agg[v].hit++;
-    if(recent.length<12)recent.push({ticker:tk,verdict:v,date:String(e.ts||'').slice(0,10),retPct:Math.round(ret*10)/10,good});
+    const ret=(cur/rec-1)*100,good=(v==='buy'||v==='wait')?ret>0:ret<0,a=agg[v];
+    a.n++;a.sum+=ret;if(good)a.hit++;
+    let alpha=null;const bm=AI_BENCH_SYM[String(e.ccy||'').toUpperCase()];
+    if(bm){const i0=idxCloseOn(bm,date),i1=IDX_HIST[bm]&&IDX_HIST[bm]._last;if(i0>0&&i1>0){alpha=Math.round((ret-(i1/i0-1)*100)*10)/10;const ag=(v==='buy'||v==='wait')?alpha>0:alpha<0;a.aN++;a.aSum+=alpha;if(ag)a.aHit++;}}
+    if(recent.length<12)recent.push({ticker:tk,verdict:v,date,retPct:Math.round(ret*10)/10,alphaPct:alpha,good});
   });
-  const byVerdict={};let total=0,hits=0;
-  Object.entries(agg).forEach(([v,a])=>{if(a.n){byVerdict[v]={n:a.n,hitRate:Math.round(a.hit/a.n*100),avgRetPct:Math.round(a.sum/a.n*10)/10};total+=a.n;hits+=a.hit}});
+  const byVerdict={};let total=0,hits=0,aTotal=0,aHits=0,aSum=0;
+  Object.entries(agg).forEach(([v,a])=>{if(a.n){const o={n:a.n,hitRate:Math.round(a.hit/a.n*100),avgRetPct:Math.round(a.sum/a.n*10)/10};if(a.aN){o.alphaHitRate=Math.round(a.aHit/a.aN*100);o.avgAlphaPct=Math.round(a.aSum/a.aN*10)/10;aTotal+=a.aN;aHits+=a.aHit;aSum+=a.aSum}byVerdict[v]=o;total+=a.n;hits+=a.hit}});
   if(!total)return null;
-  return{note:'успех = направление цены с момента совета совпало с вердиктом (buy/wait→рост, sell/avoid→падение); доходность абсолютная, не к индексу',overallHitRate:Math.round(hits/total*100),samples:total,byVerdict,recent};
+  const out={note:'успех=направление цены совпало с вердиктом; alpha=доходность бумаги минус индекс (^NDX для USD, ^OMX для SEK) за тот же период',overallHitRate:Math.round(hits/total*100),samples:total,byVerdict,recent};
+  if(aTotal){out.overallAlphaHitRate=Math.round(aHits/aTotal*100);out.avgAlphaPct=Math.round(aSum/aTotal*10)/10;out.alphaSamples=aTotal}
+  return out;
 }
 
 // 🆚 Состав бенчмарков по секторам (доля по числу бумаг) — чтобы AI видел недовес.
@@ -1905,6 +1933,7 @@ async function pf3AiRun(){
     // Fresh prices + SMA/levels first — so the AI snapshot, the signals column
     // and the «Состояние портфеля» tab all reflect the current market state.
     await pf3Refresh(true);
+    await aiLoadIdxHist().catch(()=>{});   // история индексов → альфа в трек-рекорде
     const snap=pf3AiSnapshot(key);
     // Вариант B: детерминированные вердикты скоринга сайта по всем тикерам —
     // чтобы «Предложение» AI было согласовано с вердиктом «Рекомендация» в карточке
@@ -2429,15 +2458,18 @@ function pf3PlaybookHTML(){
   </section>`;
 }
 function pf3TrackHTML(){
+  aiEnsureIdxHist();   // подгрузить историю индексов для альфы (фоном, с ре-рендером)
   const tr=aiTrackRecord();
   const vlabel={buy:['Покупать','Buy'],wait:['Ждать','Wait'],sell:['Сократить','Trim'],avoid:['Избегать','Avoid']};
   const vl=v=>RT((vlabel[v]||[v,v])[0],(vlabel[v]||[v,v])[1]);
   if(!tr)return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${RT('🎯 Трек-рекорд разборов','🎯 Analysis track record')}</span></div><div class="pf3-empty">${RT('Пока мало данных — появится после AI-разборов акций (🔬) с известной ценой входа.','Not enough data yet — appears after stock AI analyses (🔬) with a known entry price.')}</div></section>`;
-  const rows=Object.entries(tr.byVerdict).map(([v,a])=>`<div class="tr-row"><span class="tr-act ${v==='sell'||v==='avoid'?'sell':'buy'}">${vl(v)}</span><span>${a.n}</span><span class="${a.hitRate>=50?'pf3-up':'pf3-down'}">${RT('точн.','hit')} ${a.hitRate}%</span><span class="${a.avgRetPct>=0?'pf3-up':'pf3-down'}">${RT('ср.','avg')} ${a.avgRetPct>=0?'+':''}${a.avgRetPct}%</span></div>`).join('');
-  const recent=tr.recent.map(e=>`<div class="tr-row"><span class="tr-qty">${e.ticker}</span><span class="pf3-asof">${e.date}</span><span>${vl(e.verdict)}</span><span class="${e.good?'pf3-up':'pf3-down'}">${e.good?'✓':'✕'} ${e.retPct>=0?'+':''}${e.retPct}%</span></div>`).join('');
+  const al=v=>v==null?'':` · <span class="${v>=0?'pf3-up':'pf3-down'}">α ${v>=0?'+':''}${v}%</span>`;
+  const rows=Object.entries(tr.byVerdict).map(([v,a])=>`<div class="tr-row"><span class="tr-act ${v==='sell'||v==='avoid'?'sell':'buy'}">${vl(v)}</span><span>${a.n}</span><span class="${a.hitRate>=50?'pf3-up':'pf3-down'}">${RT('точн.','hit')} ${a.hitRate}%</span><span class="${a.avgRetPct>=0?'pf3-up':'pf3-down'}">${RT('ср.','avg')} ${a.avgRetPct>=0?'+':''}${a.avgRetPct}%</span>${a.avgAlphaPct!=null?`<span class="${a.avgAlphaPct>=0?'pf3-up':'pf3-down'}">α ${a.avgAlphaPct>=0?'+':''}${a.avgAlphaPct}%</span>`:''}</div>`).join('');
+  const recent=tr.recent.map(e=>`<div class="tr-row"><span class="tr-qty">${e.ticker}</span><span class="pf3-asof">${e.date}</span><span>${vl(e.verdict)}</span><span class="${e.good?'pf3-up':'pf3-down'}">${e.good?'✓':'✕'} ${e.retPct>=0?'+':''}${e.retPct}%${al(e.alphaPct)}</span></div>`).join('');
+  const alphaHd=tr.overallAlphaHitRate!=null?` · α ${tr.avgAlphaPct>=0?'+':''}${tr.avgAlphaPct}% (${tr.overallAlphaHitRate}% ${RT('обгон','beat')})`:'';
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${RT('🎯 Трек-рекорд разборов','🎯 Analysis track record')}</span><span class="pf3-asof">${RT('общая точность','overall hit')} ${tr.overallHitRate}% · ${tr.samples} ${RT('разборов','calls')}</span></div>
-    <div class="pf3-ai-note">${RT('Сбывались ли прошлые вердикты по направлению цены (абсолют, не к индексу). Передаётся AI Proto — он учится на результатах.','Whether past verdicts matched price direction (absolute, not vs index). Sent to AI Proto so it learns from outcomes.')}</div>
+    <div class="pf3-panel-hd"><span>${RT('🎯 Трек-рекорд разборов','🎯 Analysis track record')}</span><span class="pf3-asof">${RT('точность','hit')} ${tr.overallHitRate}% · ${tr.samples} ${RT('разборов','calls')}${alphaHd}</span></div>
+    <div class="pf3-ai-note">${RT('Сбывались ли вердикты по направлению цены + α — доходность бумаги минус индекс (^NDX для USD, ^OMX для SEK) за тот же период. Передаётся AI Proto — он учится на результатах.','Did verdicts match price direction + α — stock return minus its index (^NDX for USD, ^OMX for SEK) over the same period. Fed to AI Proto so it learns from outcomes.')}</div>
     ${rows}
     ${recent?`<div class="pf3-ai-note" style="margin-top:6px">${RT('Последние','Recent')}:</div>${recent}`:''}
   </section>`;

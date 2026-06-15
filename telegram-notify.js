@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16budget2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16stream';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -79,15 +79,38 @@ const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods'
 const json = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: CORS });
 const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
+// Долгие AI-ответы (web_search + генерация отчёта) не успевают в окно Cloudflare:
+// если воркер не начал отвечать ~за 100с, соединение рвётся (524 → «Failed to fetch»).
+// Поэтому начинаем ОТДАВАТЬ поток сразу (первый байт + keep-alive переводы строки),
+// считаем дальше, а финальный JSON шлём в конце. Клиент читает весь текст и парсит:
+// ведущие/хвостовые пробелы безопасны для JSON.parse. Ошибки уходят как {error} (200).
+function streamJson(workFn){
+  const enc = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller){
+      let live = true;
+      const push = s => { try{ controller.enqueue(enc.encode(s)); }catch(_){ live = false; } };
+      push(' ');   // первый байт — соединение считается «отвечающим»
+      (async () => { while(live){ await sleep(12000); if(live) push('\n'); } })();   // heartbeat
+      let out;
+      try{ out = await workFn(); }
+      catch(e){ out = { error: String((e && e.message) || e) }; }
+      live = false;
+      push(JSON.stringify(out));
+      try{ controller.close(); }catch(_){}
+    }
+  });
+  return new Response(stream, { headers: CORS });
+}
+
 // Вызов Claude с устойчивостью к web_search: при stop_reason='pause_turn'
 // (долгий серверный поиск) ответ приходит без финального текста — продолжаем
 // запрос, докидывая ответ ассистента, пока модель не завершит. usage и
 // текстовые блоки суммируем по всем раундам. Возвращает {content, usage}.
-// Бюджет веб-ресёрча. ВАЖНО: это синхронный HTTP-запрос, а Cloudflare рвёт
-// соединение примерно через 100с (ошибка 524) → клиент видит «Failed to fetch».
-// Поэтому держим ресёрч коротким (≈55с): после дедлайна — финальный проход БЕЗ
-// поиска (резюме), и весь ответ укладывается в окно Cloudflare. Это и дешевле.
-const AI_RESEARCH_MS = 55 * 1000;
+// Бюджет веб-ресёрча: после дедлайна — финальный проход БЕЗ поиска (только резюме),
+// чтобы не жечь деньги бесконечным поиском. Ответ стримится (см. streamJson), поэтому
+// таймаут Cloudflare ~100с больше не ограничивает — можно держать осмысленный бюджет.
+const AI_RESEARCH_MS = 90 * 1000;
 async function anthropicRun(env, body){
   const started = Date.now();
   let messages = (body.messages || []).slice();
@@ -1761,8 +1784,7 @@ export default {
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{
         const snapshot = await request.json();
-        const out = await aiAnalyze(env, snapshot);   // { text, proposal }
-        return json(out);
+        return streamJson(() => aiAnalyze(env, snapshot));   // стрим: не упереться в таймаут Cloudflare
       }catch(e){
         return json({ error: String(e.message || e) }, 500);
       }
@@ -1773,7 +1795,7 @@ export default {
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ return json(await aiChat(env, await request.json())); }
+      try{ const b = await request.json(); return streamJson(() => aiChat(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'insider'){
@@ -1855,7 +1877,7 @@ export default {
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ return json(await stockAnalyze(env, await request.json())); }
+      try{ const b = await request.json(); return streamJson(() => stockAnalyze(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'dashboard'){
@@ -1864,7 +1886,7 @@ export default {
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ return json(await dashboardGen(env, await request.json())); }
+      try{ const b = await request.json(); return streamJson(() => dashboardGen(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'reco'){
@@ -1873,7 +1895,7 @@ export default {
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ return json(await recoAnalyze(env, await request.json())); }
+      try{ const b = await request.json(); return streamJson(() => recoAnalyze(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'aipreset'){

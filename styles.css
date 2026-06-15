@@ -1159,3 +1159,10 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* Бейдж-ручка в углу */
 .edit-on .edit-item::before{content:"⠿";position:absolute;top:-9px;left:-2px;z-index:5;font-size:12px;line-height:1;color:#fff;background:var(--accent);border-radius:5px;padding:2px 4px;pointer-events:none;opacity:.9}
 .edit-on .sub-tab.edit-item::before{top:-7px}
+
+/* Ручная запись в журнал сделок (восстановление) */
+.tr-add{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
+.tr-add summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--accent)}
+.tr-add-form{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.tr-add-form input,.tr-add-form select{padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:12px}
+.tr-add-form input{width:110px}

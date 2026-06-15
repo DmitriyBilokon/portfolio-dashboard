@@ -4633,10 +4633,67 @@ function pfTradesHTML(filterTk){
     </div>`;
   }).join('');
   const tot=hasSell?`<span class="pf3-asof">${RT('Реализованный P&L','Realized P&L')}: <b class="${realizedSEK>=0?'pf3-up':'pf3-down'}">${realizedSEK>=0?'+':''}${pf3Money(d,realizedSEK)}</b></span>`:'';
+  // Форма «внести запись в журнал» (только полный журнал семейного портфеля):
+  // пишет ТОЛЬКО историю, не меняя позиции/кэш — для ручного восстановления сделок.
+  const addForm=(!fk&&!isAi&&pf3MyPort(v3Key))?`
+    <details class="tr-add">
+      <summary>➕ ${RT('Внести сделку заново (позиция + журнал, кэш не трогаю)','Re-enter a trade (position + journal, cash untouched)')}</summary>
+      <div class="tr-add-form">
+        <select id="pfTrAct"><option value="buy">🟢 ${RT('Покупка','Buy')}</option><option value="sell">🔴 ${RT('Продажа','Sell')}</option></select>
+        <input id="pfTrTk" placeholder="${RT('Тикер','Ticker')}" autocomplete="off">
+        <input id="pfTrRq" type="number" step="any" min="0" placeholder="${RT('Кол-во','Qty')}">
+        <input id="pfTrRp" type="number" step="any" min="0" placeholder="${RT('Цена','Price')}">
+        <input id="pfTrCcy" placeholder="${RT('Валюта','Ccy')}" value="USD" style="width:64px;text-transform:uppercase">
+        <input id="pfTrRd" type="date" value="${new Date().toISOString().slice(0,10)}">
+        <button class="pf3-btn" onclick="pfTradeAddRecord()">${RT('Внести','Add')}</button>
+      </div>
+      <div class="pf3-reco-note">${RT('Обновляет количество и среднюю по тикеру (создаёт позицию, если её нет) и пишет в журнал. Свободный кэш НЕ меняется. Вводите сделки по порядку: сначала покупки, потом продажи. P&L по продаже считается от средней автоматически. Валюта берётся из существующей позиции, если она есть.','Updates qty and average by ticker (creates the position if missing) and writes the journal. Free cash is NOT changed. Enter trades in order: buys first, then sells. Sell P&L is computed from the average automatically. Currency comes from the existing position if present.')}</div>
+    </details>`:'';
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📜 ${RT('История сделок','Trade history')}${fk?'':' — '+TAB_LABEL(v3Key)}</span>${tot}</div>
     ${mine.length?`<div class="sim-list">${rows}</div>`:`<div class="pf3-empty">${isAi?RT('AI-портфель ещё не совершал сделок — он торгует автономно по стратегии.','The AI portfolio has not traded yet — it trades autonomously by its strategy.'):RT('Сделок пока нет. Купите или продайте в блоке «💸 Сделка» в карточке акции.','No trades yet. Buy or sell in the «💸 Trade» box on a stock card.')}</div>`}
+    ${addForm}
   </section>`;
+}
+// Ручной повторный ввод сделки: пересобирает позицию (кол-во/средняя) + журнал,
+// но НЕ трогает свободный кэш. Создаёт позицию по тикеру, если её нет.
+function pfTradeAddRecord(){
+  if(!pf3MyPort(v3Key))return;
+  const g=id=>document.getElementById(id);
+  const act=(g('pfTrAct')&&g('pfTrAct').value)||'buy';
+  const tk=String((g('pfTrTk')&&g('pfTrTk').value)||'').trim().toUpperCase();
+  const qty=parseFloat(g('pfTrRq')&&g('pfTrRq').value)||0;
+  const price=parseFloat(g('pfTrRp')&&g('pfTrRp').value)||0;
+  const date=(g('pfTrRd')&&g('pfTrRd').value)||new Date().toISOString().slice(0,10);
+  let ccyIn=String((g('pfTrCcy')&&g('pfTrCcy').value)||'').trim().toUpperCase();
+  if(!tk||!(qty>0)||!(price>0)){toast(RT('Укажите тикер, количество и цену','Enter ticker, qty and price'),true);return;}
+  const d=pf3D();
+  let ri=(d.rows||[]).findIndex(r=>String(r[2]||'').trim().toUpperCase()===tk);
+  if(ri<0){
+    if(act==='sell'){toast(RT('Нет позиции для продажи — сначала внесите покупку','No position to sell — add a buy first'),true);return;}
+    // создать минимальную позицию (метрики/сектор дозаполнятся при обновлении цен)
+    const row=new Array(d.headers.length).fill('');
+    row[0]=d.rows.length+1;row[1]=tk;row[2]=tk;row[3]='';row[4]='';row[5]='';
+    row[6]=0;row[7]=price;row[8]=ccyIn||'USD';row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;
+    d.rows.push(row);d.count=d.rows.length;ri=d.rows.length-1;
+  }
+  const r=d.rows[ri],ccy=r[8]||ccyIn||'USD';
+  const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
+  let plNative=null,tq=qty;
+  if(act==='sell'){
+    tq=Math.min(qty,curQty);
+    if(!(tq>0)){toast(RT('Нет позиции для продажи','No position to sell'),true);return;}
+    plNative=Math.round((price-avg)*tq*100)/100;
+    r[6]=Math.round((curQty-tq)*1e6)/1e6;   // средняя не меняется
+  }else{
+    const nq=curQty+qty;
+    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя
+    r[6]=nq;
+    if(!(parseFloat(r[7])>0))r[7]=price;   // дать цену, пока не обновили живую
+  }
+  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,date});
+  recalcPF(ri,v3Key);scheduleSave();renderPF3();
+  toast((act==='sell'?'🔴 '+RT('Продажа внесена','Sell recorded'):'🟢 '+RT('Покупка внесена','Buy recorded'))+` · ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*(FX[ccy]||1))}`:'')+' · '+RT('кэш не изменён','cash unchanged'));
 }
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для

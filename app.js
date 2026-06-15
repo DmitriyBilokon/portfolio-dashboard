@@ -642,12 +642,12 @@ function init(){
   if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
-  const mkTab=n=>{
+  const mkTab=(n,lbl,noDrag)=>{
     const el=document.createElement('div');
     el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;
-    el.innerHTML=`${META[n]||''} ${TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
+    el.innerHTML=`${META[n]||''} ${lbl||TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
     el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};
-    if(isAdmin()&&n!==PF3_KEY){
+    if(isAdmin()&&n!==PF3_KEY&&!noDrag){
       el.draggable=true;el.title=RT('Перетащите, чтобы переставить','Drag to reorder');
       el.addEventListener('dragstart',e=>tabDragStart(e,n));
       el.addEventListener('dragover',tabDragOver);
@@ -664,16 +664,30 @@ function init(){
     return el;
   };
   t.appendChild(mkVirt(HOME_KEY,HOME_KEY));
-  if(isAdmin())t.appendChild(mkVirt(AIP_KEY,TAB_LABEL(AIP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(STK_KEY,TAB_LABEL(STK_KEY)));
   if(isAdmin())t.appendChild(mkVirt(AIDASH_KEY,TAB_LABEL(AIDASH_KEY)));
-  if(keys.includes(PF3_KEY))t.appendChild(mkTab(PF3_KEY));
+  // 💼 Группа портфелей: Dima · AI-Portfolio · Anna · Sergei (в одном месте).
+  const portShort=k=>k===AIP_KEY?'AI-Portfolio':TAB_LABEL(k).replace(/^Portfolio\s*\((.+)\)$/i,'$1');
+  const portTabs=[];
+  if(keys.includes(PF3_KEY))portTabs.push(PF3_KEY);            // Dima
+  if(isAdmin())portTabs.push(AIP_KEY);                          // AI-Portfolio (виртуальная)
+  keys.filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].port==='1').forEach(k=>portTabs.push(k));   // Anna, Sergei, …
+  const portMembers=new Set(portTabs.filter(k=>k!==AIP_KEY));  // DATA-вкладки портфелей (исключить из стран/негруппированных)
+  if(portTabs.length){
+    const GN='💼 Portfolio',pcol=!!_grpCollapsed[GN];
+    const hd=document.createElement('div');
+    hd.className='tab-group-hd'+(pcol?' col':'');
+    hd.textContent=(pcol?'▸ ':'▾ ')+GN;
+    hd.onclick=()=>grpToggleCollapse(GN);
+    t.appendChild(hd);
+    if(!pcol)portTabs.forEach(k=>t.appendChild(k===AIP_KEY?mkVirt(AIP_KEY,portShort(AIP_KEY)):mkTab(k,portShort(k),true)));
+  }
   // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
   const groups=ensureGroups();
-  const grouped=new Set();
+  const grouped=new Set(portMembers);   // порт-вкладки уже показаны в 💼 Portfolio
   groups.forEach(g=>{
-    const members=g.tabs.filter(n=>n!==PF3_KEY&&keys.includes(n));
+    const members=g.tabs.filter(n=>n!==PF3_KEY&&!portMembers.has(n)&&keys.includes(n));
     members.forEach(n=>grouped.add(n));
     if(!members.length)return;
     const col=!!_grpCollapsed[g.name];

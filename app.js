@@ -288,6 +288,8 @@ function tabDropGroup(ev,gName){
   groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==drag)});
   TAB_ORDER=(Array.isArray(TAB_ORDER)?TAB_ORDER:[]).filter(x=>x!==drag);
   const g=groups.find(g=>g.name===gName);if(g)g.tabs.push(drag);
+  // Присвоить вкладке значок группы (флаг страны) — ведущий эмодзи имени группы.
+  if(DATA[drag]){const ico=(gName.match(/^\S+/)||[''])[0];if(ico&&/[^\x00-\x7F]/.test(ico))DATA[drag].icon=ico;}
   scheduleSave();init();
 }
 // Вставить drag перед dropKey — в его группе или в негруппированной зоне.
@@ -646,7 +648,7 @@ function init(){
   const mkTab=(n,lbl,noDrag)=>{
     const el=document.createElement('div');
     el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;
-    el.innerHTML=`${META[n]||''} ${lbl||TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
+    el.innerHTML=`${(DATA[n]&&DATA[n].icon)||META[n]||''} ${lbl||TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
     el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};
     if(isAdmin()&&n!==PF3_KEY&&!noDrag){
       el.draggable=true;el.title=RT('Перетащите, чтобы переставить','Drag to reorder');

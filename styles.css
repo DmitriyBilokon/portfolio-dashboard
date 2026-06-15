@@ -1119,3 +1119,10 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-pp-live{color:#10b981;font-size:9px;animation:futpulse 2s ease-in-out infinite}
 .pf3-pp-l{color:var(--text3);font-weight:700}
 .pf3-pp-v small{color:var(--text3)}
+
+/* Сайдбар вкладок — чуть светлее фона (видно отличие) */
+@media(min-width:901px){
+  html.ui2 .tabs,html.ui2 body.v3 .tabs{background:color-mix(in srgb,var(--bg3) 94%,transparent);border-color:color-mix(in srgb,var(--border) 95%,transparent)}
+  /* Под-вкладки выровнены по левому краю контента (контент центрируется на широких экранах) */
+  html.ui2 .sub-tabs{margin-left:calc(254px + max(0px,(100vw - 268px - min(1680px,100vw - 32px))/2))}
+}

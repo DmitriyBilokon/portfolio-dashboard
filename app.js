@@ -3949,6 +3949,26 @@ function aipSaveSettings(){
   scheduleSave();
   toast(RT('Настройки AI портфеля сохранены ✓','AI portfolio settings saved ✓'));
 }
+// 🆚 Альфа AI-портфеля vs индексы во времени (из ap.perfHistory, пишет worker).
+function aipAlphaHTML(ap){
+  const hist=Array.isArray(ap&&ap.perfHistory)?ap.perfHistory:[];
+  const last=hist.length?hist[hist.length-1]:null;
+  if(!last||!last.alpha||!Object.keys(last.alpha).length)return'';
+  const cls=v=>v>=0?'pf3-up':'pf3-down';
+  const wkAgo=hist.length>1?hist[Math.max(0,hist.length-8)]:null;   // ~неделю назад (дневные точки)
+  const cards=Object.keys(last.alpha).map(ix=>{
+    const a=last.alpha[ix];
+    const prev=wkAgo&&wkAgo.alpha&&wkAgo.alpha[ix]!=null?wkAgo.alpha[ix]:null;
+    const delta=prev!=null?Math.round((a-prev)*10)/10:null;
+    const arrow=delta==null?'':delta>0?'▲':delta<0?'▼':'▬';
+    return`<div class="aip-vs-card"><span>${ix}</span><b class="${cls(a)}">α ${a>=0?'+':''}${a}%</b>${delta!=null?`<small class="${cls(delta)}">${arrow} ${delta>=0?'+':''}${delta} pp ${RT('за нед.','wk')}</small>`:''}</div>`;
+  }).join('');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🆚 ${RT('Альфа vs индексы','Alpha vs indices')}</span><span class="pf3-asof">${RT('обгон с момента старта · тренд за неделю','beat-the-index since start · weekly trend')}</span></div>
+    <div class="aip-vs">${cards}</div>
+    <div class="pf3-ai-note">${RT('α = доходность AI-портфеля минус индекс с даты старта. Эту историю видит и сам бот — он подстраивает стратегию под тренд альфы.','α = AI portfolio return minus the index since start. The bot sees this history too and adapts its strategy to the alpha trend.')}</div>
+  </section>`;
+}
 function aipManageHTML(){
   const ap=AI_PORT;
   if(!ap)return`<section class="pf3-panel"><div class="pf3-empty">${RT('AI портфель инициализируется…','Initialising AI portfolio…')}</div></section>`;
@@ -3984,6 +4004,7 @@ function aipManageHTML(){
     </div>
     ${aipSpark(ap.equityHistory,ap.startCapital||300000)}
   </section>
+  ${aipAlphaHTML(ap)}
   ${ap.lastNote?`<section class="pf3-panel"><div class="pf3-panel-hd"><span>💭 ${RT('Последний комментарий AI','Latest AI note')}</span></div><div class="aip-note">${ap.lastNote}</div></section>`:''}
   <section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📜 ${RT('Журнал сделок','Trade journal')}</span><span class="pf3-asof">${RT('последние 30 · каждое решение с обоснованием','last 30 · every decision with reasoning')}</span></div>

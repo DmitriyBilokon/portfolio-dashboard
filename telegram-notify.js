@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16aiperf';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16aiperf2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -845,7 +845,7 @@ const AIPORT_SYSTEM = `Ты — автономный портфельный уп
 
 ПЛЕЙБУК И ПРАВИЛА. Если переданы playbook (методичка «как обгонять индекс»: качество+моментум, дисциплина входа/оценки, сайзинг, риск, не резать победителей) и investorRules (личные правила инвестора) — это твоя СТРАТЕГИЧЕСКАЯ РАМКА: применяй их строго, они приоритетнее общих эвристик. Каждое решение должно быть согласовано с плейбуком и правилами.
 
-ТВОЙ РЕЗУЛЬТАТ vs ИНДЕКСЫ (самооценка). В поле performance — твоя доходность с даты старта (portfolioReturnPct) и сравнение с эталонами (vsIndex: indexReturnPct и alphaPct = твоя доходность минус индекс). Это твоя главная оценка. Если по большинству индексов alphaPct < 0 — ты ОТСТАЁШЬ: критически пересмотри подход (качество отбора, тайминг входов, концентрация, доля кэша, не передерживаешь ли проигравших) и сделай осмысленный шаг к улучшению — но без паники и переторговли. Если обгоняешь (alphaPct > 0) — закрепляй работающее, не ломай его лишними сделками. В note кратко отметь, обгоняешь ты индексы или отстаёшь, и что корректируешь.
+ТВОЙ РЕЗУЛЬТАТ vs ИНДЕКСЫ (самооценка). В поле performance — твоя доходность с даты старта (portfolioReturnPct) и сравнение с эталонами (vsIndex: indexReturnPct и alphaPct = твоя доходность минус индекс). Это твоя главная оценка. Если по большинству индексов alphaPct < 0 — ты ОТСТАЁШЬ: критически пересмотри подход (качество отбора, тайминг входов, концентрация, доля кэша, не передерживаешь ли проигравших) и сделай осмысленный шаг к улучшению — но без паники и переторговли. Если обгоняешь (alphaPct > 0) — закрепляй работающее, не ломай его лишними сделками. В performance.history — дневные снимки твоей альфы за прошлые циклы: смотри ТРЕНД (альфа растёт или падает во времени) — если стабильно деградирует, меняй подход решительнее; если растёт, продолжай линию. В note кратко отметь, обгоняешь ты индексы или отстаёшь, куда идёт тренд альфы и что корректируешь.
 
 Правила:
 - Торгуй ТОЛЬКО тикерами из universe или из своих позиций.
@@ -1106,6 +1106,8 @@ async function aiPortfolioRun(env, force){
       sinceStart: new Date(ap.startedAt).toISOString().slice(0, 10),
       portfolioReturnPct: portReturnPct,
       vsIndex: benches.map(b => ({ index: b.index, indexReturnPct: b.returnPct, alphaPct: portReturnPct != null ? Math.round((portReturnPct - b.returnPct) * 10) / 10 : null })),
+      // Тренд альфы во времени (дневные снимки прошлых циклов) — обгон растёт или падает.
+      history: (ap.perfHistory || []).slice(-16).map(x => ({ d: x.d, ret: x.ret, alpha: x.alpha })),
     };
   }catch(e){}
   // Вердикты скоринга по тикерам — для жёсткой проверки на исполнении.
@@ -1185,6 +1187,16 @@ async function aiPortfolioRun(env, force){
   const eq2 = Math.round((ap.cashSEK || 0) + positions.reduce((a, p) => a + p.qty * (p.lastPrice || p.avgBuy) * (fx[p.ccy] || 1), 0));
   const dkey = new Date().toISOString().slice(0, 10);
   ap.equityHistory = ((ap.equityHistory || []).filter(x => x.d !== dkey).concat([{ d: dkey, v: eq2 }])).slice(-800);
+  // Дневной снимок альфы (обгон индексов) — для истории «обгона» во времени.
+  try{
+    const retNow = ap.startCapital > 0 ? Math.round((eq2 / ap.startCapital - 1) * 1000) / 10 : null;
+    const vi = payload.performance && Array.isArray(payload.performance.vsIndex) ? payload.performance.vsIndex : [];
+    if(retNow != null && vi.length){
+      const alpha = {};
+      vi.forEach(b => { if(b.indexReturnPct != null) alpha[b.index] = Math.round((retNow - b.indexReturnPct) * 10) / 10; });
+      ap.perfHistory = ((ap.perfHistory || []).filter(x => x.d !== dkey).concat([{ d: dkey, ret: retNow, alpha }])).slice(-200);
+    }
+  }catch(e){}
   ap.trades = ((ap.trades || []).concat(trades)).slice(-400);
   ap.lastRunAt = now;
   ap.lastNote = String(parsed.note || '').slice(0, 600);

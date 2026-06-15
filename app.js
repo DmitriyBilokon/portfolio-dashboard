@@ -4025,9 +4025,13 @@ function insiderOpenCard(tk){
 // Портфели, для которых строится отдельный дашборд (мой + Anna + любые семейные).
 function dashPortTabs(){return v3Tabs().filter(k=>pf3MyPort(k))}
 // ── 📊 AI-Dashboard: AI Proto формирует ОТДЕЛЬНЫЙ дашборд по каждому портфелю ──
-async function aiDashRun(){
+async function aiDashRun(onlyKey){
   if(_aiDashBusy)return;_aiDashBusy=true;_aiDashProg='';
-  const tabs=dashPortTabs();
+  // onlyKey задан → генерим отчёт ТОЛЬКО для этого портфеля (кнопка на его саб-вкладке);
+  // без него — по всем портфелям подряд (кнопка «📚 Все»).
+  const all=dashPortTabs();
+  const tabs=(onlyKey&&all.includes(onlyKey))?[onlyKey]:all;
+  if(onlyKey)_aiDashSub=onlyKey;   // показать спиннер на нужной саб-вкладке
   renderAll();
   let ok=0;
   try{
@@ -4115,18 +4119,21 @@ function aiDashHTML(){
   const sub=_aiDashSub,D=AI_DASH[sub];
   const toneC={good:'dash-good',warn:'dash-warn',bad:'dash-bad',info:'dash-info'};
   const cardBullets=c=>{const b=Array.isArray(c.bullets)?c.bullets:(c.bullets!=null?[c.bullets]:(c.text!=null?[c.text]:[]));return b.map(x=>dashMd(x)).filter(Boolean)};
-  const anyDone=tabs.some(k=>AI_DASH[k]&&AI_DASH[k].cards);
-  const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun()"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую','Generating')+(_aiDashProg?' '+_aiDashProg:'')+'…':'✨ '+RT('Сгенерировать','Generate')+(anyDone?' · '+RT('обновить','refresh'):'')+(tabs.length>1?' ('+tabs.length+')':'')}</button>`;
+  const subName=dashMd(TAB_LABEL(sub)),doneCur=!!(D&&D.cards);
+  // Главная кнопка — генерация ТЕКУЩЕГО портфеля (отдельно для каждого);
+  // вторая «📚 Все» — прогнать все портфели подряд.
+  const btn=`<button class="pf3-btn" id="aiDashBtn" onclick="aiDashRun(_aiDashSub)"${_aiDashBusy?' disabled':''}>${_aiDashBusy?'⏳ '+RT('Генерирую','Generating')+(_aiDashProg?' '+_aiDashProg:'')+'…':(doneCur?'🔄 '+RT('Обновить','Refresh'):'✨ '+RT('Сгенерировать','Generate'))+' · '+subName}</button>`;
+  const btnAll=(tabs.length>1&&!_aiDashBusy)?`<button class="pf3-btn pf3-btn-sm" id="aiDashBtnAll" onclick="aiDashRun()" title="${RT('Сгенерировать отчёты по всем портфелям подряд','Generate reports for all portfolios in sequence')}">📚 ${RT('Все','All')} (${tabs.length})</button>`:'';
   // Шапка + саб-вкладки по портфелям.
   const subTabs=tabs.map(k=>{const dd=AI_DASH[k];const dot=dd&&dd.cards?'●':'○';return`<button class="dash-tab${k===sub?' active':''}" onclick="_aiDashSub=${JSON.stringify(k).replace(/"/g,'&quot;')};renderAll()">${dot} ${dashMd(TAB_LABEL(k))}</button>`}).join('');
-  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard <span class="dash-info-btn" onclick="event.stopPropagation();aiDashInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · отдельный анализ по каждому портфелю','AI Proto · separate analysis per portfolio')}</span>${btn}</div>${tabs.length>1?`<div class="dash-subtabs">${subTabs}</div>`:''}${D&&D.headline?`<div class="dash-headline">${dashMd(D.headline)}</div>`:''}</section>`;
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 AI-Dashboard <span class="dash-info-btn" onclick="event.stopPropagation();aiDashInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${D&&D.at?RT('обновлено','updated')+' '+pf3DtRu(D.at)+(D.cost?' · '+costLine(D.cost):''):RT('AI Proto · отдельный анализ по каждому портфелю','AI Proto · separate analysis per portfolio')}</span>${btn}${btnAll}</div>${tabs.length>1?`<div class="dash-subtabs">${subTabs}</div>`:''}${D&&D.headline?`<div class="dash-headline">${dashMd(D.headline)}</div>`:''}</section>`;
   if(_aiDashBusy&&(!D||!D.cards))h+=`<div class="pf3-empty" style="padding:24px">⏳ ${RT('AI Proto анализирует портфель','AI Proto is analysing the portfolio')} «${dashMd(TAB_LABEL(sub))}» ${RT('(web-поиск)… до 1–2 минут на портфель.','(web search)… up to 1–2 min per portfolio.')}</div>`;
   else if(D&&D.cards&&D.cards.length){
     const dcards=D.cards.map((c,ci)=>{const bl=cardBullets(c);const id=(String(c.title||'').toLowerCase().replace(/[^a-zа-я0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,40))||('c'+ci);return{id,html:`<section class="dash-card ${toneC[String(c.tone||'').toLowerCase()]||'dash-info'}" data-eid="${id}"><div class="dash-card-hd">${dashMd(c.icon||'•')} <b>${dashMd(c.title||'')}</b></div><ul class="dash-bul">${bl.map(b=>`<li>${b}</li>`).join('')||`<li class="pf3-asof">—</li>`}</ul></section>`}});
     h+=`<div class="dash-grid" data-edit-row="dash">${eapply('dash',dcards).map(c=>c.html).join('')}</div>`;
     h+=aiDashPicksHTML(D.picks);
   }
-  else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Нажмите «✨ Сгенерировать» — AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт ОТДЕЛЬНЫЙ дашборд по каждому портфелю (мой и Anna): состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю + лучшие рекомендации на 1–3 / 3–6 / 6–12 мес. Переключайтесь между портфелями вкладками выше.','Press «✨ Generate» — AI Proto builds a SEPARATE dashboard per portfolio. Switch portfolios with the tabs above.')}</div>`;
+  else if(!_aiDashBusy)h+=`<div class="pf3-empty" style="padding:24px">${RT('Кнопка «✨ Сгенерировать · '+TAB_LABEL(sub)+'» строит дашборд ТОЛЬКО для выбранного портфеля (переключайте вкладками выше), а «📚 Все» — прогоняет все портфели подряд. AI Proto с веб-поиском свежих новостей/макро и вашими правилами (🧠 память) соберёт: состояние, что важно сегодня, возможности, риски, макро, диверсификация, план на неделю + лучшие рекомендации на 1–3 / 3–6 / 6–12 мес.','The «✨ Generate» button builds a dashboard for the SELECTED portfolio only (switch with the tabs above); «📚 All» runs every portfolio in sequence.')}</div>`;
   return h;
 }
 

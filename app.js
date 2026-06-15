@@ -20,7 +20,11 @@ function snapshotState(){
            hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV };
 }
 // Call after any edit: debounce-push to the cloud.
-function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
+// syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
+// миграции/рендеры на старте (init до pullState) могли затереть облако пустыми
+// локальными данными (например, журналом сделок PF_TRADES).
+let syncReady=false;
+function scheduleSave(){ if(currentUser && !applyingRemote && syncReady) schedulePush(); }
 function schedulePush(){ clearTimeout(pushTimer); pushTimer=setTimeout(pushState, 800); }
 
 async function pushState(){
@@ -49,6 +53,7 @@ async function pullState(){
   if(!currentUser) return;
   const { data, error } = await sb.from('ledger_state').select('data').eq('user_id',currentUser.id).maybeSingle();
   if(error){ console.warn('Sync pull failed', error); return; }
+  syncReady=true;   // облако прочитано — с этого момента локальные правки можно безопасно пушить
   if(data && data.data && Object.keys(data.data).length) applyRemoteState(data.data);
   else pushState();   // first login: seed the cloud with the bundled data
 }
@@ -141,7 +146,7 @@ async function handleLogout(){
   if(realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel=null; }
   clearInterval(hbTimer); userRole='user'; allowedTabs=['Nasdaq 100'];
   const st=document.getElementById('settingsBtn'); if(st)st.style.display='none';
-  await sb.auth.signOut(); currentUser=null;
+  await sb.auth.signOut(); currentUser=null; syncReady=false;
   document.getElementById('logoutBtn')?.style.setProperty('display','none');
   document.getElementById('authOverlay').classList.remove('hidden');
   init();   // за оверлеем входа остаются только публичные вкладки

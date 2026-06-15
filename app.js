@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV };
 }
 // Call after any edit: debounce-push to the cloud.
 function scheduleSave(){ if(currentUser && !applyingRemote) schedulePush(); }
@@ -65,7 +65,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
-  if(Array.isArray(s.aiPlaybook)) AI_PLAYBOOK=s.aiPlaybook;
+  if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
@@ -197,9 +197,23 @@ const DEFAULT_PLAYBOOK=[
   'Учитывай издержки и налоги: лишние сделки съедают альфу — меняй портфель, когда ожидаемая выгода превышает трение.',
   'Сверяйся с трек-рекордом: усиливай подходы, которые сбывались; пересматривай те, что нет.',
   'Диверсификация — для снижения риска, а не самоцель; обычно 15–25 качественных имён достаточно.',
+  // v2 (из обсуждения «обучения AI» 2026-06): альфа, бенчмарк-веса, обучение на результатах.
+  'Меряй успех АЛЬФОЙ к индексу (доходность минус бенчмарк за тот же период), а не абсолютной доходностью; следи за трендом альфы и усиливай то, что её повышает.',
+  'Сравнивай веса портфеля с составом эталонного индекса по секторам: осознанный перевес в 1–2 сильных темах и отсутствие явных проигравших — главный источник опережения.',
+  'Учись на собственном трек-рекорде по типам вердиктов: где сбывалось и давало альфу — закрепляй; где системно ошибался (рано фиксировал рост, держал проигравших) — меняй подход.',
+  'Недовес сектора/гео закрывай в первую очередь свободным кэшем, новыми идеями и ротацией из слабых бумаг, а не продажей работающих позиций.',
 ];
-let AI_PLAYBOOK=[];
-function aiPlaybookEnsure(){ if(!Array.isArray(AI_PLAYBOOK)||!AI_PLAYBOOK.length)AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice(); return AI_PLAYBOOK; }
+// Принципы, добавленные в v2 — дописываются к уже синхронизированному плейбуку один раз.
+const PLAYBOOK_V2_ADD=DEFAULT_PLAYBOOK.slice(-4);
+const PLAYBOOK_SEED_V=2;
+let AI_PLAYBOOK=[],AI_PLAYBOOK_SEEDV=0;
+function aiPlaybookEnsure(){
+  if(!Array.isArray(AI_PLAYBOOK))AI_PLAYBOOK=[];
+  if(!AI_PLAYBOOK.length){ AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice(); }
+  else if(AI_PLAYBOOK_SEEDV<PLAYBOOK_SEED_V){ PLAYBOOK_V2_ADD.forEach(p=>{ if(!AI_PLAYBOOK.includes(p))AI_PLAYBOOK.push(p); }); }
+  if(AI_PLAYBOOK_SEEDV<PLAYBOOK_SEED_V){ AI_PLAYBOOK_SEEDV=PLAYBOOK_SEED_V; if(!applyingRemote)scheduleSave(); }
+  return AI_PLAYBOOK;
+}
 
 // 📈 История индексов-бенчмарков (дневные закрытия) — для расчёта АЛЬФЫ трек-рекорда.
 let IDX_HIST={},_idxHistLoading=false;

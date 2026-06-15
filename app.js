@@ -3312,11 +3312,18 @@ function renderPF3(){
 // старт по умолчанию — с прошлой пятницы. Кеш 6 часов.
 let pfPerf={range:'fri',hist:null,loaded:0,loading:false,failed:false,on:{}};
 const PFP_BENCH=[['^OMX','OMXS30','#f5c863'],['^NDX','Nasdaq 100','#8b8cf8']];
-const pfpPorts=()=>[
-  {key:PF3_KEY,name:'Dima',def:'#6366f1'},
-  {key:'Portfolio (Anna)',name:'Anna',def:'#10b981'},
-  {key:'Portfolio (Sergei)',name:'Sergei',def:'#f59e0b'},
-].filter(p=>DATA[p.key]&&Array.isArray(DATA[p.key].rows)&&DATA[p.key].rows.length);
+const pfpPorts=()=>{
+  const out=[
+    {key:PF3_KEY,name:'Dima',def:'#6366f1'},
+    {key:'Portfolio (Anna)',name:'Anna',def:'#10b981'},
+    {key:'Portfolio (Sergei)',name:'Sergei',def:'#f59e0b'},
+  ].filter(p=>DATA[p.key]&&Array.isArray(DATA[p.key].rows)&&DATA[p.key].rows.length);
+  // AI-портфель — особый: линия из реальной истории капитала (equityHistory), а
+  // не из цен позиций (учитывает фактические сделки и кэш).
+  if(isAdmin()&&AI_PORT&&AI_PORT.startedAt&&Array.isArray(AI_PORT.equityHistory)&&AI_PORT.equityHistory.length>=2)
+    out.push({key:AIP_KEY,name:'AI-Portfolio',def:'#ec4899',ai:true});
+  return out;
+};
 function pfpColors(){try{return JSON.parse(localStorage.getItem('dash_pfpcol')||'{}')}catch(e){return{}}}
 const pfpCol=(key,def)=>pfpColors()[key]||def;
 function pfPerfSetColor(key,c){const m=pfpColors();m[key]=c;try{localStorage.setItem('dash_pfpcol',JSON.stringify(m))}catch(e){}renderPF3()}
@@ -3356,12 +3363,17 @@ async function pfPerfLoad(){
   try{
     const ports=pfpPorts();
     const symSet=new Set();
-    ports.forEach(p=>DATA[p.key].rows.forEach((r,i)=>{recalcPF(i,p.key);const s=exSymbol(r[2],r[8]);if(s&&(parseFloat(r[13])||0)>0)symSet.add(s)}));
+    ports.forEach(p=>{if(p.ai||!DATA[p.key])return;DATA[p.key].rows.forEach((r,i)=>{recalcPF(i,p.key);const s=exSymbol(r[2],r[8]);if(s&&(parseFloat(r[13])||0)>0)symSet.add(s)})});
     PFP_BENCH.forEach(b=>symSet.add(b[0]));
     const syms=[...symSet];
     const res=await Promise.all(syms.map(x=>fetch(PRICE_PROXY+'?history='+encodeURIComponent(x)+'&range=3y').then(r=>r.json()).catch(()=>null)));
     const histBy={};syms.forEach((s,i)=>{histBy[s]=res[i]});
-    const portsSer={};ports.forEach(p=>{const ser=pfpPortSeries(p.key,histBy);if(ser)portsSer[p.key]=ser});
+    const portsSer={};ports.forEach(p=>{
+      let ser;
+      if(p.ai){ser=(AI_PORT.equityHistory||[]).filter(x=>x&&x.d&&x.v>0).map(x=>({d:x.d,v:x.v}));if(ser.length<2)ser=null;}   // реальная история капитала AI
+      else ser=pfpPortSeries(p.key,histBy);
+      if(ser)portsSer[p.key]=ser;
+    });
     if(!Object.keys(portsSer).length)throw new Error('no port history');
     const bench={};PFP_BENCH.forEach(b=>{const h=histBy[b[0]];if(h&&Array.isArray(h.c))bench[b[0]]=h.c.map((c,i2)=>({d:new Date(h.t[i2]*1000).toISOString().slice(0,10),v:c})).filter(x=>x.v>0)});
     pfPerf.hist={ports:portsSer,bench};pfPerf.loaded=Date.now();

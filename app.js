@@ -1947,6 +1947,16 @@ async function sbToken(){
 // ── Фоновый AI: воркер считает в ctx.waitUntil и пишет результат в ai_jobs;
 // клиент опрашивает таблицу до status='done'/'error'. Снимает лимит по времени. ──
 function aiJobId(){try{return crypto.randomUUID()}catch(_){return 'job-'+Date.now()+'-'+Math.floor(Math.random()*1e9)}}
+// Доступна ли таблица ai_jobs? Если нет (SQL не выполнен) — фоновый режим
+// отключается, и анализ идёт синхронно (стриминг), без впустую потраченного прогона.
+let _aiJobsReady=null;
+async function aiJobsReady(){
+  if(_aiJobsReady!=null)return _aiJobsReady;
+  if(!sb){_aiJobsReady=false;return false;}
+  try{ const{error}=await sb.from('ai_jobs').select('job_id').limit(1); _aiJobsReady=!error; }
+  catch(_){ _aiJobsReady=false; }
+  return _aiJobsReady;
+}
 async function aiJobPoll(jobId,opt){
   const timeoutMs=(opt&&opt.timeoutMs)||6*60*1000,intervalMs=(opt&&opt.intervalMs)||4000;
   const deadline=Date.now()+timeoutMs;
@@ -1979,7 +1989,7 @@ async function pf3AiRun(){
     // и таблицах. Расхождение допускается, но AI обязан развести его по горизонтам.
     snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке/таблицах). Это КРАТКОСРОЧНО-технический вердикт.';
     snap.recoVerdicts=dashRecoMap(key);
-    snap.jobId=aiJobId();snap.portfolioKey=key;   // фоновый режим: воркер посчитает и запишет в ai_jobs
+    if(await aiJobsReady()){ snap.jobId=aiJobId();snap.portfolioKey=key; }   // фоновый режим (если есть таблица ai_jobs); иначе синхронный стриминг
     const r=await fetch(PRICE_PROXY+'?action=ai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const bodyText=await r.text();
     let j=null;try{j=JSON.parse(bodyText)}catch(_){}
@@ -4276,7 +4286,7 @@ async function aiDashRun(onlyKey){
       snap.portfolioName=TAB_LABEL(k);
       snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';
       snap.recoVerdicts=dashRecoMap(k);   // согласование picks с вердиктом сайта (вариант B)
-      snap.jobId=aiJobId();snap.portfolioKey=k;   // фоновый режим
+      if(await aiJobsReady()){ snap.jobId=aiJobId();snap.portfolioKey=k; }   // фоновый режим (если есть таблица ai_jobs)
       try{
         const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
         const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}

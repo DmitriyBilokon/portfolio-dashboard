@@ -28,7 +28,22 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16prepost2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16models';   // ?action=version — проверить, что задеплоено
+
+// Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
+// решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
+// индексов (дешевле ~40%, качества достаточно). Неизвестный ключ → дефолт.
+const AI_MODEL_DEFAULT = 'claude-opus-4-8';
+const MODELS = {
+  portfolio: 'claude-opus-4-8',   // aiAnalyze (AI Proto) — анализ портфеля + ребаланс
+  dashboard: 'claude-opus-4-8',   // dashboardGen — 📊 AI-Dashboard (правила консистентности)
+  aiport:    'claude-opus-4-8',   // aiPortfolio — управление AI-портфелем
+  stock:     'claude-opus-4-8',   // stockAnalyze — 🤖 AI-анализ карточки
+  reco:      'claude-opus-4-8',   // recoAnalyze — 🔄 AI-Рекомендация
+  watchlist: 'claude-sonnet-4-6', // aiAnalyze (watchlist индексов) — простой структурный вывод
+  chat:      'claude-sonnet-4-6', // aiChat — диалоговый ассистент
+};
+const aiModel = k => MODELS[k] || AI_MODEL_DEFAULT;
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -669,7 +684,7 @@ async function aiAnalyze(env, snapshot){
   const today = new Date().toISOString().slice(0, 10);
   if(snapshot && typeof snapshot === 'object') snapshot.liveMarkets = await liveMarkets().catch(() => []);
   const reqBody = {
-    model: 'claude-opus-4-8',
+    model: aiModel(watch ? 'watchlist' : 'portfolio'),
     max_tokens: 16000,
     thinking: { type: 'adaptive' },
     system,
@@ -727,7 +742,7 @@ async function aiChat(env, body){
     method: 'POST',
     headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: 'claude-opus-4-8',
+      model: aiModel('chat'),
       max_tokens: 4000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: CHAT_SCHEMA } },
@@ -1001,7 +1016,7 @@ async function aiPortfolioRun(env, force){
     method: 'POST',
     headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: 'claude-opus-4-8',
+      model: aiModel('aiport'),
       max_tokens: 6000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: AIPORT_SCHEMA } },
@@ -1244,7 +1259,7 @@ async function stockAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
   if(body && typeof body === 'object') body.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
-    model: 'claude-opus-4-8',
+    model: aiModel('stock'),
     max_tokens: 8000,
     thinking: { type: 'adaptive' },
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
@@ -1322,7 +1337,7 @@ async function recoAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
   if(body && typeof body === 'object') body.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
-    model: 'claude-opus-4-8',
+    model: aiModel('reco'),
     max_tokens: 8000,
     thinking: { type: 'adaptive' },
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
@@ -1388,7 +1403,7 @@ async function dashboardGen(env, snapshot){
   const today = new Date().toISOString().slice(0, 10);
   if(snapshot && typeof snapshot === 'object') snapshot.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
-    model: 'claude-opus-4-8',
+    model: aiModel('dashboard'),
     max_tokens: 9000,
     thinking: { type: 'adaptive' },
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
@@ -1705,7 +1720,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature)\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply

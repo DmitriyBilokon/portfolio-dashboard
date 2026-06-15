@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16prepost';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16prepost2';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1982,9 +1982,13 @@ export default {
       return json(h || { t: [], c: [] });
     }
     if(url.searchParams.has('prepost')){
-      // Pre/post-market цена одной бумаги → лайв-блок в карточке акции.
-      const pp = await prePost(url.searchParams.get('prepost').trim());
-      return json(pp || {});
+      // Pre/post-market: одна бумага (карточка) или несколько через запятую
+      // (сводка портфеля) → карта {sym: {state,pre,post,...}}.
+      const syms = url.searchParams.get('prepost').split(',').map(s => s.trim()).filter(Boolean);
+      if(syms.length <= 1) return json(await prePost(syms[0] || '') || {});
+      const out = {};
+      await Promise.all(syms.map(async s => { out[s] = await prePost(s); }));
+      return json(out);
     }
     if(url.searchParams.get('action') === 'chart'){
       // Manual test: send the CHART_TICKER chart photo to Telegram now.

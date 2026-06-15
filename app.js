@@ -979,6 +979,7 @@ function grpAssign(tab,gi){
 
 function renderAll(){
   if(curIdx!==HOME_KEY)homeFutStop();   // лайв-фьючерсы крутятся только на Home
+  if(curIdx!==_pfPPKey)pfSumPPStop();   // лайв изм. баланса — только на открытом портфеле
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
   const st=document.getElementById('subTabs');st.innerHTML='';
   document.body.classList.toggle('v3',isV3());   // Портфель 3.0 restyles the whole site
@@ -2498,6 +2499,7 @@ function pf3Summary(){
     ${isDima?`<div class="pf3-card"><div class="pf3-card-l">${T('Кредитное плечо')}</div><div class="pf3-card-v">${lev>0?'+':''}${num('leverage',lev)} <small>${unit}</small></div><div class="pf3-card-s">${T('доступный кредит сверх капитала')}</div></div>
     <div class="pf3-card"><div class="pf3-card-l">${T('Доступно с плечом')}</div><div class="pf3-card-v">${pf3Fmt(withLev)} ${unit}</div><div class="pf3-card-s">${T('капитал + кредитное плечо')}</div></div>`:''}
   </section>
+  <div id="pfSumPP" class="pf3-pp pfsum-pp">${pfSumPPInner(pf3D())}</div>
   <div class="pf3-fx"><span class="pf3-fx-l">${T('💱 Курсы')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')}<span class="pf3-fx-note">${T('живые курсы ECB · база SEK')}</span></div>`;
 }
 function pf3SetNum(key,v){const n=parseFloat(v);pf3D()[key]=(isNaN(n)||n<0)?0:n;scheduleSave();renderPF3()}
@@ -3245,6 +3247,7 @@ function renderPF3(){
   // Асинхронные хвосты (обновление цен/таргетов/риска) не должны подменять
   // контент, если пользователь уже ушёл на Home/другую вкладку.
   if(curIdx!==v3Key)return;
+  if(pf3IsPort(v3Key))pfSumPPStart(v3Key);else pfSumPPStop();   // лайв изм. баланса по пре/пост-рынку
   if(pf3Tab==='sec'||pf3Tab==='typ'){
     el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pf3GroupedHTML(pf3Tab)}</div>`;
     return;
@@ -4488,6 +4491,63 @@ function cardPPInner(sym){
   else if(st.indexOf('POST')>=0)body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours');
   else if(st==='CLOSED')body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours')||seg(d.pre,'🌅 Пре-маркет','🌅 Pre-market');
   return body?`<span class="pf3-pp-live">●</span> ${body}`:'';
+}
+
+// ── 🌅/🌙 Изменение баланса портфеля по пре/пост-рынку (лайв, в сводке) ──
+// Батч ?prepost=sym1,sym2,... по позициям текущего портфеля раз в 30с; считает
+// суммарную дельту стоимости акций во внебиржевую сессию. Сам останавливается,
+// когда вкладка портфеля закрыта/сменилась.
+let PF_PP={},_pfPPTimer=null,_pfPPKey=null,_pfPPLoading=false;
+function pfSumPPStop(){if(_pfPPTimer){clearInterval(_pfPPTimer);_pfPPTimer=null;}_pfPPKey=null;}
+function pfSumPPStart(key){
+  if(!key)return;
+  if(_pfPPKey===key&&_pfPPTimer)return;   // уже опрашиваем этот портфель
+  pfSumPPStop();_pfPPKey=key;
+  pfSumPPLoad();
+  _pfPPTimer=setInterval(pfSumPPLoad,30000);
+}
+async function pfSumPPLoad(){
+  const key=_pfPPKey;if(!key)return;
+  if(!(isV3()&&curIdx===key&&pf3IsPort(key))){pfSumPPStop();return;}   // ушли с портфеля — стоп
+  const d=DATA[key];if(!d||!Array.isArray(d.rows))return;
+  if(document.hidden||_pfPPLoading)return;
+  _pfPPLoading=true;
+  try{
+    const syms=[...new Set(d.rows.map(r=>(parseFloat(r[6])||0)>0?exSymbol(r[2],r[8]):null).filter(Boolean))];
+    if(syms.length){
+      const j=await fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(syms.join(','))).then(r=>r.json()).catch(()=>null);
+      if(j&&typeof j==='object'){
+        if(syms.length===1)PF_PP[syms[0]]=j; else Object.assign(PF_PP,j);   // 1 символ → объект бумаги, не карта
+        const el=document.getElementById('pfSumPP');
+        if(el&&curIdx===key)el.innerHTML=pfSumPPInner(DATA[key]);
+      }
+    }
+  }catch(e){}
+  _pfPPLoading=false;
+}
+function pfSumPPInner(d){
+  if(!d||!Array.isArray(d.rows))return'';
+  let deltaSEK=0,totalSEK=0,pre=0,post=0;
+  d.rows.forEach(r=>{
+    const qty=parseFloat(r[6])||0;if(!(qty>0))return;
+    totalSEK+=parseFloat(r[13])||0;
+    const pp=PF_PP[exSymbol(r[2],r[8])];if(!pp)return;
+    const reg=pp.regular;if(!(reg>0))return;
+    const st=String(pp.state||'').toUpperCase();
+    let o=null;
+    if(st.indexOf('PRE')>=0){o=pp.pre;}
+    else if(st.indexOf('POST')>=0){o=pp.post;}
+    else if(st==='CLOSED'){o=pp.post||pp.pre;}
+    if(!o||!(o.price>0))return;
+    const fx=FX[r[8]||'USD']||1;
+    deltaSEK+=qty*(o.price-reg)*fx;
+    if(st.indexOf('PRE')>=0)pre++;else post++;
+  });
+  if(pre+post===0)return'';   // нет внебиржевых котировок — блок скрыт (:empty)
+  const pct=totalSEK>0?deltaSEK/totalSEK*100:null;
+  const cls=deltaSEK>=0?'pf3-up':'pf3-down';
+  const lbl=pre>=post?RT('🌅 Пре-маркет','🌅 Pre-market'):RT('🌙 Пост-маркет','🌙 After-hours');
+  return`<span class="pf3-pp-live">●</span> <span class="pf3-pp-l">${lbl} · ${RT('изм. баланса','balance Δ')}</span> <span class="pf3-pp-v ${cls}">${deltaSEK>=0?'+':''}${pf3Money(d,deltaSEK)}${pct!=null?` (${pct>=0?'+':''}${pct.toFixed(2)}%)`:''}</span>`;
 }
 
 // Аналит. таргеты (Yahoo/Refinitiv-консенсус) для текущей вкладки: worker-эндпоинт

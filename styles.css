@@ -1138,3 +1138,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .tr-pl{font:700 12.5px 'JetBrains Mono',monospace;white-space:nowrap;min-width:70px;text-align:right}
 .pf3-btn.tr-buy{color:var(--green);font-weight:700}
 .pf3-btn.tr-sell{color:var(--red);font-weight:700}
+
+/* Сводка портфеля: лайв-баннер изм. баланса по пре/пост-рынку */
+.pfsum-pp{margin:10px 2px 0;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--bg3) 60%,transparent);font-size:13px}

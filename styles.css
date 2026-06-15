@@ -1141,3 +1141,21 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* Сводка портфеля: лайв-баннер изм. баланса по пре/пост-рынку */
 .pfsum-pp{margin:10px 2px 0;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--bg3) 60%,transparent);font-size:13px}
+
+/* ===== Конструктор раскладки («✏️ Редактор») ===== */
+#editBtn.active{background:var(--accent);color:#fff}
+.edit-bar{margin:6px 0 4px;padding:8px 14px;border:1px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--text);font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.edit-bar.hidden{display:none}
+.edit-bar b{font-weight:700}
+.edit-reset{margin-left:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:12px;font-weight:600;cursor:pointer}
+.edit-reset:hover{border-color:var(--accent);color:var(--accent)}
+.edit-rows,.edit-rows-v{display:block}
+.edit-cell{display:block}
+/* Перетаскиваемые элементы видны только в режиме редактора */
+.edit-on .edit-item{cursor:grab;outline:1.5px dashed color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:2px;border-radius:8px;position:relative;transition:outline-color .15s}
+.edit-on .edit-item:hover{outline-color:var(--accent)}
+.edit-on .edit-item:active{cursor:grabbing}
+.edit-on .edit-item.edit-drag{opacity:.45}
+/* Бейдж-ручка в углу */
+.edit-on .edit-item::before{content:"⠿";position:absolute;top:-9px;left:-2px;z-index:5;font-size:12px;line-height:1;color:#fff;background:var(--accent);border-radius:5px;padding:2px 4px;pointer-events:none;opacity:.9}
+.edit-on .sub-tab.edit-item::before{top:-7px}

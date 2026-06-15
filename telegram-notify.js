@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-15reco3h';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16futures';   // ?action=version — проверить, что задеплоено
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -157,6 +157,22 @@ async function dailyHistory(sym, range = '2y'){
   const t = [], c = [];
   for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(round2(cl[i])); } }
   return c.length ? { t, c } : null;
+}
+
+// ── 📈 Живые фьючерсы/индексы для AI-анализа: направление риска ПРЯМО СЕЙЧАС ──
+// US-фьючерсы (=F) идут ~23ч (в т.ч. пре-маркет), VIX/сырьё — барометр риска,
+// спот-индексы (^…) — в часы своей биржи. price + дневное изменение %.
+const AI_MARKETS = [
+  ['ES=F','S&P 500 fut'],['NQ=F','Nasdaq 100 fut'],['YM=F','Dow fut'],['RTY=F','Russell 2000 fut'],
+  ['GC=F','Gold'],['CL=F','WTI Oil'],['^VIX','VIX'],
+  ['^OMX','OMXS30'],['^GDAXI','DAX'],['^STOXX50E','Euro Stoxx 50'],['^N225','Nikkei 225'],
+];
+async function liveMarkets(){
+  const out = [];
+  await Promise.all(AI_MARKETS.map(async ([sym, name]) => {
+    try{ const q = await yahoo(sym); if(q && typeof q.price === 'number') out.push({ name, price: round2(q.price), dayPct: typeof q.pct === 'number' ? round2(q.pct) : null }); }catch(e){}
+  }));
+  return out;
 }
 
 // Портфель 3.0 is the portfolio of record; fall back to 2.0 for old states.
@@ -536,6 +552,8 @@ const AI_SYSTEM = `Ты — AI Proto, главная и самая важная 
 
 ЖИВЫЕ НОВОСТИ И МАКРО. ОБЯЗАТЕЛЬНО используй web_search, чтобы собрать самые свежие данные: новости по ключевым позициям портфеля и кандидатам на новые покупки (отчёты, гайденс, сделки M&A, рейтинги и таргеты аналитиков, регуляторика) и глобальную макрокартину (ставки ФРС/ЕЦБ/Riksbank, инфляция, геополитика, цены на сырьё и валюты, настроение по секторам и ведущим индексам). Учитывай найденное во всех разделах и рекомендациях; кратко ссылайся на самое важное.
 
+ДВИЖЕНИЕ ФЬЮЧЕРСОВ. В снапшоте есть liveMarkets — живые фьючерсы и индексы с дневным изменением %: US-фьючерсы (ES/NQ/YM/RTY) и VIX/сырьё идут почти круглосуточно и показывают направление риска ПРЯМО СЕЙЧАС (в т.ч. пре-маркет США), спот-индексы (OMXS30/DAX/Euro Stoxx/Nikkei) — настроение своих рынков. Сильное движение фьючерсов или скачок VIX учитывай как текущий риск-фон для тайминга докупок/фиксаций.
+
 ОБУЧЕНИЕ. Если есть investorRules — это твоя накопленная память (правила, риск-профиль и предпочтения инвестора): строго соблюдай их. Сверяй текущую картину с этими правилами и с прежними решениями; если прошлая логика не сработала — скорректируй подход и прямо скажи об этом. Ты учишься на результатах.
 
 Дай структурированный анализ на русском языке в markdown строго по разделам:
@@ -620,6 +638,8 @@ const WATCH_SYSTEM = `Ты — опытный рыночный аналитик.
 ## ⚠️ Риски
 2–3 главных риска для этого индекса сейчас.
 
+В снапшоте есть liveMarkets — живые фьючерсы и индексы с дневным изменением % (US-фьючерсы, VIX, сырьё, мировые индексы): направление риска прямо сейчас (в т.ч. пре-маркет США). Учитывай его в общей картине и тайминге.
+
 Правила: опирайся на переданные данные и свои знания о компаниях; конкретные цифры и уровни; лаконично; если есть investorRules — строго учитывай их; в конце одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
 
 Ответ верни строго в JSON по схеме: report — анализ в markdown; proposal — summary (1–2 предложения о состоянии индекса) и actions — те же 5–8 самых актуальных акций (action из списка: Купить/Докупить/Сократить/Продать/Держать — подбери ближайшее по смыслу; details: уровни и причина; amountSEK: null).`;
@@ -628,6 +648,7 @@ async function aiAnalyze(env, snapshot){
   const watch = !!(snapshot && snapshot.mode === 'watchlist');
   const system = watch ? WATCH_SYSTEM : AI_SYSTEM;
   const today = new Date().toISOString().slice(0, 10);
+  if(snapshot && typeof snapshot === 'object') snapshot.liveMarkets = await liveMarkets().catch(() => []);
   const reqBody = {
     model: 'claude-opus-4-8',
     max_tokens: 16000,
@@ -1167,6 +1188,8 @@ const STOCKAI_SYSTEM = `Ты — старший инвестиционный а�
 
 ОБЯЗАТЕЛЬНО используй web_search для свежих новостей и событий по компании (отчёты, гайденс, сделки, регуляторика, отраслевой фон) — на дату анализа. Кратко сошлись на найденное в разделе новостей.
 
+В снапшоте есть liveMarkets — живые фьючерсы и индексы с дневным изменением % (US-фьючерсы ES/NQ/YM/RTY, VIX, золото, нефть, OMXS30/DAX/Euro Stoxx/Nikkei). Это направление риска ПРЯМО СЕЙЧАС (фьючерсы идут ~23ч, включая пре-маркет США). Сильное движение фьючерсов или скачок VIX особенно влияют на горизонт «Момент» (вход сейчас) — учитывай это в выводе.
+
 Дай разбор на русском языке в markdown строго по разделам:
 
 ## 📰 Новости и события
@@ -1200,6 +1223,7 @@ ${FENCE}
 
 async function stockAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
+  if(body && typeof body === 'object') body.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
     model: 'claude-opus-4-8',
     max_tokens: 8000,
@@ -1236,6 +1260,8 @@ const RECO_SYSTEM = `Ты — старший инвестиционный ана
 ОБЯЗАТЕЛЬНО используй web_search (на дату анализа):
 1) Свежие новости и события по компании: отчёты, гайденс, сделки M&A, регуляторика, изменения рейтингов и таргетов аналитиков, инсайдерские сделки.
 2) Глобальная макрокартина: ставки ФРС / ЕЦБ / Riksbank, инфляция, геополитика, цены на сырьё и валюты, настроение по сектору и ведущим индексам — и как именно это влияет на ЭТУ бумагу.
+
+ФЬЮЧЕРСЫ И РИСК-ФОН. В снапшоте есть liveMarkets — живые фьючерсы и индексы с дневным изменением % (US-фьючерсы ES/NQ/YM/RTY, VIX, золото, нефть, OMXS30/DAX/Euro Stoxx/Nikkei). Фьючерсы идут почти круглосуточно и показывают направление риска ПРЯМО СЕЙЧАС (в т.ч. пре-маркет США); скачок VIX — рост страха. Сильное движение фьючерсов/VIX особенно влияет на горизонт «Момент» (now): на резком risk-off не входи у уровня без подтверждения; на risk-on у качественной бумаги вход надёжнее.
 
 Методика вердикта (учти каждый блок, отметь, что перевесило):
 - ТЕХНИКА: тренд относительно SMA, фаза, расстояние до уровней. Падающий нож и перегрев — против покупки; цена у SMA 50/200 или поддержки при здоровом тренде — за покупку.
@@ -1275,6 +1301,7 @@ ${FENCE}
 
 async function recoAnalyze(env, body){
   const today = new Date().toISOString().slice(0, 10);
+  if(body && typeof body === 'object') body.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
     model: 'claude-opus-4-8',
     max_tokens: 8000,
@@ -1314,6 +1341,8 @@ const DASH_SYSTEM = `Ты — AI Proto, главная аналитическа�
 
 ОБЯЗАТЕЛЬНО используй web_search для самой свежей информации: новости по ключевым позициям и кандидатам, отчёты/гайденс, изменения рейтингов и таргетов аналитиков, и глобальная макрокартина (ставки ФРС/ЕЦБ/Riksbank, инфляция, геополитика, сырьё/валюты, настроение по секторам и индексам).
 
+В снапшоте есть liveMarkets — живые фьючерсы и индексы с дневным изменением % (US-фьючерсы ES/NQ/YM/RTY, VIX, золото, нефть, OMXS30/DAX/Euro Stoxx/Nikkei): направление риска ПРЯМО СЕЙЧАС (фьючерсы и VIX идут ~23ч, в т.ч. пре-маркет США). Отрази это в карточке «что важно сегодня» и в таймингe picks (Момент).
+
 Сформируй ДАШБОРД — набор компактных карточек с САМОЙ ПОЛЕЗНОЙ информацией для этого портфеля прямо сейчас. Карточки выбери сам (6–9 штук), но покрой по смыслу:
 - общее состояние портфеля и где он относительно эталонных индексов;
 - что важно сегодня / на этой неделе (события, отчёты, свежие новости);
@@ -1338,6 +1367,7 @@ ${FENCE}`;
 
 async function dashboardGen(env, snapshot){
   const today = new Date().toISOString().slice(0, 10);
+  if(snapshot && typeof snapshot === 'object') snapshot.liveMarkets = await liveMarkets().catch(() => []);
   const j = await anthropicRun(env, {
     model: 'claude-opus-4-8',
     max_tokens: 9000,
@@ -1656,7 +1686,7 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · prompts\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prompts\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply

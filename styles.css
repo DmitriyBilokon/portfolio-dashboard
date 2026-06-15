@@ -1105,3 +1105,10 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 
 /* 🧪 Симуляция (агрегированная): ярлык исходного портфеля у позиции */
 .sim-port{color:var(--v3-acc);font-weight:600}
+
+/* Развитие портфелей: цвет-свотч + кнопка-тоггл в легенде */
+.pfp-color{width:14px;height:14px;padding:0;border:none;border-radius:4px;background:none;cursor:pointer;flex-shrink:0}
+.pfp-color::-webkit-color-swatch-wrapper{padding:0}
+.pfp-color::-webkit-color-swatch{border:1px solid var(--border);border-radius:4px}
+.pfp-color::-moz-color-swatch{border:1px solid var(--border);border-radius:4px}
+.pfp-chip-b{border:none;background:none;color:inherit;font:inherit;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:5px}

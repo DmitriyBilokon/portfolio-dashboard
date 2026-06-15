@@ -3308,11 +3308,25 @@ function renderPF3(){
 // Истории всех бумаг за 3 года → дневные доходности, взвешенные ТЕКУЩИМИ долями
 // позиций (приближение: состав считается неизменным), кумулятив в %.
 // Бенчмарки сравниваются от начала выбранного периода. Кеш 6 часов.
-let pfPerf={range:'1m',hist:null,loaded:0,loading:false,failed:false,bench:{'^OMX':true,'^NDX':true}};
-const PF_PERF_BENCH=[['^OMX','OMX Stockholm 30','#f5c863'],['^NDX','Nasdaq 100','#8b8cf8']];
+// Все семейные портфели + индексы OMXS30/Nasdaq 100, цвета линий настраиваются,
+// старт по умолчанию — с прошлой пятницы. Кеш 6 часов.
+let pfPerf={range:'fri',hist:null,loaded:0,loading:false,failed:false,on:{}};
+const PFP_BENCH=[['^OMX','OMXS30','#f5c863'],['^NDX','Nasdaq 100','#8b8cf8']];
+const pfpPorts=()=>[
+  {key:PF3_KEY,name:'Dima',def:'#6366f1'},
+  {key:'Portfolio (Anna)',name:'Anna',def:'#10b981'},
+  {key:'Portfolio (Sergei)',name:'Sergei',def:'#f59e0b'},
+].filter(p=>DATA[p.key]&&Array.isArray(DATA[p.key].rows)&&DATA[p.key].rows.length);
+function pfpColors(){try{return JSON.parse(localStorage.getItem('dash_pfpcol')||'{}')}catch(e){return{}}}
+const pfpCol=(key,def)=>pfpColors()[key]||def;
+function pfPerfSetColor(key,c){const m=pfpColors();m[key]=c;try{localStorage.setItem('dash_pfpcol',JSON.stringify(m))}catch(e){}renderPF3()}
+const pfpOn=key=>pfPerf.on[key]!==false;
+function pfPerfToggle(key){pfPerf.on[key]=!pfpOn(key);renderPF3()}
+// Прошлая пятница: понедельник текущей недели − 3 дня.
+function pfpLastFriday(){const n=new Date();const sinceMon=(n.getDay()+6)%7;const mon=new Date(n.getFullYear(),n.getMonth(),n.getDate()-sinceMon);return new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()-3);}
 function pfPerfFrom(range){
   const n=new Date();
-  if(range==='1w')return new Date(n-7*864e5);
+  if(range==='fri')return pfpLastFriday();
   if(range==='1m')return new Date(n-30*864e5);
   if(range==='3m')return new Date(n-91*864e5);
   if(range==='ytd')return new Date(n.getFullYear(),0,1);
@@ -3324,61 +3338,58 @@ function pfPerfPct(series,from){
   const sl=series.filter(x=>x.d>=iso);
   return sl.length<2?null:(sl[sl.length-1].v/sl[0].v-1)*100;
 }
+// Кумулятивная серия одного портфеля: дневные доходности позиций, взвешенные
+// текущими долями (валюта не важна — доходности безразмерны).
+function pfpPortSeries(key,histBy){
+  const d=DATA[key];if(!d)return null;
+  const pos=d.rows.map((r,i)=>{recalcPF(i,key);return{sym:exSymbol(r[2],r[8]),w:parseFloat(r[13])||0}}).filter(x=>x.sym&&x.w>0);
+  const tot=pos.reduce((a,x)=>a+x.w,0);if(!(tot>0))return null;
+  const byDay={};
+  pos.forEach(p=>{const h=histBy[p.sym];if(!h||!Array.isArray(h.c)||h.c.length<30)return;const w=p.w/tot;
+    for(let k=1;k<h.c.length;k++){if(!(h.c[k-1]>0&&h.c[k]>0))continue;const day=new Date(h.t[k]*1000).toISOString().slice(0,10);const o=byDay[day]||(byDay[day]={s:0,w:0});o.s+=(h.c[k]/h.c[k-1]-1)*w;o.w+=w;}});
+  let cum=1;const ser=Object.keys(byDay).sort().filter(k=>byDay[k].w>=0.5).map(k=>{cum*=1+byDay[k].s/byDay[k].w;return{d:k,v:cum}});
+  return ser.length>=5?ser:null;
+}
 async function pfPerfLoad(){
   if(pfPerf.loading||(pfPerf.hist&&Date.now()-pfPerf.loaded<6*3600*1000))return;
   pfPerf.loading=true;pfPerf.failed=false;
   try{
-    const d=DATA[PF3_KEY];
-    const pos=d.rows.map((r,i)=>{recalcPF(i,PF3_KEY);return{sym:exSymbol(r[2],r[8]),w:parseFloat(r[13])||0}}).filter(x=>x.sym&&x.w>0);
-    const tot=pos.reduce((a,x)=>a+x.w,0);
-    if(!(tot>0))throw new Error('empty');
-    const syms=[...pos.map(p=>p.sym),...PF_PERF_BENCH.map(b=>b[0])];
+    const ports=pfpPorts();
+    const symSet=new Set();
+    ports.forEach(p=>DATA[p.key].rows.forEach((r,i)=>{recalcPF(i,p.key);const s=exSymbol(r[2],r[8]);if(s&&(parseFloat(r[13])||0)>0)symSet.add(s)}));
+    PFP_BENCH.forEach(b=>symSet.add(b[0]));
+    const syms=[...symSet];
     const res=await Promise.all(syms.map(x=>fetch(PRICE_PROXY+'?history='+encodeURIComponent(x)+'&range=3y').then(r=>r.json()).catch(()=>null)));
-    const byDay={};
-    pos.forEach((p,i)=>{
-      const h=res[i];if(!h||!Array.isArray(h.c)||h.c.length<30)return;
-      const w=p.w/tot;
-      for(let k=1;k<h.c.length;k++){
-        if(!(h.c[k-1]>0&&h.c[k]>0))continue;
-        const day=new Date(h.t[k]*1000).toISOString().slice(0,10);
-        const o=byDay[day]||(byDay[day]={s:0,w:0});
-        o.s+=(h.c[k]/h.c[k-1]-1)*w;o.w+=w;
-      }
-    });
-    let cum=1;
-    const port=Object.keys(byDay).sort().filter(k=>byDay[k].w>=0.5).map(k=>{cum*=1+byDay[k].s/byDay[k].w;return{d:k,v:cum}});
-    if(port.length<10)throw new Error('no history');
-    const bench={};
-    PF_PERF_BENCH.forEach((b,bi)=>{
-      const h=res[pos.length+bi];
-      if(h&&Array.isArray(h.c))bench[b[0]]=h.c.map((c,i2)=>({d:new Date(h.t[i2]*1000).toISOString().slice(0,10),v:c})).filter(x=>x.v>0);
-    });
-    pfPerf.hist={port,bench};pfPerf.loaded=Date.now();
+    const histBy={};syms.forEach((s,i)=>{histBy[s]=res[i]});
+    const portsSer={};ports.forEach(p=>{const ser=pfpPortSeries(p.key,histBy);if(ser)portsSer[p.key]=ser});
+    if(!Object.keys(portsSer).length)throw new Error('no port history');
+    const bench={};PFP_BENCH.forEach(b=>{const h=histBy[b[0]];if(h&&Array.isArray(h.c))bench[b[0]]=h.c.map((c,i2)=>({d:new Date(h.t[i2]*1000).toISOString().slice(0,10),v:c})).filter(x=>x.v>0)});
+    pfPerf.hist={ports:portsSer,bench};pfPerf.loaded=Date.now();
   }catch(e){pfPerf.failed=true;}
   pfPerf.loading=false;
   if(isV3()&&v3Key===PF3_KEY&&pf3Tab==='list'&&!pf3Sel)renderPF3();
 }
 function pfPerfHTML(){
   const H=pfPerf.hist;
-  const ranges=[['1w',RT('1 нед','1W')],['1m',RT('1 мес','1M')],['3m',RT('3 мес','3M')],['ytd',RT('в этом году','YTD')],['1y',RT('1 год','1Y')],['3y',RT('3 года','3Y')]];
-  const btn=([k,l])=>{
-    const p=H?pfPerfPct(H.port,pfPerfFrom(k)):null;
-    return`<button class="pfp-r${pfPerf.range===k?' on':''}" onclick="pfPerfRange('${k}')">${l}<small class="${p==null?'':p>=0?'pf3-up':'pf3-down'}">${p==null?'—':(p>0?'+':'')+p.toFixed(2)+'%'}</small></button>`;
+  const ranges=[['fri',RT('с пт','since Fri')],['1m',RT('1 мес','1M')],['3m',RT('3 мес','3M')],['ytd',RT('в этом году','YTD')],['1y',RT('1 год','1Y')],['3y',RT('3 года','3Y')]];
+  const esc=s=>String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  const from=pfPerfFrom(pfPerf.range);
+  const chip=(key,name,def,ser)=>{
+    const c=pfpCol(key,def),on=pfpOn(key);
+    const p=(on&&ser)?pfPerfPct(ser,from):null;
+    return`<span class="pfp-chip${on?' on':''}" style="--c:${c}"><input type="color" class="pfp-color" value="${c}" title="${RT('цвет линии','line colour')}" onclick="event.stopPropagation()" onchange="pfPerfSetColor('${esc(key)}',this.value)"><button class="pfp-chip-b" onclick="pfPerfToggle('${esc(key)}')">${name}${p!=null?` <span class="${p>=0?'pf3-up':'pf3-down'}">${(p>0?'+':'')+p.toFixed(2)}%</span>`:''}</button></span>`;
   };
-  const cur=H?pfPerfPct(H.port,pfPerfFrom(pfPerf.range)):null;
-  const chips=PF_PERF_BENCH.map(([sym,n,c])=>{
-    const p=H&&H.bench[sym]?pfPerfPct(H.bench[sym],pfPerfFrom(pfPerf.range)):null;
-    return`<button class="pfp-chip${pfPerf.bench[sym]?' on':''}" style="--c:${c}" onclick="pfPerfBench('${sym}')"><i></i>${n}${p!=null?` <span class="${p>=0?'pf3-up':'pf3-down'}">${(p>0?'+':'')+p.toFixed(2)}%</span>`:''}</button>`;
-  }).join('');
+  const chips=pfpPorts().map(p=>chip(p.key,p.name,p.def,H&&H.ports[p.key])).join('')
+    +PFP_BENCH.map(([sym,n,def])=>chip(sym,n,def,H&&H.bench[sym])).join('');
+  const btn=([k,l])=>`<button class="pfp-r${pfPerf.range===k?' on':''}" onclick="pfPerfRange('${k}')">${l}</button>`;
   return`<section class="pf3-panel pfp">
-    <div class="pf3-panel-hd"><span>${RT('📈 Развитие портфеля','📈 Portfolio performance')} ${cur!=null?`<b class="${cur>=0?'pf3-up':'pf3-down'}">${(cur>0?'+':'')+cur.toFixed(2)}%</b>`:''}</span><span class="pfp-chips">${chips}</span></div>
+    <div class="pf3-panel-hd"><span>${RT('📈 Развитие портфелей','📈 Portfolios performance')}</span><span class="pfp-chips">${chips}</span></div>
     <div id="pfPerfBox" class="pfp-chart">${H?'':`<div class="pf3-empty">${pfPerf.loading?RT('Загружаю истории цен всех позиций…','Loading price histories…'):pfPerf.failed?RT('Не удалось загрузить истории цен','Failed to load price histories'):'…'}</div>`}</div>
     <div class="pfp-ranges">${ranges.map(btn).join('')}</div>
-    <div class="pf3-risk-note">${RT('состав портфеля считается текущим на всём периоде · бенчмарки от начала периода','assumes the current portfolio composition over the whole period · benchmarks from period start')}</div>
+    <div class="pf3-risk-note">${RT('3 портфеля + индексы · состав каждого считается текущим на периоде · старт с прошлой пятницы · клик по квадрату — цвет линии','3 portfolios + indices · current composition over the period · starts last Friday · click the swatch to recolour')}</div>
   </section>`;
 }
 function pfPerfRange(k){pfPerf.range=k;renderPF3()}
-function pfPerfBench(sym){pfPerf.bench[sym]=!pfPerf.bench[sym];renderPF3()}
 let _pfPerfChart=null;
 async function pfPerfDraw(){
   if(!(isV3()&&v3Key===PF3_KEY&&pf3Tab==='list'&&!pf3Sel))return;
@@ -3399,13 +3410,8 @@ async function pfPerfDraw(){
   const from=pfPerfFrom(pfPerf.range).toISOString().slice(0,10);
   const mk=ser=>{const sl=ser.filter(x=>x.d>=from);if(sl.length<2)return null;const b=sl[0].v;return sl.map(x=>({time:x.d,value:(x.v/b-1)*100}))};
   const fmt={type:'custom',formatter:v=>v.toFixed(1)+'%'};
-  const pd=mk(pfPerf.hist.port);
-  if(pd)chart.addLineSeries({color:'#6366f1',lineWidth:3,priceFormat:fmt}).setData(pd);
-  PF_PERF_BENCH.forEach(([sym,,c])=>{
-    if(!pfPerf.bench[sym])return;
-    const sr=pfPerf.hist.bench[sym],dd=sr&&mk(sr);
-    if(dd)chart.addLineSeries({color:c,lineWidth:1.5,priceFormat:fmt,priceLineVisible:false,lastValueVisible:false}).setData(dd);
-  });
+  pfpPorts().forEach(p=>{if(!pfpOn(p.key))return;const ser=pfPerf.hist.ports[p.key],dd=ser&&mk(ser);if(dd)chart.addLineSeries({color:pfpCol(p.key,p.def),lineWidth:2.5,priceFormat:fmt}).setData(dd);});
+  PFP_BENCH.forEach(([sym,,def])=>{if(!pfpOn(sym))return;const ser=pfPerf.hist.bench[sym],dd=ser&&mk(ser);if(dd)chart.addLineSeries({color:pfpCol(sym,def),lineWidth:1.5,priceFormat:fmt,priceLineVisible:false,lastValueVisible:false}).setData(dd);});
   chart.timeScale().fitContent();
   _pfPerfChart=chart;
 }

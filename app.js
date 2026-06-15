@@ -2743,6 +2743,30 @@ function pf3HorizonsHTML(d,r){
   };
   return`<div class="airk-hz">${HZ.map(cell).join('')}</div>`;
 }
+// Описание инструментов рекомендаций карточки (по клику на «!») — faq-оверлей.
+function recoInfoHTML(){
+  const li=s=>`<li>${s}</li>`;
+  return`<button class="faq-close" onclick="toggleFaq()">✕</button>
+  <h2>💡 ${RT('Рекомендации в карточке','Card recommendations')}</h2>
+  <div class="faq-body">
+  <p>${RT('Все инструменты рекомендаций в карточке дают вывод по <b>трём горизонтам</b>:','All card recommendation tools give a verdict across <b>three horizons</b>:')}</p>
+  <ul class="dash-bul">
+  ${li('⏱ <b>'+RT('Момент (сейчас)','Now')+'</b> — '+RT('действие по живой цене и технике: зоны входа/выхода, ближайший триггер. Падающий нож → избегать; перегрев / у сопротивления → сокращать; у уровня (SMA/поддержка) в аптренде → покупать.','live price & technicals: entry/exit zones, nearest trigger. Falling knife → avoid; overheated / at resistance → trim; at a level (SMA/support) in an uptrend → buy.'))}
+  ${li('📅 <b>'+RT('6–9 месяцев','6–9 months')+'</b> — '+RT('среднесрок: тренд, потенциал к аналит. таргету, ROE/рост, оценка. Показывает таргет и потенциал %.','mid-term: trend, upside to analyst target, ROE/growth, valuation. Shows target and upside %.'))}
+  ${li('🚀 <b>'+RT('Лонг (12+ мес)','Long (12+ mo)')+'</b> — '+RT('фундаментал (ROE, рост) и недооценка (P/E к сектору, апсайд).','fundamentals (ROE, growth) and undervaluation (P/E vs sector, upside).'))}
+  </ul>
+  <p>${RT('Горизонты могут расходиться — например «сокращать сейчас» из-за перегрева, но «покупать на лонг». Это нормально.','Horizons may diverge — e.g. «trim now» on overheating but «buy for the long run». That is expected.')}</p>
+  <p><b>${RT('Четыре инструмента','Four tools')}:</b></p>
+  <ul class="dash-bul">
+  ${li('💡 <b>'+RT('Рекомендация','Recommendation')+'</b> — '+RT('детерминированный скоринг сайта (техника + фундаментал + риск). Бесплатно, без токенов, считается всегда.','deterministic site scoring (technicals + fundamentals + risk). Free, no tokens, always computed.'))}
+  ${li('🔎 <b>'+RT('Анализ акции','Stock analysis')+'</b> — '+RT('детерминированный текстовый разбор по метрикам дашборда. Бесплатно.','deterministic written analysis from dashboard metrics. Free.'))}
+  ${li('🔄 <b>'+RT('AI-Рекомендация','AI recommendation')+'</b> — '+RT('Claude взвешивает технику, фундаментал и оценку + веб-поиск свежих новостей и макро. Платный AI-вызов на бумагу.','Claude weighs technicals, fundamentals and valuation + web search of fresh news and macro. A paid AI call per stock.'))}
+  ${li('🔬 <b>'+RT('AI-анализ акции','AI stock analysis')+'</b> — '+RT('Claude собирает цены, уровни, фундаментал и свежие новости и даёт разбор по горизонтам; сохраняется в обучающую базу 🔬 AI-разборы.','Claude gathers prices, levels, fundamentals and fresh news and analyses by horizon; saved to the 🔬 AI analyses learning base.'))}
+  </ul>
+  <p class="pf3-asof">${RT('Это справочная аналитика, а не индивидуальная инвестиционная рекомендация.','Reference analytics, not individual investment advice.')}</p>
+  </div>`;
+}
+function recoInfo(){const o=document.getElementById('faqOverlay');if(!o)return;document.getElementById('faqCard').innerHTML=recoInfoHTML();o.classList.remove('hidden');}
 // Вердикт скоринга → колонка данных «Реком. скоринг» (buy/wait/sell/avoid).
 // Worker передаёт её Claude в universe AI-портфеля как мягкий фактор.
 function pf3WriteReco(d){
@@ -2756,7 +2780,7 @@ function pf3RecoHTML(d,r){
   const sgn=x=>`${x>0?'+':''}${x.toFixed(1)}`;
   const dim=(title,score,items)=>`<div class="pf3-reco-dim"><div class="pf3-reco-dim-hd">${title} <span class="${score>0?'pf3-up':score<0?'pf3-down':''}">${sgn(score)}</span></div>${items.map(i=>`<div class="pf3-reco-it ${i.pts>0?'pos':i.pts<0?'neg':'neu'}">${i.pts>0?'▲':i.pts<0?'▼':'•'} ${i.txt}</div>`).join('')||`<div class="pf3-reco-it neu">• ${RT('нет данных','no data')}</div>`}</div>`;
   return`<section class="pf3-panel pf3-reco">
-    <div class="pf3-panel-hd"><span>${RT('💡 Рекомендация','💡 Recommendation')}</span><span class="pf3-asof">${RT('балл','score')} ${sgn(rc.total)}</span></div>
+    <div class="pf3-panel-hd"><span>${RT('💡 Рекомендация','💡 Recommendation')} <span class="dash-info-btn" onclick="event.stopPropagation();recoInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof">${RT('балл','score')} ${sgn(rc.total)}</span></div>
     <div class="pf3-reco-verdict rv-${rc.v}">${ico} ${label}<small>${rc.hint}</small></div>
     <div class="pf3-reco-hz-l">${RT('По горизонтам','By horizon')}</div>
     ${pf3HorizonsHTML(d,r)}

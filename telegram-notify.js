@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16learn2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16aiperf';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -845,6 +845,8 @@ const AIPORT_SYSTEM = `Ты — автономный портфельный уп
 
 ПЛЕЙБУК И ПРАВИЛА. Если переданы playbook (методичка «как обгонять индекс»: качество+моментум, дисциплина входа/оценки, сайзинг, риск, не резать победителей) и investorRules (личные правила инвестора) — это твоя СТРАТЕГИЧЕСКАЯ РАМКА: применяй их строго, они приоритетнее общих эвристик. Каждое решение должно быть согласовано с плейбуком и правилами.
 
+ТВОЙ РЕЗУЛЬТАТ vs ИНДЕКСЫ (самооценка). В поле performance — твоя доходность с даты старта (portfolioReturnPct) и сравнение с эталонами (vsIndex: indexReturnPct и alphaPct = твоя доходность минус индекс). Это твоя главная оценка. Если по большинству индексов alphaPct < 0 — ты ОТСТАЁШЬ: критически пересмотри подход (качество отбора, тайминг входов, концентрация, доля кэша, не передерживаешь ли проигравших) и сделай осмысленный шаг к улучшению — но без паники и переторговли. Если обгоняешь (alphaPct > 0) — закрепляй работающее, не ломай его лишними сделками. В note кратко отметь, обгоняешь ты индексы или отстаёшь, и что корректируешь.
+
 Правила:
 - Торгуй ТОЛЬКО тикерами из universe или из своих позиций.
 - Торгуй ТОЛЬКО бумагами, чей рынок сейчас ОТКРЫТ — смотри marketsOpen по валюте бумаги (true = биржа торгует). Решения по закрытым рынкам будут отклонены исполнением.
@@ -1006,6 +1008,23 @@ async function aiPortfolioReset(env){
   return 'AI портфель обнулён ✓ Счёт 300 000 kr, настройки сохранены. Нажмите ▶ или ждите следующего тика крона.';
 }
 
+// Результат AI-портфеля с начала vs эталонные индексы (для самооценки бота).
+// Тянет дневные закрытия ^OMX/^NDX/^GSPC и считает их доходность с даты старта.
+async function aipBenchmarks(env, startMs){
+  const startDate = new Date(startMs).toISOString().slice(0, 10);
+  const out = [];
+  await Promise.all([['^OMX', 'OMXS30'], ['^NDX', 'Nasdaq 100'], ['^GSPC', 'S&P 500']].map(async ([sym, name]) => {
+    try{
+      const h = await dailyHistory(sym, '2y');
+      if(!h || !Array.isArray(h.t) || !Array.isArray(h.c)) return;
+      let i0 = null;
+      for(let i = 0; i < h.t.length; i++){ const d = new Date(h.t[i] * 1000).toISOString().slice(0, 10); if(h.c[i] != null && d >= startDate){ i0 = h.c[i]; break; } }
+      let last = null; for(let i = h.c.length - 1; i >= 0; i--){ if(h.c[i] != null){ last = h.c[i]; break; } }
+      if(i0 > 0 && last > 0) out.push({ index: name, returnPct: Math.round((last / i0 - 1) * 1000) / 10 });
+    }catch(e){}
+  }));
+  return out;
+}
 async function aiPortfolioRun(env, force){
   if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
   const row = await loadRow(env);
@@ -1079,6 +1098,16 @@ async function aiPortfolioRun(env, force){
     playbook: Array.isArray(snap.aiPlaybook) ? snap.aiPlaybook : [],   // 📚 методичка «как обгонять индекс»
     investorRules: Array.isArray(snap.aiPrefs) ? snap.aiPrefs : [],    // 🧠 правила инвестора
   };
+  // 🆚 Самооценка: результат портфеля с начала vs индексы (alpha = обгон/отставание).
+  try{
+    const portReturnPct = ap.startCapital > 0 ? Math.round((equity / ap.startCapital - 1) * 1000) / 10 : null;
+    const benches = await aipBenchmarks(env, ap.startedAt);
+    payload.performance = {
+      sinceStart: new Date(ap.startedAt).toISOString().slice(0, 10),
+      portfolioReturnPct: portReturnPct,
+      vsIndex: benches.map(b => ({ index: b.index, indexReturnPct: b.returnPct, alphaPct: portReturnPct != null ? Math.round((portReturnPct - b.returnPct) * 10) / 10 : null })),
+    };
+  }catch(e){}
   // Вердикты скоринга по тикерам — для жёсткой проверки на исполнении.
   // Пустой сохранённый вердикт добиваем автономным расчётом worker'а — щель
   // «вкладка давно не обновлялась на сайте» закрыта.

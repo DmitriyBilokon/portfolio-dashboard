@@ -237,6 +237,12 @@ grp('rbac resolve', function(){
   __ok('legacy no run_ai', rbacResolve(null, {}, 'action.run_ai') === false);
   __ok('legacy shows amounts', rbacResolve(null, {}, 'data.show_amounts') === true);
   __ok('viewer hides amounts', rbacResolve('viewer', {}, 'data.show_amounts') === false);
+  // карточка: пользователи видят оценку/инсайдеров/AI-реко (результат), без запуска AI
+  __ok('legacy sees valuation', rbacResolve(null, {}, 'view.valuation') === true);
+  __ok('legacy sees insider', rbacResolve(null, {}, 'view.insider') === true);
+  __ok('legacy sees ai_reco', rbacResolve(null, {}, 'view.ai_reco') === true);
+  __ok('legacy cannot run AI', rbacResolve(null, {}, 'action.run_ai') === false);
+  __ok('analyst sees valuation', rbacResolve('analyst', {}, 'view.valuation') === true);
 });
 
 grp('plan triggers', function(){

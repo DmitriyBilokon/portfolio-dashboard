@@ -516,6 +516,7 @@ const RT=(ru,en)=>LANG==='en'?en:ru;   // для строк с подстано�
 // Каталог управляемых пермишенов (раздел 3 ТЗ). Определён после RT (использует его).
 const RBAC_PERMS=[
   {g:RT('Вкладки','Tabs'),items:[['view.portfolio',RT('Портфель','Portfolio')],['view.sectors',RT('Сектора','Sectors')],['view.type',RT('Тип','Type')],['view.diversification',RT('Диверсификация','Diversification')],['view.forecast',RT('Прогноз','Forecast')],['view.plan',RT('План','Plan')],['view.trades',RT('Сделки','Trades')],['view.dividends',RT('Дивиденды','Dividends')],['view.health',RT('Состояние портфеля','Health')],['view.ai_proto','AI Proto'],['view.suggestion',RT('Предложение','Suggestion')],['view.ai_portfolio',RT('AI-Портфель (просмотр)','AI Portfolio (view)')]]},
+  {g:RT('Карточка акции','Stock card'),items:[['view.valuation',RT('Оценка (мультипликаторы)','Valuation (multiples)')],['view.insider',RT('Инсайдеры','Insiders')],['view.ai_reco',RT('AI-Рекомендация (просмотр)','AI recommendation (view)')]]},
   {g:RT('Действия','Actions'),items:[['action.add_position',RT('Добавлять/удалять позиции','Add/remove positions')],['action.edit_trades',RT('Вносить сделки','Edit trades')],['action.edit_plan',RT('Менять план','Edit plan')],['action.run_ai',RT('Запуск AI (тратит бюджет)','Run AI (spends budget)')],['action.chat_ai',RT('Чат с AI','AI chat')],['action.refresh_data',RT('Обновлять данные','Refresh data')],['action.manage_users',RT('Управление доступом','Manage access')]]},
   {g:RT('Данные','Data'),items:[['data.show_amounts',RT('Суммы в kr','Amounts (kr)')],['data.show_leverage',RT('Кредитное плечо','Leverage')],['data.show_ai_cost',RT('AI-расходы','AI cost')],['data.show_trades_pnl',RT('P&L по сделкам','Trades P&L')]]},
 ];
@@ -524,12 +525,12 @@ const RBAC_ALL=RBAC_PERMS.reduce((a,g)=>a.concat(g.items.map(i=>i[0])),[]);
 const RBAC_ROLES={
   admin:'*',
   owner:new Set(RBAC_ALL.filter(p=>p!=='action.manage_users')),
-  editor:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.add_position','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
-  analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','view.ai_portfolio','action.refresh_data','data.show_amounts']),
+  editor:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','view.valuation','view.insider','view.ai_reco','action.add_position','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
+  analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','view.ai_portfolio','view.valuation','view.insider','view.ai_reco','action.refresh_data','data.show_amounts']),
   viewer:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.dividends','action.refresh_data']),
   // legacy = неявный дефолт для ненастроенных не-админов: РОВНО текущее поведение
   // (видит обычные вкладки, торгует/правит план свой портфель, без add-тикера и AI).
-  legacy:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
+  legacy:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','view.valuation','view.insider','view.ai_reco','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
 };
 const RBAC_ROLE_LABELS={'default':RT('По умолч.','Default'),admin:'Admin',owner:'Owner',editor:'Editor',analyst:'Analyst',viewer:'Viewer',custom:'Custom'};
 let ACCESS={roleId:null,overrides:{}};   // текущего пользователя (из user_access)
@@ -2293,7 +2294,8 @@ function aiRecoHTML(d,r){
   const tk=String(r[2]||'').toUpperCase();
   const loading=_aiRecoLoading===tk;
   const v=AI_RECO[tk];
-  const btn=`<button class="pf3-btn pf3-btn-sm" onclick="aiRecoRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`;
+  const canRun=can('action.run_ai');   // кнопку запуска видит только тот, кому можно тратить AI; результат — по view.ai_reco
+  const btn=canRun?`<button class="pf3-btn pf3-btn-sm" onclick="aiRecoRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`:'';
   const hd=`<div class="pf3-panel-hd"><span>🔄 ${RT('AI-Рекомендация','AI recommendation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at)+(v.cost?' · '+costUsd(v.cost):''):''}</span>${btn}</div>`;
   let body;
   if(loading)body=`<div class="stkai-load">⏳ ${RT('Анализирую: техника, фундаментал, новости и мировой контекст… (до минуты)','Analysing: technicals, fundamentals, news and global context… (up to a minute)')}</div>`;
@@ -2321,7 +2323,7 @@ function aiRecoHTML(d,r){
       ${risks}
       <button class="stkai-toggle" onclick="aiRecoToggle('${tk}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
       ${open?`<div class="pf3-ai-report">${pf3Md(v.text)}</div>`:''}`;
-  }else body=`<div class="pf3-empty">${RT('Нажмите «🔄 AI-Рекомендация» — Claude взвесит технику, фундаментал, оценку, свежие новости и мировую ситуацию и даст единый вердикт. Детерминированный скоринг «Рекомендация» выше остаётся как есть.','Press «🔄 AI recommendation» — Claude weighs technicals, fundamentals, valuation, fresh news and the global picture into one verdict. The deterministic «Рекомендация» score above stays as is.')}</div>`;
+  }else body=`<div class="pf3-empty">${canRun?RT('Нажмите «🔄 AI-Рекомендация» — Claude взвесит технику, фундаментал, оценку, свежие новости и мировую ситуацию и даст единый вердикт. Детерминированный скоринг «Рекомендация» выше остаётся как есть.','Press «🔄 AI recommendation» — Claude weighs technicals, fundamentals, valuation, fresh news and the global picture into one verdict. The deterministic «Рекомендация» score above stays as is.'):RT('AI-Рекомендация по этой бумаге ещё не сформирована.','No AI recommendation for this stock yet.')}</div>`;
   return`<section class="pf3-panel">${hd}${body}</section>`;
 }
 
@@ -5308,10 +5310,10 @@ function pf3DetailHTML(){
     </section>
     ${pf3RecoHTML(d,r)}
     ${stockReportHTML(d,r)}
-    ${isAdmin()?aiRecoHTML(d,r):''}
+    ${can('view.ai_reco')?aiRecoHTML(d,r):''}
     ${isAdmin()?stockAiHTML(d,r):''}
-    ${isAdmin()?valHTML(d,r):''}
-    ${isAdmin()?insiderHTML(d,r):''}
+    ${can('view.valuation')?valHTML(d,r):''}
+    ${can('view.insider')?insiderHTML(d,r):''}
     <section class="pf3-panel">
       <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>
       <div class="pf3-health-grid" id="pf3HealthGrid">${pf3Health()}</div>

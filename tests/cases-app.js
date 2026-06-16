@@ -113,6 +113,22 @@ grp('snapshotState keys', function(){
 });
 
 // 9b) 🎯 План действий: planStatus — направление триггера (buy ≤ / sell ≥) и дедлайн
+// 9d) 📐 Valuation: EPS-тренд (fwd vs ttm) и позиция на шкале
+grp('valuation eps & scale', function(){
+  // MU-кейс: trailing 46, forward ~10 → forward сильно дешевле → EPS растёт
+  __eq('fwd<<ttm → EPS up', valEpsTrend(46, 10), 'up');
+  // forward дороже trailing → EPS падает (риск value-trap)
+  __eq('fwd>>ttm → EPS down', valEpsTrend(10, 46), 'down');
+  __eq('fwd≈ttm → flat', valEpsTrend(20, 21), 'flat');
+  __ok('no data → null', valEpsTrend(0, 10) === null);
+  // шкала: значение = медиане → центр 50%; дешевле → левее; дороже → правее (клампы)
+  __eq('at median → 50%', valScalePos(20, 20), 50);
+  __eq('10% cheap → 40%', valScalePos(18, 20), 40);
+  __eq('2x rich → 100% (clamp)', valScalePos(40, 20), 100);
+  __eq('0.1x → 0% (clamp)', valScalePos(2, 20), 0);
+  __ok('no ref → null', valScalePos(20, 0) === null);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

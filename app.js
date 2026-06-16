@@ -329,6 +329,7 @@ function aiBenchmarks(){
 let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
 let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
 let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
+let valPeMode='fwd';   // 📐 карточка оценки: forward | trailing(ttm) для P/E
 let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
@@ -4326,11 +4327,12 @@ async function valUpdateAll(){
 }
 // Сравнение бумаги: дисконт/премия к медиане сектора и к собственной истории по
 // каждому мультипликатору; «дёшево по обоим» — ниже сектора И ниже истории.
-function valCmp(v,secMed){
+function valCmp(v,secMed,peMode){
   if(!v)return null;
   const BAND=10;   // ±% полоса «на уровне»
+  const peCur=(peMode==='ttm')?(v.pe||v.fwdPe):(v.fwdPe||v.pe);
   const dims=[
-    {k:'pe',label:'P/E',cur:v.fwdPe||v.pe,sec:secMed&&(secMed.fwdPe||secMed.pe),hist:(v.hist&&(v.hist.pe5||v.hist.pe3))||null},
+    {k:'pe',label:'P/E',cur:peCur,sec:secMed&&(secMed.fwdPe||secMed.pe),hist:(v.hist&&(v.hist.pe5||v.hist.pe3))||null},
     {k:'ps',label:'P/S',cur:v.ps,sec:secMed&&secMed.ps,hist:(v.hist&&(v.hist.ps5||v.hist.ps3))||null},
     {k:'ev',label:'EV/EBITDA',cur:v.evEbitda,sec:secMed&&secMed.evEbitda,hist:(v.hist&&(v.hist.ev5||v.hist.ev3))||null},
   ];
@@ -4347,6 +4349,32 @@ function valCmp(v,secMed){
   return{dims,bothCount,detail:parts.length?`${parts.join(', ')}: ниже медианы сектора и собственной истории`:''};
 }
 function valChip(pct){if(pct==null)return'<span class="val-na">—</span>';const cheap=pct<=-10,rich=pct>=10;const cls=cheap?'pf3-up':(rich?'pf3-down':'val-mid');return`<span class="${cls}">${pct>=0?'+':''}${pct.toFixed(0)}%</span>`}
+function valSetPeMode(m){valPeMode=m;renderPF3();}
+// EPS-тренд из forward vs trailing P/E: fwdPe>pe ⇒ EPS ожидаемо ПАДАЕТ (forward
+// дороже), fwdPe<pe ⇒ EPS РАСТЁТ. Чистая функция — покрыта тестом.
+function valEpsTrend(pe,fwdPe){
+  if(!(pe>0&&fwdPe>0))return null;
+  return fwdPe>pe*1.1?'down':fwdPe<pe*0.9?'up':'flat';
+}
+// Позиция значения на шкале «дёшево ↔ дорого»: ref (медиана сектора) = центр 50%.
+// [0.5×..1.5× от ref] линейно → [0..100%]. null, если нет данных.
+function valScalePos(value,ref){
+  if(!(value>0&&ref>0))return null;
+  const r=Math.max(0.5,Math.min(1.5,value/ref));
+  return (r-0.5)*100;
+}
+// Полоса-шкала: центр = медиана сектора, засечка — 5y история, точка — текущее.
+function valScaleBar(cur,sec,hist){
+  const pCur=valScalePos(cur,sec);
+  if(pCur==null)return'<span class="val-na">—</span>';
+  const pHist=valScalePos(hist,sec);
+  const cls=cur<sec*0.9?'cheap':cur>sec*1.1?'rich':'mid';
+  return`<span class="val-scale">
+    <span class="val-scale-mid"></span>
+    ${pHist!=null?`<span class="val-scale-hist" style="left:${pHist}%" title="${RT('5y история','5y history')}: ${valFmt(hist)}"></span>`:''}
+    <span class="val-scale-dot ${cls}" style="left:${pCur}%"></span>
+  </span>`;
+}
 // Панель Valuation Check в карточке акции.
 function valHTML(d,r){
   const tk=String(r[2]||'').trim().toUpperCase();
@@ -4355,24 +4383,36 @@ function valHTML(d,r){
   if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))
     return`<section class="pf3-panel">${hd}<div class="pf3-empty">${v?RT('Нет данных по мультипликаторам для этой бумаги.','No multiples data for this stock.'):RT('Нажмите «📐 Оценка» на 🏠 Home — соберём мультипликаторы по всему портфелю.','Press «📐 Valuation» on 🏠 Home to pull multiples across the portfolio.')}</div></section>`;
   const secMed=(_valSecCache||valSectorMedians())[v.sector]||null;
-  const c=valCmp(v,secMed);
+  const c=valCmp(v,secMed,valPeMode);
+  const eps=valEpsTrend(v.pe,v.fwdPe);   // EPS-тренд по forward vs trailing
+  const epsLbl={down:'EPS ↓',up:'EPS ↑',flat:'EPS ='};
+  const peToggle=(v.pe>0&&v.fwdPe>0)?`<span class="val-toggle">${[['fwd','Fwd'],['ttm','TTM']].map(([m,l])=>`<button class="val-tg-b${valPeMode===m?' on':''}" onclick="valSetPeMode('${m}')">${l}</button>`).join('')}</span>`:'';
   const rowsHTML=c.dims.map(dm=>{
     if(!(dm.cur>0))return'';
-    return`<tr><td class="val-l">${dm.label}</td><td>${valFmt(dm.cur)}</td><td>${dm.sec>0?valFmt(dm.sec)+' '+valChip(dm.secPct):'<span class="val-na">—</span>'}</td><td>${dm.hist>0?valFmt(dm.hist)+' '+valChip(dm.histPct):'<span class="val-na">—</span>'}</td></tr>`;
+    const isPe=dm.k==='pe';
+    return`<tr>
+      <td class="val-l">${dm.label}${isPe&&eps?` <span class="val-eps val-eps-${eps}" title="${RT('EPS-тренд: forward vs trailing P/E','EPS trend: forward vs trailing P/E')}">${epsLbl[eps]}</span>`:''}</td>
+      <td class="val-cur">${valFmt(dm.cur)}${isPe&&peToggle?' '+peToggle:''}</td>
+      <td class="val-scale-td">${valScaleBar(dm.cur,dm.sec,dm.hist)}</td>
+      <td>${dm.sec>0?valChip(dm.secPct):'<span class="val-na">—</span>'}</td>
+      <td>${dm.hist>0?valChip(dm.histPct):'<span class="val-na">—</span>'}</td>
+    </tr>`;
   }).join('');
-  // Доп. строки без сравнения по секции (Forward P/E уже учтён в P/E; PEG отдельно).
   const extra=[];
-  if(v.pe&&v.fwdPe)extra.push(`Forward P/E <b>${valFmt(v.fwdPe)}</b> · TTM ${valFmt(v.pe)}`);
   if(v.peg)extra.push(`PEG <b>${valFmt(v.peg)}</b>${v.peg<1?' · <span class="pf3-up">'+RT('рост недооценён','growth underpriced')+'</span>':''}`);
-  const both=c.bothCount>=2?`<div class="val-both">🟢 ${RT('Дёшево по обоим измерениям','Cheap on both dimensions')} · ${c.bothCount}/3 ${RT('мультипл.','multiples')}</div>`:'';
-  const caveat=both?`<div class="val-caveat">⚠️ ${RT('Низкие мультипликаторы часто бывают на пике цикла (прибыль временно завышена). Это статистическое наблюдение, не сигнал к покупке.','Low multiples often occur at the cycle peak (temporarily inflated earnings). A statistical observation, not a buy signal.')}</div>`:'';
+  // value-trap: дёшево к сектору, но прогноз EPS снижается (forward дороже TTM).
+  const cheapDim=c.dims.find(dm=>dm.belowSec);
+  const trap=(cheapDim&&eps==='down')?`<div class="val-trap">⚠️ ${RT(`Возможная «ловушка стоимости»: ${cheapDim.label} ниже сектора, но прогноз EPS снижается (forward P/E ${valFmt(v.fwdPe)} > TTM ${valFmt(v.pe)}). Дешевизна может быть оправданной — типично для пика цикла.`,`Possible value trap: ${cheapDim.label} is below sector, but EPS estimates are falling (forward P/E ${valFmt(v.fwdPe)} > TTM ${valFmt(v.pe)}). The discount may be justified — typical at a cycle peak.`)}</div>`:'';
+  const both=c.bothCount>=2?`<div class="val-both">🟢 ${RT('Дёшево по обоим измерениям','Cheap on both dimensions')} · ${c.bothCount}/3 ${RT('мультипл.','multiples')}${eps==='up'?` · <span class="pf3-up">${epsLbl.up}</span>`:''}</div>`:'';
+  const caveat=both&&!trap?`<div class="val-caveat">⚠️ ${RT('Низкие мультипликаторы часто бывают на пике цикла (прибыль временно завышена). Это статистическое наблюдение, не сигнал к покупке.','Low multiples often occur at the cycle peak (temporarily inflated earnings). A statistical observation, not a buy signal.')}</div>`:'';
   return`<section class="pf3-panel">${hd}
     ${v.sector?`<div class="val-sec">${RT('Сектор','Sector')}: <b>${v.sector}</b>${secMed&&secMed.n?` · ${RT('медиана по','median of')} ${secMed.n} ${RT('бум.','co.')}`:''}</div>`:''}
     ${both}
-    <table class="val-tbl"><thead><tr><th></th><th>${RT('тек.','now')}</th><th>${RT('сектор','sector')}</th><th>${RT('история 5y','5y hist')}</th></tr></thead><tbody>${rowsHTML}</tbody></table>
+    <table class="val-tbl val-tbl2"><thead><tr><th></th><th>${RT('тек.','now')}</th><th class="val-scale-h">${RT('дёшево','cheap')} ◂ ${RT('медиана','median')} ▸ ${RT('дорого','rich')}</th><th>${RT('сектор','sector')}</th><th>5y</th></tr></thead><tbody>${rowsHTML}</tbody></table>
     ${extra.length?`<div class="val-extra">${extra.map(e=>`<span>${e}</span>`).join('')}</div>`:''}
+    ${trap}
     ${caveat}
-    <div class="pf3-ai-note">${RT('Yahoo (живые мультипл.) + FMP (история). Finnhub /metric — US-only, не используется. n/a при EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), росте≤0 (PEG).','Yahoo (live multiples) + FMP (history). Finnhub /metric is US-only, unused. n/a when EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), growth≤0 (PEG).')}</div>
+    <div class="pf3-ai-note">${RT('Шкала: центр = медиана сектора, засечка — 5y история бумаги, точка — текущее значение. Yahoo (живые) + FMP (история). n/a при EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), росте≤0 (PEG).','Scale: center = sector median, tick = stock 5y history, dot = current. Yahoo (live) + FMP (history). n/a when EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), growth≤0 (PEG).')}</div>
   </section>`;
 }
 

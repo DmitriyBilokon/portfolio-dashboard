@@ -1239,3 +1239,25 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .plan-edit-form{margin:0}
 .tg-old{opacity:.55;text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--text3) 60%,transparent)}
 .tg-old .pf3-down,.tg-old b{text-decoration:none}
+
+/* 📐 Valuation Check — шкалы «дёшево↔дорого», fwd/trailing, EPS-тренд, value-trap */
+.val-tbl2 td{vertical-align:middle}
+.val-cur{font-variant-numeric:tabular-nums;white-space:nowrap}
+.val-scale-td{width:130px;min-width:110px}
+.val-scale-h{font-size:10px;color:var(--text3);font-weight:600;text-align:center;white-space:nowrap}
+.val-scale{position:relative;display:block;height:14px;border-radius:7px;background:linear-gradient(90deg,color-mix(in srgb,var(--green-t) 22%,transparent),color-mix(in srgb,var(--text3) 14%,transparent) 50%,color-mix(in srgb,var(--red-t) 22%,transparent))}
+.val-scale-mid{position:absolute;left:50%;top:-1px;bottom:-1px;width:1.5px;background:color-mix(in srgb,var(--text3) 55%,transparent);transform:translateX(-50%)}
+.val-scale-hist{position:absolute;top:50%;width:7px;height:7px;border:1.5px solid var(--text2);border-radius:50%;background:var(--card);transform:translate(-50%,-50%)}
+.val-scale-dot{position:absolute;top:50%;width:11px;height:11px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px var(--card)}
+.val-scale-dot.cheap{background:var(--green-t)}
+.val-scale-dot.rich{background:var(--red-t)}
+.val-scale-dot.mid{background:var(--text2)}
+.val-toggle{display:inline-flex;gap:0;margin-left:4px;border:1px solid var(--border);border-radius:6px;overflow:hidden;vertical-align:middle}
+.val-tg-b{font-size:10px;padding:1px 6px;background:transparent;color:var(--text3);border:none;cursor:pointer;line-height:1.6}
+.val-tg-b.on{background:var(--accent);color:#fff}
+.val-eps{font-size:10px;font-weight:700;padding:0 5px;border-radius:999px;white-space:nowrap}
+.val-eps-down{color:var(--red-t);background:color-mix(in srgb,var(--red-t) 14%,transparent)}
+.val-eps-up{color:var(--green-t);background:color-mix(in srgb,var(--green-t) 14%,transparent)}
+.val-eps-flat{color:var(--text3);background:color-mix(in srgb,var(--text3) 14%,transparent)}
+.val-trap{margin-top:8px;padding:7px 10px;font-size:12px;border-radius:9px;color:var(--text);background:color-mix(in srgb,var(--gold,#e8b339) 14%,transparent);border:1px solid color-mix(in srgb,var(--gold,#e8b339) 45%,var(--border))}
+@media(max-width:600px){.val-scale-td{width:84px;min-width:72px}.val-scale-h{font-size:9px}}

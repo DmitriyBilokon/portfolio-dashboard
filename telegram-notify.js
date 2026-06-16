@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16courtage';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16forecast';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1490,6 +1490,38 @@ async function recoAnalyze(env, body){
   return { text: raw, verdict, data, cost: aiCost(j) };
 }
 
+// ── 🔮 AI-прогноз стоимости портфеля на 3 горизонта (web_search) ──
+const FORECAST_SYSTEM = `Ты — AI Proto, аналитическая модель инвестиционного дашборда частного инвестора из Швеции (база SEK). Задача — спрогнозировать ВОЗМОЖНУЮ доходность каждой позиции портфеля на ТРИ горизонта: 3 месяца (h3), 6–9 месяцев (h69), 12+ месяцев (h12).
+
+ОБЯЗАТЕЛЬНО используй web_search по ключевым позициям: консенсус-таргеты аналитиков и их свежие пересмотры, прогнозы выручки/прибыли, гайденс, отчёты, катализаторы, отраслевой и макрофон. Бюджет поиска ограничен (~90 сек): несколько ТОЧЕЧНЫХ запросов по самым важным/крупным позициям, затем сведи; по остальным опирайся на переданные метрики и свои знания.
+
+Для каждой бумаги дай ОЖИДАЕМУЮ доходность ЦЕНЫ В ПРОЦЕНТАХ к текущей цене на каждый горизонт (например +8 = ждёшь цену на 8% выше текущей; отрицательные значения допустимы). Это РЕАЛИСТИЧНЫЙ базовый сценарий, не максимум: взвешивай оценку (потенциал к таргету, мультипликаторы), тренд/технику, риск и тип бумаги. Горизонты согласованы по нарастающей по модулю (обычно |h12| ≥ |h69| ≥ |h3|), если нет особой причины. Если оснований для движения нет — близко к 0. Если переданы playbook — учитывай его принципы.
+
+В note по каждой бумаге — 1 короткая фраза: главный драйвер/риск. В summary — 1–2 предложения об ожидаемой динамике портфеля.
+
+Ответ — СТРОГО ОДИН блок ${FENCE}json … ${FENCE} по схеме (только тикеры из переданного портфеля, h-поля — числа):
+{"stocks":[{"ticker":"MU","h3":6,"h69":12,"h12":20,"note":"…"}],"horizons":{"h3":5,"h69":9,"h12":15},"summary":"…"}
+Это аналитическая оценка, не гарантия и не индивидуальная инвестиционная рекомендация.`;
+async function forecastGen(env, body){
+  const today = new Date().toISOString().slice(0, 10);
+  if(body && typeof body === 'object') body.liveMarkets = await liveMarkets().catch(() => []);
+  const j = await anthropicRun(env, {
+    model: aiModel('reco'),
+    max_tokens: 6000,
+    thinking: { type: 'adaptive' },
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    system: FORECAST_SYSTEM,
+    messages: [{ role: 'user', content: 'Сегодня ' + today + '. Портфель и контекст (JSON):\n' + JSON.stringify(body || {}) }],
+  });
+  let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  let fc = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){ const rest = raw.slice(i + FENCE.length + 4); const end = rest.indexOf(FENCE); if(end >= 0){ try{ fc = JSON.parse(rest.slice(0, end).trim()); }catch(e){} } }
+  if(!fc){ try{ fc = JSON.parse(raw); }catch(e){} }
+  if(!fc || !Array.isArray(fc.stocks)) throw new Error('Пустой/некорректный ответ прогноза');
+  return { forecast: fc, cost: aiCost(j) };
+}
+
 // ── 📊 AI-Dashboard: AI Proto формирует набор карточек с самой полезной
 // информацией для портфеля (web_search свежих новостей/макро + память правил).
 const DASH_SYSTEM = `Ты — AI Proto, главная аналитическая модель этого инвестиционного дашборда (частный инвестор из Швеции, базовая валюта SEK). Твоя сверхзадача — помогать портфелю опережать эталонные индексы (OMXS30, Nasdaq 100, S&P 500).
@@ -1992,6 +2024,15 @@ export default {
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{ const b = await request.json(); return streamJson(() => recoAnalyze(env, b)); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'forecast'){
+      // POST снапшот портфеля → AI-прогноз стоимости на 3 горизонта (web_search).
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ const b = await request.json(); return streamJson(() => forecastGen(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'aipreset'){

@@ -1178,3 +1178,8 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .fc-flat{color:var(--text3);cursor:help}
 .fc-tot{font-weight:700;border-bottom:none;background:color-mix(in srgb,var(--bg3) 50%,transparent);border-radius:8px;margin-top:4px}
 .fc-net{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+
+/* 🔮 Прогноз: сценарии + AI */
+.fc-scn{margin:2px 0 8px}
+.fc-ai{margin-top:14px;border-top:1px dashed var(--border);padding-top:6px}
+.fc-ai-hd{margin-top:8px;flex-wrap:wrap;gap:8px}

@@ -3136,23 +3136,33 @@ function pf3WriteReco(d){
   const c=ensurePFCol(d,'Реком. скоринг');
   d.rows.forEach(r=>{try{r[c]=pf3Reco(d,r).v}catch(e){}});
 }
-// 🔮 Прогноз стоимости позиций и портфеля на 3 горизонта. Проекция цены строится
-// от консенсус-таргета аналитиков (pf3EffTarget): плавный путь ~⅓ за 3 мес, ~⅔ за
-// 6–9 мес, полный таргет за 12+ мес. Бумаги без таргета — без изменения (flat).
+// 🔮 Прогноз стоимости позиций и портфеля на 3 горизонта.
+// Ожидаемая 12-мес доходность бумаги: от таргета аналитиков, иначе от фундаментала
+// (рост выручки / ROE). Сценарий сдвигает её на ±band. Горизонты — доля пути.
+let pf3FcastScn='base';   // 'pess' | 'base' | 'opt'
+function pf3FcastSetScn(s){pf3FcastScn=s;renderPF3()}
+function pf3Fcast12(d,r){
+  const cur=parseFloat(r[7])||0,tgt=pf3EffTarget(d,r).target,cl=(x,a,b)=>Math.max(a,Math.min(b,x));
+  if(tgt>0&&cur>0)return{e:(tgt/cur-1)*100,src:'tgt'};
+  const m=pf3TypeMetrics(d,r);
+  if(m.revg!=null)return{e:cl(m.revg,-20,30),src:'fund'};
+  if(m.roe!=null&&m.roe>0)return{e:cl(m.roe*0.5,0,15),src:'fund'};
+  return{e:0,src:'flat'};
+}
 function pf3ForecastHTML(){
   const d=pf3D();
   const HZ=[['3 '+RT('мес','m'),0.33],[RT('6–9 мес','6–9m'),0.66],[RT('12+ мес','12m+'),1.0]];
+  const SCN=[['pess','📉 '+RT('Пессим.','Pess.'),-1],['base','📊 '+RT('База','Base'),0],['opt','📈 '+RT('Оптим.','Opt.'),1]];
+  if(!SCN.some(s=>s[0]===pf3FcastScn))pf3FcastScn='base';
+  const dir=(SCN.find(s=>s[0]===pf3FcastScn)||[])[2]||0;
   let curStocks=0;const sumH=[0,0,0],rows=[];
   d.rows.forEach((r,i)=>{
     const qty=parseFloat(r[6])||0;if(!(qty>0))return;
     recalcPF(i,v3Key);
-    const cur=parseFloat(r[7])||0,valSEK=parseFloat(r[13])||0,tgt=pf3EffTarget(d,r).target;
-    const has=tgt>0&&cur>0;curStocks+=valSEK;
-    const cells=HZ.map((hz,hi)=>{
-      const ratio=has?(cur+(tgt-cur)*hz[1])/cur:1,v=valSEK*ratio;
-      sumH[hi]+=v;return{v,pct:(ratio-1)*100,has};
-    });
-    rows.push({name:String(r[1]||r[2]||''),tk:String(r[2]||''),valSEK,cells,has});
+    const valSEK=parseFloat(r[13])||0;curStocks+=valSEK;
+    const f12=pf3Fcast12(d,r),band=Math.max(18,Math.abs(f12.e)*0.8),e=f12.e+dir*band;
+    const cells=HZ.map((hz,hi)=>{const ratio=1+(e/100)*hz[1],v=valSEK*ratio;sumH[hi]+=v;return{v,pct:(ratio-1)*100}});
+    rows.push({name:String(r[1]||r[2]||''),tk:String(r[2]||''),valSEK,cells,src:f12.src});
   });
   if(!rows.length)return`<section class="pf3-panel"><div class="pf3-empty">${RT('Нет позиций для прогноза','No positions to forecast')}</div></section>`;
   rows.sort((a,b)=>b.valSEK-a.valSEK);
@@ -3160,22 +3170,66 @@ function pf3ForecastHTML(){
   const cls=p=>p>=0?'pf3-up':'pf3-down';
   const pctTxt=p=>`<small class="${cls(p)}">${p>=0?'+':''}${p.toFixed(1)}%</small>`;
   const tpl='grid-template-columns:minmax(120px,1.6fr) repeat(4,minmax(74px,1fr))';
+  const srcMark={tgt:'',fund:` <span class="fc-flat" title="${RT('прогноз по фундаменталу (рост выручки/ROE)','fundamental projection (revenue growth/ROE)')}">ƒ</span>`,flat:` <span class="fc-flat" title="${RT('нет данных — без изменения','no data — held flat')}">≈</span>`};
   const head=`<div class="fc-row fc-head" style="${tpl}"><span>${RT('Акция','Stock')}</span><span class="fc-r">${RT('Сейчас','Now')}</span>${HZ.map(h=>`<span class="fc-r">${h[0]}</span>`).join('')}</div>`;
   const rowHtml=rows.map(x=>`<div class="fc-row" style="${tpl}">
-    <span class="fc-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span>${x.has?'':` <span class="fc-flat" title="${RT('нет таргета — без изменения','no target — held flat')}">≈</span>`}</span>
+    <span class="fc-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span>${srcMark[x.src]||''}</span>
     <span class="fc-r">${pf3Money(d,x.valSEK)}</span>
-    ${x.cells.map(c=>`<span class="fc-r">${pf3Money(d,c.v)}${c.has?'<br>'+pctTxt(c.pct):''}</span>`).join('')}
+    ${x.cells.map(c=>`<span class="fc-r">${pf3Money(d,c.v)}<br>${pctTxt(c.pct)}</span>`).join('')}
   </div>`).join('');
   const totRow=(label,nowV,hVals,extra)=>`<div class="fc-row fc-tot${extra||''}" style="${tpl}">
     <span class="fc-name">${label}</span>
     <span class="fc-r">${pf3Money(d,nowV)}</span>
     ${hVals.map(v=>`<span class="fc-r">${pf3Money(d,v)}<br>${pctTxt(nowV>0?(v/nowV-1)*100:0)}</span>`).join('')}
   </div>`;
+  const scnBtns=SCN.map(s=>`<button class="pf3-hz-b${pf3FcastScn===s[0]?' on':''}" onclick="pf3FcastSetScn('${s[0]}')">${s[1]}</button>`).join('');
   return`<section class="pf3-panel pf3-forecast">
-    <div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз стоимости','Value forecast')}</span><span class="pf3-asof">${RT('путь к консенсус-таргету аналитиков','path to analyst consensus target')}</span></div>
+    <div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз стоимости','Value forecast')}</span><span class="pf3-asof">${RT('детерминированно · по таргетам и фундаменталу','deterministic · targets & fundamentals')}</span></div>
+    <div class="pf3-hz-seg fc-scn">${scnBtns}</div>
     <div class="fc-tbl">${head}${rowHtml}${totRow('📦 '+RT('Акции','Stocks'),curStocks,sumH,' fc-stocks')}${totRow('💰 '+RT('Чистый капитал','Net worth'),netNow,sumH.map(s=>s+cashSEK),' fc-net')}</div>
-    <div class="pf3-reco-note">${RT('Проекция от консенсус-таргета аналитиков: ~⅓ пути за 3 мес, ~⅔ за 6–9 мес, полный таргет за 12+ мес. Бумаги без таргета (≈) считаются без изменения цены, свободный кэш в «Чистом капитале» постоянен. Это оценка, не гарантия и не индивидуальная инвестиционная рекомендация.','Projection ramps to the analyst consensus target: ~1/3 of the way in 3m, ~2/3 in 6–9m, full target at 12m+. Stocks without a target (≈) are held flat, free cash in net worth is constant. An estimate, not a guarantee or individual investment advice.')}</div>
+    <div class="pf3-reco-note">${RT('Ожидаемая 12-мес доходность бумаги берётся от консенсус-таргета аналитиков, а без таргета — от фундаментала (ƒ: рост выручки / ROE). Горизонты — доля этого пути (~⅓ за 3 мес, ~⅔ за 6–9 мес, полностью за 12+ мес). Сценарии Пессим./Оптим. сдвигают доходность на волатильный диапазон. Кэш постоянен. Оценка, не гарантия и не индивидуальная рекомендация.','A stock\'s expected 12m return comes from the analyst consensus target, or from fundamentals when no target (ƒ: revenue growth / ROE). Horizons are a fraction of that path (~1/3 in 3m, ~2/3 in 6–9m, full at 12m+). Pess./Opt. scenarios shift the return by a volatility band. Cash is constant. An estimate, not a guarantee or advice.')}</div>
+    ${pf3FcastAiHTML(d)}
   </section>`;
+}
+// ✨ AI-прогноз (AI Proto + web_search): проекция стоимости на 3 горизонта.
+let pf3Fcast={loading:false};
+function pf3FcastAiHTML(d){
+  if(!isAdmin())return'';   // AI — только админу (токены)
+  const fa=d.fcastAI,busy=pf3Fcast.loading;
+  const btn=`<button class="pf3-btn" onclick="pf3FcastAiRun()"${busy?' disabled':''}>${busy?'⏳ '+RT('Прогнозирую','Forecasting')+'…':(fa?'🔄 '+RT('Обновить AI-прогноз','Refresh AI forecast'):'✨ '+RT('AI-прогноз','AI forecast'))}</button>`;
+  let body='';
+  if(fa&&Array.isArray(fa.stocks)){
+    const HZ=[['3 '+RT('мес','m'),'h3'],[RT('6–9 мес','6–9m'),'h69'],[RT('12+ мес','12m+'),'h12']];
+    const byTk={};fa.stocks.forEach(s=>{byTk[String(s.ticker||'').toUpperCase()]=s});
+    let curStocks=0;const sumH=[0,0,0],rows=[];
+    d.rows.forEach((r,i)=>{const qty=parseFloat(r[6])||0;if(!(qty>0))return;recalcPF(i,v3Key);const valSEK=parseFloat(r[13])||0;curStocks+=valSEK;const s=byTk[String(r[2]||'').toUpperCase()]||{};
+      const cells=HZ.map((hz,hi)=>{const pct=parseFloat(s[hz[1]]),has=isFinite(pct),v=valSEK*(1+(has?pct:0)/100);sumH[hi]+=v;return{v,pct:has?pct:0,has}});
+      rows.push({name:String(r[1]||r[2]),tk:String(r[2]),valSEK,cells,note:String(s.note||'')});});
+    rows.sort((a,b)=>b.valSEK-a.valSEK);
+    const cashSEK=(parseFloat(d.cashFree)||0)*pf3BaseFx(d),netNow=curStocks+cashSEK;
+    const cls=p=>p>=0?'pf3-up':'pf3-down',pctTxt=p=>`<small class="${cls(p)}">${p>=0?'+':''}${p.toFixed(1)}%</small>`;
+    const tpl='grid-template-columns:minmax(120px,1.6fr) repeat(4,minmax(74px,1fr))';
+    const head=`<div class="fc-row fc-head" style="${tpl}"><span>${RT('Акция','Stock')}</span><span class="fc-r">${RT('Сейчас','Now')}</span>${HZ.map(h=>`<span class="fc-r">${h[0]}</span>`).join('')}</div>`;
+    const rh=rows.map(x=>`<div class="fc-row" style="${tpl}"${x.note?` title="${x.note.replace(/"/g,'&quot;')}"`:''}><span class="fc-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></span><span class="fc-r">${pf3Money(d,x.valSEK)}</span>${x.cells.map(c=>`<span class="fc-r">${pf3Money(d,c.v)}<br>${c.has?pctTxt(c.pct):'—'}</span>`).join('')}</div>`).join('');
+    const totRow=(label,nowV,hVals,extra)=>`<div class="fc-row fc-tot${extra||''}" style="${tpl}"><span class="fc-name">${label}</span><span class="fc-r">${pf3Money(d,nowV)}</span>${hVals.map(v=>`<span class="fc-r">${pf3Money(d,v)}<br>${pctTxt(nowV>0?(v/nowV-1)*100:0)}</span>`).join('')}</div>`;
+    body=`${fa.summary?`<div class="dash-headline">${pf3Md(fa.summary)}</div>`:''}<div class="fc-tbl">${head}${rh}${totRow('📦 '+RT('Акции','Stocks'),curStocks,sumH,' fc-stocks')}${totRow('💰 '+RT('Чистый капитал','Net worth'),netNow,sumH.map(s=>s+cashSEK),' fc-net')}</div>`;
+  }
+  return`<div class="fc-ai"><div class="pf3-panel-hd fc-ai-hd"><span>✨ ${RT('AI-прогноз','AI forecast')}</span><span class="pf3-asof">${fa&&fa.at?RT('обновлено','updated')+' '+pf3DtRu(fa.at)+(fa.cost?' · '+costLine(fa.cost):''):RT('AI Proto с веб-поиском свежих таргетов и новостей','AI Proto with web search of fresh targets & news')}</span>${btn}</div>${body||(busy?`<div class="pf3-empty">⏳ ${RT('AI Proto собирает свежие данные…','AI Proto gathering fresh data…')}</div>`:`<div class="pf3-empty">${RT('Нажмите «AI-прогноз» — AI Proto со свежими новостями и таргетами спрогнозирует стоимость на 3 горизонта.','Press «AI forecast» — AI Proto forecasts value across 3 horizons with fresh news & targets.')}</div>`)}</div>`;
+}
+async function pf3FcastAiRun(){
+  if(pf3Fcast.loading)return;
+  const key=v3Key;pf3Fcast.loading=true;renderPF3();
+  try{
+    await pf3Refresh(true);
+    const d=DATA[key],num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
+    const positions=d.rows.filter(r=>(parseFloat(r[6])||0)>0).map(r=>{const m=pf3TypeMetrics(d,r);return{ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',qty:num(r[6]),price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,phase:pf3Criterion(d,r).label}});
+    const snap={portfolioName:TAB_LABEL(key),baseCurrency:pf3Base(d),horizons:['3 мес','6-9 мес','12+ мес'],positions,playbook:aiPlaybookEnsure()};
+    const r=await fetch(PRICE_PROXY+'?action=forecast',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
+    const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
+    if(j&&j.forecast){aiSpendAdd(j.cost);DATA[key].fcastAI={summary:j.forecast.summary||'',stocks:Array.isArray(j.forecast.stocks)?j.forecast.stocks:[],horizons:j.forecast.horizons||null,at:new Date().toISOString(),cost:j.cost||null};scheduleSave();}
+    else{const msg=(j&&j.error)||(bodyText?bodyText.slice(0,200):('HTTP '+r.status));console.warn('Forecast failed:',r.status,bodyText);toast('AI ('+TAB_LABEL(key)+'): '+msg,true);}
+  }catch(e){toast('AI: '+(e&&e.message||RT('сеть/worker недоступен','network/worker unreachable')),true);}
+  pf3Fcast.loading=false;if(isV3())renderPF3();
 }
 function pf3RecoHTML(d,r){
   // Верхний вердикт = горизонт «Сейчас» (now), чтобы «Рекомендация» не противоречила

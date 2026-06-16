@@ -246,28 +246,34 @@ grp('rbac resolve', function(){
 });
 
 // 9k) 📊 Сценарный движок (Bull/Base/Bear) + RR + симметрия
-grp('scenario v1.1 (two horizons)', function(){
-  // WDC-кейс краткосрок: дальняя многолетняя поддержка 249 ВНЕ коридора ±2.5·ATR → игнор
-  var sh = scenarioShort({ price: 673, atr: 27, support: 249, resistance: 700, sma50: 450, rsi: 72 });
-  __approx('short bull capped at resistance 700', sh.bull, 700);
-  __approx('short bear = price−1.5·ATR (≈632.5), НЕ 249', sh.bear, 632.5, 0.5);
-  __ok('short downside small (~6%, не 63%)', sh.downside < 10);
+grp('scenario v1.4', function(){
+  // B.3 краткосрок: цель = ближайший S/R в коридоре ±2.5·ATR (WDC)
+  var sh = scenarioShort({ price: 700.81, atr: 29.44, resistance: 729.92, support: 667.53, sma50: 600, rsi: 71 });
+  __approx('short bull = resistance level 729.92', sh.bull, 729.92, 0.01);
+  __approx('short bear = support level 667.53', sh.bear, 667.53, 0.01);
   __ok('short overbought → bear high', sh.bearConf === 'high');
-  // ATR-bear, когда ближний уровень в коридоре есть
-  var sh2 = scenarioShort({ price: 100, atr: 4, support: 96, resistance: 110, sma50: 80, rsi: 50 });
-  __approx('short bear uses near support in corridor', sh2.bear, 96);
-  // Среднесрок: событийный Bear = цена×(1−R), Bull = верхний таргет
-  var md = scenarioMid({ price: 673, target: 650, targetHigh: 730, support: 249 });
-  __approx('mid bull = analyst high 730', md.bull, 730);
-  __approx('mid base = consensus 650', md.base, 650);
-  __approx('mid event bear ≈ price×0.8 (538), не 249', md.bear, 538.4, 1);
-  __ok('mid bear realistic (0.7–0.85×price)', md.bear > 673*0.7 && md.bear < 673*0.85);
-  // честный отрицательный RR: все таргеты ниже цены → апсайда нет
-  var mdNeg = scenarioMid({ price: 673, target: 650, targetHigh: 650, support: 0 });
-  __ok('mid RR < 0 when targets below price', mdNeg.rr < 0);
-  // оба направления всегда (критерий 6)
-  __ok('both directions present', sh.bull > sh.price && sh.bear < sh.price && md.bull !== md.bear);
-  // ATR/RSI из закрытий
+  // далёкий уровень вне коридора → fallback ±1.5·ATR (не 249)
+  var sh2 = scenarioShort({ price: 700, atr: 30, resistance: 0, support: 249, sma50: 0, rsi: 50 });
+  __approx('short bear fallback −1.5·ATR (655), не 249', sh2.bear, 655, 1);
+  // B.3.1 проекция ±ATR×√10
+  var pr = scenarioProjection(700.81, 29.44, 10);
+  __approx('proj high ≈ 793.9', pr.high, 793.9, 0.5);
+  __approx('proj low ≈ 607.7', pr.low, 607.7, 0.5);
+  // A.1: нет свежих таргетов → lowdata, БЕЗ R/R (запрет тихого фоллбэка)
+  var mdNo = scenarioMid({ price: 673, target: 0, fresh: false });
+  __eq('mid lowdata when not fresh', mdNo.note, 'lowdata');
+  __ok('mid no RR when lowdata', mdNo.valid === false && mdNo.rr === null);
+  // B.8 sanity: цена выше верхнего таргета → noupside, R/R скрыт (а не −1.38)
+  var mdNu = scenarioMid({ price: 700, target: 650, targetHigh: 650, fresh: true });
+  __eq('mid noupside when price>highest target', mdNu.note, 'noupside');
+  __ok('mid noupside hides RR', mdNu.rr === null);
+  // B.8: bull<base → broken
+  var mdBr = scenarioMid({ price: 600, target: 650, targetHigh: 600, fresh: true });
+  __eq('mid broken when bull<base', mdBr.note, 'broken');
+  // валидный среднесрок: свежие таргеты выше цены → R/R>0
+  var mdOk = scenarioMid({ price: 600, target: 650, targetHigh: 730, fresh: true });
+  __ok('mid valid: bull 730 / base 650 / RR>0', mdOk.valid && mdOk.bull === 730 && mdOk.base === 650 && mdOk.rr > 0);
+  // ATR/RSI helpers
   var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
   __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);

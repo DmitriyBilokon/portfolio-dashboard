@@ -24,6 +24,7 @@ function snapshotState(){
 // миграции/рендеры на старте (init до pullState) могли затереть облако пустыми
 // локальными данными (например, журналом сделок PF_TRADES).
 let syncReady=false;
+let stateRev=0;   // монотонная ревизия состояния: БД-триггер отклоняет запись с НЕ растущим rev (защита от затирания устаревшим клиентом)
 function scheduleSave(){ if(currentUser && !applyingRemote && syncReady) schedulePush(); }
 function schedulePush(){ clearTimeout(pushTimer); pushTimer=setTimeout(pushState, 800); }
 
@@ -54,10 +55,12 @@ async function pushState(){
   }catch(e){}
   const ts=new Date().toISOString();
   lastPushTs=Date.parse(ts);   // remember so the realtime echo of this push can be ignored
+  const snap=snapshotState();
+  snap.rev=(stateRev||0)+1;    // растущая ревизия — БД-триггер отклонит устаревшую запись
   const { error } = await sb.from('ledger_state')
-    .upsert({ user_id:currentUser.id, data:snapshotState(), updated_at:ts });
+    .upsert({ user_id:currentUser.id, data:snap, updated_at:ts });
   if(error) console.warn('Sync push failed', error);
-  else pfBackupSave();   // несгораемый локальный бэкап «последнего хорошего» состояния
+  else { stateRev=snap.rev; pfBackupSave(); }   // приняли — запоминаем rev + локальный бэкап
 }
 // 🛡 Локальный бэкап (localStorage) журнала сделок и позиций семейных портфелей —
 // переживает обнуление облака устаревшим клиентом. Сохраняем только непустое.
@@ -121,6 +124,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(s.layout&&typeof s.layout==='object') LAYOUT=Object.assign({sub:{},cards:[],home:[],dash:[]},s.layout);
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
+  if(typeof s.rev==='number') stateRev=s.rev;   // приняли облачную ревизию → наш след. push = rev+1
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
   // 🛡 Если облако пришло с пустым журналом сделок, а локальный бэкап его помнит —

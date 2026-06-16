@@ -16,11 +16,21 @@ returns trigger
 language plpgsql
 as $$
 declare
+  old_rev numeric := coalesce((OLD.data ->> 'rev')::numeric, 0);
+  new_rev numeric := coalesce((NEW.data ->> 'rev')::numeric, 0);
   old_trades jsonb := OLD.data -> 'pfTrades';
   new_trades jsonb := NEW.data -> 'pfTrades';
   old_aiport jsonb := OLD.data -> 'aiPort';
   new_aiport jsonb := NEW.data -> 'aiPort';
 begin
+  -- 0) ГЛАВНОЕ: optimistic concurrency. Если входящая ревизия НЕ выросла —
+  -- значит писатель опирался на устаревшее состояние (старая вкладка/гонка).
+  -- Полностью отклоняем запись (оставляем строку как есть). Это защищает ВСЁ
+  -- состояние (позиции, кэш, журнал), а не только отдельные ключи.
+  if new_rev <= old_rev then
+    return OLD;
+  end if;
+
   -- 1) Журнал сделок: был непустым массивом, новый пуст/отсутствует → вернуть старый.
   if jsonb_typeof(old_trades) = 'array'
      and jsonb_array_length(old_trades) > 0
@@ -47,6 +57,10 @@ create trigger ledger_state_guard_trg
   execute function public.ledger_state_guard();
 
 -- ── Примечания ───────────────────────────────────────────────────────────────
+-- • ГЛАВНАЯ защита — проверка rev (шаг 0): устаревший/старый клиент с меньшим
+--   или равным rev НЕ сможет перезаписать состояние (позиции/кэш/журнал).
+--   Клиент с этой версией сайта шлёт растущий rev автоматически.
+-- • Шаги 1–2 (pfTrades/aiPort) — подстраховка на переходный период.
 -- • Срабатывает только на UPDATE (на первый INSERT-сид не влияет).
 -- • Триггер сохраняет НЕПУСТОЙ журнал поверх пустого. Это значит, что
 --   «удалить ВСЕ сделки разом» через обычную синхронизацию заблокировано —

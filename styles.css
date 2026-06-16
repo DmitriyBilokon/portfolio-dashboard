@@ -1261,3 +1261,14 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .val-eps-flat{color:var(--text3);background:color-mix(in srgb,var(--text3) 14%,transparent)}
 .val-trap{margin-top:8px;padding:7px 10px;font-size:12px;border-radius:9px;color:var(--text);background:color-mix(in srgb,var(--gold,#e8b339) 14%,transparent);border:1px solid color-mix(in srgb,var(--gold,#e8b339) 45%,var(--border))}
 @media(max-width:600px){.val-scale-td{width:84px;min-width:72px}.val-scale-h{font-size:9px}}
+
+/* 📐 Valuation — пиры и «почему» */
+.val-peers,.val-why{margin-top:8px;border-top:1px solid var(--border);padding-top:6px}
+.val-peer-tbl{width:100%;font-size:12px}
+.val-peer-tbl th{font-size:10px;color:var(--text3);text-align:right;padding:2px 6px}
+.val-peer-tbl th.val-l,.val-peer-tbl td.val-l{text-align:left}
+.val-peer-tbl td{text-align:right;padding:3px 6px;font-variant-numeric:tabular-nums;cursor:pointer}
+.val-peer-tbl tr:hover td{background:color-mix(in srgb,var(--text3) 8%,transparent)}
+.val-peer-self td{font-weight:700;background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.val-why-list{margin:6px 0 2px;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6}
+.val-why-list li{margin:2px 0}

@@ -4375,6 +4375,55 @@ function valScaleBar(cur,sec,hist){
     <span class="val-scale-dot ${cls}" style="left:${pCur}%"></span>
   </span>`;
 }
+// Профильная группа пиров: бумаги портфеля той же ИНДУСТРИИ (точнее), иначе
+// того же сектора. Возвращает записи VAL с хотя бы одним мультипликатором.
+function valPeerGroup(tk){
+  const v=VAL[tk]; if(!v)return [];
+  const useInd=!!v.industry;
+  if(!(useInd?v.industry:v.sector))return [];
+  return Object.keys(VAL).map(t=>({tk:t,...VAL[t]}))
+    .filter(e=>(e.pe||e.fwdPe||e.ps||e.evEbitda)&&(useInd?e.industry===v.industry:e.sector===v.sector));
+}
+// Сравнение «в ряд» с пирами: таблица P/E·P/S·EV/EBITDA, подсветка лучшей/худшей
+// ячейки текущей бумаги. P/E уважает тумблер Fwd/TTM.
+function valPeerTableHTML(tk){
+  const group=valPeerGroup(tk);
+  if(group.length<2)return '';
+  const peVal=e=>valPeMode==='ttm'?(e.pe||e.fwdPe):(e.fwdPe||e.pe);
+  let rows=group.slice().sort((a,b)=>(peVal(a)||1e9)-(peVal(b)||1e9));
+  if(rows.length>6){ const self=rows.find(e=>e.tk===tk); rows=rows.slice(0,6); if(self&&!rows.some(e=>e.tk===tk))rows[5]=self; }
+  const cols=[['P/E',peVal],['P/S',e=>e.ps],['EV/E',e=>e.evEbitda]];
+  const ext=cols.map(([,f])=>{const vals=rows.map(f).filter(x=>x>0);return vals.length?{min:Math.min(...vals),max:Math.max(...vals)}:{min:null,max:null};});
+  const useInd=!!VAL[tk].industry;
+  const body=rows.map(e=>{
+    const self=e.tk===tk;
+    const cells=cols.map(([,f],i)=>{
+      const x=f(e); if(!(x>0))return'<td class="val-na">—</td>';
+      const cls=self&&ext[i].min!=null?(x===ext[i].min?'pf3-up':x===ext[i].max?'pf3-down':''):'';
+      return`<td class="${cls}">${valFmt(x)}</td>`;
+    }).join('');
+    return`<tr class="${self?'val-peer-self':''}" onclick="insiderOpenCard('${e.tk}')">
+      <td class="val-l">${self?'▸ ':''}${e.tk}</td>${cells}</tr>`;
+  }).join('');
+  return`<details class="val-peers"><summary class="ins-summary">👥 ${RT('Сравнение с пирами','Peer comparison')} · ${useInd?RT('по индустрии','by industry'):RT('по сектору','by sector')} (${group.length})<span class="ins-chevron">▾</span></summary>
+    <table class="val-tbl val-peer-tbl"><thead><tr><th class="val-l">${RT('Пир','Peer')}</th>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+    <div class="pf3-ai-note">${RT('Группа из бумаг портфеля. У текущей бумаги (▸) зелёным/красным помечена самая дешёвая/дорогая ячейка. P/E — по тумблеру Fwd/TTM.','Group from portfolio holdings. For the current stock (▸), green/red marks its cheapest/richest cell. P/E follows the Fwd/TTM toggle.')}</div>
+  </details>`;
+}
+// Раскрываемое «почему такая оценка» — детерминированное объяснение из чисел.
+function valWhyLines(v,c,eps){
+  const out=[];
+  (c.dims||[]).forEach(d=>{
+    if(!(d.cur>0)||d.secPct==null)return;
+    const w=Math.abs(d.secPct).toFixed(0);
+    if(d.secPct<=-10)out.push(RT(`${d.label} на ${w}% ниже медианы сектора`,`${d.label} is ${w}% below sector median`));
+    else if(d.secPct>=10)out.push(RT(`${d.label} на ${w}% выше сектора`,`${d.label} is ${w}% above sector`));
+  });
+  if(eps==='up')out.push(RT('forward EPS растёт → дешевизна выглядит обоснованной','forward EPS rising → the discount looks justified'));
+  else if(eps==='down')out.push(RT('forward EPS снижается → риск «ловушки стоимости»','forward EPS falling → value-trap risk'));
+  if(v.peg>0&&v.peg<1)out.push(RT(`PEG ${valFmt(v.peg)} < 1 → рост недооценён рынком`,`PEG ${valFmt(v.peg)} < 1 → growth underpriced`));
+  return out;
+}
 // Панель Valuation Check в карточке акции.
 function valHTML(d,r){
   const tk=String(r[2]||'').trim().toUpperCase();
@@ -4412,6 +4461,8 @@ function valHTML(d,r){
     ${extra.length?`<div class="val-extra">${extra.map(e=>`<span>${e}</span>`).join('')}</div>`:''}
     ${trap}
     ${caveat}
+    ${(()=>{const lines=valWhyLines(v,c,eps);return lines.length?`<details class="val-why"><summary class="ins-summary">💡 ${RT('Почему такая оценка','Why this valuation')}<span class="ins-chevron">▾</span></summary><ul class="val-why-list">${lines.map(l=>`<li>${l}</li>`).join('')}</ul></details>`:'';})()}
+    ${valPeerTableHTML(tk)}
     <div class="pf3-ai-note">${RT('Шкала: центр = медиана сектора, засечка — 5y история бумаги, точка — текущее значение. Yahoo (живые) + FMP (история). n/a при EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), росте≤0 (PEG).','Scale: center = sector median, tick = stock 5y history, dot = current. Yahoo (live) + FMP (history). n/a when EPS≤0 (P/E), EBITDA<0 (EV/EBITDA), growth≤0 (PEG).')}</div>
   </section>`;
 }

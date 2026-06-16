@@ -129,6 +129,22 @@ grp('valuation eps & scale', function(){
   __ok('no ref → null', valScalePos(20, 0) === null);
 });
 
+// 9e) 📐 Valuation: профильная группа пиров (индустрия → сектор)
+grp('valuation peers', function(){
+  var _VAL = VAL;
+  VAL = {
+    AAA: { pe: 10, ps: 2, evEbitda: 8, sector: 'Tech', industry: 'Semis' },
+    BBB: { pe: 20, ps: 4, evEbitda: 12, sector: 'Tech', industry: 'Semis' },
+    CCC: { pe: 15, ps: 3, evEbitda: 9, sector: 'Tech', industry: 'Software' },
+    DDD: { pe: 0, ps: 0, sector: 'Tech', industry: 'Semis' }, // нет данных → исключается
+  };
+  __eq('peers by industry (Semis) = 2', valPeerGroup('AAA').length, 2);
+  VAL.EEE = { pe: 11, ps: 2, sector: 'Health' };
+  VAL.FFF = { pe: 13, ps: 2, sector: 'Health' };
+  __eq('no industry → group by sector = 2', valPeerGroup('EEE').length, 2);
+  VAL = _VAL;
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

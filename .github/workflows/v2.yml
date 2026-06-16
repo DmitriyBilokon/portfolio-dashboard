@@ -1,0 +1,56 @@
+name: Build v2
+
+# Собирает Svelte-версию из v2-src/ и коммитит статику в /v2 той же ветки.
+# Текущий сайт (корень репо) не трогается. Classic Pages (deploy-from-branch)
+# затем раздаёт /v2/ как обычные файлы.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'v2-src/**'
+      - '.github/workflows/v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-v2
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        working-directory: v2-src
+        run: npm install --no-audit --no-fund
+
+      - name: Type-check (non-blocking)
+        working-directory: v2-src
+        run: npm run check || true
+
+      - name: Build → ../v2
+        working-directory: v2-src
+        run: npm run build
+
+      - name: Mark as static (no Jekyll)
+        run: touch v2/.nojekyll
+
+      - name: Commit built /v2
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add v2
+          if git diff --cached --quiet; then
+            echo "No changes in /v2"
+          else
+            git commit -m "build: v2 static bundle [skip ci]"
+            git push
+          fi

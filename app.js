@@ -4845,11 +4845,23 @@ function scenarioMid(inp){
   let bullConf=high>0?'medium':'low', bearConf='medium';
   if(stretch){bullConf='low';bearConf='high';}
   // B.8 sanity (порядок важен): bull<base — настоящая ошибка; bull≤цены — нет апсайда по таргетам.
-  if(bull<base)   return {horizon:'mid',valid:false,note:'broken',price,bull,base,bear,bullConf,bearConf,rr:null,stretch};
-  if(bull<=price) return {horizon:'mid',valid:false,note:'noupside',price,bull,base,bear,bullConf,bearConf,rr:null,stretch};
+  if(bull<base)   return {horizon:'mid',valid:false,note:'broken',price,bull,base,bear,bullConf,bearConf,rr:null,stretch,R};
+  if(bull<=price) return {horizon:'mid',valid:false,note:'noupside',price,bull,base,bear,bullConf,bearConf,rr:null,stretch,R};
   const upside=(bull-price)/price*100, downside=(price-bear)/price*100;
   const rr=downside>0?upside/downside:null;
   return {horizon:'mid',valid:true,note:null,price,bull,base,bear,upside,downside,rr,bullConf,baseConf:'medium',bearConf,stretch,R};
+}
+// 📉 implied move из опционов (живой) по тикеру: {data:{movePct,expiry,days,iv,atm},at,loading}.
+let OPT_IV={};
+function pf3OptEnsure(tk,ccy){
+  const cur=OPT_IV[tk];
+  if(cur&&cur.loading)return;
+  if(cur&&cur.at&&Date.now()-cur.at<30*60000)return;   // кэш 30 мин
+  OPT_IV[tk]={data:cur?cur.data:null,at:cur?cur.at:0,loading:true};
+  fetch(PRICE_PROXY+'?options='+encodeURIComponent(exSymbol(tk,ccy))).then(r=>r.json()).then(j=>{
+    OPT_IV[tk]={data:(j&&!j.error&&j.movePct>0)?j:null,at:Date.now(),loading:false};
+    if(isV3()&&pf3Sel===tk)renderPF3();
+  }).catch(()=>{OPT_IV[tk]={data:null,at:Date.now(),loading:false};});
 }
 // Свежий консенсус-таргет для среднесрочного сценария — тот же источник, что и
 // карточка: TG_FULL (агрегация A.1) → квартальный срез pf3EffTarget → eff (если не
@@ -4874,8 +4886,11 @@ function pf3ScenarioHTML(d,r){
   // Свежий консенсус — тот же, что в карточке (TG_FULL → квартальный срез pf3EffTarget).
   const ft=scnFreshTarget(d,r), fresh=ft.fresh, consensus=ft.consensus, high=ft.high, staleConsensus=ft.staleConsensus;
   const tech=scenarioTech(tk,ccy);
+  pf3OptEnsure(tk,ccy);   // 📉 живой implied move (опционы)
+  const opt=OPT_IV[tk]&&OPT_IV[tk].data;
+  const impR=(opt&&opt.movePct>0)?opt.movePct/100:0;   // implied move как R событийного Bear (B.4)
   const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});       // RSI 1D
-  const md=scenarioMid({price,target:consensus,targetHigh:high,support,rsi:tech.rsiW,fresh}); // RSI 1W
+  const md=scenarioMid({price,target:consensus,targetHigh:high,support,rsi:tech.rsiW,fresh,eventR:impR}); // RSI 1W
   const proj=scenarioProjection(price,tech.atr);
   if(!sh&&!md)return '';
   const CONF={high:RT('высокая','high'),medium:RT('средняя','medium'),low:RT('низкая · растяжение','low · stretch'),lowdata:RT('мало данных','low data')};
@@ -4905,7 +4920,9 @@ function pf3ScenarioHTML(d,r){
   // Среднесрок: valid/noupside показывают реальные Bull/Base/Bear; lowdata/broken — только пояснение.
   let mdBody;
   if(md.valid||md.note==='noupside'){
-    const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${Math.round((md.R||SCENARIO_CFG.eventR)*100)}%`,`earnings miss / guidance cut → −${Math.round((md.R||SCENARIO_CFG.eventR)*100)}%`);
+    const mdRpct=Math.round((md.R||SCENARIO_CFG.eventR)*100);
+    const mdImpSrc=(impR>0&&Math.abs(md.R-impR)<1e-9)?RT(' (по опционам)',' (from options)'):'';
+    const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${mdRpct}%${mdImpSrc}`,`earnings miss / guidance cut → −${mdRpct}%${mdImpSrc}`);
     const mdCells=`<div class="scn-grid">
       ${cell('🟢','Bull',md.bull,'bull',md.bullConf||'low',RT('отчёт выше ожиданий / рост гайденса','earnings beat / guidance raise'),'event')}
       ${cell('⚪','Base',md.base,'base',md.baseConf||'medium',RT('консенсус-таргет','analyst consensus'),'event')}
@@ -4921,6 +4938,7 @@ function pf3ScenarioHTML(d,r){
   const mdBlock=`<div class="scn-hz"><div class="scn-hz-h">📅 ${RT('Среднесрок','Mid-term')} <span class="scn-hz-s">${RT('до отчёта · таргеты + событие','to earnings · targets + event')} · RSI ${tf(tech.rsiW,'1W')}</span>${md.stretch?` <span class="scn-stretch">⚠ ${RT('растяжение','stretched')}</span>`:''}</div>${mdBody}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)} 1D`:''}</span></div>
+    ${opt&&opt.movePct>0?`<div class="pf3-opt-im" title="${RT('Закладываемый опционами ход к ближайшей экспирации — из ATM-стрэддла (call+put). Живое значение с Yahoo, без платных токенов.','Implied move to the nearest expiry — from the ATM straddle (call+put). Live from Yahoo, no paid tokens.')}">📉 ${RT('Опционы закладывают ход','Options imply a move of')} <b>±${opt.movePct.toFixed(1)}%</b> ${RT('к','to')} ${opt.expiry}${opt.days>0?` · ${opt.days} ${RT('дн','d')}`:''}${opt.iv>0?` · IV ${(opt.iv*100).toFixed(0)}%`:''}</div>`:''}
     ${shBlock}${mdBlock}
     <div class="pf3-ai-note">${RT('Два РАЗДЕЛЬНЫХ горизонта со своим R/R. Краткосрок — ближайшие S/R в коридоре ±2.5·ATR (RSI/ATR 1D), плюс полоса проекции ±ATR×√10 (≈±1σ за 2 нед, не цель). Среднесрок — Bull/Base только от СВЕЖИХ таргетов (иначе «недостаточно данных»), Bear событийный; RSI 1W. Sanity-check скрывает R/R при сломанных/устаревших входах. Справочно, не рекомендация.','Two SEPARATE horizons, each with its own R/R. Short-term — nearest S/R within ±2.5·ATR (RSI/ATR 1D) plus an ±ATR×√10 projection band (≈±1σ over 2 weeks, not a target). Mid-term — Bull/Base only from FRESH targets (else «not enough data»), event-based Bear; RSI 1W. A sanity check hides R/R on broken/stale inputs. Reference only.')}</div>
   </section>`;

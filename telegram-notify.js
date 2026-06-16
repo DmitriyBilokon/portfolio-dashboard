@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17news';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17options';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -256,6 +256,38 @@ async function weeklySMA(sym){
 }
 
 // Daily closes for one symbol over `range` → { t:[unix secs], c:[closes] } (or null).
+// ── 📉 Implied move из опционов (ATM-стрэддл ближайшей экспирации) ──
+// Чистая функция: спот + цепочки call/put + дата экспирации → ожидаемый ход %.
+// Покрыта тестом.
+function impliedMove(spot, calls, puts, expMs, nowMs){
+  if(!(spot > 0) || !Array.isArray(calls) || !Array.isArray(puts)) return null;
+  const near = arr => arr.filter(o => o && +o.strike > 0).sort((a, b) => Math.abs(a.strike - spot) - Math.abs(b.strike - spot))[0];
+  const c = near(calls), p = near(puts);
+  if(!c || !p) return null;
+  const px = o => { const b = +o.bid, a = +o.ask, l = +o.lastPrice; if(b > 0 && a > 0) return (b + a) / 2; return l > 0 ? l : 0; };
+  const straddle = px(c) + px(p);
+  if(!(straddle > 0)) return null;
+  const movePct = straddle / spot * 100;
+  const days = Math.max(0, Math.round((expMs - nowMs) / 864e5));
+  const ivc = +c.impliedVolatility || 0, ivp = +p.impliedVolatility || 0, iv = (ivc + ivp) / 2;
+  return { movePct: Math.round(movePct * 10) / 10, days, atm: Math.round(((+c.strike + +p.strike) / 2) * 100) / 100, iv: iv > 0 ? Math.round(iv * 1000) / 10 : null };
+}
+async function optionsImplied(symbol){
+  try{
+    const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if(!r.ok) return null;
+    const j = await r.json();
+    const res = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
+    if(!res) return null;
+    const spot = (res.quote && res.quote.regularMarketPrice) || 0;
+    const opt = res.options && res.options[0];
+    if(!opt || !(spot > 0)) return null;
+    const expMs = (opt.expirationDate || 0) * 1000;
+    const im = impliedMove(spot, opt.calls, opt.puts, expMs, Date.now());
+    if(!im) return null;
+    return { ...im, expiry: new Date(expMs).toISOString().slice(0, 10), spot: round2(spot), at: new Date().toISOString() };
+  }catch(e){ return null; }
+}
 async function dailyHistory(sym, range = '2y'){
   const res = await yChart(sym, '1d', range);
   if(!res) return null;
@@ -2393,6 +2425,11 @@ export default {
         };
       }));
       return json(out);
+    }
+    if(url.searchParams.has('options')){
+      // Implied move из опционов (ATM-стрэддл ближайшей экспирации). Публичные данные.
+      const im = await optionsImplied(url.searchParams.get('options').trim());
+      return json(im || { error: 'no options' });
     }
     if(url.searchParams.has('history')){
       // Daily close series for one symbol → powers the dashboard's stock chart popup.

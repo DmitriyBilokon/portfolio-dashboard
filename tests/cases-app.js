@@ -283,6 +283,12 @@ grp('scenario v1.4', function(){
   __approx('mid bull from band ≈ 1300', mdBand.bull, 1300.2, 0.5);
   __approx('mid base = consensus 1182', mdBand.base, 1182);
   __ok('mid band valid & RR>0', mdBand.valid === true && mdBand.rr > 0);
+  // 📉 implied move как событийный R: eventR=0.10 → Bear = price×0.9, R вернулся в объекте
+  var mdImp = scenarioMid({ price: 600, target: 650, targetHigh: 730, fresh: true, eventR: 0.10 });
+  __approx('mid Bear по implied move (−10%) = 540', mdImp.bear, 540);
+  __approx('mid R = implied 0.10', mdImp.R, 0.10);
+  // дефолт без eventR → событийный 20%
+  __approx('mid Bear default −20% = 480', mdOk.bear, 480);
   // ATR/RSI helpers
   var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
   __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);

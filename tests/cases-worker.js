@@ -42,6 +42,21 @@ grp('round2', function(){
   __eq('round2 2.0', round2(2), 2);
 });
 
+// 7) 📉 impliedMove — ход из ATM-стрэддла
+grp('impliedMove', function(){
+  var calls = [{ strike: 95, bid: 7, ask: 8 }, { strike: 100, bid: 5, ask: 6, impliedVolatility: 0.45 }, { strike: 105, bid: 3, ask: 4 }];
+  var puts  = [{ strike: 95, bid: 3, ask: 4 }, { strike: 100, bid: 5, ask: 6, impliedVolatility: 0.45 }, { strike: 105, bid: 7, ask: 8 }];
+  var now = Date.parse('2026-06-16T00:00:00Z'), exp = Date.parse('2026-06-30T00:00:00Z');
+  var im = impliedMove(100, calls, puts, exp, now);
+  __approx('implied move 11% (ATM straddle 5.5+5.5)', im.movePct, 11, 0.1);
+  __eq('days = 14', im.days, 14);
+  __eq('atm = 100', im.atm, 100);
+  __ok('null on bad input', impliedMove(0, [], [], exp, now) === null);
+  // только lastPrice (нет bid/ask)
+  var im2 = impliedMove(100, [{ strike: 100, lastPrice: 6 }], [{ strike: 100, lastPrice: 5 }], exp, now);
+  __approx('uses lastPrice fallback (11%)', im2.movePct, 11, 0.1);
+});
+
 // 6) 🎯 A.1 aggTargets — агрегация таргетов (WDC-подобный кейс)
 grp('aggTargets', function(){
   var sm = { allTimeAvgPriceTarget: 300, lastQuarterAvgPriceTarget: 650, lastQuarterCount: 16, allTimeCount: 230 };

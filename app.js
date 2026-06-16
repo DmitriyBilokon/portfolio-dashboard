@@ -4627,10 +4627,10 @@ async function valUpdateAll(){
     for(let i=0;i<list.length;i+=5){   // 5 симв/вызов: 3 FMP-запроса/символ (+редиректы), лимит субзапросов Cloudflare
       const chunk=list.slice(i,i+5);
       try{
-        const r=await fetch(PRICE_PROXY+'?action=targets',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
+        const r=await fetch(PRICE_PROXY+'?action=targetsagg',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
         const j=await r.json();
         if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]={...t,at:new Date().toISOString()};}
-      }catch(e){}
+      }catch(e){ break; }   // эндпоинт недоступен (старый воркер/CORS) → не долбим и не висим
     }
     // Алерты «дёшево по обоим измерениям» (новые) → Telegram, дедуп по подписи.
     for(const tk of Object.keys(VAL)){

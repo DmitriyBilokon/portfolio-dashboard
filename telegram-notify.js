@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17scn';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17targetsagg';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2153,8 +2153,9 @@ export default {
         return json(out);
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
-    if(url.searchParams.get('action') === 'targets'){
+    if(url.searchParams.get('action') === 'targetsagg'){
       // POST {symbols}: A.1 — агрегированные аналит. таргеты (консенсус/диапазон/рейтинги/изменения).
+      // ВАЖНО: имя 'targetsagg', т.к. 'targets' уже занят debug-роутом updateTargets выше (txt без CORS).
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);

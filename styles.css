@@ -1313,3 +1313,7 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .fx-row{display:flex;align-items:center;gap:8px;font-size:13px}
 .fx-row .fx-c{font-weight:700;width:42px}
 .fx-row b{margin-left:auto;font-variant-numeric:tabular-nums}
+.cd-periods{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:8px 0 2px;font-size:12px}
+.cd-pp{display:flex;flex-direction:column;align-items:center;gap:1px;min-width:48px}
+.cd-pp-l{font-size:10px;color:var(--text3)}
+.cd-pp b{font-variant-numeric:tabular-nums}

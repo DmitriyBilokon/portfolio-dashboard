@@ -2837,6 +2837,9 @@ function cashDragHTML(d,rows){
     :RT(`Размещайте избыточный кэш частями по сигналам докупки на вкладке «Портфель», уважая правило 15–20%${overheat?'. Рынок перегрет — часть резерва под откат оправдана':''}.`,`Deploy the excess cash gradually on buy signals from the Portfolio tab, respecting the 15–20% rule${overheat?'. The market is overheated — keeping part of the reserve for a pullback is reasonable':''}.`);
   const counter=(m.counterKr!=null&&m.excessPct>0.5&&Math.abs(m.counterKr)>=1)
     ? `<div class="cd-counter">${m.counterKr>=0?RT('Недополучено на избытке','Forgone on excess'):RT('Сэкономлено на избытке','Saved on excess')} ≈ <b>${pf3Fmt(Math.abs(m.counterKr),0)} ${unit}</b> ${RT('за','over')} ${({day:RT('день','day'),month:RT('месяц','month'),ytd:'YTD','1y':RT('1 год','1Y')})[period]}</div>`:'';
+  // Вклад кэша в доходность по всем периодам (день/мес/YTD/год) — мини-ряд.
+  const perRow=PERIODS.map(([k,l])=>{const br=idxReturnPct(bench,k);const dg=br==null?null:-(m.cashPct/100)*br;return`<div class="cd-pp"><span class="cd-pp-l">${l}</span><b class="${dg==null?'cd-dim':dg>=0?'pf3-up':'pf3-down'}">${dg==null?'…':(dg>=0?'+':'')+dg.toFixed(1)+'%'}</b></div>`;}).join('');
+  const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" onclick="pf3Tab='list';renderAll()">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
     <div class="cd-grid">
@@ -2850,8 +2853,9 @@ function cashDragHTML(d,rows){
         ${counter}
       </div>
     </div>
-    <div class="cd-hint">💡 ${hint}</div>
-    <div class="pf3-ai-note">${RT('cash_drag = доля кэша × доходность бенчмарка (кэш под 0%). Справочная аналитика, не рекомендация.','cash_drag = cash share × benchmark return (cash at 0%). Reference analytics, not advice.')}</div>
+    <div class="cd-periods"><span class="cd-dim">${RT('Вклад кэша в доходность по периодам','Cash contribution to return by period')}:</span>${perRow}</div>
+    <div class="cd-hint">💡 ${hint}${buyBtn}</div>
+    <div class="pf3-ai-note">${RT('cash_drag = доля кэша × доходность бенчмарка (кэш под 0%); знак к альфе обратный показанному вкладу. Справочная аналитика, не рекомендация.','cash_drag = cash share × benchmark return (cash at 0%). Reference analytics, not advice.')}</div>
   </section>`;
 }
 // ── 💱 Валютный риск и хедж: сценарий «SEK крепнет на X%» по экспозиции ──

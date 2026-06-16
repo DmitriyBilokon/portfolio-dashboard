@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16sectors';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16daypct';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -181,11 +181,22 @@ async function yahoo(sym){
     const m = res?.meta;
     if(!m || typeof m.regularMarketPrice !== 'number') return null;
     const q = res?.indicators?.quote?.[0] || {};
-    const closes = (q.close || []).filter(v => typeof v === 'number' && v > 0);
+    const rawC = q.close || [], ts = res.timestamp || [];
+    const closes = rawC.filter(v => typeof v === 'number' && v > 0);
     const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const price = m.regularMarketPrice;
-    const prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
+    // День%: база — последнее ДНЕВНОЕ закрытие СТРОГО ДО сегодня (по UTC-дате), а не
+    // closes[length-2]. Иначе, пока сегодняшняя свеча не появилась в дневном ряду,
+    // бралось ПОЗАВЧЕРАШНЕЕ закрытие → завышенный «двухдневный» % (баг ^OMX и др.).
+    const todayUTC = new Date().toISOString().slice(0, 10);
+    let prev = null;
+    for(let i = rawC.length - 1; i >= 0; i--){
+      const c = rawC[i]; if(!(typeof c === 'number' && c > 0)) continue;
+      const dstr = ts[i] ? new Date(ts[i] * 1000).toISOString().slice(0, 10) : '';
+      if(dstr && dstr < todayUTC){ prev = c; break; }
+    }
+    if(prev == null) prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
     const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     return {
       price, pct,
@@ -241,7 +252,11 @@ async function sectorMetrics(sym){
   for(let i = 0; i < rawc.length; i++){ if(typeof rawc[i] === 'number' && rawc[i] > 0){ closes.push(rawc[i]); times.push(ts[i]); } }
   const n = closes.length; if(!n) return null;
   const price = m.regularMarketPrice;
-  const prev = n >= 2 ? closes[n - 2] : (m.chartPreviousClose || m.previousClose || price);
+  // День%: база — последнее закрытие строго ДО сегодня (по UTC-дате), а не closes[n-2].
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  let prev = null;
+  for(let i = n - 1; i >= 0; i--){ const dstr = times[i] ? new Date(times[i] * 1000).toISOString().slice(0, 10) : ''; if(dstr && dstr < todayUTC){ prev = closes[i]; break; } }
+  if(prev == null) prev = n >= 2 ? closes[n - 2] : (m.chartPreviousClose || m.previousClose || price);
   const ret = base => (base > 0) ? round2((price / base - 1) * 100) : null;
   const back = k => (n - 1 - k >= 0) ? closes[n - 1 - k] : closes[0];
   const curYear = new Date((m.regularMarketTime ? m.regularMarketTime * 1000 : Date.now())).getUTCFullYear();

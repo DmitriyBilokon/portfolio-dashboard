@@ -95,6 +95,39 @@ async function pullState(){
   syncReady=true;   // облако прочитано — с этого момента локальные правки можно безопасно пушить
   if(data && data.data && Object.keys(data.data).length) applyRemoteState(data.data);
   else pushState();   // first login: seed the cloud with the bundled data
+  await loadSharedAnalysis();   // общие данные оценки/инсайдеров/AI-реко (админ собрал → все видят)
+  subSharedAnalysis();
+}
+// ── Общая аналитика (VAL/INSIDER/AI_RECO): админ собирает — все читают ──
+// Данные по тикерам не персональны, поэтому живут в общей таблице shared_analysis
+// (RLS: чтение всем, запись только админу). См. supabase-shared-analysis.sql.
+async function loadSharedAnalysis(){
+  if(!SYNC_ENABLED||!sb||!currentUser)return;
+  try{
+    const{data}=await sb.from('shared_analysis').select('val,insider,aireco').eq('id','global').maybeSingle();
+    if(!data)return;
+    if(data.val&&typeof data.val==='object'&&Object.keys(data.val).length)VAL=data.val;
+    if(data.insider&&typeof data.insider==='object'&&Object.keys(data.insider).length)INSIDER=data.insider;
+    if(data.aireco&&typeof data.aireco==='object'&&Object.keys(data.aireco).length)AI_RECO=data.aireco;
+    _valSecCache=null;   // пересчитать секторные медианы по общим данным
+  }catch(e){}   // таблицы нет (до миграции) → молча
+}
+async function pushSharedAnalysis(){
+  if(!SYNC_ENABLED||!sb||!isAdmin())return;
+  try{ await sb.from('shared_analysis').upsert({id:'global',val:VAL,insider:INSIDER,aireco:AI_RECO,updated_at:new Date().toISOString()}); }catch(e){ console.warn('shared push failed',e); }
+}
+let _sharedSub=null;
+function subSharedAnalysis(){
+  if(!SYNC_ENABLED||!sb||_sharedSub)return;
+  try{
+    _sharedSub=sb.channel('shared_analysis').on('postgres_changes',{event:'*',schema:'public',table:'shared_analysis'},payload=>{
+      const n=payload&&payload.new; if(!n)return;
+      if(n.val&&typeof n.val==='object')VAL=n.val;
+      if(n.insider&&typeof n.insider==='object')INSIDER=n.insider;
+      if(n.aireco&&typeof n.aireco==='object')AI_RECO=n.aireco;
+      _valSecCache=null; if(typeof renderAll==='function')renderAll();
+    }).subscribe();
+  }catch(e){}
 }
 function applyRemoteState(s){
   applyingRemote=true;
@@ -2283,7 +2316,7 @@ async function aiRecoRun(ev){
         horizons:(D.horizons&&typeof D.horizons==='object')?D.horizons:null,
         text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null,recoAt:snap.recoVerdict||null};
       _aiRecoOpen[tk]=true;
-      scheduleSave();
+      scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
       toast('🔄 '+RT('AI-Рекомендация готова','AI recommendation ready'));
     }else toast((j&&j.error)||'AI не ответил',true);
   }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=reco)','Worker unreachable (?action=reco)'),true);}
@@ -2390,7 +2423,7 @@ async function insiderUpdateAll(){
       const b=document.getElementById('insiderBtn');
       if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
     }
-    scheduleSave();
+    scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
     toast('🕵 '+RT(`Инсайдеры обновлены: ${withData}/${list.length} с данными · ${clusters} нов. кластер.`,`Insiders updated: ${withData}/${list.length} with data · ${clusters} new cluster(s)`));
   }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=insider)','Worker unreachable (?action=insider)'),true);}
   finally{_insiderBusy=false;renderAll();}
@@ -4587,7 +4620,7 @@ async function valUpdateAll(){
         }
       }else if(v.notified){VAL[tk].notified=null;}
     }
-    scheduleSave();
+    scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
     toast('📐 '+RT(`Оценка обновлена: ${withData}/${list.length} с данными${cheap?` · ${cheap} нов. недооценк.`:''}`,`Valuation updated: ${withData}/${list.length} with data${cheap?` · ${cheap} new undervalued`:''}`));
   }catch(e){toast(RT('Worker недоступен (нужен ?action=valuation)','Worker unreachable (?action=valuation)'),true);}
   finally{_valBusy=false;renderAll();}

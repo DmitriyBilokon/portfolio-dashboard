@@ -4748,11 +4748,39 @@ function homeMktInner(){
     +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи','spot · during market hours'));
 }
 function homeFuturesHTML(){return`<div id="homeFutWrap">${homeMktInner()}</div>`;}
+// 🔮 HOME-прогноз: топ-10 акций по ОЖИДАЕМОЙ доходности на 3 горизонта.
+// Та же детерминированная модель, что во вкладке «Прогноз» (pf3Fcast12): путь к
+// консенсус-таргету (или фундаменталу ƒ). Считается по живым данным → обновляется
+// кнопкой «🔄 Обновить всё» (она освежает цены/таргеты и перерисовывает HOME).
+function homeForecastPicks(){
+  const seen=new Set(),all=[];
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
+    d.rows.forEach((r,i)=>{
+      const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[7])||0;if(!(price>0))return;
+      recalcPF(i,k);seen.add(tk);
+      const f=pf3Fcast12(d,r);
+      all.push({tk,name:String(r[1]||tk),ccy:r[8]||'',price,e:f.e,src:f.src});
+    });
+  });
+  all.sort((a,b)=>b.e-a.e);
+  return all.slice(0,10);
+}
+function homeForecastHTML(){
+  const picks=homeForecastPicks();
+  const HZ=[[RT('3 мес','3m'),0.33],[RT('6–9 мес','6–9m'),0.66],[RT('12+ мес','12m+'),1.0]];
+  const cls=v=>v>=0?'pf3-up':'pf3-down';
+  const pct=v=>`<span class="${cls(v)}">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
+  const mark={tgt:'',fund:` <span class="fc-flat" title="${RT('по фундаменталу (рост выручки/ROE)','fundamental (revenue growth/ROE)')}">ƒ</span>`,flat:` <span class="fc-flat" title="${RT('нет таргета/данных — без изменения','no target/data — held flat')}">≈</span>`};
+  const body=picks.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th>${HZ.map(h=>`<th style="text-align:right">${h[0]}</th>`).join('')}</tr></thead><tbody>${picks.map((p,i)=>`<tr onclick="insiderOpenCard('${p.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${p.name}</b> <span class="bp-tk">${p.tk}</span>${mark[p.src]||''}</td>${HZ.map(h=>`<td style="text-align:right">${pct(p.e*h[1])}</td>`).join('')}</tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Нет данных — нажмите «🔄 Обновить всё».','No data — press «🔄 Update all».')}</div>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')}</span><span class="pf3-asof">${RT('ожидаемая доходность · кнопка «Обновить всё»','expected return · «Update all»')}</span></div>${body}<div class="pf3-reco-note">${RT('Ожидаемая доходность от консенсус-таргета аналитиков (или фундаментала ƒ: рост выручки/ROE): ~⅓ за 3 мес, ~⅔ за 6–9 мес, полностью за 12+ мес. Топ-10 по 12-мес потенциалу. Оценка, не индивидуальная инвестиционная рекомендация.','Expected return from the analyst consensus target (or fundamentals ƒ: revenue growth/ROE): ~1/3 in 3m, ~2/3 in 6–9m, full at 12m+. Top-10 by 12m potential. An estimate, not individual investment advice.')}</div></section>`;
+}
 function homeHTML(){
   const items=[
     {id:'futures',html:homeFuturesHTML()},
     {id:'tools',html:`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${RT('Рынок сейчас','Market now')}</span><span class="pf3-asof">${RT('лучшие кандидаты по горизонтам','best candidates by horizon')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div></section>`},
     {id:'best',html:homeBestHTML()},
+    {id:'forecast',html:homeForecastHTML()},
   ];
   if(isAdmin()){ items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }
   return erow('home',items,'edit-rows-v');

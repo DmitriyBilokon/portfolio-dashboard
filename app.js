@@ -4755,7 +4755,7 @@ function scenarioMid(inp){
   const cfg=SCENARIO_CFG, consensus=+inp.target||0, high=+inp.targetHigh||0, fresh=!!inp.fresh;
   // A.1 КРИТИЧНО: без свежих таргетов НЕ подставляем устаревшее — «недостаточно данных», без R/R.
   if(!fresh||!(consensus>0)) return {horizon:'mid',valid:false,note:'lowdata',price,bull:null,base:null,bear:null,rr:null};
-  const base=consensus, bull=high>0?high:consensus, R=(+inp.eventR>0)?+inp.eventR:cfg.eventR;
+  const base=consensus, bull=high>0?high:consensus*(1+cfg.bullTargetBand), R=(+inp.eventR>0)?+inp.eventR:cfg.eventR;
   let bear=price*(1-R);
   const support=+inp.support||0;
   if(support>0&&support<price&&support>bear&&support>=price*(1-R*1.5))bear=support;
@@ -4771,6 +4771,18 @@ function scenarioMid(inp){
   if(stretch){bullConf='low';bearConf='high';}
   return {horizon:'mid',valid:true,note:null,price,bull,base,bear,upside,downside,rr,bullConf,baseConf:'medium',bearConf,stretch,R};
 }
+// Свежий консенсус-таргет для среднесрочного сценария — тот же источник, что и
+// карточка: TG_FULL (агрегация A.1) → квартальный срез pf3EffTarget → eff (если не
+// stale). Устаревшим (не используется) считается ТОЛЬКО all-time (eff.main).
+function scnFreshTarget(d,r){
+  const tk=String(r[2]||'').toUpperCase(), tgf=TG_FULL[tk];
+  if(tgf&&tgf.consensus>0&&tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays))
+    return {consensus:tgf.consensus,high:tgf.high||0,fresh:true,staleConsensus:0};
+  const eff=pf3EffTarget(d,r)||{};
+  if(eff.recent>0)                 return {consensus:eff.recent,high:0,fresh:true,staleConsensus:0};   // «за квартал» = свежий
+  if(eff.target>0&&!eff.stale)     return {consensus:eff.target,high:0,fresh:true,staleConsensus:0};
+  return {consensus:0,high:0,fresh:false,staleConsensus:eff.main||eff.target||0};
+}
 // Панель «Сценарии» (двухгоризонтная) в карточке акции.
 function pf3ScenarioHTML(d,r){
   const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
@@ -4778,11 +4790,8 @@ function pf3ScenarioHTML(d,r){
   const sm=smaIdx(d), sma50=sm.s50>=0?parseFloat(r[sm.s50]):0;
   const supC=ensurePFCol(d,'Поддержка'),resC=ensurePFCol(d,'Сопротивление');
   const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
-  // A.1: свежие таргеты только из TG_FULL c lastDate ≤ N дней. Без них — НЕ подставляем устаревшее.
-  const tgf=TG_FULL[tk];
-  const fresh=!!(tgf&&tgf.consensus>0&&tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays));
-  const consensus=fresh?tgf.consensus:0, high=fresh?(tgf.high||0):0;
-  const staleConsensus=(!fresh)?((pf3EffTarget(d,r)||{}).target||(tgf&&tgf.consensus)||0):0;
+  // Свежий консенсус — тот же, что в карточке (TG_FULL → квартальный срез pf3EffTarget).
+  const ft=scnFreshTarget(d,r), fresh=ft.fresh, consensus=ft.consensus, high=ft.high, staleConsensus=ft.staleConsensus;
   const tech=scenarioTech(tk,ccy);
   const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});       // RSI 1D
   const md=scenarioMid({price,target:consensus,targetHigh:high,support,rsi:tech.rsiW,fresh}); // RSI 1W
@@ -4865,11 +4874,10 @@ function scnAlertCheck(){
     if(!(price>0)||!tk)return;
     const sma50=sm.s50>=0?parseFloat(r[sm.s50]):0;
     const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
-    const tgf=TG_FULL[tk];
-    const fresh=!!(tgf&&tgf.consensus>0&&tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays));
+    const ft=scnFreshTarget(d,r);
     const tech=scenarioTech(tk,ccy);
     const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});
-    const md=scenarioMid({price,target:fresh?tgf.consensus:0,targetHigh:fresh?(tgf.high||0):0,support,rsi:tech.rsiW,fresh});
+    const md=scenarioMid({price,target:ft.consensus,targetHigh:ft.high,support,rsi:tech.rsiW,fresh:ft.fresh});
     if(!sh)return;
     const now={rrShort:sh.rr,rsi:tech.rsi,stretch:!!(md&&md.stretch),priceAboveBull:price>=sh.bull,priceBelowBear:price<=sh.bear};
     const prev=SCN_ALERT_STATE[tk];

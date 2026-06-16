@@ -273,6 +273,11 @@ grp('scenario v1.4', function(){
   // валидный среднесрок: свежие таргеты выше цены → R/R>0
   var mdOk = scenarioMid({ price: 600, target: 650, targetHigh: 730, fresh: true });
   __ok('mid valid: bull 730 / base 650 / RR>0', mdOk.valid && mdOk.bull === 730 && mdOk.base === 650 && mdOk.rr > 0);
+  // баг-кейс: свежий квартальный консенсус БЕЗ явного диапазона → Bull = consensus×1.1 (>Base), валидно
+  var mdBand = scenarioMid({ price: 1041, target: 1182, fresh: true });
+  __approx('mid bull from band ≈ 1300', mdBand.bull, 1300.2, 0.5);
+  __approx('mid base = consensus 1182', mdBand.base, 1182);
+  __ok('mid band valid & RR>0', mdBand.valid === true && mdBand.rr > 0);
   // ATR/RSI helpers
   var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
   __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);

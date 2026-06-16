@@ -4506,6 +4506,59 @@ function valHTML(d,r){
 }
 
 // 📐 Сводка недооценки на Home — результат кнопки «Оценка».
+// 🧭 Составной «сигнальный балл»: инсайдеры × оценка (раздел 3.1). Агрегатор для
+// быстрого сканирования, НЕ рекомендация. Чистая функция — покрыта тестом.
+function signalScore(ins, val, secMed){
+  let n=0; const items=[];
+  if(ins){
+    if(ins.cluster){n+=2;items.push({d:1,t:RT('кластер покупок инсайдеров','insider cluster buy')});}
+    else if(ins.netUSD>0){n+=1;items.push({d:1,t:RT('нетто-покупка инсайдеров','net insider buying')});}
+    else if(ins.netUSD<0){n-=1;items.push({d:-1,t:RT('нетто-продажа инсайдеров','net insider selling')});}
+  }
+  if(val&&(val.pe||val.fwdPe||val.ps||val.evEbitda)){
+    const c=valCmp(val,secMed,'fwd');
+    const eps=valEpsTrend(val.pe,val.fwdPe);
+    if(c&&c.bothCount>=2){
+      if(eps==='down'){n-=1;items.push({d:-1,t:RT('дёшево, но EPS падает (ловушка?)','cheap but EPS falling (trap?)')});}
+      else{n+=2;items.push({d:1,t:RT('недооценка по сектору и истории','undervalued vs sector & history')});}
+    }else if(c){
+      const cheapSec=c.dims.some(dm=>dm.belowSec);
+      const richSec=c.dims.some(dm=>dm.secPct!=null&&dm.secPct>=10);
+      if(cheapSec&&eps!=='down'){n+=1;items.push({d:1,t:RT('дешевле сектора','cheaper than sector')});}
+      else if(richSec){n-=1;items.push({d:-1,t:RT('дороже сектора','richer than sector')});}
+    }
+  }
+  return {n,items};
+}
+function signalLevel(n){return n>=3?{i:'🟢',c:'sig-strong'}:n>=1?{i:'🟢',c:'sig-pos'}:n<=-1?{i:'🔴',c:'sig-neg'}:{i:'⚪',c:'sig-neu'};}
+function signalBadgeHTML(tk){
+  const sm=(_valSecCache||valSectorMedians());
+  const s=signalScore(INSIDER[tk], VAL[tk], sm[(VAL[tk]||{}).sector]);
+  if(!s.items.length)return '';
+  const lvl=signalLevel(s.n);
+  const tip=s.items.map(it=>(it.d>0?'+ ':'− ')+it.t).join(' · ')+' · '+RT('справочный сигнал, не рекомендация','reference signal, not advice');
+  return`<span class="sig-badge ${lvl.c}" title="${tip}">🧭 ${RT('Сигнал','Signal')} ${lvl.i} ${s.n>0?'+':''}${s.n}</span>`;
+}
+// Home: «инсайдерская покупка × недооценка» (раздел 4) — ключевое отличие: связка
+// двух модулей, разнесённых по вкладкам в готовых платформах.
+function homeSignalHTML(){
+  if(!Object.keys(INSIDER||{}).length&&!Object.keys(VAL||{}).length)return '';
+  const sm=(_valSecCache||valSectorMedians());
+  const tks=[...new Set([...Object.keys(INSIDER||{}),...Object.keys(VAL||{})])];
+  const scored=tks.map(tk=>{
+    const s=signalScore(INSIDER[tk],VAL[tk],sm[(VAL[tk]||{}).sector]);
+    const insBuy=INSIDER[tk]&&(INSIDER[tk].cluster||INSIDER[tk].netUSD>0);
+    const valCheap=s.items.some(it=>it.d>0&&/недооцен|дешевле|undervalued|cheaper/.test(it.t));
+    return {tk,s,both:insBuy&&valCheap,name:(VAL[tk]||INSIDER[tk]||{}).name||tk,ccy:(VAL[tk]||INSIDER[tk]||{}).ccy};
+  }).filter(x=>x.both).sort((a,b)=>b.s.n-a.s.n);
+  const body=scored.length?scored.slice(0,12).map(x=>`<div class="home-row" onclick="insiderOpenCard('${x.tk}')">
+    ${logoHTML(x.tk,x.ccy,'pf3-row-logo')}
+    <div class="pf3-row-name"><b>${x.name}</b><span>${x.tk}</span></div>
+    <div style="flex:1">${x.s.items.map(it=>`<span class="sig-tag ${it.d>0?'up':'down'}">${it.d>0?'+':'−'} ${it.t}</span>`).join(' ')}</div>
+    <span class="sig-badge ${signalLevel(x.s.n).c}">${signalLevel(x.s.n).i} ${x.s.n>0?'+':''}${x.s.n}</span></div>`).join('')
+    :`<div class="pf3-empty">${RT('Пока нет бумаг, где инсайдерская покупка совпадает с недооценкой. Соберите «🕵 AI Insider» и «📐 Оценку» на Home.','No stocks yet where insider buying meets undervaluation. Run «🕵 AI Insider» and «📐 Valuation» on Home.')}</div>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🧭 ${RT('Инсайдеры × Недооценка','Insiders × Undervaluation')}</span><span class="pf3-asof">${RT('связка сигналов — справочно','signal crossover — reference')}</span></div>${body}</section>`;
+}
 function homeValHTML(){
   const ents=Object.keys(VAL||{}).map(tk=>({tk,...VAL[tk]}));
   const withData=ents.filter(e=>e.pe||e.fwdPe||e.ps||e.evEbitda);
@@ -4951,7 +5004,7 @@ function homeHTML(){
     {id:'best',html:homeBestHTML()},
     {id:'forecast',html:homeForecastHTML()},
   ];
-  if(isAdmin()){ items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }
+  if(isAdmin()){ items.push({id:'signal',html:homeSignalHTML()}); items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }
   return erow('home',items,'edit-rows-v');
 }
 
@@ -4992,6 +5045,7 @@ function pf3DetailHTML(){
         <div>
           <h2>${r[1]||tk}</h2>
           <div class="pf3-chips">${chips}</div>
+          ${isAdmin()?signalBadgeHTML(tk):''}
         </div>
       </div>
       <div class="pf3-quote">

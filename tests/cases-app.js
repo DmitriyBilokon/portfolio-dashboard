@@ -154,6 +154,28 @@ grp('insider tx kind', function(){
   __ok('unknown = routine', insiderTxKind('Z').routine === true);
 });
 
+// 9g) 🧭 Составной сигнальный балл (инсайдеры × оценка)
+grp('signal score', function(){
+  var sec = { pe: 30, ps: 5, evEbitda: 15 };
+  // кластер инсайдеров + недооценка по сектору и истории → высокий балл
+  var s = signalScore(
+    { cluster: { uniqueBuyers: 3 }, netUSD: 1e6 },
+    { pe: 10, fwdPe: 8, ps: 2, evEbitda: 7, sector: 'X', hist: { pe5: 20, ps5: 4, ev5: 12 } },
+    sec,
+  );
+  __ok('cluster + undervalued → n>=4', s.n >= 4);
+  // нетто-продажа + дорого → отрицательный
+  var s2 = signalScore({ netUSD: -5e5 }, { pe: 60, fwdPe: 70, ps: 30, sector: 'X' }, { pe: 30, ps: 10 });
+  __ok('selling + rich → n<0', s2.n < 0);
+  // value-trap: дёшево, но EPS падает → не плюсуем
+  var s3 = signalScore(
+    null,
+    { pe: 10, fwdPe: 20, ps: 2, sector: 'X', hist: { pe5: 30, ps5: 5 } },
+    { pe: 30, ps: 6 },
+  );
+  __ok('value trap not rewarded', s3.n <= 0);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

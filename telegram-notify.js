@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16stream-ai';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16cross-alerts';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2082,7 +2082,8 @@ export default {
       try{
         const b = await request.json();
         const sum = b.sumUSD ? ` · объём ≈ $${Number(b.sumUSD).toLocaleString('en-US')}` : '';
-        await sendTelegram(env, `🕵 <b>CLUSTER BUY — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${b.uniqueBuyers} инсайдер${b.uniqueBuyers >= 5 ? 'ов' : (b.uniqueBuyers >= 2 ? 'а' : '')} купили в окне ${b.windowDays || 10} дн.${sum}\n📅 ${b.fromDate || ''} — ${b.toDate || ''}`);
+        const cross = b.cross ? `\n${esc(String(b.cross))}` : '';   // 3.2: контекст оценки в алерте инсайдеров
+        await sendTelegram(env, `🕵 <b>CLUSTER BUY — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${b.uniqueBuyers} инсайдер${b.uniqueBuyers >= 5 ? 'ов' : (b.uniqueBuyers >= 2 ? 'а' : '')} купили в окне ${b.windowDays || 10} дн.${sum}${cross}\n📅 ${b.fromDate || ''} — ${b.toDate || ''}`);
         return json({ ok: true });
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
@@ -2113,7 +2114,8 @@ export default {
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{
         const b = await request.json();
-        await sendTelegram(env, `📐 <b>НЕДООЦЕНКА — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.detail || 'дёшево относительно сектора и собственной истории'))}\n<i>Статистическое наблюдение, не сигнал к покупке.</i>`);
+        const cross = b.cross ? `\n${esc(String(b.cross))}` : '';   // 3.2: контекст инсайдеров в алерте оценки
+        await sendTelegram(env, `📐 <b>НЕДООЦЕНКА — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.detail || 'дёшево относительно сектора и собственной истории'))}${cross}\n<i>Статистическое наблюдение, не сигнал к покупке.</i>`);
         return json({ ok: true });
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }

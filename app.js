@@ -2271,7 +2271,7 @@ async function insiderUpdateAll(){
               const sig=v.cluster.fromDate+'_'+v.cluster.toDate+'_'+v.cluster.uniqueBuyers;
               if(prev.notified!==sig){
                 clusters++;INSIDER[tk].notified=sig;
-                try{await fetch(PRICE_PROXY+'?action=insidernotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:names[tk]||tk,uniqueBuyers:v.cluster.uniqueBuyers,sumUSD:v.cluster.sumUSD,windowDays:v.cluster.windowDays,fromDate:v.cluster.fromDate,toDate:v.cluster.toDate})});}catch(e){}
+                try{await fetch(PRICE_PROXY+'?action=insidernotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:names[tk]||tk,uniqueBuyers:v.cluster.uniqueBuyers,sumUSD:v.cluster.sumUSD,windowDays:v.cluster.windowDays,fromDate:v.cluster.fromDate,toDate:v.cluster.toDate,cross:valContextLine(tk)})});}catch(e){}
               }
             }
           }
@@ -4354,7 +4354,7 @@ async function valUpdateAll(){
         const sig='cheap_'+c.bothCount;
         if(v.notified!==sig){
           cheap++;VAL[tk].notified=sig;
-          try{await fetch(PRICE_PROXY+'?action=valnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:v.name||tk,detail:c.detail})});}catch(e){}
+          try{await fetch(PRICE_PROXY+'?action=valnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:v.name||tk,detail:c.detail,cross:insiderContextLine(tk)})});}catch(e){}
         }
       }else if(v.notified){VAL[tk].notified=null;}
     }
@@ -4538,6 +4538,22 @@ function signalBadgeHTML(tk){
   const lvl=signalLevel(s.n);
   const tip=s.items.map(it=>(it.d>0?'+ ':'− ')+it.t).join(' · ')+' · '+RT('справочный сигнал, не рекомендация','reference signal, not advice');
   return`<span class="sig-badge ${lvl.c}" title="${tip}">🧭 ${RT('Сигнал','Signal')} ${lvl.i} ${s.n>0?'+':''}${s.n}</span>`;
+}
+// Контекст-строки для скрещивания в Telegram-алертах (3.2): к инсайдерскому
+// алерту добавляем оценку, к алерту оценки — инсайдеров. Клиент знает оба модуля.
+function valContextLine(tk){
+  const v=VAL[tk]; if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))return '';
+  const c=valCmp(v,(_valSecCache||valSectorMedians())[v.sector],'fwd'); if(!c)return '';
+  const cheap=c.dims.filter(d=>d.belowSec&&d.secPct!=null).map(d=>`${d.label} ${Math.round(d.secPct)}% к сектору`);
+  if(!cheap.length)return '';
+  const eps=valEpsTrend(v.pe,v.fwdPe);
+  return `📐 ${cheap.join(', ')}${eps==='up'?' · EPS↑':eps==='down'?' · ⚠ EPS↓':''}`;
+}
+function insiderContextLine(tk){
+  const v=INSIDER[tk]; if(!v)return '';
+  if(v.cluster)return `🕵 кластер: ${v.cluster.uniqueBuyers} инсайд. купили${v.cluster.sumUSD?' ≈ '+insiderFmtUSD(v.cluster.sumUSD,v.valCcy):''}`;
+  if(v.netUSD>0)return `🕵 нетто-покупка инсайдеров +${insiderFmtUSD(v.netUSD,v.valCcy)}`;
+  return '';
 }
 // Home: «инсайдерская покупка × недооценка» (раздел 4) — ключевое отличие: связка
 // двух модулей, разнесённых по вкладкам в готовых платформах.

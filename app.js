@@ -4766,14 +4766,46 @@ function homeForecastPicks(){
   all.sort((a,b)=>b.e-a.e);
   return all.slice(0,10);
 }
+let homeFcast={loading:false,data:null,hz:'h12'};   // AI-прогноз топ-10 (по кнопке)
+function homeFcastSetHz(hz){homeFcast.hz=hz;if(curIdx===HOME_KEY)renderAll();}
+async function homeFcastAiRun(){
+  if(homeFcast.loading||!isAdmin())return;
+  homeFcast.loading=true;if(curIdx===HOME_KEY)renderAll();
+  try{
+    const picks=homeForecastPicks(),tks=new Set(picks.map(p=>p.tk)),num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
+    const positions=[],added=new Set();
+    v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tks.has(tk)||added.has(tk))return;added.add(tk);const m=pf3TypeMetrics(d,r);positions.push({ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,phase:pf3Criterion(d,r).label})})});
+    const snap={portfolioName:'HOME · топ-10',baseCurrency:'SEK',horizons:['3 мес','6-9 мес','12+ мес'],positions,playbook:aiPlaybookEnsure()};
+    const r=await fetch(PRICE_PROXY+'?action=forecast',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
+    const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
+    if(j&&j.forecast&&Array.isArray(j.forecast.stocks)){aiSpendAdd(j.cost);homeFcast.data={stocks:j.forecast.stocks,summary:j.forecast.summary||'',at:new Date().toISOString(),cost:j.cost||null};}
+    else toast('AI: '+((j&&j.error)||(bodyText?bodyText.slice(0,200):('HTTP '+r.status))),true);
+  }catch(e){toast('AI: '+(e&&e.message||RT('сеть/worker','network/worker')),true);}
+  homeFcast.loading=false;if(curIdx===HOME_KEY)renderAll();
+}
 function homeForecastHTML(){
-  const picks=homeForecastPicks();
-  const HZ=[[RT('3 мес','3m'),0.33],[RT('6–9 мес','6–9m'),0.66],[RT('12+ мес','12m+'),1.0]];
+  const HZ=[['h3',RT('3 мес','3m'),0.33],['h69',RT('6–9 мес','6–9m'),0.66],['h12',RT('12+ мес','12m+'),1.0]];
   const cls=v=>v>=0?'pf3-up':'pf3-down';
-  const pct=v=>`<span class="${cls(v)}">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
-  const mark={tgt:'',fund:` <span class="fc-flat" title="${RT('по фундаменталу (рост выручки/ROE)','fundamental (revenue growth/ROE)')}">ƒ</span>`,flat:` <span class="fc-flat" title="${RT('нет таргета/данных — без изменения','no target/data — held flat')}">≈</span>`};
-  const body=picks.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th>${HZ.map(h=>`<th style="text-align:right">${h[0]}</th>`).join('')}</tr></thead><tbody>${picks.map((p,i)=>`<tr onclick="insiderOpenCard('${p.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${p.name}</b> <span class="bp-tk">${p.tk}</span>${mark[p.src]||''}</td>${HZ.map(h=>`<td style="text-align:right">${pct(p.e*h[1])}</td>`).join('')}</tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Нет данных — нажмите «🔄 Обновить всё».','No data — press «🔄 Update all».')}</div>`;
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')}</span><span class="pf3-asof">${RT('ожидаемая доходность · кнопка «Обновить всё»','expected return · «Update all»')}</span></div>${body}<div class="pf3-reco-note">${RT('Ожидаемая доходность от консенсус-таргета аналитиков (или фундаментала ƒ: рост выручки/ROE): ~⅓ за 3 мес, ~⅔ за 6–9 мес, полностью за 12+ мес. Топ-10 по 12-мес потенциалу. Оценка, не индивидуальная инвестиционная рекомендация.','Expected return from the analyst consensus target (or fundamentals ƒ: revenue growth/ROE): ~1/3 in 3m, ~2/3 in 6–9m, full at 12m+. Top-10 by 12m potential. An estimate, not individual investment advice.')}</div></section>`;
+  const pct=v=>v==null||isNaN(v)?'—':`<span class="${cls(v)}">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
+  const aiBtn=isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="homeFcastBtn" onclick="homeFcastAiRun()"${homeFcast.loading?' disabled':''}>${homeFcast.loading?'⏳ '+RT('Прогноз','Forecasting')+'…':(homeFcast.data?'🔄 '+RT('Обновить AI','Refresh AI'):'✨ '+RT('AI-прогноз','AI forecast'))}</button>`:'';
+  let body,sub,note;
+  if(homeFcast.data&&Array.isArray(homeFcast.data.stocks)){
+    if(!HZ.some(h=>h[0]===homeFcast.hz))homeFcast.hz='h12';
+    const hz=homeFcast.hz;
+    const rows=homeFcast.data.stocks.map(s=>({tk:String(s.ticker||'').trim().toUpperCase(),h3:parseFloat(s.h3),h69:parseFloat(s.h69),h12:parseFloat(s.h12),note:String(s.note||'')}))
+      .filter(s=>s.tk).sort((a,b)=>((isNaN(b[hz])?-1e9:b[hz])-(isNaN(a[hz])?-1e9:a[hz]))).slice(0,10);
+    const seg=HZ.map(h=>`<button class="pf3-hz-b${hz===h[0]?' on':''}" onclick="homeFcastSetHz('${h[0]}')">${h[1]}</button>`).join('');
+    body=`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div>${homeFcast.data.summary?`<div class="dash-headline">${pf3Md(homeFcast.data.summary)}</div>`:''}<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th>${HZ.map(h=>`<th style="text-align:right">${h[1]}</th>`).join('')}</tr></thead><tbody>${rows.map((s,i)=>`<tr onclick="insiderOpenCard('${s.tk}')"${s.note?` title="${s.note.replace(/"/g,'&quot;')}"`:''}><td class="bp-n">${i+1}</td><td class="bp-name"><b>${s.tk}</b></td>${HZ.map(h=>`<td style="text-align:right">${pct(s[h[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    sub=RT('AI · ранжирование по выбранному горизонту','AI · ranked by the selected horizon')+(homeFcast.data.at?' · '+pf3DtRu(homeFcast.data.at):'')+(homeFcast.data.cost?' · '+costLine(homeFcast.data.cost):'');
+    note=RT('AI-прогноз доходности на 3 горизонта (web-поиск свежих таргетов/новостей). Топ-10 переранжируются по выбранному горизонту. Оценка, не индивидуальная рекомендация.','AI forecast of returns across 3 horizons (web search of fresh targets/news). Top-10 re-ranked by the selected horizon. An estimate, not advice.');
+  }else{
+    const picks=homeForecastPicks();
+    const mark={tgt:'',fund:` <span class="fc-flat" title="${RT('по фундаменталу (рост выручки/ROE)','fundamental (revenue growth/ROE)')}">ƒ</span>`,flat:` <span class="fc-flat" title="${RT('нет таргета/данных — без изменения','no target/data — held flat')}">≈</span>`};
+    body=picks.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th>${HZ.map(h=>`<th style="text-align:right">${h[1]}</th>`).join('')}</tr></thead><tbody>${picks.map((p,i)=>`<tr onclick="insiderOpenCard('${p.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${p.name}</b> <span class="bp-tk">${p.tk}</span>${mark[p.src]||''}</td>${HZ.map(h=>`<td style="text-align:right">${pct(p.e*h[2])}</td>`).join('')}</tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Нет данных — нажмите «🔄 Обновить всё».','No data — press «🔄 Update all».')}</div>`;
+    sub=RT('детерминированно · «Обновить всё»','deterministic · «Update all»');
+    note=homeFcast.loading?RT('⏳ AI Proto собирает свежие данные…','⏳ AI Proto gathering fresh data…'):RT('Ожидаемая доходность от консенсус-таргета аналитиков (или фундаментала ƒ): ~⅓ за 3 мес, ~⅔ за 6–9 мес, полностью за 12+ мес. Топ-10 по 12-мес потенциалу. «✨ AI-прогноз» — версия со свежим веб-поиском. Оценка, не рекомендация.','Expected return from the analyst consensus target (or fundamentals ƒ): ~1/3 in 3m, ~2/3 in 6–9m, full at 12m+. Top-10 by 12m potential. «✨ AI forecast» is the fresh web-search version. An estimate, not advice.');
+  }
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')}</span><span class="pf3-asof">${sub}</span>${aiBtn}</div>${body}<div class="pf3-reco-note">${note}</div></section>`;
 }
 function homeHTML(){
   const items=[

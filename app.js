@@ -4888,7 +4888,8 @@ function pf3ScenarioHTML(d,r){
   const tech=scenarioTech(tk,ccy);
   pf3OptEnsure(tk,ccy);   // 📉 живой implied move (опционы)
   const opt=OPT_IV[tk]&&OPT_IV[tk].data;
-  const impR=(opt&&opt.movePct>0)?opt.movePct/100:0;   // implied move как R событийного Bear (B.4)
+  // R событийного Bear (B.4): приоритет — ход на ОТЧЁТ (если есть), иначе ближайшая экспирация.
+  const impR=(opt&&opt.earn&&opt.earn.movePct>0)?opt.earn.movePct/100:((opt&&opt.movePct>0)?opt.movePct/100:0);
   const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});       // RSI 1D
   const md=scenarioMid({price,target:consensus,targetHigh:high,support,rsi:tech.rsiW,fresh,eventR:impR}); // RSI 1W
   const proj=scenarioProjection(price,tech.atr);
@@ -4921,7 +4922,7 @@ function pf3ScenarioHTML(d,r){
   let mdBody;
   if(md.valid||md.note==='noupside'){
     const mdRpct=Math.round((md.R||SCENARIO_CFG.eventR)*100);
-    const mdImpSrc=(impR>0&&Math.abs(md.R-impR)<1e-9)?RT(' (по опционам)',' (from options)'):'';
+    const mdImpSrc=(impR>0&&Math.abs(md.R-impR)<1e-9)?(opt&&opt.earn&&opt.earn.movePct>0?RT(' (опционы на отчёт)',' (earnings options)'):RT(' (по опционам)',' (from options)')):'';
     const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${mdRpct}%${mdImpSrc}`,`earnings miss / guidance cut → −${mdRpct}%${mdImpSrc}`);
     const mdCells=`<div class="scn-grid">
       ${cell('🟢','Bull',md.bull,'bull',md.bullConf||'low',RT('отчёт выше ожиданий / рост гайденса','earnings beat / guidance raise'),'event')}
@@ -4938,7 +4939,7 @@ function pf3ScenarioHTML(d,r){
   const mdBlock=`<div class="scn-hz"><div class="scn-hz-h">📅 ${RT('Среднесрок','Mid-term')} <span class="scn-hz-s">${RT('до отчёта · таргеты + событие','to earnings · targets + event')} · RSI ${tf(tech.rsiW,'1W')}</span>${md.stretch?` <span class="scn-stretch">⚠ ${RT('растяжение','stretched')}</span>`:''}</div>${mdBody}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)} 1D`:''}</span></div>
-    ${opt&&opt.movePct>0?`<div class="pf3-opt-im" title="${RT('Закладываемый опционами ход к ближайшей экспирации — из ATM-стрэддла (call+put). Живое значение с Yahoo, без платных токенов.','Implied move to the nearest expiry — from the ATM straddle (call+put). Live from Yahoo, no paid tokens.')}">📉 ${RT('Опционы закладывают ход','Options imply a move of')} <b>±${opt.movePct.toFixed(1)}%</b> ${RT('к','to')} ${opt.expiry}${opt.days>0?` · ${opt.days} ${RT('дн','d')}`:''}${opt.iv>0?` · IV ${opt.iv.toFixed(0)}%`:''}</div>`:''}
+    ${opt&&opt.movePct>0?`<div class="pf3-opt-im" title="${RT('Закладываемый опционами ход — из ATM-стрэддла (call+put). Ближайшая экспирация + отдельно ход на отчёт (экспирация, покрывающая дату отчёта). Живое значение с Yahoo, без платных токенов.','Implied move from the ATM straddle (call+put). Nearest expiry plus the earnings move (expiration covering the report date). Live from Yahoo, no paid tokens.')}">📉 ${RT('Опционы закладывают ход','Options imply a move of')} <b>±${opt.movePct.toFixed(1)}%</b> ${RT('к','to')} ${opt.expiry}${opt.days>0?` · ${opt.days} ${RT('дн','d')}`:''}${opt.iv>0?` · IV ${opt.iv.toFixed(0)}%`:''}${opt.earn&&opt.earn.movePct>0?`<br>📅 ${RT('На отчёт','Earnings')} ${opt.earn.date}: <b>±${opt.earn.movePct.toFixed(1)}%</b> <span class="pf3-opt-sub">(${RT('эксп','exp')} ${opt.earn.expiry}${opt.earn.days>0?` · ${opt.earn.days} ${RT('дн','d')}`:''}${opt.earn.iv>0?` · IV ${opt.earn.iv.toFixed(0)}%`:''})</span>`:''}</div>`:''}
     ${shBlock}${mdBlock}
     <div class="pf3-ai-note">${RT('Два РАЗДЕЛЬНЫХ горизонта со своим R/R. Краткосрок — ближайшие S/R в коридоре ±2.5·ATR (RSI/ATR 1D), плюс полоса проекции ±ATR×√10 (≈±1σ за 2 нед, не цель). Среднесрок — Bull/Base только от СВЕЖИХ таргетов (иначе «недостаточно данных»), Bear событийный; RSI 1W. Sanity-check скрывает R/R при сломанных/устаревших входах. Справочно, не рекомендация.','Two SEPARATE horizons, each with its own R/R. Short-term — nearest S/R within ±2.5·ATR (RSI/ATR 1D) plus an ±ATR×√10 projection band (≈±1σ over 2 weeks, not a target). Mid-term — Bull/Base only from FRESH targets (else «not enough data»), event-based Bear; RSI 1W. A sanity check hides R/R on broken/stale inputs. Reference only.')}</div>
   </section>`;

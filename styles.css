@@ -1389,3 +1389,4 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* 📉 Implied move (опционы) — живой ход к ближайшей экспирации в панели сценариев */
 .pf3-opt-im{font-size:12px;color:var(--text2);margin:2px 0 10px;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:inline-block;cursor:help}
 .pf3-opt-im b{color:var(--text1)}
+.pf3-opt-im .pf3-opt-sub{color:var(--text3);font-size:11px}

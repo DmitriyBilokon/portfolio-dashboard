@@ -57,6 +57,17 @@ grp('impliedMove', function(){
   __approx('uses lastPrice fallback (11%)', im2.movePct, 11, 0.1);
 });
 
+// 7b) 📅 pickEarnExpiry — экспирация, покрывающая дату отчёта (первая по дню ≥ дня отчёта)
+grp('pickEarnExpiry', function(){
+  var D = function(s){ return Date.parse(s + 'T00:00:00Z'); };
+  var exps = [D('2026-06-18'), D('2026-06-25'), D('2026-07-02'), D('2026-07-18')];
+  __eq('отчёт 2026-06-26 → эксп 2026-07-02', pickEarnExpiry(exps, D('2026-06-26')), D('2026-07-02'));
+  __eq('отчёт в день экспирации → та же', pickEarnExpiry(exps, D('2026-06-25')), D('2026-06-25'));
+  __eq('отчёт после всех экспираций → 0', pickEarnExpiry(exps, D('2026-08-01')), 0);
+  __eq('пустой список → 0', pickEarnExpiry([], D('2026-06-26')), 0);
+  __eq('нет даты отчёта → 0', pickEarnExpiry(exps, 0), 0);
+});
+
 // 6) 🎯 A.1 aggTargets — агрегация таргетов (WDC-подобный кейс)
 grp('aggTargets', function(){
   var sm = { allTimeAvgPriceTarget: 300, lastQuarterAvgPriceTarget: 650, lastQuarterCount: 16, allTimeCount: 230 };

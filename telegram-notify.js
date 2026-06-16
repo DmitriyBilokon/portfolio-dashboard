@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17options2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17options3';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -272,6 +272,14 @@ function impliedMove(spot, calls, puts, expMs, nowMs){
   const ivc = +c.impliedVolatility || 0, ivp = +p.impliedVolatility || 0, iv = (ivc + ivp) / 2;
   return { movePct: Math.round(movePct * 10) / 10, days, atm: Math.round(((+c.strike + +p.strike) / 2) * 100) / 100, iv: iv > 0 ? Math.round(iv * 1000) / 10 : null };
 }
+// Ближайшая экспирация, покрывающая дату отчёта: первая, чья КАЛЕНДАРНАЯ дата ≥ дня отчёта.
+// (сравнение по дню, чтобы тайзоны не уводили на недельную экспирацию перед отчётом).
+function pickEarnExpiry(expDatesMs, earnMs){
+  if(!(earnMs > 0) || !Array.isArray(expDatesMs)) return 0;
+  const day = ms => Math.floor(ms / 864e5), ed = day(earnMs);
+  const fut = expDatesMs.filter(ms => day(ms) >= ed).sort((a, b) => a - b);
+  return fut.length ? fut[0] : 0;
+}
 async function optionsImplied(symbol){
   try{
     // v7 options теперь требует crumb+cookie (как quoteSummary), иначе 401 Invalid Crumb.
@@ -285,10 +293,37 @@ async function optionsImplied(symbol){
     const spot = (res.quote && res.quote.regularMarketPrice) || 0;
     const opt = res.options && res.options[0];
     if(!opt || !(spot > 0)) return null;
+    const nowMs = Date.now();
     const expMs = (opt.expirationDate || 0) * 1000;
-    const im = impliedMove(spot, opt.calls, opt.puts, expMs, Date.now());
+    const im = impliedMove(spot, opt.calls, opt.puts, expMs, nowMs);
     if(!im) return null;
-    return { ...im, expiry: new Date(expMs).toISOString().slice(0, 10), spot: round2(spot), at: new Date().toISOString() };
+    const out = { ...im, expiry: new Date(expMs).toISOString().slice(0, 10), spot: round2(spot), at: new Date().toISOString() };
+    // 📅 Ход на отчёт: implied move у экспирации, покрывающей дату ближайшего отчёта.
+    try{
+      let earnMs = (+(res.quote && res.quote.earningsTimestamp) || 0) * 1000;
+      if(!(earnMs >= nowMs - 864e5)){   // нет в quote или уже прошёл — берём из calendarEvents
+        const cal = await yQuoteSummary(symbol, 'calendarEvents');
+        const ed = cal && cal.calendarEvents && cal.calendarEvents.earnings && cal.calendarEvents.earnings.earningsDate;
+        earnMs = (Array.isArray(ed) && ed.length) ? (yRaw(ed[0]) || 0) * 1000 : 0;
+      }
+      if(earnMs >= nowMs - 864e5){   // только предстоящий отчёт (допуск — сегодня)
+        const expDates = (res.expirationDates || []).map(s => s * 1000);
+        const eExpMs = pickEarnExpiry(expDates, earnMs);
+        if(eExpMs > 0){
+          let eOpt = (eExpMs === expMs) ? opt : null;   // совпала с ближайшей — без лишнего запроса
+          if(!eOpt){
+            const r2 = await fetch(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}?date=${Math.round(eExpMs / 1000)}&crumb=${encodeURIComponent(a.crumb)}`,
+              { headers: { ...Y_UA, Cookie: a.cookie } });
+            if(r2.ok){ const res2 = (await r2.json())?.optionChain?.result?.[0]; eOpt = res2 && res2.options && res2.options[0]; }
+          }
+          if(eOpt){
+            const eim = impliedMove(spot, eOpt.calls, eOpt.puts, eExpMs, nowMs);
+            if(eim) out.earn = { date: new Date(earnMs).toISOString().slice(0, 10), expiry: new Date(eExpMs).toISOString().slice(0, 10), movePct: eim.movePct, days: eim.days, iv: eim.iv };
+          }
+        }
+      }
+    }catch(e){}
+    return out;
   }catch(e){ return null; }
 }
 async function dailyHistory(sym, range = '2y'){

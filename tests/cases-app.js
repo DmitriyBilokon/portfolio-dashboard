@@ -279,6 +279,26 @@ grp('scenario v1.4', function(){
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
 });
 
+// 9l) 📊 Блок D — детектор сценарных алертов
+grp('scenario alerts', function(){
+  // первое наблюдение (нет prev) → без событий
+  __eq('no prev → no events', scnAlertEvents(null, { rrShort: 1.3, rsi: 75, stretch: true, priceAboveBull: true, priceBelowBear: false }).length, 0);
+  // касание bull-триггера
+  var a = scnAlertEvents({ priceAboveBull: false, rrShort: 1.3, rsi: 60, stretch: false }, { priceAboveBull: true, priceBelowBear: false, rrShort: 1.3, rsi: 60, stretch: false });
+  __ok('bull trigger touch', a.some(function(e){ return e.kind === 'bull'; }));
+  // смена знака R/R через 1.0
+  var b = scnAlertEvents({ rrShort: 1.3, rsi: 60, stretch: false, priceAboveBull: false, priceBelowBear: false }, { rrShort: 0.7, rsi: 60, stretch: false, priceAboveBull: false, priceBelowBear: false });
+  __ok('R/R crossed 1.0', b.some(function(e){ return e.kind === 'rr'; }));
+  // выход RSI из >70 на «растяжении»
+  var c = scnAlertEvents({ rsi: 75, stretch: true, rrShort: 1.0, priceAboveBull: false, priceBelowBear: false }, { rsi: 68, stretch: true, rrShort: 1.0, priceAboveBull: false, priceBelowBear: false });
+  __ok('RSI exits 70 on stretch', c.some(function(e){ return e.kind === 'rsi'; }));
+  // без изменений → без событий
+  var same = { rrShort: 1.2, rsi: 55, stretch: false, priceAboveBull: false, priceBelowBear: false };
+  __eq('no change → no events', scnAlertEvents(same, same).length, 0);
+  // RSI-выход без «растяжения» не алертит
+  __eq('RSI exit without stretch ignored', scnAlertEvents({ rsi: 75, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }, { rsi: 68, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }).length, 0);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

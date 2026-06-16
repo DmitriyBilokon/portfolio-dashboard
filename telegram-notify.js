@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17targets';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17scn';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2179,6 +2179,16 @@ export default {
         const b = await request.json();
         const cross = b.cross ? `\n${esc(String(b.cross))}` : '';   // 3.2: контекст инсайдеров в алерте оценки
         await sendTelegram(env, `📐 <b>НЕДООЦЕНКА — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.detail || 'дёшево относительно сектора и собственной истории'))}${cross}\n<i>Статистическое наблюдение, не сигнал к покупке.</i>`);
+        return json({ ok: true });
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'scnnotify'){
+      // POST {ticker,name,text}: Блок D — сценарный алерт (касание bull/bear-триггера, смена знака R/R, выход RSI).
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{
+        const b = await request.json();
+        await sendTelegram(env, `📊 <b>СЦЕНАРИЙ — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.text || ''))}\n<i>Справочный сигнал, не рекомендация.</i>`);
         return json({ ok: true });
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }

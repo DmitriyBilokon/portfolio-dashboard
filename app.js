@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE };
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -143,6 +143,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.sim)) SIM=s.sim;
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules;
+  if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
   if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
@@ -266,6 +267,7 @@ let SIM=[];
 // qty,price,plNative,date}] — plNative = реализованный P&L в валюте бумаги (для продаж).
 let PF_TRADES=[];
 let PLAN_RULES=[];   // 🎯 правила-триггеры плана действий (уровень/дедлайн → уведомление)
+let SCN_ALERT_STATE={};   // 📊 Блок D: последнее наблюдаемое состояние сценариев по тикеру (дедуп алертов)
 // Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
 // свои сохранения, чтобы push дашборда не стирал память бота.
 let TG_ALERTS={};
@@ -4833,6 +4835,54 @@ function pf3ScenarioHTML(d,r){
     <div class="pf3-ai-note">${RT('Два РАЗДЕЛЬНЫХ горизонта со своим R/R. Краткосрок — ближайшие S/R в коридоре ±2.5·ATR (RSI/ATR 1D), плюс полоса проекции ±ATR×√10 (≈±1σ за 2 нед, не цель). Среднесрок — Bull/Base только от СВЕЖИХ таргетов (иначе «недостаточно данных»), Bear событийный; RSI 1W. Sanity-check скрывает R/R при сломанных/устаревших входах. Справочно, не рекомендация.','Two SEPARATE horizons, each with its own R/R. Short-term — nearest S/R within ±2.5·ATR (RSI/ATR 1D) plus an ±ATR×√10 projection band (≈±1σ over 2 weeks, not a target). Mid-term — Bull/Base only from FRESH targets (else «not enough data»), event-based Bear; RSI 1W. A sanity check hides R/R on broken/stale inputs. Reference only.')}</div>
   </section>`;
 }
+// ── 📊 Блок D: сценарные алерты (касание триггера / смена знака R/R / выход RSI) ──
+// Чистый детектор: сравнивает прошлое и текущее наблюдение → список новых событий.
+function scnAlertEvents(prev,now){
+  prev=prev||null; const ev=[];
+  if(!prev)return ev;   // первое наблюдение — не алертим
+  if(now.priceAboveBull&&!prev.priceAboveBull)ev.push({kind:'bull',text:RT('цена достигла bull-триггера','price reached the bull trigger')});
+  if(now.priceBelowBear&&!prev.priceBelowBear)ev.push({kind:'bear',text:RT('цена достигла bear-триггера','price reached the bear trigger')});
+  if(prev.rrShort!=null&&now.rrShort!=null&&((prev.rrShort<1)!==(now.rrShort<1)))
+    ev.push({kind:'rr',text:RT(`R/R пересёк 1.0 → ${now.rrShort.toFixed(2)}`,`R/R crossed 1.0 → ${now.rrShort.toFixed(2)}`)});
+  if(now.stretch&&prev.rsi!=null&&now.rsi!=null){
+    if(prev.rsi>70&&now.rsi<=70)ev.push({kind:'rsi',text:RT('RSI вышел вниз из зоны >70 (растяжение)','RSI exited >70 (stretched)')});
+    else if(prev.rsi<30&&now.rsi>=30)ev.push({kind:'rsi',text:RT('RSI вышел вверх из зоны <30','RSI exited <30')});
+  }
+  return ev;
+}
+function scnNotifyTelegram(tk,name,text){
+  if(!isAdmin())return;   // Telegram-рассылка — только от админа
+  sbToken().then(tok=>{fetch(PRICE_PROXY+'?action=scnnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name,text})}).catch(()=>{});}).catch(()=>{});
+}
+// Проверка сценарных триггеров по позициям текущей вкладки (вызывается после обновления цен).
+function scnAlertCheck(){
+  if(!isV3())return; const d=pf3D(); if(!d||!Array.isArray(d.rows))return;
+  const sm=smaIdx(d), supC=ensurePFCol(d,'Поддержка'), resC=ensurePFCol(d,'Сопротивление');
+  let changed=false;
+  d.rows.forEach(r=>{
+    if(!((parseFloat(r[6])||0)>0))return;   // только позиции
+    const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
+    if(!(price>0)||!tk)return;
+    const sma50=sm.s50>=0?parseFloat(r[sm.s50]):0;
+    const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
+    const tgf=TG_FULL[tk];
+    const fresh=!!(tgf&&tgf.consensus>0&&tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays));
+    const tech=scenarioTech(tk,ccy);
+    const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});
+    const md=scenarioMid({price,target:fresh?tgf.consensus:0,targetHigh:fresh?(tgf.high||0):0,support,rsi:tech.rsiW,fresh});
+    if(!sh)return;
+    const now={rrShort:sh.rr,rsi:tech.rsi,stretch:!!(md&&md.stretch),priceAboveBull:price>=sh.bull,priceBelowBear:price<=sh.bear};
+    const prev=SCN_ALERT_STATE[tk];
+    const ev=scnAlertEvents(prev,now);
+    SCN_ALERT_STATE[tk]=now; changed=true;
+    ev.forEach(e=>{
+      const msg=`📊 ${tk}: ${e.text} · ${pf3Fmt(price,2)} ${ccy}`;
+      toast(msg); if(typeof planNotify==='function')planNotify('📊 '+RT('Сценарный сигнал','Scenario signal'),msg);
+      scnNotifyTelegram(tk,String(r[1]||tk),e.text+` · ${pf3Fmt(price,2)} ${ccy}`);
+    });
+  });
+  if(changed)scheduleSave();
+}
 // Профильная группа пиров: бумаги портфеля той же ИНДУСТРИИ (точнее), иначе
 // того же сектора. Возвращает записи VAL с хотя бы одним мультипликатором.
 function valPeerGroup(tk){
@@ -6011,6 +6061,7 @@ async function pf3Refresh(silent){
     if(updated)pf3LastRefresh[v3Key]=Date.now();
     try{await pf3RefreshTargets(d)}catch(e){}   // аналит. таргеты — раз в сутки, тем же батч-паттерном
     try{planCheck()}catch(e){}                  // 🎯 сверить уровни плана и уведомить о достигнутых
+    try{scnAlertCheck()}catch(e){}              // 📊 Блок D: сценарные алерты (триггеры/R/R/RSI)
     if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
   }catch(e){if(!silent)toast('Прокси цен недоступен',true);}
   // Don't redraw under the user's cursor while they edit qty / buy price.

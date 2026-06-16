@@ -1166,3 +1166,15 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .tr-add-form{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .tr-add-form input,.tr-add-form select{padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:12px}
 .tr-add-form input{width:110px}
+
+/* 🔮 Прогноз стоимости */
+.pf3-forecast .fc-tbl{margin-top:4px}
+.fc-row{display:grid;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);font-size:12.5px}
+.fc-head{font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border)}
+.fc-r{text-align:right;font-variant-numeric:tabular-nums;line-height:1.25}
+.fc-r small{font-size:10.5px}
+.fc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-name .bp-tk{color:var(--text3);font-size:11px;margin-left:4px}
+.fc-flat{color:var(--text3);cursor:help}
+.fc-tot{font-weight:700;border-bottom:none;background:color-mix(in srgb,var(--bg3) 50%,transparent);border-radius:8px;margin-top:4px}
+.fc-net{background:color-mix(in srgb,var(--accent) 12%,transparent)}

@@ -5120,9 +5120,90 @@ function planCheck(){
   if(changed)scheduleSave();
   if(fired.length&&isV3()&&pf3Tab==='plan')renderPF3();
 }
+let planEditId=null;   // id правила, открытого на редактирование (инлайн)
+// Сколько ЦЕЛЫХ акций влезает в сумму kr по цене (валюта бумаги). Акции
+// покупаются поштучно — поэтому показываем штуки, а не «на N крон».
+function planShares(r, price){
+  if(!(price>0)||!(r.amount>0))return null;
+  const ccyAmt=r.amount/(FX[r.ccy]||1);   // kr → валюта бумаги
+  return Math.floor(ccyAmt/price);
+}
+// Строка про количество: либо заданные штуки, либо «сколько влезает» из суммы.
+function planQtyBit(r, price){
+  if(r.qty>0){
+    let s=`${pf3Fmt(r.qty)} ${RT('шт','sh')}`;
+    if(price>0)s+=` ≈ ${pf3Fmt(r.qty*price*(FX[r.ccy]||1),0)} kr`;
+    return s;
+  }
+  if(r.amount>0){
+    if(price>0){
+      const sh=planShares(r,price);
+      if(sh<1)return `~${pf3Fmt(r.amount,0)} kr · ⚠ ${RT('меньше цены 1 акции','below 1-share price')} (≈${pf3Fmt(price*(FX[r.ccy]||1),0)} kr/${RT('шт','sh')})`;
+      return `~${pf3Fmt(r.amount,0)} kr · ≈ ${sh} ${RT('шт','sh')}`;
+    }
+    return `~${pf3Fmt(r.amount,0)} kr`;
+  }
+  return '';
+}
+// Достать ценовой уровень из текста совета («зоне 358–366», «у поддержки €1099»).
+// Денежные суммы (kr/крон) отбрасываем, чтобы не спутать с ценой акции.
+function planParseLevel(text, act){
+  if(!text)return 0;
+  const t=String(text).replace(/\d[\d  .,]*\s*(kr|крон|kr\.|sek)\b/gi,' ');
+  const m=t.match(/\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?/g);
+  if(!m)return 0;
+  const nums=m.map(s=>parseFloat(s.replace(/[  ]/g,'').replace(',','.'))).filter(n=>isFinite(n)&&n>0);
+  if(!nums.length)return 0;
+  return act==='sell'?Math.min.apply(null,nums):Math.max.apply(null,nums);   // buy→верх зоны, sell→уровень
+}
+// Перенести структурированный совет AI-Proto («⚖️ Предложение») в правила плана.
+function planImportFromAi(){
+  const H=pf3AiHist(),last=H[0],P=last&&last.proposal;
+  const acts=(P&&P.actions)||[];
+  if(!acts.length){toast(RT('Нет структурированного совета — запустите анализ на «🤖 AI Proto»','No structured advice — run analysis on «🤖 AI Proto»'),true);return;}
+  const d=pf3D(); let added=0;
+  acts.forEach((a,i)=>{
+    const isSell=/прода|сократ|уменьш|fix|sell|trim|reduce/i.test(a.action||'');
+    const isBuy=/куп|докуп|добав|нарасти|buy|add|increase/i.test(a.action||'');
+    if(!isBuy&&!isSell)return;   // «держать/наблюдать» — пропускаем
+    const act=isSell?'sell':'buy';
+    const tk=String(a.ticker||'').trim().toUpperCase(); if(!tk)return;
+    if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act===act))return;   // дедуп
+    const level=planParseLevel(a.details||'',act);
+    const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
+    let ccy='USD';
+    if(row&&row[8])ccy=String(row[8]).toUpperCase();
+    else if(/€|eur/i.test(a.details||''))ccy='EUR';
+    else if(/£|gbp/i.test(a.details||''))ccy='GBP';
+    const amount=typeof a.amountSEK==='number'&&a.amountSEK>0?a.amountSEK:0;
+    PLAN_RULES.push({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1});
+    added++;
+  });
+  if(added){planAskNotify(true);scheduleSave();renderPF3();toast('📥 '+RT('Перенесено из совета AI','Imported from AI advice')+': '+added+'. '+RT('Проверьте уровни и кол-во ✏','Check levels & qty ✏'));}
+  else toast(RT('Новых правил нет (уже добавлены или нет торговых действий)','No new rules (already added or no trade actions)'));
+}
+function planEdit(id){ planEditId=(planEditId===id?null:id); renderPF3(); }
+function planCancelEdit(){ planEditId=null; renderPF3(); }
+function planSave(id){
+  const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return;
+  const g=k=>document.getElementById(k);
+  r.act=(g('planE_act')&&g('planE_act').value)||r.act;
+  const tk=String((g('planE_tk')&&g('planE_tk').value)||'').trim().toUpperCase(); if(tk)r.tk=tk;
+  r.level=parseFloat(g('planE_lvl')&&g('planE_lvl').value)||0;
+  r.ccy=String((g('planE_ccy')&&g('planE_ccy').value)||r.ccy||'USD').trim().toUpperCase();
+  r.qty=parseFloat(g('planE_qty')&&g('planE_qty').value)||0;
+  r.amount=parseFloat(g('planE_amt')&&g('planE_amt').value)||0;
+  r.deadline=(g('planE_dl')&&g('planE_dl').value)||'';
+  r.note=String((g('planE_note')&&g('planE_note').value)||'').trim();
+  if(!(r.level>0)&&!r.deadline){toast(RT('Задайте уровень цены или дедлайн','Set a price level or a deadline'),true);return;}
+  r.hitAt=0;   // условие изменилось → пересверить заново
+  planEditId=null; scheduleSave(); renderPF3();
+  toast('🎯 '+RT('Правило обновлено','Rule updated'));
+}
 function planRulesHTML(){
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const d=pf3D();
+  const tkOpts=((d&&d.rows)||[]).map(r=>`<option value="${r[2]}">${esc(r[1]||'')}</option>`).join('');
   const mine=(PLAN_RULES||[]).filter(r=>(r.tab||PF3_KEY)===v3Key).map(r=>({r,st:planStatus(r)}));
   mine.sort((a,b)=>{
     if(!!a.r.done!==!!b.r.done)return a.r.done?1:-1;
@@ -5131,7 +5212,22 @@ function planRulesHTML(){
     return ga-gb;
   });
   const readyN=mine.filter(x=>!x.r.done&&x.st.ready).length;
+  const editRow=r=>`<div class="plan-row plan-edit">
+      <div class="plan-add-form plan-edit-form">
+        <select id="planE_act"><option value="buy"${r.act!=='sell'?' selected':''}>🟢 ${RT('Купить','Buy')}</option><option value="sell"${r.act==='sell'?' selected':''}>🔴 ${RT('Сократить','Trim')}</option></select>
+        <input id="planE_tk" value="${esc(r.tk||'')}" list="planTkList" style="text-transform:uppercase;width:92px">
+        <input id="planE_lvl" type="number" step="any" min="0" value="${r.level||''}" placeholder="${RT('Уровень','Level')}">
+        <input id="planE_ccy" value="${esc(r.ccy||'USD')}" style="width:58px;text-transform:uppercase">
+        <input id="planE_qty" type="number" step="any" min="0" value="${r.qty||''}" placeholder="${RT('Кол-во, шт','Qty, sh')}">
+        <input id="planE_amt" type="number" step="any" min="0" value="${r.amount||''}" placeholder="${RT('Сумма, kr','Amount, kr')}">
+        <input id="planE_dl" type="date" value="${r.deadline||''}" title="${RT('Дедлайн','Deadline')}">
+        <input id="planE_note" value="${esc(r.note||'')}" placeholder="${RT('Заметка','Note')}" style="flex:1;min-width:140px">
+        <button class="pf3-btn" onclick="planSave('${r.id}')">${RT('Сохранить','Save')}</button>
+        <button class="pf3-btn pf3-btn-sm" onclick="planCancelEdit()">${RT('Отмена','Cancel')}</button>
+      </div>
+    </div>`;
   const rows=mine.map(({r,st})=>{
+    if(planEditId===r.id)return editRow(r);
     let badge;
     if(r.done)badge=`<span class="plan-badge plan-done">✓ ${RT('Исполнено','Done')}</span>`;
     else if(st.ready)badge=`<span class="plan-badge plan-ready">🔔 ${RT('Пора','Act now')}</span>`;
@@ -5147,39 +5243,43 @@ function planRulesHTML(){
       const dl=st.dleft;
       bits.push(`📅 ${r.deadline}${dl!=null?` (${dl<0?RT('просрочен','past'):dl===0?RT('сегодня','today'):dl+RT(' дн','d')})`:''}`);
     }
-    if(r.amount)bits.push(`~${pf3Fmt(r.amount,0)} kr`);
+    const qb=planQtyBit(r, st.price>0?st.price:st.lvl);
+    if(qb)bits.push(qb);
     return`<div class="plan-row${st.ready&&!r.done?' is-ready':''}${r.done?' is-done':''}">
       <span class="plan-act ${r.act}">${planActIcon(r.act)} ${r.act==='sell'?RT('Сократить','Trim'):RT('Купить','Buy')}</span>
-      <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
+      <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}">🤖</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
       <span class="plan-btns">
+        <button class="pf3-del" onclick="planEdit('${r.id}')" title="${RT('Редактировать','Edit')}">✏</button>
         ${r.done?`<button class="pf3-del" onclick="planDone('${r.id}',0)" title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" onclick="planDone('${r.id}',1)" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}
         <button class="pf3-del" onclick="planDel('${r.id}')" title="${RT('Удалить','Delete')}">🗑</button>
       </span>
     </div>`;
   }).join('');
-  const opts=((d&&d.rows)||[]).map(r=>`<option value="${r[2]}">${esc(r[1]||'')}</option>`).join('');
   const canNotify=typeof Notification!=='undefined';
   const notifBtn=(canNotify&&Notification.permission!=='granted')
     ?`<button class="pf3-btn pf3-btn-sm" onclick="planAskNotify()">🔔 ${RT('Вкл. уведомления','Enable alerts')}</button>`:'';
+  const hasProp=(()=>{const H=pf3AiHist();return!!(H[0]&&H[0].proposal&&(H[0].proposal.actions||[]).length);})();
+  const importBtn=(isAdmin()&&hasProp)?`<button class="pf3-btn pf3-btn-sm" onclick="planImportFromAi()">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
   const addForm=`
+    <datalist id="planTkList">${tkOpts}</datalist>
     <details class="plan-add"${mine.length?'':' open'}>
       <summary>➕ ${RT('Добавить правило плана','Add plan rule')}</summary>
       <div class="plan-add-form">
         <select id="planAct"><option value="buy">🟢 ${RT('Купить/докупить','Buy/add')}</option><option value="sell">🔴 ${RT('Сократить/продать','Trim/sell')}</option></select>
         <input id="planTk" list="planTkList" placeholder="${RT('Тикер','Ticker')}" autocomplete="off" style="text-transform:uppercase">
-        <datalist id="planTkList">${opts}</datalist>
         <input id="planLvl" type="number" step="any" min="0" placeholder="${RT('Уровень цены','Price level')}">
         <input id="planCcy" placeholder="${RT('Валюта','Ccy')}" value="USD" style="width:64px;text-transform:uppercase">
-        <input id="planAmt" type="number" step="any" min="0" placeholder="${RT('Сумма, kr','Amount, kr')}">
+        <input id="planQty" type="number" step="any" min="0" placeholder="${RT('Кол-во, шт','Qty, sh')}">
+        <input id="planAmt" type="number" step="any" min="0" placeholder="${RT('или сумма, kr','or amount, kr')}">
         <input id="planDl" type="date" title="${RT('Дедлайн (необязательно)','Deadline (optional)')}">
         <input id="planNote" placeholder="${RT('Заметка / условие','Note / condition')}" style="flex:1;min-width:160px">
         <button class="pf3-btn" onclick="planAdd()">${RT('Добавить','Add')}</button>
       </div>
-      <div class="pf3-reco-note">${RT('Уровень: для покупки сработает, когда цена опустится ДО уровня (≤); для продажи — когда поднимется ДО уровня (≥). Дедлайн без уровня сработает по дате. Уведомление приходит тостом и (если разрешено) браузерным push при достижении.','Level: a buy triggers when price drops TO the level (≤); a sell when it rises TO the level (≥). A deadline without a level triggers by date. You get a toast and (if allowed) a browser push when reached.')}</div>
+      <div class="pf3-reco-note">${RT('Уровень: для покупки сработает, когда цена опустится ДО уровня (≤); для продажи — когда поднимется ДО уровня (≥). Кол-во указывайте в штуках (акции покупаются поштучно). Если указать сумму в kr — покажу, сколько целых акций на неё влезает по цене. Дедлайн без уровня сработает по дате.','Level: a buy triggers when price drops TO the level (≤); a sell when it rises TO the level (≥). Enter quantity in shares (stocks are bought per share). If you enter a kr amount, I show how many whole shares it covers at price. A deadline without a level triggers by date.')}</div>
     </details>`;
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>🎯 ${RT('План действий','Action plan')} — ${TAB_LABEL(v3Key)}</span>${readyN?`<span class="pf3-asof"><b class="plan-ready-t">🔔 ${readyN} ${RT('к исполнению','ready')}</b></span>`:''}${notifBtn}</div>
-    ${mine.length?`<div class="plan-list">${rows}</div>`:`<div class="pf3-empty">${RT('Правил пока нет. Добавьте уровни/даты из совета AI — дашборд уведомит, когда придёт время действовать.','No rules yet. Add levels/dates from the AI advice — the dashboard will alert you when it is time to act.')}</div>`}
+    <div class="pf3-panel-hd"><span>🎯 ${RT('План действий','Action plan')} — ${TAB_LABEL(v3Key)}</span>${readyN?`<span class="pf3-asof"><b class="plan-ready-t">🔔 ${readyN} ${RT('к исполнению','ready')}</b></span>`:''}${importBtn}${notifBtn}</div>
+    ${mine.length?`<div class="plan-list">${rows}</div>`:`<div class="pf3-empty">${RT('Правил пока нет. Нажмите «📥 Из совета AI», чтобы перенести предложение AI-Proto, или добавьте уровни/даты вручную — дашборд уведомит, когда придёт время действовать.','No rules yet. Click «📥 From AI advice» to import the AI-Proto proposal, or add levels/dates manually — the dashboard will alert you when it is time to act.')}</div>`}
     ${addForm}
   </section>`;
 }
@@ -5189,6 +5289,7 @@ function planAdd(){
   if(!tk){toast(RT('Укажите тикер','Enter a ticker'),true);return;}
   const act=(g('planAct')&&g('planAct').value)||'buy';
   const level=parseFloat(g('planLvl')&&g('planLvl').value)||0;
+  const qty=parseFloat(g('planQty')&&g('planQty').value)||0;
   const amount=parseFloat(g('planAmt')&&g('planAmt').value)||0;
   const deadline=(g('planDl')&&g('planDl').value)||'';
   const note=String((g('planNote')&&g('planNote').value)||'').trim();
@@ -5197,12 +5298,12 @@ function planAdd(){
   const d=pf3D(); let name=tk;
   const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
   if(row){ name=String(row[1]||tk); if(row[8])ccy=String(row[8]).toUpperCase(); }
-  PLAN_RULES.push({id:'pl'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name,ccy,act,level:level>0?level:0,amount:amount>0?amount:0,deadline,note,hitAt:0,done:false});
+  PLAN_RULES.push({id:'pl'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name,ccy,act,level:level>0?level:0,qty:qty>0?qty:0,amount:amount>0?amount:0,deadline,note,hitAt:0,done:false});
   planAskNotify(true);   // тихо запросить разрешение на push при первом правиле
   scheduleSave();renderPF3();
   toast('🎯 '+RT('Правило добавлено','Rule added')+': '+tk);
 }
-function planDel(id){ PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==id); scheduleSave();renderPF3(); }
+function planDel(id){ PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==id); if(planEditId===id)planEditId=null; scheduleSave();renderPF3(); }
 function planDone(id,v){ const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return; r.done=!!(+v); if(r.done)r.hitAt=0; scheduleSave();renderPF3(); }
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для

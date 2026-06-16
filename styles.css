@@ -1234,3 +1234,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .plan-add-form input,.plan-add-form select{padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:12.5px}
 .plan-add-form input[type=number]{width:120px}
 @media(max-width:600px){.plan-row{grid-template-columns:78px 1fr auto;gap:7px;padding:8px 9px}.plan-add-form input,.plan-add-form select{flex:1 1 44%}}
+.plan-src{font-size:11px;opacity:.7}
+.plan-edit{display:block !important}
+.plan-edit-form{margin:0}

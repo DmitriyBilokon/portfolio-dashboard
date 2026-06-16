@@ -246,32 +246,31 @@ grp('rbac resolve', function(){
 });
 
 // 9k) 📊 Сценарный движок (Bull/Base/Bear) + RR + симметрия
-grp('scenario engine', function(){
-  // перегретый тренд (WDC-кейс): цена выше консенсуса, RSI>70 → bull «растяжение», RR<1
-  var hot = scenarioEngine({ price: 120, target: 105, sma50: 90, sma200: 80, support: 95, resistance: 125, atr: 4, rsi: 75 });
-  __approx('hot base = consensus', hot.base, 105);
-  __approx('hot bear = SMA50', hot.bear, 90);
-  __ok('hot RR < 1', hot.rr < 1);
-  __ok('hot bull stretched', hot.stretch === true && hot.bullConf === 'low');
-  __ok('hot bear weight high', hot.bearConf === 'high');
-  // перепроданность: RSI<30 → bear low-confidence, bull high
-  var cold = scenarioEngine({ price: 70, target: 100, sma50: 75, sma200: 90, support: 68, resistance: 80, atr: 3, rsi: 25 });
-  __ok('cold not stretched', cold.stretch === false);
-  __ok('cold bull high / bear low', cold.bullConf === 'high' && cold.bearConf === 'low');
-  // оба направления всегда есть (ТЗ B.4 / критерий 4)
-  __ok('both directions present', hot.bull > hot.price && hot.bear < hot.price);
-  // нет таргета → база «мало данных», но сценарии считаются
-  var nod = scenarioEngine({ price: 50, target: 0, sma50: 45, support: 44, resistance: 55, atr: 1, rsi: null });
-  __eq('no target → base lowdata', nod.baseConf, 'lowdata');
-  __ok('no target → bull/bear still computed', nod.bull > 50 && nod.bear < 50);
+grp('scenario v1.1 (two horizons)', function(){
+  // WDC-кейс краткосрок: дальняя многолетняя поддержка 249 ВНЕ коридора ±2.5·ATR → игнор
+  var sh = scenarioShort({ price: 673, atr: 27, support: 249, resistance: 700, sma50: 450, rsi: 72 });
+  __approx('short bull capped at resistance 700', sh.bull, 700);
+  __approx('short bear = price−1.5·ATR (≈632.5), НЕ 249', sh.bear, 632.5, 0.5);
+  __ok('short downside small (~6%, не 63%)', sh.downside < 10);
+  __ok('short overbought → bear high', sh.bearConf === 'high');
+  // ATR-bear, когда ближний уровень в коридоре есть
+  var sh2 = scenarioShort({ price: 100, atr: 4, support: 96, resistance: 110, sma50: 80, rsi: 50 });
+  __approx('short bear uses near support in corridor', sh2.bear, 96);
+  // Среднесрок: событийный Bear = цена×(1−R), Bull = верхний таргет
+  var md = scenarioMid({ price: 673, target: 650, targetHigh: 730, support: 249 });
+  __approx('mid bull = analyst high 730', md.bull, 730);
+  __approx('mid base = consensus 650', md.base, 650);
+  __approx('mid event bear ≈ price×0.8 (538), не 249', md.bear, 538.4, 1);
+  __ok('mid bear realistic (0.7–0.85×price)', md.bear > 673*0.7 && md.bear < 673*0.85);
+  // честный отрицательный RR: все таргеты ниже цены → апсайда нет
+  var mdNeg = scenarioMid({ price: 673, target: 650, targetHigh: 650, support: 0 });
+  __ok('mid RR < 0 when targets below price', mdNeg.rr < 0);
+  // оба направления всегда (критерий 6)
+  __ok('both directions present', sh.bull > sh.price && sh.bear < sh.price && md.bull !== md.bear);
   // ATR/RSI из закрытий
   var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
   __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
-  // A.1: верхний таргет аналитиков ведёт Bull выше консенсуса
-  var wHigh = scenarioEngine({ price: 600, target: 650, targetHigh: 730, sma50: 450, support: 480, resistance: 640, atr: 10, rsi: 72 });
-  __approx('Bull = analyst high 730', wHigh.bull, 730);
-  __approx('Base = consensus 650', wHigh.base, 650);
 });
 
 grp('plan triggers', function(){

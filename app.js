@@ -3402,10 +3402,10 @@ function pf3RecoHorizons(d,r){
   if(knife)P(nR,-2.5,'падающий нож','falling knife');else if(overheat)P(nR,-1.5,'перегрев — далеко над средними','overheated — far above averages');
   if(spec)P(nR,-1,'спекулятивный профиль','speculative profile');
   if(m.beta!=null&&m.beta>1.5)P(nR,-0.5,`высокая волатильность β ${m.beta.toFixed(1)}`,`high volatility β ${m.beta.toFixed(1)}`);
-  // C.3: Risk/Reward сценарного движка во входах скоринга «сейчас».
+  // C.3: Risk/Reward КРАТКОСРОЧНОГО сценария во входах скоринга «сейчас» (один масштаб).
   const _res=num(h.indexOf('Сопротивление'));
   const _tech=scenarioTech(String(r[2]||''),r[8]||'USD');
-  const _scn=scenarioEngine({price,target:eff.target||0,sma50,sma200,support:sup,resistance:_res,atr:_tech.atr,rsi:_tech.rsi});
+  const _scn=scenarioShort({price,sma50,support:sup,resistance:_res,atr:_tech.atr,rsi:_tech.rsi});
   if(_scn&&_scn.rr!=null){
     if(_scn.rr<1)P(nR,-1,`R/R ${_scn.rr.toFixed(1)} < 1 — риск > потенциала`,`R/R ${_scn.rr.toFixed(1)} < 1 — risk > reward`);
     else if(_scn.rr>2)P(nF,1,`R/R ${_scn.rr.toFixed(1)} — асимметрия в пользу роста`,`R/R ${_scn.rr.toFixed(1)} — upside asymmetry`);
@@ -4698,7 +4698,9 @@ function valScaleBar(cur,sec,hist){
 }
 // ===== 📊 Сценарный движок (Bull / Base / Bear) + Risk/Reward =====
 // Конфиг (ТЗ 6: формулы и пороги — не в коде карточки).
-const SCENARIO_CFG={atrMult:1.5, bullTargetBand:0.10, atrFallbackPct:0.02, rsiHot:70, rsiCold:30};
+// v1.1: два горизонта. atrMult — ширина; corridorAtr — отсечка дальних уровней;
+// eventR — типичная просадка на провале отчёта (среднесрочный событийный Bear).
+const SCENARIO_CFG={atrMult:1.5, corridorAtr:2.5, eventR:0.20, bullTargetBand:0.10, atrFallbackPct:0.02, rsiHot:70, rsiCold:30};
 // ATR-прокси по закрытиям (средний |Δ| за n дней) — без H/L, из кэша истории.
 function atrFromCloses(c,n=14){
   if(!Array.isArray(c)||c.length<n+1)return 0;
@@ -4718,70 +4720,95 @@ function scenarioTech(tk,ccy){
   }catch(e){}
   return {atr:0,rsi:null};
 }
-// Чистое ядро: входы → 3 сценария + триггеры + уверенность + RR. Покрыто тестами.
-function scenarioEngine(inp){
+// ── Краткосрок (дни-недели): ATR + ближайшие уровни В КОРИДОРЕ ±2.5×ATR. Чистая ф-я. ──
+function scenarioShort(inp){
   const price=+inp.price; if(!(price>0))return null;
-  const target=+inp.target||0, sma50=+inp.sma50||0, sma200=+inp.sma200||0, support=+inp.support||0, resistance=+inp.resistance||0;
-  const atr=(+inp.atr>0)?+inp.atr:price*SCENARIO_CFG.atrFallbackPct, rsi=(inp.rsi==null)?null:+inp.rsi, cfg=SCENARIO_CFG;
-  const base=target>0?target:price;
-  // верхний таргет аналитиков (из A.1, если есть), иначе консенсус×(1+полоса)
-  const upperTgt=(+inp.targetHigh>0)?+inp.targetHigh:(target>0?target*(1+cfg.bullTargetBand):0);
-  const bullCands=[upperTgt, price+cfg.atrMult*atr, resistance].filter(x=>x>price);
-  const bull=bullCands.length?Math.max.apply(null,bullCands):price+cfg.atrMult*atr;
-  const bearCands=[support,sma50,price-cfg.atrMult*atr].filter(x=>x>0&&x<price);
-  const bear=bearCands.length?Math.min.apply(null,bearCands):Math.max(0.01,price-cfg.atrMult*atr);
+  const cfg=SCENARIO_CFG, atr=(+inp.atr>0)?+inp.atr:price*cfg.atrFallbackPct, corr=cfg.corridorAtr*atr;
+  const resistance=+inp.resistance||0, support=+inp.support||0, sma50=+inp.sma50||0, rsi=inp.rsi==null?null:+inp.rsi;
+  const resIn=(resistance>price&&resistance<=price+corr)?resistance:0;            // только уровни в коридоре
+  const supIn=(support>0&&support<price&&support>=price-corr)?support:0;
+  const sma50In=(sma50>0&&sma50<price&&sma50>=price-corr)?sma50:0;
+  const volBull=price+cfg.atrMult*atr, volBear=price-cfg.atrMult*atr;
+  const bull=resIn>0?Math.min(volBull,resIn):volBull;                            // не дальше ближайшего сопротивления
+  const downLevel=Math.max(supIn,sma50In);                                       // ближайший уровень снизу (0 если вне коридора)
+  const bear=downLevel>0?Math.max(volBear,downLevel):volBear;
   const upside=(bull-price)/price*100, downside=(price-bear)/price*100;
   const rr=downside>0?upside/downside:null;
-  // B.4 симметрия: перегрев → bull «растяжение», bear weight↑; перепроданность → наоборот.
-  const overbought=(rsi!=null&&rsi>cfg.rsiHot)||(target>0&&price>target&&sma200>0&&price>sma200*1.2);
-  const oversold=(rsi!=null&&rsi<cfg.rsiCold)||(sma200>0&&price<sma200&&rsi!=null&&rsi<35);
-  let bullConf=target>0?'medium':'low', baseConf=target>0?'medium':'lowdata', bearConf='medium';
-  const stretch=target>0&&price>base&&overbought;
-  if(stretch){bullConf='low';bearConf='high';}
-  else if(oversold){bearConf='low';bullConf='high';}
-  return {price,bull,base,bear,upside,downside,rr,bullConf,baseConf,bearConf,stretch,rsi,atr,
-    triggers:{
-      bull:resistance>0?{type:'price',level:resistance,dir:'up'}:{type:'price',level:bull,dir:'up'},
-      bear:support>0?{type:'price',level:support,dir:'down'}:(sma50>0?{type:'sma',level:sma50,dir:'down'}:{type:'price',level:bear,dir:'down'}),
-    }};
+  const overbought=(rsi!=null&&rsi>cfg.rsiHot);
+  return {horizon:'short',price,atr,bull,base:price,bear,upside,downside,rr,
+    bullConf:'medium',baseConf:'medium',bearConf:overbought?'high':'medium',rsi,
+    resIn,supIn,sma50In,overbought};
 }
-// Панель «Сценарии» в карточке акции.
+// ── Среднесрок (до отчёта): Bull/Base от таргетов, Bear СОБЫТИЙНЫЙ = цена×(1−R). ──
+function scenarioMid(inp){
+  const price=+inp.price; if(!(price>0))return null;
+  const cfg=SCENARIO_CFG, consensus=+inp.target||0, high=+inp.targetHigh||0;
+  const base=consensus>0?consensus:price;
+  const bull=high>0?high:(consensus>0?consensus:price);                          // верхний таргет (может быть < цены — честно)
+  const R=(+inp.eventR>0)?+inp.eventR:cfg.eventR;
+  let bear=price*(1-R);
+  const support=+inp.support||0;                                                 // сверка с поддержкой в разумном радиусе (не многолетние минимумы)
+  if(support>0&&support<price&&support>bear&&support>=price*(1-R*1.5))bear=support;
+  const upside=(bull-price)/price*100, downside=(price-bear)/price*100;
+  const rr=downside>0?upside/downside:null;                                      // upside<0 → rr<0 (честно: апсайда по таргетам нет)
+  const rsi=inp.rsi==null?null:+inp.rsi;
+  const overbought=(rsi!=null&&rsi>cfg.rsiHot)||(consensus>0&&price>consensus);
+  const stretch=consensus>0&&price>consensus&&overbought;
+  let bullConf=high>0?'medium':(consensus>0?'low':'lowdata'), bearConf='medium';
+  if(stretch){bullConf='low';bearConf='high';}
+  return {horizon:'mid',price,bull,base,bear,upside,downside,rr,bullConf,baseConf:consensus>0?'medium':'lowdata',bearConf,stretch,R};
+}
+// Панель «Сценарии» (двухгоризонтная) в карточке акции.
 function pf3ScenarioHTML(d,r){
   const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
   if(!(price>0))return '';
-  const sm=smaIdx(d), sma50=sm.s50>=0?parseFloat(r[sm.s50]):0, sma200=sm.s200>=0?parseFloat(r[sm.s200]):0;
+  const sm=smaIdx(d), sma50=sm.s50>=0?parseFloat(r[sm.s50]):0;
   const supC=ensurePFCol(d,'Поддержка'),resC=ensurePFCol(d,'Сопротивление');
   const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
-  let target=(pf3EffTarget(d,r)||{}).target||0;
-  const tgf=TG_FULL[tk];   // A.1: агрегированные таргеты (если собраны)
-  if(tgf&&tgf.consensus>0)target=tgf.consensus;   // свежий консенсус как Base
+  let consensus=(pf3EffTarget(d,r)||{}).target||0;
+  const tgf=TG_FULL[tk]; if(tgf&&tgf.consensus>0)consensus=tgf.consensus;
+  const high=(tgf&&tgf.high)||0;
   const tech=scenarioTech(tk,ccy);
-  const s=scenarioEngine({price,target,sma50,sma200,support,resistance,atr:tech.atr,rsi:tech.rsi,targetHigh:(tgf&&tgf.high)||0});
-  if(!s)return '';
+  const sh=scenarioShort({price,atr:tech.atr,support,resistance,sma50,rsi:tech.rsi});
+  const md=scenarioMid({price,target:consensus,targetHigh:high,support,rsi:tech.rsi});
+  if(!sh&&!md)return '';
   const CONF={high:RT('высокая','high'),medium:RT('средняя','medium'),low:RT('низкая · растяжение','low · stretch'),lowdata:RT('мало данных','low data')};
+  const TYP={price:RT('цена','price'),indicator:RT('индикатор','indicator'),event:RT('событие','event')};
   const pctOf=v=>`${v>=price?'+':''}${((v-price)/price*100).toFixed(1)}%`;
   const cls=v=>v>=price?'pf3-up':'pf3-down';
-  const bullTrig=resistance>0?RT(`закрытие выше сопротивления ${pf3Fmt(resistance,2)} на объёме`,`close above resistance ${pf3Fmt(resistance,2)} on volume`):RT(`пробой вверх к ${pf3Fmt(s.bull,2)}`,`breakout to ${pf3Fmt(s.bull,2)}`);
-  const bearTrig=support>0?RT(`потеря поддержки ${pf3Fmt(support,2)}`,`loses support ${pf3Fmt(support,2)}`):(sma50>0?RT(`пробой SMA50 ${pf3Fmt(sma50,2)} вниз`,`breaks SMA50 ${pf3Fmt(sma50,2)}`):RT(`откат к ${pf3Fmt(s.bear,2)}`,`pullback to ${pf3Fmt(s.bear,2)}`))+((s.rsi!=null&&s.rsi>SCENARIO_CFG.rsiHot)?RT(' / RSI разворот из >70',' / RSI turns down from >70'):'');
-  const cell=(icon,name,lvl,scls,conf,trig)=>`<div class="scn-col scn-${scls}">
+  const cell=(icon,name,lvl,scls,conf,trig,typ)=>`<div class="scn-col scn-${scls}">
     <div class="scn-h">${icon} ${name}</div>
     <div class="scn-px ${cls(lvl)}">${pf3Fmt(lvl,2)} <small>${ccy}</small></div>
     <div class="scn-pct ${cls(lvl)}">${pctOf(lvl)}</div>
-    <div class="scn-trig">${trig}</div>
+    <div class="scn-trig">${trig}<span class="scn-typ">${TYP[typ]||typ}</span></div>
     <div class="scn-conf">${RT('увер.','conf')}: ${CONF[conf]||conf}</div>
   </div>`;
-  const rr=s.rr, rrCls=rr==null?'':rr<1?'scn-rr-bad':rr>2?'scn-rr-good':'';
-  const rrNote=rr==null?'':rr<1?RT('риск > потенциала — зона фиксации','risk > reward — trim zone'):rr>2?RT('асимметрия в пользу роста','asymmetry to the upside'):RT('сбалансировано','balanced');
-  const rsiTxt=s.rsi!=null?` · RSI ${s.rsi.toFixed(0)}${s.rsi>SCENARIO_CFG.rsiHot?' ⚠':s.rsi<SCENARIO_CFG.rsiCold?' ⤴':''}`:'';
-  return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')}${s.stretch?` <span class="scn-stretch">⚠ ${RT('растяжение','stretched')}</span>`:''}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${rsiTxt}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)}`:''}</span></div>
+  const rrRow=s=>{const rr=s.rr,rc=rr==null?'':rr<1?'scn-rr-bad':rr>2?'scn-rr-good':'';
+    const note=rr==null?'':rr<1?RT('риск > потенциала — зона фиксации','risk > reward — trim zone'):rr>2?RT('асимметрия в пользу роста','asymmetry to the upside'):RT('сбалансировано','balanced');
+    return`<div class="scn-rr ${rc}">⚖️ R/R = <b>${rr==null?'—':rr.toFixed(2)}</b> · ${RT('апсайд','up')} ${s.upside>=0?'+':''}${s.upside.toFixed(1)}% / ${RT('даунсайд','down')} −${s.downside.toFixed(1)}% — ${note}</div>`;};
+  // Краткосрочные триггеры
+  const shBullTrig=sh.resIn>0?RT(`закрытие > сопротивления ${pf3Fmt(sh.resIn,2)} на объёме`,`close > resistance ${pf3Fmt(sh.resIn,2)} on volume`):RT(`+1.5·ATR (${pf3Fmt(sh.bull,2)})`,`+1.5·ATR (${pf3Fmt(sh.bull,2)})`);
+  const shBearTrig=sh.overbought?RT('RSI разворот из >70 / пробой уровня','RSI turns down from >70 / level break'):(sh.supIn>0?RT(`потеря поддержки ${pf3Fmt(sh.supIn,2)}`,`loses support ${pf3Fmt(sh.supIn,2)}`):(sh.sma50In>0?RT(`пробой SMA50 ${pf3Fmt(sh.sma50In,2)}`,`breaks SMA50 ${pf3Fmt(sh.sma50In,2)}`):RT(`−1.5·ATR (${pf3Fmt(sh.bear,2)})`,`−1.5·ATR (${pf3Fmt(sh.bear,2)})`)));
+  // Среднесрочные триггеры (событийные)
+  const mdBullTrig=RT('отчёт выше ожиданий / рост гайденса','earnings beat / guidance raise');
+  const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${Math.round(md.R*100)}%`,`earnings miss / guidance cut → −${Math.round(md.R*100)}%`);
+  const rsiTxt=tech.rsi!=null?` · RSI ${tech.rsi.toFixed(0)}${tech.rsi>SCENARIO_CFG.rsiHot?' ⚠':tech.rsi<SCENARIO_CFG.rsiCold?' ⤴':''}`:'';
+  const shBlock=`<div class="scn-hz"><div class="scn-hz-h">⏱ ${RT('Краткосрок','Short-term')} <span class="scn-hz-s">${RT('дни-недели · ATR-коридор','days-weeks · ATR corridor')}</span></div>
     <div class="scn-grid">
-      ${cell('🟢','Bull',s.bull,'bull',s.bullConf,bullTrig)}
-      ${cell('⚪','Base',s.base,'base',s.baseConf,RT('консенсус-таргет аналитиков','analyst consensus'))}
-      ${cell('🔴','Bear',s.bear,'bear',s.bearConf,bearTrig)}
-    </div>
-    <div class="scn-rr ${rrCls}">⚖️ Risk/Reward = <b>${rr==null?'—':rr.toFixed(2)}</b> · ${RT('апсайд','up')} +${s.upside.toFixed(1)}% / ${RT('даунсайд','down')} −${s.downside.toFixed(1)}% — ${rrNote}</div>
-    <div class="pf3-ai-note">${RT('Сценарии и триггеры — по технике (SMA, поддержка/сопротивление) и СВЕЖЕМУ консенсус-таргету. ATR/RSI — из закэшированной истории графика (откройте график, чтобы уточнить ширину). Справочная аналитика, не рекомендация.','Scenarios & triggers from technicals (SMA, support/resistance) and the FRESH consensus target. ATR/RSI from cached chart history (open the chart to refine width). Reference analytics, not advice.')}</div>
+      ${cell('🟢','Bull',sh.bull,'bull',sh.bullConf,shBullTrig,'price')}
+      ${cell('⚪','Base',sh.base,'base',sh.baseConf,RT('текущая цена','current price'),'price')}
+      ${cell('🔴','Bear',sh.bear,'bear',sh.bearConf,shBearTrig,sh.overbought?'indicator':'price')}
+    </div>${rrRow(sh)}</div>`;
+  const mdBlock=`<div class="scn-hz"><div class="scn-hz-h">📅 ${RT('Среднесрок','Mid-term')} <span class="scn-hz-s">${RT('до отчёта · таргеты + событие','to earnings · targets + event')}</span>${md.stretch?` <span class="scn-stretch">⚠ ${RT('растяжение','stretched')}</span>`:''}</div>
+    <div class="scn-grid">
+      ${cell('🟢','Bull',md.bull,'bull',md.bullConf,mdBullTrig,'event')}
+      ${cell('⚪','Base',md.base,'base',md.baseConf,RT('консенсус-таргет','analyst consensus'),'event')}
+      ${cell('🔴','Bear',md.bear,'bear',md.bearConf,mdBearTrig,'event')}
+    </div>${rrRow(md)}</div>`;
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${rsiTxt}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)}`:''}</span></div>
+    ${shBlock}${mdBlock}
+    <div class="pf3-ai-note">${RT('Два РАЗДЕЛЬНЫХ горизонта со своим R/R: краткосрок — от ATR и уровней в коридоре ±2.5·ATR; среднесрок — Bull/Base от свежих таргетов аналитиков, Bear событийный (просадка на провале отчёта). ATR/RSI — из истории графика. Справочно, не рекомендация.','Two SEPARATE horizons, each with its own R/R: short-term from ATR and levels within ±2.5·ATR; mid-term Bull/Base from fresh analyst targets, Bear event-based (drawdown on an earnings miss). ATR/RSI from chart history. Reference only.')}</div>
   </section>`;
 }
 // Профильная группа пиров: бумаги портфеля той же ИНДУСТРИИ (точнее), иначе

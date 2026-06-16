@@ -3137,7 +3137,10 @@ function pf3WriteReco(d){
   d.rows.forEach(r=>{try{r[c]=pf3Reco(d,r).v}catch(e){}});
 }
 function pf3RecoHTML(d,r){
-  const rc=pf3Reco(d,r);
+  // Верхний вердикт = горизонт «Сейчас» (now), чтобы «Рекомендация» не противоречила
+  // карточке СЕЙЧАС и колонке «Рекомендация» в списке (она тоже берёт горизонты).
+  const now=pf3RecoHorizons(d,r).now;
+  const rc={v:now.v,hint:now.note,total:now.total};
   const META={buy:['🟢',RT('Покупать','Buy')],sell:['🔴',RT('Продавать / фиксировать','Sell / take profit')],wait:['🟡',RT('Ждать','Wait')],avoid:['⛔',RT('Не приближаться','Stay away')]};
   const [ico,label]=META[rc.v];
   const sgn=x=>`${x>0?'+':''}${x.toFixed(1)}`;

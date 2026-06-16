@@ -4774,7 +4774,8 @@ function scenarioMid(inp){
 // stale). Устаревшим (не используется) считается ТОЛЬКО all-time (eff.main).
 function scnFreshTarget(d,r){
   const tk=String(r[2]||'').toUpperCase(), tgf=TG_FULL[tk];
-  if(tgf&&tgf.consensus>0&&tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays))
+  // Yahoo-источник (src:'yahoo') — живой консенсус, свежий без даты; FMP — по lastDate ≤ N.
+  if(tgf&&tgf.consensus>0&&(tgf.src==='yahoo'||(tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays))))
     return {consensus:tgf.consensus,high:tgf.high||0,fresh:true,staleConsensus:0};
   const eff=pf3EffTarget(d,r)||{};
   if(eff.recent>0)                 return {consensus:eff.recent,high:0,fresh:true,staleConsensus:0};   // «за квартал» = свежий
@@ -4951,7 +4952,7 @@ function targetsBlockHTML(d,r){
     if(tot)ratingBar=`<div class="tgf-bar">${segs.map(([k,c])=>{const n=rt[k]||0;return n?`<span style="width:${n/tot*100}%;background:${c}" title="${k}: ${n}"></span>`:'';}).join('')}</div><div class="tgf-bar-l">${segs.filter(([k])=>rt[k]).map(([k,,l])=>`${l} ${rt[k]}`).join(' · ')}${rt.consensus?` · <b>${rt.consensus}</b>`:''}</div>`;}
   const changes=(t.changes&&t.changes.length)?`<details class="tgf-ch"><summary>📝 ${RT('Изменения таргетов (30д)','Target changes (30d)')} · ${t.changes.length}</summary>${t.changes.map(c=>`<div class="tgf-ch-row"><span class="tgf-firm">${String(c.firm||'—').replace(/</g,'&lt;')}</span><span class="tgf-chv">${c.from!=null?pf3Fmt(c.from,0)+' → ':''}<b>${pf3Fmt(c.to,0)}</b> ${ccy}</span><span class="tgf-date">${c.date||''}</span></div>`).join('')}</details>`:'';
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>🎯 ${RT('Аналитические таргеты','Analyst targets')}</span><span class="pf3-asof">${t.count?`${t.count} ${RT('аналит.','an.')}`:''}${t.lastDate?` · ${RT('посл.','last')} ${t.lastDate}`:''}${stale?` <span class="tg-stale">⚠️ ${RT('устар.','stale')}</span>`:''}</span></div>
+    <div class="pf3-panel-hd"><span>🎯 ${RT('Аналитические таргеты','Analyst targets')}</span><span class="pf3-asof">${t.src?`<span class="tg-src">${t.src==='yahoo'?'Yahoo':'FMP'}</span> `:''}${t.count?`${t.count} ${RT('аналит.','an.')}`:''}${t.lastDate?` · ${RT('посл.','last')} ${t.lastDate}`:(t.src==='yahoo'?` · ${RT('живой','live')}`:'')}${stale?` <span class="tg-stale">⚠️ ${RT('устар.','stale')}</span>`:''}</span></div>
     <div class="tgf-top">
       <div><span class="label">${RT('Консенсус','Consensus')}</span> <b>${t.consensus!=null?pf3Fmt(t.consensus,0)+' '+ccy:'—'}</b>${upPct!=null?` <span class="${upPct>=0?'pf3-up':'pf3-down'}">${upPct>=0?'+':''}${upPct.toFixed(1)}%</span>`:''}</div>
       <div><span class="label">${RT('Диапазон','Range')}</span> <b>${t.low!=null&&t.high!=null?pf3Fmt(t.low,0)+'–'+pf3Fmt(t.high,0)+' '+ccy:'—'}</b></div>

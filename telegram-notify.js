@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17targetsagg';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17tgt-yahoo';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1825,19 +1825,42 @@ function aggTargets(sm, news, gc, nowMs){
   if(consensus == null && !arr.length) return null;
   return { consensus: consensus != null ? round2(consensus) : null, span,
            high: high != null ? round2(high) : null, low: low != null ? round2(low) : null,
-           count, lastDate, ratings, changes,
+           count, lastDate, ratings, changes, src: 'fmp',
            allTime: consensusAll != null ? round2(consensusAll) : null, lastQuarter: lastQ != null ? round2(lastQ) : null };
 }
+// Fallback Yahoo financialData (покрывает EU/Nordic, где FMP пусто): консенсус +
+// диапазон + число аналитиков + распределение рейтингов (recommendationTrend).
+async function targetsYahoo(symbol){
+  try{
+    const qs = await yQuoteSummary(symbol, 'financialData,recommendationTrend');
+    const fd = qs && qs.financialData;
+    const mean = fd && yRaw(fd.targetMeanPrice);
+    if(!(mean > 0)) return null;
+    const high = yRaw(fd.targetHighPrice), low = yRaw(fd.targetLowPrice), n = yRaw(fd.numberOfAnalystOpinions);
+    const tr = qs.recommendationTrend && qs.recommendationTrend.trend && qs.recommendationTrend.trend[0];
+    const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
+    const ratings = tr ? { strongBuy:num(tr.strongBuy), buy:num(tr.buy), hold:num(tr.hold), sell:num(tr.sell), strongSell:num(tr.strongSell), consensus: (fd.recommendationKey || null) } : null;
+    return { consensus: round2(mean), span: 'live',
+             high: high > 0 ? round2(high) : null, low: low > 0 ? round2(low) : null,
+             count: n || 0, lastDate: null, ratings, changes: [], src: 'yahoo', allTime: null, lastQuarter: null };
+  }catch(e){ return null; }
+}
 async function targetsFull(symbol, env){
-  if(!env.FMP_KEY) return null;
-  const k = env.FMP_KEY, s = encodeURIComponent(symbol), base = 'https://financialmodelingprep.com/stable';
-  const get = async u => { try{ const r = await fetch(u); if(!r.ok) return null; return await r.json(); }catch(e){ return null; } };
-  const [sm, news, gc] = await Promise.all([
-    get(`${base}/price-target-summary?symbol=${s}&apikey=${k}`).then(a => Array.isArray(a) ? a[0] : a),
-    get(`${base}/price-target-news?symbol=${s}&page=0&limit=50&apikey=${k}`),
-    get(`${base}/grades-consensus?symbol=${s}&apikey=${k}`),
-  ]);
-  try{ return aggTargets(sm, news, gc, Date.now()); }catch(e){ return null; }
+  // 1) FMP (US — диапазон + изменения за 30д + рейтинги)
+  let agg = null;
+  if(env.FMP_KEY){
+    const k = env.FMP_KEY, s = encodeURIComponent(symbol), base = 'https://financialmodelingprep.com/stable';
+    const get = async u => { try{ const r = await fetch(u); if(!r.ok) return null; return await r.json(); }catch(e){ return null; } };
+    const [sm, news, gc] = await Promise.all([
+      get(`${base}/price-target-summary?symbol=${s}&apikey=${k}`).then(a => Array.isArray(a) ? a[0] : a),
+      get(`${base}/price-target-news?symbol=${s}&page=0&limit=50&apikey=${k}`),
+      get(`${base}/grades-consensus?symbol=${s}&apikey=${k}`),
+    ]);
+    try{ agg = aggTargets(sm, news, gc, Date.now()); }catch(e){ agg = null; }
+  }
+  if(agg && agg.consensus != null) return agg;
+  // 2) Fallback Yahoo (EU/Nordic, где у FMP нет таргетов)
+  return (await targetsYahoo(symbol)) || agg;
 }
 
 // ── 📐 Valuation Check: текущие мультипликаторы (Yahoo) + историческая медиана (FMP) ──

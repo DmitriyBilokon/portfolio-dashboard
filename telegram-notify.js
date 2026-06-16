@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16daypct2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16daypct3';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -185,28 +185,28 @@ async function yahoo(sym){
     const closes = rawC.filter(v => typeof v === 'number' && v > 0);
     const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
-    let price = m.regularMarketPrice, prev = null;
-    // День%: официальное предыдущее закрытие из меты лёгкого запроса range=1d
-    // (chartPreviousClose там корректно учитывает пропуски/праздники в дневном ряду
-    // 1y — напр. у ^OMX пропадает день → ряд 1y давал завышенный «двухдневный» %).
+    let price = m.regularMarketPrice, pct = null;
+    // День%: АВТОРИТЕТНЫЙ regularMarketChangePercent из quote-меты Yahoo (как на
+    // finance.yahoo.com). Chart-расчёт ненадёжен при пропусках/null в дневном ряду
+    // (^OMX пропускает день; US-акции дают null на сегодняшнюю свечу) — давал «2-дневный» %.
     try{
-      const r1 = await yChart(sym, '1d', '1d');
-      const m1 = r1 && r1.meta;
-      if(m1){
-        if(typeof m1.regularMarketPrice === 'number' && m1.regularMarketPrice > 0) price = m1.regularMarketPrice;
-        if(typeof m1.chartPreviousClose === 'number' && m1.chartPreviousClose > 0) prev = m1.chartPreviousClose;
+      const p = (await yQuoteSummary(sym, 'price'))?.price;
+      if(p){
+        const rp = yRaw(p.regularMarketPrice); if(typeof rp === 'number' && rp > 0) price = rp;
+        const cp = yRaw(p.regularMarketChangePercent); if(typeof cp === 'number') pct = round2(cp * 100);
       }
     }catch(e){}
-    if(prev == null){   // fallback: последнее закрытие строго ДО сегодня из 1y-ряда
+    if(pct == null){   // fallback: последнее дневное закрытие строго ДО сегодня из 1y-ряда
       const todayUTC = new Date().toISOString().slice(0, 10);
+      let prev = null;
       for(let i = rawC.length - 1; i >= 0; i--){
         const c = rawC[i]; if(!(typeof c === 'number' && c > 0)) continue;
         const dstr = ts[i] ? new Date(ts[i] * 1000).toISOString().slice(0, 10) : '';
         if(dstr && dstr < todayUTC){ prev = c; break; }
       }
       if(prev == null) prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
+      pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     }
-    const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     return {
       price, pct,
       sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
@@ -260,8 +260,13 @@ async function sectorMetrics(sym){
   const closes = [], times = [];
   for(let i = 0; i < rawc.length; i++){ if(typeof rawc[i] === 'number' && rawc[i] > 0){ closes.push(rawc[i]); times.push(ts[i]); } }
   const n = closes.length; if(!n) return null;
-  const price = m.regularMarketPrice;
-  // День%: база — последнее закрытие строго ДО сегодня (по UTC-дате), а не closes[n-2].
+  let price = m.regularMarketPrice, dayPctAuth = null;
+  // День%: авторитетный regularMarketChangePercent (как в yahoo()); chart — fallback.
+  try{
+    const p = (await yQuoteSummary(sym, 'price'))?.price;
+    if(p){ const rp = yRaw(p.regularMarketPrice); if(typeof rp === 'number' && rp > 0) price = rp;
+      const cp = yRaw(p.regularMarketChangePercent); if(typeof cp === 'number') dayPctAuth = round2(cp * 100); }
+  }catch(e){}
   const todayUTC = new Date().toISOString().slice(0, 10);
   let prev = null;
   for(let i = n - 1; i >= 0; i--){ const dstr = times[i] ? new Date(times[i] * 1000).toISOString().slice(0, 10) : ''; if(dstr && dstr < todayUTC){ prev = closes[i]; break; } }
@@ -273,7 +278,7 @@ async function sectorMetrics(sym){
   for(let i = times.length - 1; i >= 0; i--){ if(times[i] && new Date(times[i] * 1000).getUTCFullYear() < curYear){ ytdBase = closes[i]; break; } }
   const sma = p => { if(n < p) return null; let s = 0; for(let i = n - p; i < n; i++) s += closes[i]; return s / p; };
   return {
-    price: round2(price), dayPct: (prev > 0) ? round2((price / prev - 1) * 100) : null,
+    price: round2(price), dayPct: (dayPctAuth != null) ? dayPctAuth : ((prev > 0) ? round2((price / prev - 1) * 100) : null),
     w1: ret(back(5)), m1: ret(back(21)), m3: ret(back(63)), ytd: ytdBase ? ret(ytdBase) : null,
     sma20: sma(20), sma50: sma(50), marketState: m.marketState || null,
   };

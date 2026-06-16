@@ -4756,10 +4756,7 @@ function scenarioMid(inp){
   // A.1 КРИТИЧНО: без свежих таргетов НЕ подставляем устаревшее — «недостаточно данных», без R/R.
   if(!fresh||!(consensus>0)) return {horizon:'mid',valid:false,note:'lowdata',price,bull:null,base:null,bear:null,rr:null};
   const base=consensus, bull=high>0?high:consensus*(1+cfg.bullTargetBand), R=(+inp.eventR>0)?+inp.eventR:cfg.eventR;
-  let bear=price*(1-R);
-  const support=+inp.support||0;
-  if(support>0&&support<price&&support>bear&&support>=price*(1-R*1.5))bear=support;
-  if(bear>base)bear=base;   // инвариант base≥bear: событийный пол не выше консенсуса
+  const bear=price*(1-R);   // событийный: реакция на провал отчёта (−R% от цены), не консенсус
   const rsi=inp.rsi==null?null:+inp.rsi;
   const overbought=(rsi!=null&&rsi>cfg.rsiHot)||(price>consensus);
   const stretch=price>consensus&&overbought;

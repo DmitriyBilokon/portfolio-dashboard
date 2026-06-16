@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17options';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17options2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -274,8 +274,11 @@ function impliedMove(spot, calls, puts, expMs, nowMs){
 }
 async function optionsImplied(symbol){
   try{
-    const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if(!r.ok) return null;
+    // v7 options теперь требует crumb+cookie (как quoteSummary), иначе 401 Invalid Crumb.
+    const a = await yAuth(); if(!a) return null;
+    const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}?crumb=${encodeURIComponent(a.crumb)}`,
+      { headers: { ...Y_UA, Cookie: a.cookie } });
+    if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
     const j = await r.json();
     const res = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
     if(!res) return null;

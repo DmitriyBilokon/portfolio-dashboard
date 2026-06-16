@@ -1294,3 +1294,4 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .sig-tag{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:999px;margin:1px 2px;white-space:nowrap}
 .sig-tag.up{color:var(--green-t);background:color-mix(in srgb,var(--green-t) 12%,transparent)}
 .sig-tag.down{color:var(--red-t);background:color-mix(in srgb,var(--red-t) 12%,transparent)}
+.cl-ins{color:var(--text2);font-weight:600}

@@ -1697,11 +1697,35 @@ async function drawChart(state=_chartState, boxId='chartBox', legendId='chartLeg
   const support=supC>=0?parseFloat(row[supC]):NaN,resistance=resC>=0?parseFloat(row[resC]):NaN;
   if(isFinite(support))ps.createPriceLine({price:support,color:'#16a34a',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Поддержка'});
   if(isFinite(resistance))ps.createPriceLine({price:resistance,color:'#dc2626',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Сопротивление'});
+  // 1.5 Метки инсайдерских сделок поверх цены (только значимые: P покупка / S продажа),
+  // в контексте SMA и уровней. Каждую сделку привязываем к ближайшему бару графика.
+  let insLegend='';
+  try{
+    const tkU=String(row[2]||'').trim().toUpperCase(), iv=INSIDER[tkU];
+    if(iv&&Array.isArray(iv.tx)&&iv.tx.length&&P.length){
+      const bars=P.map(p=>p.time),t0=bars[0],t1=bars[bars.length-1];
+      const nearest=s=>{let best=bars[0],bd=Infinity;for(const b of bars){const dd=Math.abs(b-s);if(dd<bd){bd=dd;best=b}}return best;};
+      const agg={};
+      iv.tx.forEach(t=>{
+        if(t.code!=='P'&&t.code!=='S'||!t.date)return;
+        const ms=Date.parse(t.date+'T12:00:00Z');if(isNaN(ms))return;
+        const sec=Math.floor(ms/1000);
+        if(sec<t0-3*86400||sec>t1+3*86400)return;   // вне окна графика
+        const bt=nearest(sec),key=bt+'|'+t.code,o=agg[key]||(agg[key]={time:bt,side:t.code,n:0,usd:0});
+        o.n++;o.usd+=t.value||0;
+      });
+      const markers=Object.values(agg).map(m=>m.side==='P'
+        ?{time:m.time,position:'belowBar',color:'#16a34a',shape:'arrowUp',text:'🟢'+(m.n>1?'×'+m.n:'')}
+        :{time:m.time,position:'aboveBar',color:'#dc2626',shape:'arrowDown',text:'🔴'+(m.n>1?'×'+m.n:'')}
+      ).sort((a,b)=>a.time-b.time);
+      if(markers.length&&ps.setMarkers){ps.setMarkers(markers);insLegend=`<span class="cl-item cl-ins">🟢/🔴 ${RT('инсайдеры','insiders')} (${markers.length})</span>`;}
+    }
+  }catch(e){}
   chart.timeScale().fitContent();
   // Legend: hovered values when the crosshair moves, last values otherwise.
   const defs=[['Цена',ps,priceCol],['SMA 50',s50,'#2563eb'],['SMA 100',s100,'#f59e0b'],['SMA 200',s200,'#7c3aed']];
   const last=[P,A,B,C].map(a=>a.length?a[a.length-1].value:null);
-  const paint=vals=>{legend.innerHTML=defs.map(([l,,c],i)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${vals[i]!=null?` <b>${vals[i].toFixed(2)} ${ccy}</b>`:''}</span>`).join('')};
+  const paint=vals=>{legend.innerHTML=defs.map(([l,,c],i)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${vals[i]!=null?` <b>${vals[i].toFixed(2)} ${ccy}</b>`:''}</span>`).join('')+insLegend;};
   paint(last);
   chart.subscribeCrosshairMove(param=>{if(!param||!param.time||!param.seriesData){paint(last);return}paint(defs.map(([,s])=>{const dp=param.seriesData.get(s);return dp&&typeof dp.value==='number'?dp.value:null}))});
   if(!state._resize){state._resize=()=>{const b=document.getElementById(state._boxId);if(state.chart&&b&&b.clientWidth)state.chart.applyOptions({width:b.clientWidth})};window.addEventListener('resize',state._resize)}

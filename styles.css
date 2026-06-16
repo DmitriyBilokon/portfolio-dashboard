@@ -946,8 +946,8 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 /* 🕵 Инсайдеры на Home */
 .home-ins-sec{margin-bottom:6px}
 .home-ins-h{font-size:11px;font-weight:700;color:var(--text2);margin:8px 0 4px}
-.home-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer}
-.home-row:last-child{border-bottom:none}.home-row:hover{background:var(--bg3)}
+.home-ins-sec .home-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.home-ins-sec .home-row:last-child{border-bottom:none}.home-ins-sec .home-row:hover{background:var(--bg3)}
 
 /* 🎯 Свежий срез аналит-таргета в карточке */
 .pf3-card-sub{margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);font-size:12px;color:var(--text2);display:flex;align-items:baseline;gap:5px;flex-wrap:wrap}

@@ -5006,14 +5006,14 @@ function pfSumPPInner(d){
     const pp=PF_PP[exSymbol(r[2],r[8])];if(!pp)return;
     const reg=pp.regular;if(!(reg>0))return;
     const st=String(pp.state||'').toUpperCase();
-    let o=null;
-    if(st.indexOf('PRE')>=0){o=pp.pre;}
+    let o=null,usedPre=false;
+    if(st.indexOf('PRE')>=0){o=pp.pre;usedPre=true;}
     else if(st.indexOf('POST')>=0){o=pp.post;}
-    else if(st==='CLOSED'){o=pp.post||pp.pre;}
+    else if(st==='CLOSED'){o=pp.post||pp.pre;usedPre=!pp.post;}   // CLOSED мог взять пре-маркет
     if(!o||!(o.price>0))return;
     const fx=FX[r[8]||'USD']||1;
     deltaSEK+=qty*(o.price-reg)*fx;
-    if(st.indexOf('PRE')>=0)pre++;else post++;
+    if(usedPre)pre++;else post++;   // метку считаем по реально использованной котировке
   });
   if(pre+post===0)return'';   // нет внебиржевых котировок — блок скрыт (:empty)
   const pct=totalSEK>0?deltaSEK/totalSEK*100:null;

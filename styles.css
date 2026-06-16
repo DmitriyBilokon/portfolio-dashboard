@@ -1237,3 +1237,5 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .plan-src{font-size:11px;opacity:.7}
 .plan-edit{display:block !important}
 .plan-edit-form{margin:0}
+.tg-old{opacity:.55;text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--text3) 60%,transparent)}
+.tg-old .pf3-down,.tg-old b{text-decoration:none}

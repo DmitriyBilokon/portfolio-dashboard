@@ -5049,7 +5049,7 @@ async function pf3Refresh(silent){
 let _cardPxAt={};
 async function pf3RefreshCardPrice(d,r){
   const sym=exSymbol(r[2],r[8]);if(!sym)return;
-  if(_cardPxAt[sym]&&Date.now()-_cardPxAt[sym]<120000)return;
+  if(_cardPxAt[sym]&&Date.now()-_cardPxAt[sym]<45000)return;   // ~45с: «% за день» обновляется живо на открытой карточке
   _cardPxAt[sym]=Date.now();
   try{
     const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(sym)).then(x=>x.json()).catch(()=>null);
@@ -5096,6 +5096,9 @@ async function cardPPLoad(){
   try{
     const j=await fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null);
     if(j&&typeof j==='object'){CARD_PP[sym]={...j,at:Date.now()};const el=document.getElementById('pf3PrePost');if(el&&pf3Sel===tk)el.innerHTML=cardPPInner(sym);}
+    // Освежаем и обычную котировку (цена + «% за день») — иначе дневной % «замерзает».
+    const d=pf3D(),r=d&&Array.isArray(d.rows)&&d.rows.find(x=>String(x[2]||'')===tk);
+    if(r)pf3RefreshCardPrice(d,r);
   }catch(e){}
   _cardPPLoading=false;
 }

@@ -340,6 +340,7 @@ const AIP_KEY='🤖 AI Портфель';     // virtual tab (admin): вирту
 const STK_KEY='🔬 AI-разборы';      // virtual tab (admin): история разборов акций (обучающая база)
 const AIDASH_KEY='📊 AI-Dashboard'; // virtual tab (admin): AI Proto генерит карточки-дашборд по портфелю
 const SIM_KEY='🧪 Симуляция';      // virtual tab: все тестовые позиции (SIM) со всех вкладок вместе
+const SECT_KEY='🔄 Сектора';        // virtual tab (admin): Live Sector Tracker (ротация GICS-секторов)
 const pf3IsPort=k=>k===PF3_KEY||k===AIP_KEY||!!(DATA[k]&&DATA[k].port==='1');   // вкладки с экономикой позиций
 const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые портфели (мои/семейные, не AI)
 const OMX_IDX='OMXS30';
@@ -448,7 +449,7 @@ function reorderTab(drag,dropKey){
   }
   scheduleSave();init();
 }
-const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SIM_KEY;
+const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SIM_KEY||curIdx===SECT_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
 // остаются как есть. Переключатель — кнопка RU/EN в шапке, выбор на устройстве.
 let LANG='ru';
@@ -803,8 +804,8 @@ function init(){
   aiPlaybookEnsure();   // 📚 засеять плейбук стандартными принципами при первом запуске
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
-  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
-  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&curIdx!==SIM_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
+  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SECT_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&curIdx!==SIM_KEY&&curIdx!==SECT_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=(n,lbl,noDrag)=>{
     const el=document.createElement('div');
@@ -831,6 +832,7 @@ function init(){
   if(isAdmin())t.appendChild(mkVirt(DUP_KEY,TAB_LABEL(DUP_KEY)));
   if(isAdmin())t.appendChild(mkVirt(STK_KEY,TAB_LABEL(STK_KEY)));
   if(isAdmin())t.appendChild(mkVirt(AIDASH_KEY,TAB_LABEL(AIDASH_KEY)));
+  if(isAdmin())t.appendChild(mkVirt(SECT_KEY,SECT_KEY));
   // 💼 Группа портфелей: Dima · AI-Portfolio · Anna · Sergei (в одном месте).
   const portShort=k=>k===AIP_KEY?'AI-Portfolio':k===SIM_KEY?'🧪 '+RT('Симуляция','Simulation'):TAB_LABEL(k).replace(/^Portfolio\s*\((.+)\)$/i,'$1');
   const portTabs=[];
@@ -1136,6 +1138,7 @@ function grpAssign(tab,gi){
 
 function renderAll(){
   if(curIdx!==HOME_KEY)homeFutStop();   // лайв-фьючерсы крутятся только на Home
+  if(curIdx!==SECT_KEY)sectStop();      // лайв-поллинг секторов — только на вкладке Сектора
   if(curIdx!==_pfPPKey)pfSumPPStop();   // лайв изм. баланса — только на открытом портфеле
   editScheduleWire();                   // навесить drag на блоки после перерисовки (режим ✏️)
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
@@ -1170,6 +1173,14 @@ function renderAll(){
       document.getElementById('smaBanner').innerHTML='';
       pf3StopAutoRefresh();
       if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${simTabHTML(true)}</div>`;}
+      return;
+    }
+    if(curIdx===SECT_KEY){   // 🔄 Сектора: Live Sector Tracker (ротация GICS-секторов)
+      ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
+      document.getElementById('smaBanner').innerHTML='';
+      pf3StopAutoRefresh();
+      if(pf3El){pf3El.style.display='';pf3El.innerHTML=`<div class="pf3-wrap">${sectHTML()}</div>`;}
+      sectStart();
       return;
     }
     if(curIdx===AIDASH_KEY){   // 📊 AI-Dashboard (админ): карточки от AI Proto
@@ -4585,6 +4596,98 @@ async function homeLoadFutures(){
 }
 function homeFutStart(){homeLoadFutures();if(_homeFutTimer)return;_homeFutTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadFutures();},20000);}
 function homeFutStop(){if(_homeFutTimer){clearInterval(_homeFutTimer);_homeFutTimer=null;}}
+
+// ===== 🔄 Live Sector Tracker (вкладка «Сектора») =====
+let SECT={data:null,prev:null,period:'dayPct',at:0,err:null};
+let _sectTimer=null,_sectLoading=false;
+const SECT_PERIODS=[['dayPct',['день','Day']],['w1',['неделя','1W']],['m1',['месяц','1M']],['m3',['3 мес','3M']],['ytd',['YTD','YTD']]];
+// Ключевые слова сектора → GICS ETF, для подсветки секторов, где есть позиции.
+const SECT_KW={
+  XLK:['технолог','полупровод','софт','semiconduct','software','tech'],
+  XLV:['здрав','фарм','биотех','медиц','health','pharma','biotech','medical'],
+  XLF:['финанс','банк','страхов','financ','bank','insurance'],
+  XLY:['цикличн','ритейл','авто','роскош','discretionary','retail','auto'],
+  XLC:['коммуник','медиа','телеком','communication','media','telecom'],
+  XLI:['промышл','индустр','машиностро','оборон','аэрокосм','industrial','aerospace','defense'],
+  XLP:['защитн','продукт','напит','household','staples','food','beverage'],
+  XLE:['энерг','нефт','газ','energy','oil','gas'],
+  XLU:['коммунал','электроэнерг','utilit'],
+  XLRE:['недвиж','real estate','reit'],
+  XLB:['материал','химия','металл','горнодоб','добыч','materials','chemical','metal','mining'],
+};
+function sectPortfolioSet(){
+  const set=new Set();
+  Object.keys(DATA).forEach(k=>{if(!pf3MyPort(k))return;(DATA[k].rows||[]).forEach(r=>{if(!((parseFloat(r[6])||0)>0))return;const s=String(r[4]||'').toLowerCase();if(!s)return;for(const etf in SECT_KW){if(SECT_KW[etf].some(kw=>s.includes(kw))){set.add(etf);break;}}});});
+  return set;
+}
+async function sectLoad(force){
+  if(_sectLoading)return;
+  if(!force&&SECT.data&&SECT.data.marketState!=='REGULAR'&&Date.now()-SECT.at<300000)return;   // вне сессии — реже
+  _sectLoading=true;
+  try{
+    const j=await fetch(PRICE_PROXY+'?action=sectors').then(r=>r.json()).catch(()=>null);
+    if(j&&Array.isArray(j.sectors)&&j.sectors.some(s=>s.ok)){SECT.prev=SECT.data?SECT.data.sectors:null;SECT.data=j;SECT.at=Date.now();SECT.err=null;}
+    else SECT.err=(j&&j.error)||RT('нет данных','no data');
+    const el=document.getElementById('sectWrap');if(el&&curIdx===SECT_KEY)el.innerHTML=sectInner();
+    const mk=document.getElementById('sectMkt');if(mk&&curIdx===SECT_KEY)mk.innerHTML=sectMktLbl();
+  }catch(e){SECT.err=String(e&&e.message||e);}
+  _sectLoading=false;
+}
+function sectStart(){sectLoad();if(_sectTimer)return;_sectTimer=setInterval(()=>{if(curIdx===SECT_KEY&&!document.hidden)sectLoad();},60000);}
+function sectStop(){if(_sectTimer){clearInterval(_sectTimer);_sectTimer=null;}}
+function sectSetPeriod(p){SECT.period=p;const el=document.getElementById('sectWrap');if(el)el.innerHTML=sectInner();}
+function sectMktLbl(){
+  const ms=SECT.data&&SECT.data.marketState;
+  const m={REGULAR:'🟢 '+RT('рынок открыт','market open'),PRE:'🌅 '+RT('пре-маркет','pre-market'),POST:'🌙 '+RT('пост-маркет','after-hours'),POSTPOST:'🌙 '+RT('пост-маркет','after-hours'),PREPRE:'🌅 '+RT('пре-маркет','pre-market'),CLOSED:'🔴 '+RT('рынок закрыт','market closed')};
+  const lbl=ms?(m[ms]||ms):'';
+  const t=SECT.at?new Date(SECT.at).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit'}):'';
+  return `${lbl}${t?' · '+RT('обновлено','updated')+' '+t+' ET·local':''}`;
+}
+function sectHTML(){
+  return `<section class="pf3-panel sect-panel">
+    <div class="pf3-panel-hd"><span>🔄 ${RT('Сектора рынка — ротация','Market sectors — rotation')} <span class="dash-info-btn" onclick="event.stopPropagation();sectInfo()" title="${RT('Что это?','What is this?')}">!</span></span><span class="pf3-asof" id="sectMkt">${sectMktLbl()}</span></div>
+    <div id="sectWrap">${sectInner()}</div>
+    <div class="pf3-reco-note">${RT('Сектора отслеживаются через SPDR ETF (XLK/XLV/…), бенчмарк — SPY. «Лидер»/«аутсайдер» — статистика доходности за период, не сигнал к сделке. ● — сектор, где у вас есть позиции.','Sectors tracked via SPDR ETFs (XLK/XLV/…), benchmark SPY. «Leader»/«laggard» are period-return facts, not a trade signal. ● — a sector where you hold positions.')}</div>
+  </section>`;
+}
+function sectInner(){
+  if(SECT.err&&!SECT.data)return `<div class="pf3-empty">${RT('Не удалось загрузить сектора','Failed to load sectors')}: ${SECT.err}${RT(' (нужен воркер с ?action=sectors)',' (needs worker with ?action=sectors)')}</div>`;
+  if(!SECT.data)return `<div class="pf3-empty">⏳ ${RT('Загрузка секторов…','Loading sectors…')}</div>`;
+  const per=SECT.period,fld=per,vsKey=(per==='dayPct'?'day':per);
+  const val=s=>s.ok?s[fld]:null;
+  const rank=arr=>arr.slice().filter(s=>s.ok).sort((a,b)=>{const va=val(a),vb=val(b);return (vb==null?-1e9:vb)-(va==null?-1e9:va)});
+  const rows=rank(SECT.data.sectors);
+  const prevRank={};if(SECT.prev)rank(SECT.prev).forEach((s,i)=>{prevRank[s.etf]=i;});
+  const pset=sectPortfolioSet();
+  const maxAbs=Math.max(1,...rows.map(s=>Math.abs(val(s)||0)));
+  const cls=v=>v==null?'':v>=0?'pf3-up':'pf3-down';
+  const fmt=v=>v==null?'—':`${v>=0?'+':''}${v.toFixed(2)}%`;
+  const trIco={up:'▲',down:'▼',side:'▬'};
+  const periodBtns=SECT_PERIODS.map(p=>`<button class="pf3-hz-b${per===p[0]?' on':''}" onclick="sectSetPeriod('${p[0]}')">${RT(p[1][0],p[1][1])}</button>`).join('');
+  const bench=SECT.data.bench,benchVal=bench?bench[fld]:null;
+  const rowHtml=rows.map((s,i)=>{
+    const v=val(s),rel=s.vsSpy?s.vsSpy[vsKey]:null,pr=prevRank[s.etf];
+    const arrow=pr==null?'':(pr>i?`<span class="sect-arr up">▲${pr-i}</span>`:pr<i?`<span class="sect-arr dn">▼${i-pr}</span>`:'');
+    const barW=Math.min(100,Math.abs(v||0)/maxAbs*100),mine=pset.has(s.etf);
+    return `<div class="sect-row${mine?' sect-mine':''}">
+      <span class="sect-rank">${i+1}${arrow}</span>
+      <span class="sect-name">${mine?`<span class="sect-dot" title="${RT('есть позиции','you hold positions')}">●</span> `:''}<b>${RT(s.ru,s.en)}</b> <span class="bp-tk">${s.etf}</span></span>
+      <span class="sect-bar"><span class="sect-bar-f ${v>=0?'pos':'neg'}" style="width:${barW}%"></span></span>
+      <span class="sect-v ${cls(v)}">${fmt(v)}</span>
+      <span class="sect-vs ${cls(rel)}" title="${RT('против SPY','vs SPY')}">${rel==null?'—':(rel>=0?'+':'')+rel.toFixed(2)}</span>
+      <span class="sect-tr ${s.trend||'side'}" title="${RT('тренд','trend')}">${trIco[s.trend]||'▬'}</span>
+    </div>`;
+  }).join('');
+  return `<div class="pf3-hz-seg sect-per">${periodBtns}</div>
+    <div class="sect-bench">${RT('Бенчмарк','Benchmark')} SPY: <b class="${cls(benchVal)}">${fmt(benchVal)}</b> · vs SPY = ${RT('опережение/отставание сектора','sector over/underperformance')}</div>
+    <div class="sect-row sect-head"><span class="sect-rank">#</span><span class="sect-name">${RT('Сектор','Sector')}</span><span class="sect-bar"></span><span class="sect-v">${RT('Доходн.','Return')}</span><span class="sect-vs">vs SPY</span><span class="sect-tr" title="${RT('тренд','trend')}">↕</span></div>
+    ${rowHtml}`;
+}
+function sectInfo(){
+  const o=document.getElementById('faqOverlay');if(!o)return;
+  document.getElementById('faqCard').innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>🔄 ${RT('Сектора рынка','Market sectors')}</h2><div class="faq-body"><p>${RT('Отслеживает доходность 11 секторов рынка (GICS) через секторные ETF SPDR близко к реальному времени — чтобы видеть ротацию между секторами и сравнивать со своим портфелем.','Tracks the 11 GICS market sectors via SPDR sector ETFs in near-real-time — to watch rotation and compare with your portfolio.')}</p><ul class="dash-bul"><li>${RT('Рейтинг по периодам: день / неделя / месяц / 3 мес / YTD.','Ranking by period: day / week / month / 3m / YTD.')}</li><li>${RT('Колонка vs SPY — опережает сектор рынок или отстаёт.','vs SPY column — is the sector beating or lagging the market.')}</li><li>${RT('Стрелки ▲/▼ — изменение места в рейтинге с прошлого обновления (прогресс ротации).','Arrows ▲/▼ — rank change since the last update (rotation progress).')}</li><li>${RT('● — сектор, где у вас есть позиции (по портфелям).','● — a sector where you hold positions.')}</li><li>${RT('Тренд ▲/▬/▼ — цена ETF относительно скользящих средних.','Trend ▲/▬/▼ — ETF price vs moving averages.')}</li></ul><p class="pf3-asof">${RT('Обновление каждую минуту в торговые часы (реже вне сессии). Справочные данные, не индивидуальная инвестиционная рекомендация.','Updates every minute during market hours (less often off-session). Reference data, not individual investment advice.')}</p></div>`;
+  o.classList.remove('hidden');
+}
 function homeFutAtLbl(){return _homeFutAt?RT('обновлено','updated')+' '+new Date(_homeFutAt).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):RT('загрузка…','loading…');}
 function homeFutTiles(list){
   return list.map(([sym,ru,en])=>{

@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16fixes';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16sectors';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -212,6 +212,66 @@ async function dailyHistory(sym, range = '2y'){
   const t = [], c = [];
   for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(round2(cl[i])); } }
   return c.length ? { t, c } : null;
+}
+
+// ── 🔄 Live Sector Tracker: 11 GICS-секторов через SPDR ETF + бенчмарк SPY ──
+// Прокси секторов — стандарт рынка. Источник — Yahoo (как везде в дашборде),
+// один запрос chart на тикер даёт и живую цену, и 1y-историю для периодов.
+const SECTOR_ETFS = [
+  ['XLK', 'Information Technology', 'Технологии'],
+  ['XLV', 'Health Care', 'Здравоохранение'],
+  ['XLF', 'Financials', 'Финансы'],
+  ['XLY', 'Consumer Discretionary', 'Потреб. цикличные'],
+  ['XLC', 'Communication Services', 'Коммуникации'],
+  ['XLI', 'Industrials', 'Промышленность'],
+  ['XLP', 'Consumer Staples', 'Потреб. защитные'],
+  ['XLE', 'Energy', 'Энергетика'],
+  ['XLU', 'Utilities', 'Коммун. услуги'],
+  ['XLRE', 'Real Estate', 'Недвижимость'],
+  ['XLB', 'Materials', 'Материалы'],
+];
+const SECTOR_BENCH = 'SPY';
+async function sectorMetrics(sym){
+  const res = await yChart(sym, '1d', '1y');
+  const m = res && res.meta;
+  if(!m || typeof m.regularMarketPrice !== 'number') return null;
+  const q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+  const ts = res.timestamp || [], rawc = q.close || [];
+  const closes = [], times = [];
+  for(let i = 0; i < rawc.length; i++){ if(typeof rawc[i] === 'number' && rawc[i] > 0){ closes.push(rawc[i]); times.push(ts[i]); } }
+  const n = closes.length; if(!n) return null;
+  const price = m.regularMarketPrice;
+  const prev = n >= 2 ? closes[n - 2] : (m.chartPreviousClose || m.previousClose || price);
+  const ret = base => (base > 0) ? round2((price / base - 1) * 100) : null;
+  const back = k => (n - 1 - k >= 0) ? closes[n - 1 - k] : closes[0];
+  const curYear = new Date((m.regularMarketTime ? m.regularMarketTime * 1000 : Date.now())).getUTCFullYear();
+  let ytdBase = null;
+  for(let i = times.length - 1; i >= 0; i--){ if(times[i] && new Date(times[i] * 1000).getUTCFullYear() < curYear){ ytdBase = closes[i]; break; } }
+  const sma = p => { if(n < p) return null; let s = 0; for(let i = n - p; i < n; i++) s += closes[i]; return s / p; };
+  return {
+    price: round2(price), dayPct: (prev > 0) ? round2((price / prev - 1) * 100) : null,
+    w1: ret(back(5)), m1: ret(back(21)), m3: ret(back(63)), ytd: ytdBase ? ret(ytdBase) : null,
+    sma20: sma(20), sma50: sma(50), marketState: m.marketState || null,
+  };
+}
+async function sectorTracker(){
+  const syms = SECTOR_ETFS.map(s => s[0]).concat([SECTOR_BENCH]);
+  const map = {};
+  await Promise.all(syms.map(async sym => { map[sym] = await sectorMetrics(sym).catch(() => null); }));
+  const spy = map[SECTOR_BENCH];
+  const rel = (a, b) => (a != null && b != null) ? round2(a - b) : null;
+  const sectors = SECTOR_ETFS.map(([etf, en, ru]) => {
+    const s = map[etf];
+    if(!s) return { etf, en, ru, ok: false };
+    const trend = (s.sma20 != null && s.sma50 != null)
+      ? (s.price >= s.sma20 && s.sma20 >= s.sma50 ? 'up' : (s.price < s.sma20 && s.sma20 < s.sma50 ? 'down' : 'side'))
+      : 'side';
+    return { etf, en, ru, ok: true, price: s.price, dayPct: s.dayPct, w1: s.w1, m1: s.m1, m3: s.m3, ytd: s.ytd, trend,
+      vsSpy: spy ? { day: rel(s.dayPct, spy.dayPct), w1: rel(s.w1, spy.w1), m1: rel(s.m1, spy.m1), m3: rel(s.m3, spy.m3), ytd: rel(s.ytd, spy.ytd) } : null };
+  });
+  return { at: Date.now(), marketState: (spy && spy.marketState) || null,
+    bench: spy ? { etf: SECTOR_BENCH, dayPct: spy.dayPct, w1: spy.w1, m1: spy.m1, m3: spy.m3, ytd: spy.ytd } : null,
+    sectors };
 }
 
 // ── 📈 Живые фьючерсы/индексы для AI-анализа: направление риска ПРЯМО СЕЙЧАС ──
@@ -2176,6 +2236,10 @@ export default {
       const range = (url.searchParams.get('range') || '2y').trim();
       const h = await dailyHistory(url.searchParams.get('history').trim(), range);
       return json(h || { t: [], c: [] });
+    }
+    if(url.searchParams.get('action') === 'sectors'){
+      // 🔄 Live Sector Tracker: доходность 11 GICS-секторов (ETF) vs SPY по периодам.
+      return json(await sectorTracker().catch(e => ({ error: String(e.message || e), sectors: [] })));
     }
     if(url.searchParams.has('prepost')){
       // Pre/post-market: одна бумага (карточка) или несколько через запятую

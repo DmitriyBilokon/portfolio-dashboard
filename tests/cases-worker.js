@@ -41,3 +41,24 @@ grp('round2', function(){
   __eq('round2 1.234', round2(1.234), 1.23);
   __eq('round2 2.0', round2(2), 2);
 });
+
+// 6) 🎯 A.1 aggTargets — агрегация таргетов (WDC-подобный кейс)
+grp('aggTargets', function(){
+  var sm = { allTimeAvgPriceTarget: 300, lastQuarterAvgPriceTarget: 650, lastQuarterCount: 16, allTimeCount: 230 };
+  var news = [
+    { priceTarget: 1200, priceWhenPosted: 1080, publishedDate: '2026-06-15', analystCompany: 'RBC Capital' },
+    { priceTarget: 1500, priceWhenPosted: 660,  publishedDate: '2026-06-15', analystCompany: 'TD Cowen' },
+    { priceTarget: 500,  publishedDate: '2025-01-01', analystCompany: 'Old Bank' },
+  ];
+  var gc = { strongBuy: 10, buy: 5, hold: 3, sell: 1, strongSell: 0, consensus: 'Buy' };
+  var now = Date.parse('2026-06-16T00:00:00Z');
+  var a = aggTargets(sm, news, gc, now);
+  __eq('consensus = свежий квартал', a.consensus, 650);
+  __eq('span q', a.span, 'q');
+  __eq('high', a.high, 1500);
+  __eq('low', a.low, 500);
+  __eq('lastDate', a.lastDate, '2026-06-15');
+  __eq('changes за 30д = 2', a.changes.length, 2);
+  __eq('ratings strongBuy', a.ratings.strongBuy, 10);
+  __ok('пусто → null', aggTargets(null, [], null, now) === null);
+});

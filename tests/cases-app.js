@@ -268,6 +268,10 @@ grp('scenario engine', function(){
   var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
   __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
+  // A.1: верхний таргет аналитиков ведёт Bull выше консенсуса
+  var wHigh = scenarioEngine({ price: 600, target: 650, targetHigh: 730, sma50: 450, support: 480, resistance: 640, atr: 10, rsi: 72 });
+  __approx('Bull = analyst high 730', wHigh.bull, 730);
+  __approx('Base = consensus 650', wHigh.base, 650);
 });
 
 grp('plan triggers', function(){

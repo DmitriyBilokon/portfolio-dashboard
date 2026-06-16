@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES };
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -104,17 +104,18 @@ async function pullState(){
 async function loadSharedAnalysis(){
   if(!SYNC_ENABLED||!sb||!currentUser)return;
   try{
-    const{data}=await sb.from('shared_analysis').select('val,insider,aireco').eq('id','global').maybeSingle();
+    const{data}=await sb.from('shared_analysis').select('val,insider,aireco,targets').eq('id','global').maybeSingle();
     if(!data)return;
     if(data.val&&typeof data.val==='object'&&Object.keys(data.val).length)VAL=data.val;
     if(data.insider&&typeof data.insider==='object'&&Object.keys(data.insider).length)INSIDER=data.insider;
     if(data.aireco&&typeof data.aireco==='object'&&Object.keys(data.aireco).length)AI_RECO=data.aireco;
+    if(data.targets&&typeof data.targets==='object'&&Object.keys(data.targets).length)TG_FULL=data.targets;
     _valSecCache=null;   // пересчитать секторные медианы по общим данным
   }catch(e){}   // таблицы нет (до миграции) → молча
 }
 async function pushSharedAnalysis(){
   if(!SYNC_ENABLED||!sb||!isAdmin())return;
-  try{ await sb.from('shared_analysis').upsert({id:'global',val:VAL,insider:INSIDER,aireco:AI_RECO,updated_at:new Date().toISOString()}); }catch(e){ console.warn('shared push failed',e); }
+  try{ await sb.from('shared_analysis').upsert({id:'global',val:VAL,insider:INSIDER,aireco:AI_RECO,targets:TG_FULL,updated_at:new Date().toISOString()}); }catch(e){ console.warn('shared push failed',e); }
 }
 let _sharedSub=null;
 function subSharedAnalysis(){
@@ -125,6 +126,7 @@ function subSharedAnalysis(){
       if(n.val&&typeof n.val==='object')VAL=n.val;
       if(n.insider&&typeof n.insider==='object')INSIDER=n.insider;
       if(n.aireco&&typeof n.aireco==='object')AI_RECO=n.aireco;
+      if(n.targets&&typeof n.targets==='object')TG_FULL=n.targets;
       _valSecCache=null; if(typeof renderAll==='function')renderAll();
     }).subscribe();
   }catch(e){}
@@ -151,6 +153,7 @@ function applyRemoteState(s){
   if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
   if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
   if(s.val&&typeof s.val==='object') VAL=s.val;
+  if(s.tgFull&&typeof s.tgFull==='object') TG_FULL=s.tgFull;
   if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
   if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=(s.aiDash.cards||s.aiDash.headline)?{[PF3_KEY]:s.aiDash}:s.aiDash;   // миграция старого одиночного дашборда в карту по портфелям
@@ -369,6 +372,7 @@ function aiBenchmarks(){
 let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
 let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
 let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
+let TG_FULL={};   // 🎯 A.1 агрегированные таргеты по тикеру (общие): {consensus,high,low,count,lastDate,ratings,changes,span,at}
 let valPeMode='fwd';   // 📐 карточка оценки: forward | trailing(ttm) для P/E
 let _valBusy=false;
 let insiderFilter={type:'all',minUSD:0};   // фильтр отображения сделок в карточке
@@ -4617,6 +4621,15 @@ async function valUpdateAll(){
       done+=chunk.length;const b=document.getElementById('valBtn');if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
     }
     _valSecCache=valSectorMedians();
+    // 🎯 A.1: агрегированные аналит. таргеты тем же набором символов (отдельный проход).
+    for(let i=0;i<list.length;i+=12){
+      const chunk=list.slice(i,i+12);
+      try{
+        const r=await fetch(PRICE_PROXY+'?action=targets',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
+        const j=await r.json();
+        if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]={...t,at:new Date().toISOString()};}
+      }catch(e){}
+    }
     // Алерты «дёшево по обоим измерениям» (новые) → Telegram, дедуп по подписи.
     for(const tk of Object.keys(VAL)){
       const v=VAL[tk];const c=valCmp(v,_valSecCache[v.sector]);
@@ -4711,7 +4724,9 @@ function scenarioEngine(inp){
   const target=+inp.target||0, sma50=+inp.sma50||0, sma200=+inp.sma200||0, support=+inp.support||0, resistance=+inp.resistance||0;
   const atr=(+inp.atr>0)?+inp.atr:price*SCENARIO_CFG.atrFallbackPct, rsi=(inp.rsi==null)?null:+inp.rsi, cfg=SCENARIO_CFG;
   const base=target>0?target:price;
-  const bullCands=[target>0?target*(1+cfg.bullTargetBand):0, price+cfg.atrMult*atr, resistance].filter(x=>x>price);
+  // верхний таргет аналитиков (из A.1, если есть), иначе консенсус×(1+полоса)
+  const upperTgt=(+inp.targetHigh>0)?+inp.targetHigh:(target>0?target*(1+cfg.bullTargetBand):0);
+  const bullCands=[upperTgt, price+cfg.atrMult*atr, resistance].filter(x=>x>price);
   const bull=bullCands.length?Math.max.apply(null,bullCands):price+cfg.atrMult*atr;
   const bearCands=[support,sma50,price-cfg.atrMult*atr].filter(x=>x>0&&x<price);
   const bear=bearCands.length?Math.min.apply(null,bearCands):Math.max(0.01,price-cfg.atrMult*atr);
@@ -4737,9 +4752,11 @@ function pf3ScenarioHTML(d,r){
   const sm=smaIdx(d), sma50=sm.s50>=0?parseFloat(r[sm.s50]):0, sma200=sm.s200>=0?parseFloat(r[sm.s200]):0;
   const supC=ensurePFCol(d,'Поддержка'),resC=ensurePFCol(d,'Сопротивление');
   const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
-  const target=(pf3EffTarget(d,r)||{}).target||0;
+  let target=(pf3EffTarget(d,r)||{}).target||0;
+  const tgf=TG_FULL[tk];   // A.1: агрегированные таргеты (если собраны)
+  if(tgf&&tgf.consensus>0)target=tgf.consensus;   // свежий консенсус как Base
   const tech=scenarioTech(tk,ccy);
-  const s=scenarioEngine({price,target,sma50,sma200,support,resistance,atr:tech.atr,rsi:tech.rsi});
+  const s=scenarioEngine({price,target,sma50,sma200,support,resistance,atr:tech.atr,rsi:tech.rsi,targetHigh:(tgf&&tgf.high)||0});
   if(!s)return '';
   const CONF={high:RT('высокая','high'),medium:RT('средняя','medium'),low:RT('низкая · растяжение','low · stretch'),lowdata:RT('мало данных','low data')};
   const pctOf=v=>`${v>=price?'+':''}${((v-price)/price*100).toFixed(1)}%`;
@@ -4815,6 +4832,29 @@ function valWhyLines(v,c,eps){
   else if(eps==='down')out.push(RT('forward EPS снижается → риск «ловушки стоимости»','forward EPS falling → value-trap risk'));
   if(v.peg>0&&v.peg<1)out.push(RT(`PEG ${valFmt(v.peg)} < 1 → рост недооценён рынком`,`PEG ${valFmt(v.peg)} < 1 → growth underpriced`));
   return out;
+}
+// 🎯 A.1 Панель агрегированных аналитических таргетов в карточке.
+function targetsBlockHTML(d,r){
+  const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
+  const t=TG_FULL[tk];
+  if(!t||(t.consensus==null&&!(t.changes&&t.changes.length)))return '';
+  const stale=t.lastDate?((Date.now()-Date.parse(t.lastDate))/864e5>30):false;
+  const upPct=(t.consensus>0&&price>0)?((t.consensus/price-1)*100):null;
+  const rt=t.ratings, segs=[['strongBuy','#16a34a','Strong Buy'],['buy','#4ade80','Buy'],['hold','#9ca3af','Hold'],['sell','#f87171','Sell'],['strongSell','#dc2626','Strong Sell']];
+  let ratingBar='';
+  if(rt){const tot=segs.reduce((s,[k])=>s+(rt[k]||0),0);
+    if(tot)ratingBar=`<div class="tgf-bar">${segs.map(([k,c])=>{const n=rt[k]||0;return n?`<span style="width:${n/tot*100}%;background:${c}" title="${k}: ${n}"></span>`:'';}).join('')}</div><div class="tgf-bar-l">${segs.filter(([k])=>rt[k]).map(([k,,l])=>`${l} ${rt[k]}`).join(' · ')}${rt.consensus?` · <b>${rt.consensus}</b>`:''}</div>`;}
+  const changes=(t.changes&&t.changes.length)?`<details class="tgf-ch"><summary>📝 ${RT('Изменения таргетов (30д)','Target changes (30d)')} · ${t.changes.length}</summary>${t.changes.map(c=>`<div class="tgf-ch-row"><span class="tgf-firm">${String(c.firm||'—').replace(/</g,'&lt;')}</span><span class="tgf-chv">${c.from!=null?pf3Fmt(c.from,0)+' → ':''}<b>${pf3Fmt(c.to,0)}</b> ${ccy}</span><span class="tgf-date">${c.date||''}</span></div>`).join('')}</details>`:'';
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🎯 ${RT('Аналитические таргеты','Analyst targets')}</span><span class="pf3-asof">${t.count?`${t.count} ${RT('аналит.','an.')}`:''}${t.lastDate?` · ${RT('посл.','last')} ${t.lastDate}`:''}${stale?` <span class="tg-stale">⚠️ ${RT('устар.','stale')}</span>`:''}</span></div>
+    <div class="tgf-top">
+      <div><span class="label">${RT('Консенсус','Consensus')}</span> <b>${t.consensus!=null?pf3Fmt(t.consensus,0)+' '+ccy:'—'}</b>${upPct!=null?` <span class="${upPct>=0?'pf3-up':'pf3-down'}">${upPct>=0?'+':''}${upPct.toFixed(1)}%</span>`:''}</div>
+      <div><span class="label">${RT('Диапазон','Range')}</span> <b>${t.low!=null&&t.high!=null?pf3Fmt(t.low,0)+'–'+pf3Fmt(t.high,0)+' '+ccy:'—'}</b></div>
+    </div>
+    ${ratingBar}
+    ${changes}
+    <div class="pf3-ai-note">${RT('Консенсус — свежий срез (квартал/месяц); диапазон и изменения — по последним таргетам аналитиков (FMP). Свежесть >30 дн помечается «устар.». Справочно.','Consensus is the fresh slice; range and changes from latest analyst targets (FMP). Older than 30d is flagged «stale». Reference only.')}</div>
+  </section>`;
 }
 // Панель Valuation Check в карточке акции.
 function valHTML(d,r){
@@ -5437,6 +5477,7 @@ function pf3DetailHTML(){
     ${stockReportHTML(d,r)}
     ${can('view.ai_reco')?aiRecoHTML(d,r):''}
     ${pf3ScenarioHTML(d,r)}
+    ${can('view.valuation')?targetsBlockHTML(d,r):''}
     ${isAdmin()?stockAiHTML(d,r):''}
     ${can('view.valuation')?valHTML(d,r):''}
     ${can('view.insider')?insiderHTML(d,r):''}

@@ -1345,3 +1345,16 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .scn-rr-bad{color:var(--text);background:color-mix(in srgb,var(--red-t) 12%,transparent);border-color:color-mix(in srgb,var(--red-t) 45%,var(--border))}
 .scn-rr-good{color:var(--text);background:color-mix(in srgb,var(--green-t) 12%,transparent);border-color:color-mix(in srgb,var(--green-t) 45%,var(--border))}
 @media(max-width:600px){.scn-grid{gap:6px}.scn-col{padding:7px 6px}.scn-px{font-size:15px}}
+
+/* 🎯 A.1 Аналитические таргеты */
+.tgf-top{display:flex;flex-wrap:wrap;gap:18px;margin:4px 0 8px;font-size:14px}
+.tgf-top b{font-variant-numeric:tabular-nums}
+.tgf-bar{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--surface2,var(--card));margin:4px 0}
+.tgf-bar span{height:100%}
+.tgf-bar-l{font-size:11px;color:var(--text2)}
+.tgf-ch{margin-top:6px}
+.tgf-ch>summary{cursor:pointer;font-size:12.5px;color:var(--text2);padding:3px 0}
+.tgf-ch-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:2px 0}
+.tgf-firm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tgf-chv{font-variant-numeric:tabular-nums;white-space:nowrap}
+.tgf-date{color:var(--text3);font-size:11px;white-space:nowrap}

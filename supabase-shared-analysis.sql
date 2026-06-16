@@ -6,11 +6,14 @@
 
 create table if not exists public.shared_analysis (
   id         text primary key default 'global',
-  val        jsonb not null default '{}'::jsonb,   -- VAL[tk]   — мультипликаторы
+  val        jsonb not null default '{}'::jsonb,   -- VAL[tk]    — мультипликаторы
   insider    jsonb not null default '{}'::jsonb,   -- INSIDER[tk] — инсайдерские сделки
   aireco     jsonb not null default '{}'::jsonb,   -- AI_RECO[tk] — AI-рекомендации
+  targets    jsonb not null default '{}'::jsonb,   -- TG_FULL[tk] — агрегированные аналит. таргеты (A.1)
   updated_at timestamptz default now()
 );
+-- Если таблица уже была создана ранее без колонки targets:
+alter table public.shared_analysis add column if not exists targets jsonb not null default '{}'::jsonb;
 
 insert into public.shared_analysis (id) values ('global') on conflict (id) do nothing;
 

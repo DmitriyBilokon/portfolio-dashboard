@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16cross-alerts';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17targets';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1795,6 +1795,51 @@ async function fmpTargetFull(symbol, env){
   }catch(e){ return null; }
 }
 
+// ── 🎯 A.1 Агрегация аналитических таргетов (консенсус + диапазон + рейтинги + изменения) ──
+// Чистая функция из сырых ответов FMP — покрыта тестом. nowMs — для окна свежести 30д.
+function aggTargets(sm, news, gc, nowMs){
+  const pos = v => (typeof v === 'number' && v > 0) ? v : null;
+  const consensusAll = pos(sm && sm.allTimeAvgPriceTarget);
+  const lastQ = pos(sm && sm.lastQuarterAvgPriceTarget);
+  const lastM = pos(sm && sm.lastMonthAvgPriceTarget);
+  const consensus = lastQ != null ? lastQ : (lastM != null ? lastM : consensusAll);
+  const span = lastQ != null ? 'q' : (lastM != null ? 'm' : 'all');
+  const arr = Array.isArray(news) ? news.filter(x => x && typeof x.priceTarget === 'number' && x.priceTarget > 0) : [];
+  const vals = arr.map(x => x.priceTarget);
+  const high = vals.length ? Math.max.apply(null, vals) : null;
+  const low  = vals.length ? Math.min.apply(null, vals) : null;
+  const dts = arr.map(x => Date.parse(x.publishedDate || x.date)).filter(t => !isNaN(t));
+  const lastDate = dts.length ? new Date(Math.max.apply(null, dts)).toISOString().slice(0,10) : null;
+  const cutoff = nowMs - 30*864e5;
+  const changes = arr.filter(x => { const t = Date.parse(x.publishedDate || x.date); return !isNaN(t) && t >= cutoff; })
+    .sort((a,b) => Date.parse(b.publishedDate||b.date) - Date.parse(a.publishedDate||a.date))
+    .slice(0, 12)
+    .map(x => ({ firm: String(x.analystCompany || x.analystName || '').slice(0,42),
+                 to: round2(x.priceTarget),
+                 from: (typeof x.priceWhenPosted === 'number' && x.priceWhenPosted > 0) ? round2(x.priceWhenPosted) : null,
+                 date: String(x.publishedDate || x.date || '').slice(0,10) }));
+  const count = arr.length || (sm && (sm.lastQuarterCount != null ? sm.lastQuarterCount : sm.allTimeCount)) || 0;
+  const g = Array.isArray(gc) ? gc[0] : gc;
+  const gnum = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
+  const ratings = g ? { strongBuy:gnum(g.strongBuy), buy:gnum(g.buy), hold:gnum(g.hold), sell:gnum(g.sell), strongSell:gnum(g.strongSell), consensus: g.consensus || null } : null;
+  if(consensus == null && !arr.length) return null;
+  return { consensus: consensus != null ? round2(consensus) : null, span,
+           high: high != null ? round2(high) : null, low: low != null ? round2(low) : null,
+           count, lastDate, ratings, changes,
+           allTime: consensusAll != null ? round2(consensusAll) : null, lastQuarter: lastQ != null ? round2(lastQ) : null };
+}
+async function targetsFull(symbol, env){
+  if(!env.FMP_KEY) return null;
+  const k = env.FMP_KEY, s = encodeURIComponent(symbol), base = 'https://financialmodelingprep.com/stable';
+  const get = async u => { try{ const r = await fetch(u); if(!r.ok) return null; return await r.json(); }catch(e){ return null; } };
+  const [sm, news, gc] = await Promise.all([
+    get(`${base}/price-target-summary?symbol=${s}&apikey=${k}`).then(a => Array.isArray(a) ? a[0] : a),
+    get(`${base}/price-target-news?symbol=${s}&page=0&limit=50&apikey=${k}`),
+    get(`${base}/grades-consensus?symbol=${s}&apikey=${k}`),
+  ]);
+  try{ return aggTargets(sm, news, gc, Date.now()); }catch(e){ return null; }
+}
+
 // ── 📐 Valuation Check: текущие мультипликаторы (Yahoo) + историческая медиана (FMP) ──
 // Yahoo покрывает US и Nordic/EU, поэтому он основной для живых мультипликаторов;
 // Finnhub /stock/metric — US-only, поэтому не используется. P/E n/a при EPS≤0,
@@ -2104,6 +2149,24 @@ export default {
             out[s] = (val || hist) ? { ...(val || {}), hist: hist || null, at: new Date().toISOString() } : null;
           }));
           if(i + 6 < syms.length) await sleep(250);
+        }
+        return json(out);
+      }catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'targets'){
+      // POST {symbols}: A.1 — агрегированные аналит. таргеты (консенсус/диапазон/рейтинги/изменения).
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{
+        const body = await request.json();
+        const syms = (Array.isArray(body.symbols) ? body.symbols : []).slice(0, 18).map(s => String(s).trim()).filter(Boolean);
+        const out = {};
+        // Чанк по 5 (3 подзапроса/символ: summary + news + grades) — щадим лимиты.
+        for(let i = 0; i < syms.length; i += 5){
+          const chunk = syms.slice(i, i + 5);
+          await Promise.all(chunk.map(async s => { out[s] = await targetsFull(s, env); }));
+          if(i + 5 < syms.length) await sleep(250);
         }
         return json(out);
       }catch(e){ return json({ error: String(e.message || e) }, 500); }

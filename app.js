@@ -2854,6 +2854,40 @@ function cashDragHTML(d,rows){
     <div class="pf3-ai-note">${RT('cash_drag = доля кэша × доходность бенчмарка (кэш под 0%). Справочная аналитика, не рекомендация.','cash_drag = cash share × benchmark return (cash at 0%). Reference analytics, not advice.')}</div>
   </section>`;
 }
+// ── 💱 Валютный риск и хедж: сценарий «SEK крепнет на X%» по экспозиции ──
+let fxScn=10;   // выбранное укрепление SEK, %
+function fxScnSet(v){fxScn=v;renderPF3();}
+// Чистая сценарная модель — покрыта тестом. rows: [{ccy,val(SEK)}]; equity — чистый
+// капитал (SEK). Укрепление SEK на sekMovePct → инвалютные позиции дешевеют в kr.
+function fxScenarioModel(rows,equity,sekMovePct){
+  const byCcy={}; let foreign=0,stocks=0;
+  rows.forEach(x=>{const v=x.val||0;stocks+=v;byCcy[x.ccy]=(byCcy[x.ccy]||0)+v;if(x.ccy!=='SEK')foreign+=v;});
+  const impact=-foreign*sekMovePct/100;
+  const ccyList=Object.keys(byCcy).filter(c=>c!=='SEK').map(c=>({c,v:byCcy[c],impact:-byCcy[c]*sekMovePct/100,pct:stocks>0?byCcy[c]/stocks*100:0})).sort((a,b)=>b.v-a.v);
+  return {foreign,stocks,foreignPctOfStocks:stocks>0?foreign/stocks*100:0,foreignPctOfNet:equity>0?foreign/equity*100:0,impact,newNet:equity+impact,impactPct:equity>0?impact/equity*100:0,ccyList};
+}
+function fxHedgeHTML(d,rows,equity){
+  const unit=pf3BaseUnit(d), m=fxScenarioModel(rows,equity,fxScn);
+  if(!(m.foreign>0))return '';
+  const verdict=m.foreignPctOfStocks>=80?{c:'cd-high',l:RT('высокий','high')}:m.foreignPctOfStocks>=60?{c:'cd-warn',l:RT('умеренный','moderate')}:{c:'cd-ok',l:RT('низкий','low')};
+  const seg=`<span class="pf3-hz-seg">${[5,10,15].map(v=>`<button class="pf3-hz-b${fxScn===v?' on':''}" onclick="fxScnSet(${v})">+${v}%</button>`).join('')}</span>`;
+  const ccyRows=m.ccyList.slice(0,5).map(x=>`<div class="fx-row"><span class="fx-c">${x.c}</span><span class="cd-dim">${x.pct.toFixed(0)}% ${RT('акций','of stocks')}</span><b class="pf3-down">${pf3Fmt(x.impact,0)} ${unit}</b></div>`).join('');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>💱 ${RT('Валютный риск и хедж','Currency risk & hedge')}</span><span class="pf3-asof">${RT('SEK крепнет','SEK strengthens')} ${seg}</span></div>
+    <div class="cd-grid">
+      <div class="cd-main ${verdict.c}">
+        <div class="cd-big pf3-down">${pf3Fmt(m.impact,0)} <small>${unit}</small></div>
+        <div class="cd-cap">${RT('влияние на чистый капитал','impact on net worth')} (${m.impactPct.toFixed(1)}%) ${RT('при','if')} SEK +${fxScn}%</div>
+      </div>
+      <div class="cd-stats">
+        <div><span class="label">${RT('Инвалютная доля','Foreign exposure')}</span><b class="${verdict.c==='cd-high'?'pf3-down':''}">${m.foreignPctOfStocks.toFixed(0)}%</b> <span class="cd-dim">${RT('акций','of stocks')} · ${RT('риск','risk')} ${verdict.l}</span></div>
+        ${ccyRows}
+      </div>
+    </div>
+    <div class="cd-hint">💡 ${RT('Снизить валютный риск: нордические/EUR-бумаги (напр. INVE B, VOLV B), часть свободного кэша держать в SEK. Ослабление SEK даст обратный (положительный) эффект.','Cut FX risk: Nordic/EUR names (e.g. INVE B, VOLV B), keep part of free cash in SEK. A weaker SEK has the opposite (positive) effect.')}</div>
+    <div class="pf3-ai-note">${RT('Сценарий: равномерное укрепление SEK против всех инвалют (упрощение; покурсовые корреляции — отдельный слой). Справочная аналитика, не рекомендация.','Scenario: uniform SEK strengthening vs all foreign currencies (a simplification; per-currency correlations are a separate layer). Reference analytics, not advice.')}</div>
+  </section>`;
+}
 function pf3HealthTab(){
   const d=pf3D(),{s200}=smaIdx(d),fxB=pf3BaseFx(d);
   // cashFree/leverage хранятся в базовой валюте вкладки — приводим к SEK,
@@ -2942,6 +2976,7 @@ function pf3HealthTab(){
     <div id="pf3RiskBox">${pf3RiskHTML()}</div>
   </section>
   ${cashDragHTML(d,rows)}
+  ${fxHedgeHTML(d,rows,equity)}
   <section class="pf3-grid">
     <div class="pf3-panel"><div class="pf3-panel-hd"><span>${T('🏭 Распределение по секторам')}</span></div>${bars(secs)}</div>
     <div class="pf3-panel"><div class="pf3-panel-hd"><span>${T('💱 Распределение по валютам')}</span></div>${bars(ccys)}</div>

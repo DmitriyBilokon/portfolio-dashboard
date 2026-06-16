@@ -194,6 +194,21 @@ grp('cash drag', function(){
   __ok('falling market → drag positive', m3.dragPct > 0);
 });
 
+// 9i) 💱 Валютный сценарий: укрепление SEK
+grp('fx scenario', function(){
+  var rows = [{ ccy: 'USD', val: 80 }, { ccy: 'SEK', val: 20 }];
+  var m = fxScenarioModel(rows, 100, 10);   // equity 100, SEK +10%
+  __approx('foreign 80', m.foreign, 80);
+  __approx('foreign % of stocks 80', m.foreignPctOfStocks, 80);
+  __approx('impact -8', m.impact, -8);        // -80 × 10%
+  __approx('newNet 92', m.newNet, 92);
+  __eq('1 foreign ccy', m.ccyList.length, 1);
+  // только SEK → нет валютного риска
+  var m2 = fxScenarioModel([{ ccy: 'SEK', val: 50 }], 50, 10);
+  __approx('no foreign', m2.foreign, 0);
+  __approx('no impact', m2.impact, 0);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

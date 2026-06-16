@@ -4759,16 +4759,17 @@ function scenarioMid(inp){
   let bear=price*(1-R);
   const support=+inp.support||0;
   if(support>0&&support<price&&support>bear&&support>=price*(1-R*1.5))bear=support;
+  if(bear>base)bear=base;   // инвариант base≥bear: событийный пол не выше консенсуса
   const rsi=inp.rsi==null?null:+inp.rsi;
   const overbought=(rsi!=null&&rsi>cfg.rsiHot)||(price>consensus);
   const stretch=price>consensus&&overbought;
-  // B.8 sanity: bull≥base≥bear и upside≥0; иначе «неконсистентно», R/R скрыт.
-  if(!(bull>=base&&base>=bear)) return {horizon:'mid',valid:false,note:'broken',price,bull,base,bear,rr:null,stretch};
-  if(bull<=price)              return {horizon:'mid',valid:false,note:'noupside',price,bull,base,bear,rr:null,stretch};   // цена выше верхнего таргета
-  const upside=(bull-price)/price*100, downside=(price-bear)/price*100;
-  const rr=downside>0?upside/downside:null;
   let bullConf=high>0?'medium':'low', bearConf='medium';
   if(stretch){bullConf='low';bearConf='high';}
+  // B.8 sanity (порядок важен): bull<base — настоящая ошибка; bull≤цены — нет апсайда по таргетам.
+  if(bull<base)   return {horizon:'mid',valid:false,note:'broken',price,bull,base,bear,bullConf,bearConf,rr:null,stretch};
+  if(bull<=price) return {horizon:'mid',valid:false,note:'noupside',price,bull,base,bear,bullConf,bearConf,rr:null,stretch};
+  const upside=(bull-price)/price*100, downside=(price-bear)/price*100;
+  const rr=downside>0?upside/downside:null;
   return {horizon:'mid',valid:true,note:null,price,bull,base,bear,upside,downside,rr,bullConf,baseConf:'medium',bearConf,stretch,R};
 }
 // Свежий консенсус-таргет для среднесрочного сценария — тот же источник, что и
@@ -4821,19 +4822,19 @@ function pf3ScenarioHTML(d,r){
       ${cell('⚪','Base',sh.base,'base',sh.baseConf,RT('текущая цена','current price'),'price')}
       ${cell('🔴','Bear',sh.bear,'bear',sh.bearConf,shBearTrig,sh.overbought?'indicator':'price')}
     </div>${rrRow(sh)}${projRow}</div>`;
-  // Среднесрок: учитываем валидность (A.1 / B.8).
+  // Среднесрок: valid/noupside показывают реальные Bull/Base/Bear; lowdata/broken — только пояснение.
   let mdBody;
-  if(md.valid){
-    const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${Math.round(md.R*100)}%`,`earnings miss / guidance cut → −${Math.round(md.R*100)}%`);
-    mdBody=`<div class="scn-grid">
-      ${cell('🟢','Bull',md.bull,'bull',md.bullConf,RT('отчёт выше ожиданий / рост гайденса','earnings beat / guidance raise'),'event')}
-      ${cell('⚪','Base',md.base,'base',md.baseConf,RT('консенсус-таргет','analyst consensus'),'event')}
-      ${cell('🔴','Bear',md.bear,'bear',md.bearConf,mdBearTrig,'event')}
-    </div>${rrRow(md)}`;
+  if(md.valid||md.note==='noupside'){
+    const mdBearTrig=RT(`слабый отчёт / снижение гайденса → −${Math.round((md.R||SCENARIO_CFG.eventR)*100)}%`,`earnings miss / guidance cut → −${Math.round((md.R||SCENARIO_CFG.eventR)*100)}%`);
+    const mdCells=`<div class="scn-grid">
+      ${cell('🟢','Bull',md.bull,'bull',md.bullConf||'low',RT('отчёт выше ожиданий / рост гайденса','earnings beat / guidance raise'),'event')}
+      ${cell('⚪','Base',md.base,'base',md.baseConf||'medium',RT('консенсус-таргет','analyst consensus'),'event')}
+      ${cell('🔴','Bear',md.bear,'bear',md.bearConf||'medium',mdBearTrig,'event')}
+    </div>`;
+    mdBody=mdCells+(md.valid?rrRow(md):`<div class="scn-rr scn-rr-bad">⚠️ ${RT(`цена выше верхнего таргета аналитиков (${pf3Fmt(md.bull,0)} ${ccy}) — апсайда по таргетам нет, R/R скрыт`,`price is above the highest analyst target (${pf3Fmt(md.bull,0)} ${ccy}) — no target upside, R/R hidden`)}</div>`);
   }else{
-    const msg=md.note==='lowdata'?RT('Недостаточно свежих таргетов аналитиков — Bull/Base не рассчитаны, R/R не показан.','No fresh analyst targets — Bull/Base not computed, R/R hidden.')
-      :md.note==='noupside'?RT(`Цена выше верхнего таргета аналитиков (${pf3Fmt(md.bull,0)} ${ccy}) — потенциала вверх по таргетам нет, R/R не показан.`,`Price is above the highest analyst target (${pf3Fmt(md.bull,0)} ${ccy}) — no target upside, R/R hidden.`)
-      :RT('Данные неконсистентны (Bull ниже Base) — R/R скрыт.','Inconsistent data (Bull below Base) — R/R hidden.');
+    const msg=md.note==='broken'?RT('Данные неконсистентны (Bull ниже Base) — R/R скрыт.','Inconsistent data (Bull below Base) — R/R hidden.')
+      :RT('Недостаточно свежих таргетов аналитиков — Bull/Base не рассчитаны, R/R не показан.','No fresh analyst targets — Bull/Base not computed, R/R hidden.');
     const staleRef=(md.note==='lowdata'&&staleConsensus>0)?`<div class="scn-stale-ref">${RT('устар. таргет','stale target')} ~${pf3Fmt(staleConsensus,0)} ${ccy} — ${RT('не используется в сценариях','not used in scenarios')}</div>`:'';
     mdBody=`<div class="scn-nodata">⚠️ ${msg}</div>${staleRef}`;
   }

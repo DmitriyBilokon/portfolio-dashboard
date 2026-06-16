@@ -267,6 +267,10 @@ grp('scenario v1.4', function(){
   var mdNu = scenarioMid({ price: 700, target: 650, targetHigh: 650, fresh: true });
   __eq('mid noupside when price>highest target', mdNu.note, 'noupside');
   __ok('mid noupside hides RR', mdNu.rr === null);
+  // WDC-кейс: консенсус 508 ниже событийного пола → НЕ «broken», а «noupside» (Bull 685 > Base 508)
+  var mdW = scenarioMid({ price: 698, target: 508, targetHigh: 685, fresh: true });
+  __eq('WDC: noupside (не broken)', mdW.note, 'noupside');
+  __ok('WDC: bull>base, bear≤base (инвариант)', mdW.bull > mdW.base && mdW.bear <= mdW.base);
   // B.8: bull<base → broken
   var mdBr = scenarioMid({ price: 600, target: 650, targetHigh: 600, fresh: true });
   __eq('mid broken when bull<base', mdBr.note, 'broken');

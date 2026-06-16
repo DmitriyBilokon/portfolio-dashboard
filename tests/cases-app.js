@@ -309,6 +309,27 @@ grp('scenario alerts', function(){
   __eq('RSI exit without stretch ignored', scnAlertEvents({ rsi: 75, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }, { rsi: 68, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }).length, 0);
 });
 
+// 9m) 📰 Бесплатный новостной разбор (детерминированный)
+grp('news analyze', function(){
+  var stocks = [
+    { tk: 'MU', name: 'Micron Technology', sector: 'Tech' },
+    { tk: 'AVGO', name: 'Broadcom', sector: 'Tech' },
+    { tk: 'RHM', name: 'Rheinmetall', sector: 'Industrials' },
+  ];
+  var text = 'Micron upgraded by analysts, strong demand and record profit. Rheinmetall faces a probe and lawsuit, shares drop. Weather is fine today.';
+  var res = analyzeNews(text, stocks);
+  __eq('MU bullish', res.byTicker.MU.impact, 'bull');
+  __ok('MU score > 0', res.byTicker.MU.score > 0);
+  __eq('RHM bearish', res.byTicker.RHM.impact, 'bear');
+  __ok('RHM score < 0', res.byTicker.RHM.score < 0);
+  __ok('AVGO not mentioned → absent', res.byTicker.AVGO === undefined);
+  // пустой ввод → пусто
+  __eq('empty text → 0', analyzeNews('', stocks).n, 0);
+  // матч по тикеру с границей слова (не часть другого слова)
+  var r2 = analyzeNews('AVGO contract win, revenue beat', stocks);
+  __eq('AVGO bullish by ticker', r2.byTicker.AVGO.impact, 'bull');
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

@@ -17,7 +17,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT };
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -146,6 +146,8 @@ function applyRemoteState(s){
   if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
+  if(typeof s.news==='string') NEWS_TEXT=s.news;
+  if(s.newsImpact&&typeof s.newsImpact==='object') NEWS_IMPACT=s.newsImpact;
   if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
   if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
@@ -275,6 +277,72 @@ let TG_ALERTS={};
 // которые ассистент извлекает из чата (и которые можно добавить вручную).
 // Правила передаются и в чат, и в полный анализ портфеля (investorRules).
 let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
+let NEWS_TEXT='';   // 📰 вставленная сводка новостей (sync)
+let NEWS_IMPACT={};   // 📰 детерминированная оценка влияния по тикеру (sync): {impact,score,hits,name,sector}
+// Двуязычный лексикон тональности для бесплатного новостного анализа.
+const NEWS_POS=['рост','раст','выросл','рекорд','прибыл','превзош','повыш','контракт','одобр','сделк','партнёрств','выкуп','байбэк','байбек','дивиденд','сильн','ускор','запуск','расшир','beat','surge','soar','record','upgrade','raise','raised','approval','approved','contract','partnership','buyback','strong','rally','jump','gain','tops','profit','expansion','wins','outperform','boost','demand'];
+const NEWS_NEG=['паден','падает','упал','сниж','убыток','штраф','расследован','санкц','иск','банкрот','сокращ','увольн','отзыв','дефолт','рецесс','слаб','предупрежд','просад','обвал','miss','plunge','drop','fall','downgrade','cut','probe','lawsuit','fine','recall','bankruptcy','warning','slump','sink','weak','loss','decline','layoff','default','halt','delay','tariff','sell-off','selloff'];
+function newsForAi(){ return (NEWS_TEXT&&NEWS_TEXT.trim())?NEWS_TEXT.trim().slice(0,8000):null; }
+function newsPolarity(s){ const t=String(s).toLowerCase(); let p=0; NEWS_POS.forEach(w=>{if(t.indexOf(w)>=0)p++;}); NEWS_NEG.forEach(w=>{if(t.indexOf(w)>=0)p--;}); return p; }
+// Чистый движок: текст + список акций → влияние по тикеру. Покрыт тестом.
+function analyzeNews(text, stocks){
+  const at=new Date().toISOString();
+  if(!text||!String(text).trim()||!Array.isArray(stocks))return {byTicker:{},at,n:0,sents:0};
+  const sents=String(text).split(/[.!?\n;•]+/).map(s=>s.trim()).filter(s=>s.length>3);
+  const byTicker={};
+  stocks.forEach(st=>{
+    const tk=String(st.tk||'').trim().toUpperCase(); if(!tk)return;
+    const reTk=new RegExp('(^|[^A-Z0-9.])'+tk.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^A-Z0-9]|$)','i');
+    const nameWords=String(st.name||'').toLowerCase().split(/[^a-zа-я0-9]+/i).filter(w=>w.length>=4&&!['inc','corp','class','ltd','plc','group','holding','company'].includes(w));
+    const hits=[];
+    sents.forEach(s=>{
+      const low=s.toLowerCase();
+      const byTkM=reTk.test(s), byName=nameWords.length>0&&nameWords.some(w=>low.indexOf(w)>=0);
+      if(byTkM||byName)hits.push({sent:s.slice(0,220),pol:newsPolarity(s),kind:byTkM?'ticker':'name'});
+    });
+    if(hits.length){
+      const score=hits.reduce((a,h)=>a+h.pol,0);
+      byTicker[tk]={impact:score>0?'bull':score<0?'bear':'neutral',score,hits,name:st.name,sector:st.sector};
+    }
+  });
+  return {byTicker,at,n:Object.keys(byTicker).length,sents:sents.length};
+}
+// Акции текущей вкладки (для сопоставления с новостями).
+function newsStocks(){
+  const d=pf3D(); if(!d||!Array.isArray(d.rows))return [];
+  return d.rows.map(r=>({tk:String(r[2]||'').toUpperCase(),name:r[1],sector:r[4],ccy:r[8]||'USD'})).filter(x=>x.tk);
+}
+function newsSetText(v){ NEWS_TEXT=v; }
+function newsClear(){ NEWS_TEXT=''; NEWS_IMPACT={}; scheduleSave(); renderPF3(); }
+// Бесплатный (без токенов) разбор вставленной сводки → влияние по бумагам.
+function newsAnalyzeFree(){
+  const text=(NEWS_TEXT||'').trim();
+  if(!text){ toast(RT('Вставьте текст новостей','Paste the news text'),true); return; }
+  const res=analyzeNews(text, newsStocks());
+  NEWS_IMPACT=res.byTicker; scheduleSave(); renderPF3();
+  toast('📰 '+RT(`Затронуто бумаг: ${res.n} (из ${res.sents} предложений)`,`Stocks affected: ${res.n} (of ${res.sents} sentences)`));
+}
+// Платная кнопка: прогон AI Proto со вставленной сводкой как контекстом (userNews).
+function newsAnalyzePaid(){ scheduleSave(); if(typeof pf3AiRun==='function')pf3AiRun(); }
+function newsImpactHTML(){
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const ents=Object.keys(NEWS_IMPACT||{}).map(tk=>({tk,...NEWS_IMPACT[tk]}));
+  if(!ents.length)return '';
+  const bull=ents.filter(e=>e.impact==='bull').sort((a,b)=>b.score-a.score);
+  const bear=ents.filter(e=>e.impact==='bear').sort((a,b)=>a.score-b.score);
+  const neu=ents.filter(e=>e.impact==='neutral');
+  const row=e=>{
+    const ico=e.impact==='bull'?'📈':e.impact==='bear'?'📉':'⚪', cls=e.impact==='bull'?'pf3-up':e.impact==='bear'?'pf3-down':'val-mid';
+    const snip=(e.hits&&e.hits[0])?esc(e.hits[0].sent):'';
+    const reco=e.impact==='bull'?RT('позитив — держать/докупать у уровня','positive — hold/add at a level'):e.impact==='bear'?RT('негатив — проверить риск/сокращение','negative — check risk/trim'):RT('упоминается, тон нейтральный','mentioned, neutral tone');
+    return`<div class="news-row" onclick="insiderOpenCard('${e.tk}')">
+      <span class="news-imp ${cls}">${ico} ${e.score>0?'+':''}${e.score}</span>
+      <div class="news-main"><b>${esc(e.name||e.tk)}</b> <span class="news-tk">${e.tk}</span> <span class="news-reco">${reco}</span>${snip?`<div class="news-snip">«${snip}»</div>`:''}</div>
+    </div>`;
+  };
+  const grp=(h,arr)=>arr.length?`<div class="news-grp"><div class="news-grp-h">${h} (${arr.length})</div>${arr.map(row).join('')}</div>`:'';
+  return`<div class="news-res">${grp('📈 '+RT('Позитив','Bullish'),bull)}${grp('📉 '+RT('Негатив','Bearish'),bear)}${grp('⚪ '+RT('Нейтрально','Neutral'),neu)}</div>`;
+}
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
 let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
 
@@ -2098,6 +2166,7 @@ function pf3AiSnapshot(key){
       investorRules:AI_PREFS,
       playbook:aiPlaybookEnsure(),
       trackRecord:aiTrackRecord(),
+      userNews:newsForAi(),
     };
   }
   let totalVal=0;
@@ -2136,6 +2205,7 @@ function pf3AiSnapshot(key){
       return{index:k,phases,
         lastAiReview:last?{at:last.at,summary:(last.proposal&&last.proposal.summary)||String(last.text||'').slice(0,1200)}:null};
     }),
+    userNews:newsForAi(),   // 📰 вставленная пользователем сводка новостей (если есть)
   };
 }
 
@@ -2777,7 +2847,19 @@ function pf3TrackHTML(){
 }
 function pf3AiHTML(){
   const H=pf3AiHist(),last=H[0];
+  const newsHas=Object.keys(NEWS_IMPACT||{}).length;
   let h=`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>📰 ${RT('Новости → влияние (без токенов)','News → impact (no tokens)')}</span><span class="pf3-asof">${RT('вставьте сводку — оцените влияние на все акции','paste a summary — score the impact on all stocks')}</span></div>
+    <textarea id="newsInp" class="news-inp" placeholder="${RT('Вставьте сводку последних мировых новостей…','Paste a summary of recent world news…')}" oninput="newsSetText(this.value)">${(NEWS_TEXT||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea>
+    <div class="pf3-ai-bar">
+      <button class="pf3-btn" onclick="newsAnalyzeFree()">🔎 ${RT('Проанализировать (бесплатно)','Analyze (free)')}</button>
+      <button class="pf3-btn sim-buy" onclick="newsAnalyzePaid()" ${pf3Ai.loading?'disabled':''}>✨ ${RT('Углубить AI-анализом (платно)','Deepen with AI (paid)')}</button>
+      ${newsHas?`<a href="#" class="pf3-ai-note" onclick="newsClear();return false">${RT('очистить','clear')}</a>`:''}
+    </div>
+    ${newsImpactHTML()}
+    <div class="pf3-ai-note">${RT('Бесплатно: сопоставляет текст с акциями по тикеру/названию и оценивает тональность по словарю — без AI-токенов. «Платно» отправляет сводку в AI Proto как контекст. Справочно, не рекомендация.','Free: matches text to stocks by ticker/name and scores sentiment by lexicon — no AI tokens. «Paid» sends the summary to AI Proto as context. Reference, not advice.')}</div>
+  </section>
+  <section class="pf3-panel">
     <div class="pf3-panel-hd"><span>${T('🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at)+(last.cost?' · '+costLine(last.cost):''):''}</span></div>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?T('⏳ Анализирую… (30–60 сек)'):T('🔮 Проанализировать портфель')}</button>

@@ -3398,6 +3398,14 @@ function pf3RecoHorizons(d,r){
   if(knife)P(nR,-2.5,'падающий нож','falling knife');else if(overheat)P(nR,-1.5,'перегрев — далеко над средними','overheated — far above averages');
   if(spec)P(nR,-1,'спекулятивный профиль','speculative profile');
   if(m.beta!=null&&m.beta>1.5)P(nR,-0.5,`высокая волатильность β ${m.beta.toFixed(1)}`,`high volatility β ${m.beta.toFixed(1)}`);
+  // C.3: Risk/Reward сценарного движка во входах скоринга «сейчас».
+  const _res=num(h.indexOf('Сопротивление'));
+  const _tech=scenarioTech(String(r[2]||''),r[8]||'USD');
+  const _scn=scenarioEngine({price,target:eff.target||0,sma50,sma200,support:sup,resistance:_res,atr:_tech.atr,rsi:_tech.rsi});
+  if(_scn&&_scn.rr!=null){
+    if(_scn.rr<1)P(nR,-1,`R/R ${_scn.rr.toFixed(1)} < 1 — риск > потенциала`,`R/R ${_scn.rr.toFixed(1)} < 1 — risk > reward`);
+    else if(_scn.rr>2)P(nF,1,`R/R ${_scn.rr.toFixed(1)} — асимметрия в пользу роста`,`R/R ${_scn.rr.toFixed(1)} — upside asymmetry`);
+  }
   if(!nR.length)P(nR,0,'красных флагов нет','no red flags');
   let nowV;
   if(noData)nowV='wait';else if(knife)nowV='avoid';

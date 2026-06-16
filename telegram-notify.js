@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16daypct';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16daypct2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -185,18 +185,27 @@ async function yahoo(sym){
     const closes = rawC.filter(v => typeof v === 'number' && v > 0);
     const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
-    const price = m.regularMarketPrice;
-    // День%: база — последнее ДНЕВНОЕ закрытие СТРОГО ДО сегодня (по UTC-дате), а не
-    // closes[length-2]. Иначе, пока сегодняшняя свеча не появилась в дневном ряду,
-    // бралось ПОЗАВЧЕРАШНЕЕ закрытие → завышенный «двухдневный» % (баг ^OMX и др.).
-    const todayUTC = new Date().toISOString().slice(0, 10);
-    let prev = null;
-    for(let i = rawC.length - 1; i >= 0; i--){
-      const c = rawC[i]; if(!(typeof c === 'number' && c > 0)) continue;
-      const dstr = ts[i] ? new Date(ts[i] * 1000).toISOString().slice(0, 10) : '';
-      if(dstr && dstr < todayUTC){ prev = c; break; }
+    let price = m.regularMarketPrice, prev = null;
+    // День%: официальное предыдущее закрытие из меты лёгкого запроса range=1d
+    // (chartPreviousClose там корректно учитывает пропуски/праздники в дневном ряду
+    // 1y — напр. у ^OMX пропадает день → ряд 1y давал завышенный «двухдневный» %).
+    try{
+      const r1 = await yChart(sym, '1d', '1d');
+      const m1 = r1 && r1.meta;
+      if(m1){
+        if(typeof m1.regularMarketPrice === 'number' && m1.regularMarketPrice > 0) price = m1.regularMarketPrice;
+        if(typeof m1.chartPreviousClose === 'number' && m1.chartPreviousClose > 0) prev = m1.chartPreviousClose;
+      }
+    }catch(e){}
+    if(prev == null){   // fallback: последнее закрытие строго ДО сегодня из 1y-ряда
+      const todayUTC = new Date().toISOString().slice(0, 10);
+      for(let i = rawC.length - 1; i >= 0; i--){
+        const c = rawC[i]; if(!(typeof c === 'number' && c > 0)) continue;
+        const dstr = ts[i] ? new Date(ts[i] * 1000).toISOString().slice(0, 10) : '';
+        if(dstr && dstr < todayUTC){ prev = c; break; }
+      }
+      if(prev == null) prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
     }
-    if(prev == null) prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
     const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     return {
       price, pct,

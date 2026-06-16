@@ -4992,7 +4992,8 @@ function pf3SetYears(y){pf3State.years=y;renderPF3()}
 async function pf3FetchPrices(d,key){
   const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
   const chunks=[];
-  for(let i=0;i<syms.length;i+=20)chunks.push(syms.slice(i,i+20).join(','));
+  // По 15: воркер на тикер делает ~3 подзапроса (chart 1y + chart 1d + weekly), лимит Cloudflare ~50.
+  for(let i=0;i<syms.length;i+=15)chunks.push(syms.slice(i,i+15).join(','));
   const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
   const prices=Object.assign({},...parts.filter(Boolean));
   const {s50,s100,s200}=smaIdx(d);

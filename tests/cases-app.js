@@ -245,6 +245,31 @@ grp('rbac resolve', function(){
   __ok('analyst sees valuation', rbacResolve('analyst', {}, 'view.valuation') === true);
 });
 
+// 9k) 📊 Сценарный движок (Bull/Base/Bear) + RR + симметрия
+grp('scenario engine', function(){
+  // перегретый тренд (WDC-кейс): цена выше консенсуса, RSI>70 → bull «растяжение», RR<1
+  var hot = scenarioEngine({ price: 120, target: 105, sma50: 90, sma200: 80, support: 95, resistance: 125, atr: 4, rsi: 75 });
+  __approx('hot base = consensus', hot.base, 105);
+  __approx('hot bear = SMA50', hot.bear, 90);
+  __ok('hot RR < 1', hot.rr < 1);
+  __ok('hot bull stretched', hot.stretch === true && hot.bullConf === 'low');
+  __ok('hot bear weight high', hot.bearConf === 'high');
+  // перепроданность: RSI<30 → bear low-confidence, bull high
+  var cold = scenarioEngine({ price: 70, target: 100, sma50: 75, sma200: 90, support: 68, resistance: 80, atr: 3, rsi: 25 });
+  __ok('cold not stretched', cold.stretch === false);
+  __ok('cold bull high / bear low', cold.bullConf === 'high' && cold.bearConf === 'low');
+  // оба направления всегда есть (ТЗ B.4 / критерий 4)
+  __ok('both directions present', hot.bull > hot.price && hot.bear < hot.price);
+  // нет таргета → база «мало данных», но сценарии считаются
+  var nod = scenarioEngine({ price: 50, target: 0, sma50: 45, support: 44, resistance: 55, atr: 1, rsi: null });
+  __eq('no target → base lowdata', nod.baseConf, 'lowdata');
+  __ok('no target → bull/bear still computed', nod.bull > 50 && nod.bear < 50);
+  // ATR/RSI из закрытий
+  var up = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
+  __approx('ATR of +1/day series = 1', atrFromCloses(up), 1);
+  __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

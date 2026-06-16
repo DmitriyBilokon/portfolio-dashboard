@@ -1327,3 +1327,21 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .set-pg-h{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
 .set-perm{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;padding:2px 0}
 .set-perm select{padding:2px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11.5px}
+
+/* 📊 Сценарный движок (Bull/Base/Bear) + Risk/Reward */
+.scn-stretch{font-size:10.5px;font-weight:700;color:var(--gold,#e8b339);background:color-mix(in srgb,var(--gold,#e8b339) 16%,transparent);padding:1px 7px;border-radius:999px}
+.scn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0 10px}
+.scn-col{border:1px solid var(--border);border-radius:11px;padding:9px 10px;text-align:center}
+.scn-bull{background:color-mix(in srgb,var(--green-t) 7%,transparent)}
+.scn-bear{background:color-mix(in srgb,var(--red-t) 7%,transparent)}
+.scn-base{background:color-mix(in srgb,var(--text3) 7%,transparent)}
+.scn-h{font-size:12px;font-weight:700;color:var(--text2)}
+.scn-px{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:3px}
+.scn-pct{font-size:12px;font-variant-numeric:tabular-nums}
+.scn-trig{font-size:11px;color:var(--text2);margin-top:5px;line-height:1.35}
+.scn-conf{font-size:10.5px;color:var(--text3);margin-top:4px}
+.scn-rr{font-size:13px;padding:8px 11px;border-radius:10px;border:1px solid var(--border);font-variant-numeric:tabular-nums}
+.scn-rr b{font-size:15px}
+.scn-rr-bad{color:var(--text);background:color-mix(in srgb,var(--red-t) 12%,transparent);border-color:color-mix(in srgb,var(--red-t) 45%,var(--border))}
+.scn-rr-good{color:var(--text);background:color-mix(in srgb,var(--green-t) 12%,transparent);border-color:color-mix(in srgb,var(--green-t) 45%,var(--border))}
+@media(max-width:600px){.scn-grid{gap:6px}.scn-col{padding:7px 6px}.scn-px{font-size:15px}}

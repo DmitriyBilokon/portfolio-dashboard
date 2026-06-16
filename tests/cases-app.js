@@ -145,6 +145,15 @@ grp('valuation peers', function(){
   VAL = _VAL;
 });
 
+// 9f) 🕵 Insider: классификация типов сделок (значимое vs шум)
+grp('insider tx kind', function(){
+  __ok('P = meaningful', insiderTxKind('P').routine === false && insiderTxKind('P').cls === 'p');
+  __ok('S = meaningful', insiderTxKind('S').routine === false);
+  __ok('M (option) = routine', insiderTxKind('M').routine === true);
+  __ok('A (grant) = routine', insiderTxKind('A').routine === true);
+  __ok('unknown = routine', insiderTxKind('Z').routine === true);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

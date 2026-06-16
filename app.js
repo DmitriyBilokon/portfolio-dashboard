@@ -2288,6 +2288,41 @@ async function insiderUpdateAll(){
 }
 function insiderFmtUSD(v,ccy){if(v==null)return'—';const n=Math.round(v);return ccy==='SEK'?n.toLocaleString('sv-SE')+' kr':'$'+n.toLocaleString('en-US')}
 function insiderSetFilter(k,val){insiderFilter[k]=(k==='minUSD')?(parseFloat(val)||0):val;renderPF3();}
+// Классификация инсайдерской сделки по коду (Finnhub/FI): что значимо, что шум.
+// P — покупка на свои (главный сигнал); S — продажа; M/A/F/G/C — рутина/плановое.
+function insiderTxKind(code){
+  const c=String(code||'').toUpperCase();
+  if(c==='P')return{label:RT('Покупка с рынка','Open-market buy'),cls:'p',routine:false,icon:'🟢'};
+  if(c==='S')return{label:RT('Продажа','Sale'),cls:'s',routine:false,icon:'🔴'};
+  if(c==='M')return{label:RT('Опцион','Option exercise'),cls:'r',routine:true,icon:'⚙'};
+  if(c==='A')return{label:RT('Грант','Grant/award'),cls:'r',routine:true,icon:'🎁'};
+  if(c==='F')return{label:RT('Налог/удержание','Tax/withholding'),cls:'r',routine:true,icon:'📄'};
+  if(c==='G')return{label:RT('Дарение','Gift'),cls:'r',routine:true,icon:'🎀'};
+  if(c==='C')return{label:RT('Конвертация','Conversion'),cls:'r',routine:true,icon:'🔁'};
+  return{label:c||'—',cls:'',routine:true,icon:'•'};
+}
+// Сводка одной строкой: чистая покупка/продажа за 30 дней + число инсайдеров.
+function insiderHeadline(v){
+  const cc=v.valCcy;
+  const buyers=new Set((v.tx||[]).filter(t=>t.code==='P'&&t.name).map(t=>t.name)).size;
+  const sellers=new Set((v.tx||[]).filter(t=>t.code==='S'&&t.name).map(t=>t.name)).size;
+  if(v.netUSD>0)return{cls:'pf3-up',icon:'🟢',txt:RT(`Чистая покупка: +${insiderFmtUSD(v.netUSD,cc)} за 30 дней${buyers?` · ${buyers} ${buyers===1?'инсайдер':'инсайд.'}`:''}`,`Net buying: +${insiderFmtUSD(v.netUSD,cc)} over 30d${buyers?` · ${buyers} insider${buyers===1?'':'s'}`:''}`)};
+  if(v.netUSD<0)return{cls:'pf3-down',icon:'🔴',txt:RT(`Чистая продажа: ${insiderFmtUSD(v.netUSD,cc)} за 30 дней${sellers?` · ${sellers} инсайд.`:''}`,`Net selling: ${insiderFmtUSD(v.netUSD,cc)} over 30d${sellers?` · ${sellers} insiders`:''}`)};
+  return{cls:'val-mid',icon:'⚪',txt:RT('Нейтрально за 30 дней','Neutral over 30d')};
+}
+// Таймлайн покупок (1.4): точки сделок code=P на оси времени, цвет по инсайдеру.
+// Синхронные покупки в узком окне = более сильный кластер — видно сразу.
+function insiderTimeline(v){
+  const buys=(v.tx||[]).filter(t=>t.code==='P'&&t.date);
+  const times=buys.map(t=>({t,ms:Date.parse(t.date)})).filter(x=>!isNaN(x.ms));
+  if(times.length<2)return '';
+  const max=Math.max(...times.map(x=>x.ms)), min=Math.min(...times.map(x=>x.ms)), span=Math.max(1,max-min);
+  const buyers=[...new Set(times.map(x=>x.t.name||'?'))];
+  const COL=['#34d399','#60a5fa','#f59e0b','#f472b6','#22d3ee','#a78bfa','#fbbf24'];
+  const dots=times.map(x=>{const left=((x.ms-min)/span)*100;const ci=buyers.indexOf(x.t.name||'?');return`<span class="ins-tl-dot" style="left:${left}%;background:${COL[ci%COL.length]}" title="${(x.t.name||'?')} · ${x.t.date} · ${insiderFmtUSD(x.t.value,v.valCcy)}"></span>`}).join('');
+  const dt=ms=>new Date(ms).toISOString().slice(5,10);
+  return`<div class="ins-tl"><div class="ins-tl-h">📈 ${RT('Таймлайн покупок','Buy timeline')} · ${times.length} ${RT('сделок','trades')} · ${buyers.length} ${RT('инсайд.','insiders')}</div><div class="ins-tl-bar">${dots}</div><div class="ins-tl-x"><span>${dt(min)}</span><span>${dt(max)}</span></div></div>`;
+}
 // Панель инсайдеров в карточке акции.
 function insiderHTML(d,r){
   const tk=String(r[2]||'').trim().toUpperCase();
@@ -2317,14 +2352,17 @@ function insiderHTML(d,r){
     </select>
   </div>`;
   const tx=(v.tx||[]).filter(t=>(insiderFilter.type==='all'||t.code===insiderFilter.type)&&(!insiderFilter.minUSD||(t.value||0)>=insiderFilter.minUSD));
-  const rows=tx.length?tx.map(t=>`<div class="ins-row">
-    <span class="ins-code ${t.code==='P'?'p':t.code==='S'?'s':''}">${t.code==='P'?'🟢 '+RT('Покупка','Buy'):t.code==='S'?'🔴 '+RT('Продажа','Sell'):t.code}</span>
+  const rows=tx.length?tx.map(t=>{const k=insiderTxKind(t.code);return`<div class="ins-row${k.routine?' ins-routine':''}">
+    <span class="ins-code ${k.cls}" title="${k.routine?RT('рутинная / плановая — шум','routine / planned — noise'):RT('значимая сделка','meaningful trade')}">${k.icon} ${k.label}</span>
     <span class="ins-name">${t.name||'—'}</span>
     <span class="ins-qty">${pf3Fmt(t.shares)} × ${t.price!=null?pf3Fmt(t.price,2):'—'}</span>
     <span class="ins-val">${t.value!=null?insiderFmtUSD(t.value,cc):'—'}</span>
     <span class="ins-date">${t.date||''}</span>
-  </div>`).join(''):`<div class="pf3-empty" style="padding:6px">${RT('Под фильтр ничего не попадает','Nothing matches the filter')}</div>`;
-  return`<section class="pf3-panel">${head}${cards}<details class="ins-details"><summary class="ins-summary">📋 ${RT('Сделки инсайдеров','Insider trades')} · ${v.txCount}<span class="ins-chevron">▾</span></summary>${fl}<div class="ins-list">${rows}</div></details></section>`;
+  </div>`}).join(''):`<div class="pf3-empty" style="padding:6px">${RT('Под фильтр ничего не попадает','Nothing matches the filter')}</div>`;
+  const hl=insiderHeadline(v);
+  const headline=`<div class="ins-headline ${hl.cls}">${hl.icon} ${hl.txt}</div>`;
+  const timeline=insiderTimeline(v);
+  return`<section class="pf3-panel">${head}${headline}${cards}${timeline}<details class="ins-details"><summary class="ins-summary">📋 ${RT('Сделки инсайдеров','Insider trades')} · ${v.txCount} <span class="ins-legend">· ${RT('🟢 покупка значима · ⚙🎁 опцион/грант = шум','🟢 buy is signal · ⚙🎁 option/grant = noise')}</span><span class="ins-chevron">▾</span></summary>${fl}<div class="ins-list">${rows}</div></details></section>`;
 }
 
 // 🔬 AI-разборы: история разборов из обучающей базы STOCK_AI_LOG. Каждая запись

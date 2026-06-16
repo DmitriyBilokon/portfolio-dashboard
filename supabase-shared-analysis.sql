@@ -32,7 +32,11 @@ create policy shared_analysis_write on public.shared_analysis
   with check (exists (select 1 from public.user_access ua where ua.user_id = auth.uid() and ua.role = 'admin'));
 
 -- Realtime: чтобы пользователи видели обновление сразу (клиент подписан на изменения).
-alter publication supabase_realtime add table public.shared_analysis;
+-- В DO-блоке, чтобы повторный запуск не падал с «already member of publication».
+do $$ begin
+  alter publication supabase_realtime add table public.shared_analysis;
+exception when duplicate_object then null;
+end $$;
 
 -- ── Примечания ────────────────────────────────────────────────────────────────
 -- • Клиент: при загрузке читает строку 'global' и заполняет VAL/INSIDER/AI_RECO

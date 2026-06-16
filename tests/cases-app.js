@@ -230,6 +230,13 @@ grp('rbac resolve', function(){
   __ok('analyst sees AI-Portfolio', rbacResolve('analyst', {}, 'view.ai_portfolio') === true);
   __ok('editor no AI-Portfolio by default', rbacResolve('editor', {}, 'view.ai_portfolio') === false);
   __ok('grant AI-Portfolio via override', rbacResolve('viewer', { 'view.ai_portfolio': 'allow' }, 'view.ai_portfolio') === true);
+  // legacy (null/'default') = текущее поведение: торгует/правит план, без add-тикера/AI
+  __ok('legacy (null) edits trades', rbacResolve(null, {}, 'action.edit_trades') === true);
+  __ok("legacy ('default') edits plan", rbacResolve('default', {}, 'action.edit_plan') === true);
+  __ok('legacy no add_position', rbacResolve(null, {}, 'action.add_position') === false);
+  __ok('legacy no run_ai', rbacResolve(null, {}, 'action.run_ai') === false);
+  __ok('legacy shows amounts', rbacResolve(null, {}, 'data.show_amounts') === true);
+  __ok('viewer hides amounts', rbacResolve('viewer', {}, 'data.show_amounts') === false);
 });
 
 grp('plan triggers', function(){

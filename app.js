@@ -526,16 +526,20 @@ const RBAC_ROLES={
   owner:new Set(RBAC_ALL.filter(p=>p!=='action.manage_users')),
   editor:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.add_position','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
   analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','view.ai_portfolio','action.refresh_data','data.show_amounts']),
-  viewer:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.dividends']),
+  viewer:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.dividends','action.refresh_data']),
+  // legacy = неявный дефолт для ненастроенных не-админов: РОВНО текущее поведение
+  // (видит обычные вкладки, торгует/правит план свой портфель, без add-тикера и AI).
+  legacy:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
 };
-const RBAC_ROLE_LABELS={admin:'Admin',owner:'Owner',editor:'Editor',analyst:'Analyst',viewer:'Viewer',custom:'Custom'};
+const RBAC_ROLE_LABELS={'default':RT('По умолч.','Default'),admin:'Admin',owner:'Owner',editor:'Editor',analyst:'Analyst',viewer:'Viewer',custom:'Custom'};
 let ACCESS={roleId:null,overrides:{}};   // текущего пользователя (из user_access)
 // Резолвер deny-by-default: явный override → роль → закрыто (раздел 6). Чистая ф-я.
 function rbacResolve(roleId,overrides,perm){
   const ov=overrides||{};
   if(ov[perm]==='allow')return true;
   if(ov[perm]==='deny')return false;
-  const preset=RBAC_ROLES[roleId||'editor'];   // ненастроенный non-admin ≈ editor (как сейчас)
+  let rid=roleId; if(!rid||rid==='default')rid='legacy';   // ненастроенный = legacy (текущее поведение)
+  const preset=RBAC_ROLES[rid];
   if(preset==='*')return true;
   return preset?preset.has(perm):false;
 }
@@ -589,7 +593,7 @@ const pf3Base=d=>String((d&&d.baseCcy)||'SEK').toUpperCase();
 const pf3BaseFx=d=>{const b=pf3Base(d);return b==='SEK'?1:(FX[b]||1)};   // SEK за 1 единицу базовой
 const pf3BaseUnit=d=>{const b=pf3Base(d);return b==='SEK'?'kr':b};        // подпись валюты
 const pf3Cv=(d,sek)=>{const f=pf3BaseFx(d);return f===1?sek:sek/f};       // SEK → базовая (число)
-const pf3Money=(d,sek,dec)=>`${pf3Fmt(pf3Cv(d,sek),dec)} ${pf3BaseUnit(d)}`;   // SEK → «X kr» / «X USD»
+const pf3Money=(d,sek,dec)=>can('data.show_amounts')?`${pf3Fmt(pf3Cv(d,sek),dec)} ${pf3BaseUnit(d)}`:`••• ${pf3BaseUnit(d)}`;   // SEK → «X kr»; data.show_amounts=off → маскируем сумму
 
 // 💸 Комиссия сделки (Avanza «Small»): courtage 0.15% от суммы, но не меньше
 // lägsta courtage в местной валюте; + валютная надбавка 0.25% за конвертацию
@@ -1517,10 +1521,10 @@ async function renderSettings(){
     const on=u.last_seen&&(Date.now()-Date.parse(u.last_seen))<150000;   // heartbeat раз в минуту → онлайн = < 2.5 мин
     const seen=on?'<span class="set-on">🟢 онлайн</span>':`<span class="set-off">⚪ ${u.last_seen?ago(u.last_seen):'не заходил'}</span>`;
     const adm=u.role==='admin';
-    const rid=adm?'admin':(u.role_id||'editor');
+    const rid=adm?'admin':(u.role_id||'default');
     const ov=(u.overrides&&typeof u.overrides==='object')?u.overrides:{};
     // выбор роли (раздел 2)
-    const roleSel=`<select class="set-rolesel" onchange="setUserRole('${u.user_id}',this.value)">${['admin','owner','editor','analyst','viewer','custom'].map(r=>`<option value="${r}"${rid===r?' selected':''}>${RBAC_ROLE_LABELS[r]}</option>`).join('')}</select>`;
+    const roleSel=`<select class="set-rolesel" onchange="setUserRole('${u.user_id}',this.value)">${['default','admin','owner','editor','analyst','viewer','custom'].map(r=>`<option value="${r}"${rid===r?' selected':''}>${RBAC_ROLE_LABELS[r]}</option>`).join('')}</select>`;
     // матрица переопределений (раздел 5.2) — для не-админов
     const ovEditor=adm?'<span class="set-all">полный доступ (Admin)</span>':RBAC_PERMS.map(g=>`<div class="set-pg"><div class="set-pg-h">${g.g}</div>${g.items.map(([p,l])=>{const cur=ov[p]||'inherit';const def=rbacResolve(rid,{},p);return`<label class="set-perm"><span>${l}</span><select onchange="setOverride('${u.user_id}','${p}',this.value)"><option value="inherit"${cur==='inherit'?' selected':''}>${RT('по роли','by role')} (${def?'✓':'✕'})</option><option value="allow"${cur==='allow'?' selected':''}>${RT('Разрешить','Allow')}</option><option value="deny"${cur==='deny'?' selected':''}>${RT('Запретить','Deny')}</option></select></label>`}).join('')}</div>`).join('');
     // предпросмотр видимых под-вкладок
@@ -1560,7 +1564,7 @@ async function setUserRole(uid,val){
       const list=adm||[];
       if(list.length<=1&&list.some(a=>a.user_id===uid)){ alert(RT('Нельзя снять роль с последнего администратора.','Cannot demote the last administrator.')); renderSettings(); return; }
     }
-    const patch=val==='admin'?{role:'admin'}:{role:'user',role_id:val};
+    const patch=val==='admin'?{role:'admin'}:{role:'user',role_id:val==='default'?null:val};
     const r=await sb.from('user_access').update(patch).eq('user_id',uid);
     if(r.error)throw r.error;
     renderSettings();
@@ -2258,7 +2262,7 @@ function aiStaleBadge(recoAt,recoNow){
 function aiSpendAdd(c){if(!c)return;AI_SPEND.usd=(AI_SPEND.usd||0)+(c.usd||0);AI_SPEND.runs=(AI_SPEND.runs||0)+1;AI_SPEND.in=(AI_SPEND.in||0)+(c.inTok||0);AI_SPEND.out=(AI_SPEND.out||0)+(c.outTok||0);AI_SPEND.searches=(AI_SPEND.searches||0)+(c.searches||0);}
 const costUsd=c=>(c&&typeof c.usd==='number')?'$'+c.usd.toFixed(c.usd<1?3:2):'';
 function costLine(c){if(!c||typeof c.usd!=='number')return'';const k=n=>n>=1000?Math.round(n/1000)+'k':(n||0);return`${costUsd(c)} · ${k(c.inTok)}→${k(c.outTok)} ${RT('ток.','tok')}${c.searches?' · '+c.searches+' '+RT('поиск.','search'):''}`;}
-function aiSpendLine(){if(!AI_SPEND||!AI_SPEND.runs)return'';return`💸 ${RT('AI-расходы','AI spend')}: $${(AI_SPEND.usd||0).toFixed(2)} · ${AI_SPEND.runs} ${RT('прогон.','runs')}`;}
+function aiSpendLine(){if(!AI_SPEND||!AI_SPEND.runs||!can('data.show_ai_cost'))return'';return`💸 ${RT('AI-расходы','AI spend')}: $${(AI_SPEND.usd||0).toFixed(2)} · ${AI_SPEND.runs} ${RT('прогон.','runs')}`;}
 async function aiRecoRun(ev){
   if(ev)ev.stopPropagation();
   if(_aiRecoLoading)return;
@@ -3992,10 +3996,10 @@ function renderPF3(){
   el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open?pfPerfHTML():''}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
-      <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button><button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>${pf3XMenuHTML(d)}</span>`}</div>
+      <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button>${can('action.refresh_data')?`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`:''}${pf3XMenuHTML(d)}</span>`}</div>
       ${pf3ListHead()}
       ${pf3ListHTML()}
-      ${open||!isAdmin()||v3Key===AIP_KEY?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
+      ${open||!can('action.add_position')||v3Key===AIP_KEY?'':`<form class="pf3-add" onsubmit="pf3Add(event)">
         <input id="pf3AddTicker" placeholder="${T('Тикер')}" autocomplete="off">
         ${pf3MyPort(v3Key)?`<input id="pf3AddQty" type="number" step="any" min="0" placeholder="${T('Кол-во')}">
         <input id="pf3AddBuy" type="number" step="any" min="0" placeholder="${T('Цена покупки')}">`:''}
@@ -5291,7 +5295,7 @@ function pf3DetailHTML(){
         <div class="pf3-price${isFinite(day)?(day>=0?' pf3-up':' pf3-down'):''}">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
         ${isFinite(day)?`<div class="pf3-day ${day>=0?'pf3-up-bg':'pf3-down-bg'}">${day>0?'+':''}${day.toFixed(2)}% ${T('за день')}</div>`:''}
         <div id="pf3PrePost" class="pf3-pp">${cardPPInner(exSymbol(tk,ccy))}</div>
-        <button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить цену')}</button>
+        ${can('action.refresh_data')?`<button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить цену')}</button>`:''}
       </div>
     </section>
     <section class="pf3-cards">
@@ -5325,7 +5329,7 @@ function pf3DetailHTML(){
       <div class="pf3-panel">
         <div class="pf3-panel-hd"><span>${T('🎯 Технические уровни')}</span></div>
         ${lvl('SMA 50',s50>=0?r[s50]:'')+lvl('SMA 100',s100>=0?r[s100]:'')+lvl('SMA 200',s200>=0?r[s200]:'')+lvl('Поддержка',supC>=0?r[supC]:'')+lvl('Сопротивление',resC>=0?r[resC]:'')||'<div class="pf3-empty">Нажмите «Обновить цену», чтобы загрузить уровни</div>'}
-        ${pf3MyPort(v3Key)?`<div class="pf3-panel-hd" style="margin-top:18px"><span>${T('✏️ Моя позиция')}</span></div>
+        ${(pf3MyPort(v3Key)&&can('action.edit_trades'))?`<div class="pf3-panel-hd" style="margin-top:18px"><span>${T('✏️ Моя позиция')}</span></div>
         <div class="pf3-edit">
           <label>${T('Кол-во акций')} <input type="number" step="any" min="0" value="${qty}" onchange="pf3Edit(6,this.value)"></label>
           <label>${T('Цена покупки')} (${ccy}) <input type="number" step="any" min="0" value="${buy}" onchange="pf3Edit(9,this.value)"></label>
@@ -5420,7 +5424,7 @@ function pfTradesHTML(filterTk){
   const tot=hasSell?`<span class="pf3-asof">${RT('Реализованный P&L','Realized P&L')}: <b class="${realizedSEK>=0?'pf3-up':'pf3-down'}">${realizedSEK>=0?'+':''}${pf3Money(d,realizedSEK)}</b></span>`:'';
   // Форма «внести запись в журнал» (только полный журнал семейного портфеля):
   // пишет ТОЛЬКО историю, не меняя позиции/кэш — для ручного восстановления сделок.
-  const addForm=(!fk&&!isAi&&pf3MyPort(v3Key))?`
+  const addForm=(!fk&&!isAi&&pf3MyPort(v3Key)&&can('action.edit_trades'))?`
     <details class="tr-add">
       <summary>➕ ${RT('Внести сделку заново (позиция + журнал, кэш не трогаю)','Re-enter a trade (position + journal, cash untouched)')}</summary>
       <div class="tr-add-form">
@@ -5675,18 +5679,18 @@ function planRulesHTML(){
     return`<div class="plan-row${st.ready&&!r.done?' is-ready':''}${r.done?' is-done':''}">
       <span class="plan-act ${r.act}">${planActIcon(r.act)} ${r.act==='sell'?RT('Сократить','Trim'):RT('Купить','Buy')}</span>
       <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}">🤖</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
-      <span class="plan-btns">
+      ${can('action.edit_plan')?`<span class="plan-btns">
         <button class="pf3-del" onclick="planEdit('${r.id}')" title="${RT('Редактировать','Edit')}">✏</button>
         ${r.done?`<button class="pf3-del" onclick="planDone('${r.id}',0)" title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" onclick="planDone('${r.id}',1)" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}
         <button class="pf3-del" onclick="planDel('${r.id}')" title="${RT('Удалить','Delete')}">🗑</button>
-      </span>
+      </span>`:''}
     </div>`;
   }).join('');
   const canNotify=typeof Notification!=='undefined';
   const notifBtn=(canNotify&&Notification.permission!=='granted')
     ?`<button class="pf3-btn pf3-btn-sm" onclick="planAskNotify()">🔔 ${RT('Вкл. уведомления','Enable alerts')}</button>`:'';
   const hasProp=(()=>{const H=pf3AiHist();return!!(H[0]&&H[0].proposal&&(H[0].proposal.actions||[]).length);})();
-  const importBtn=(isAdmin()&&hasProp)?`<button class="pf3-btn pf3-btn-sm" onclick="planImportFromAi()">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
+  const importBtn=(can('action.edit_plan')&&hasProp)?`<button class="pf3-btn pf3-btn-sm" onclick="planImportFromAi()">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
   const addForm=`
     <datalist id="planTkList">${tkOpts}</datalist>
     <details class="plan-add"${mine.length?'':' open'}>
@@ -5707,7 +5711,7 @@ function planRulesHTML(){
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🎯 ${RT('План действий','Action plan')} — ${TAB_LABEL(v3Key)}</span>${readyN?`<span class="pf3-asof"><b class="plan-ready-t">🔔 ${readyN} ${RT('к исполнению','ready')}</b></span>`:''}${importBtn}${notifBtn}</div>
     ${mine.length?`<div class="plan-list">${rows}</div>`:`<div class="pf3-empty">${RT('Правил пока нет. Нажмите «📥 Из совета AI», чтобы перенести предложение AI-Proto, или добавьте уровни/даты вручную — дашборд уведомит, когда придёт время действовать.','No rules yet. Click «📥 From AI advice» to import the AI-Proto proposal, or add levels/dates manually — the dashboard will alert you when it is time to act.')}</div>`}
-    ${addForm}
+    ${can('action.edit_plan')?addForm:''}
   </section>`;
 }
 function planAdd(){

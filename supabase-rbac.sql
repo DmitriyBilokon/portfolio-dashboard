@@ -12,9 +12,12 @@ alter table public.user_access
 alter table public.user_access
   add column if not exists overrides jsonb not null default '{}'::jsonb;  -- {"perm.key":"allow|deny"}
 
--- Дефолт для уже существующих не-админов: editor (≈ текущее поведение сайта).
-update public.user_access set role_id = 'editor'
-  where role <> 'admin' and (role_id is null or role_id = '');
+-- Дефолт для не-админов: role_id = NULL → роль «По умолчанию» (legacy в клиенте) =
+-- РОВНО текущее поведение сайта (видит обычные вкладки, торгует/правит план свой
+-- портфель, без add-тикера и AI; суммы видны). Ничего не теряется.
+-- Если ранее запускалась версия, проставлявшая 'editor', и нужно вернуть
+-- read-only-дефолт — раскомментируйте строку ниже:
+-- update public.user_access set role_id = null where role <> 'admin' and role_id = 'editor';
 
 -- ── Примечания ────────────────────────────────────────────────────────────────
 -- • Клиент читает role_id/overrides напрямую (select), отдельный RPC не требуется.

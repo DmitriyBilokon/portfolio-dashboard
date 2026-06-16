@@ -43,11 +43,47 @@ async function pushState(){
         .forEach(k=>{ if(mine[k]!==undefined) AI_PORT[k]=mine[k]; });
     }
   }catch(e){ /* сеть/колонка недоступна — пушим как есть */ }
+  // 🛡 Защита истории сделок: перед записью перечитываем облако. Если наша
+  // PF_TRADES пуста, а в облаке журнал есть — НЕ затираем (адаптируем облачную),
+  // чтобы устаревшая вкладка/гонка не стёрла сделки. Та же логика, что для aiPort.
+  try{
+    if(!Array.isArray(PF_TRADES)||!PF_TRADES.length){
+      const { data:rt } = await sb.from('ledger_state').select('pfTrades:data->pfTrades').eq('user_id',currentUser.id).maybeSingle();
+      if(rt && Array.isArray(rt.pfTrades) && rt.pfTrades.length){ PF_TRADES=rt.pfTrades; }
+    }
+  }catch(e){}
   const ts=new Date().toISOString();
   lastPushTs=Date.parse(ts);   // remember so the realtime echo of this push can be ignored
   const { error } = await sb.from('ledger_state')
     .upsert({ user_id:currentUser.id, data:snapshotState(), updated_at:ts });
   if(error) console.warn('Sync push failed', error);
+  else pfBackupSave();   // несгораемый локальный бэкап «последнего хорошего» состояния
+}
+// 🛡 Локальный бэкап (localStorage) журнала сделок и позиций семейных портфелей —
+// переживает обнуление облака устаревшим клиентом. Сохраняем только непустое.
+function pfBackupKey(){ return currentUser?('dash_bak_'+currentUser.id):null; }
+function pfBackupSave(){
+  const k=pfBackupKey(); if(!k)return;
+  try{
+    const hasTrades=Array.isArray(PF_TRADES)&&PF_TRADES.length;
+    const ports={};let hasPos=false;
+    Object.keys(DATA).forEach(key=>{ if(!pf3MyPort(key))return; const d=DATA[key]; const pos=(d.rows||[]).some(r=>(parseFloat(r[6])||0)>0); if(pos)hasPos=true; ports[key]={rows:d.rows,cashFree:d.cashFree}; });
+    if(!hasTrades&&!hasPos)return;   // нечего бэкапить — не затираем хороший бэкап пустым
+    localStorage.setItem(k, JSON.stringify({at:Date.now(),pfTrades:PF_TRADES,ports}));
+  }catch(e){}
+}
+function pfBackupRestore(){
+  const k=pfBackupKey(); if(!k)return false;
+  let bak=null; try{ bak=JSON.parse(localStorage.getItem(k)||'null'); }catch(e){}
+  if(!bak)return false;
+  // Триггер «обнуления»: в облаке журнал пуст, а в бэкапе он есть → восстановить
+  // журнал И позиции семейных портфелей из последнего хорошего бэкапа.
+  const cloudEmptyTrades=!Array.isArray(PF_TRADES)||!PF_TRADES.length;
+  const bakHasTrades=Array.isArray(bak.pfTrades)&&bak.pfTrades.length;
+  if(!(cloudEmptyTrades&&bakHasTrades))return false;
+  PF_TRADES=bak.pfTrades.slice();
+  if(bak.ports)Object.keys(bak.ports).forEach(key=>{ const d=DATA[key],b=bak.ports[key]; if(d&&b&&Array.isArray(b.rows)){ d.rows=b.rows; d.count=b.rows.length; if(b.cashFree!=null)d.cashFree=b.cashFree; } });
+  return true;
 }
 async function pullState(){
   if(!currentUser) return;
@@ -87,6 +123,12 @@ function applyRemoteState(s){
   if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
+  // 🛡 Если облако пришло с пустым журналом сделок, а локальный бэкап его помнит —
+  // значит состояние затёрли (устаревшая вкладка/гонка). Восстанавливаем и пушим.
+  if(pfBackupRestore()){
+    toast(RT('Восстановлены сделки и позиции из локальной копии (облако было обнулено)','Restored trades & positions from local backup (cloud was wiped)'),true);
+    scheduleSave();
+  }
   init();   // rebuild tabs (idempotent) + re-render with synced data
 }
 function subscribeRealtime(){

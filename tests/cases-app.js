@@ -226,6 +226,10 @@ grp('rbac resolve', function(){
   __ok('custom allows via override', rbacResolve('custom', { 'view.portfolio': 'allow' }, 'view.portfolio') === true);
   // неизвестный перм у owner → закрыто
   __ok('unknown perm denied', rbacResolve('owner', {}, 'view.nope') === false);
+  // AI-Portfolio (просмотр): analyst видит, editor — нет, грант через override
+  __ok('analyst sees AI-Portfolio', rbacResolve('analyst', {}, 'view.ai_portfolio') === true);
+  __ok('editor no AI-Portfolio by default', rbacResolve('editor', {}, 'view.ai_portfolio') === false);
+  __ok('grant AI-Portfolio via override', rbacResolve('viewer', { 'view.ai_portfolio': 'allow' }, 'view.ai_portfolio') === true);
 });
 
 grp('plan triggers', function(){

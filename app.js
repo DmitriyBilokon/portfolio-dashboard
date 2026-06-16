@@ -515,7 +515,7 @@ const RT=(ru,en)=>LANG==='en'?en:ru;   // для строк с подстано�
 // ===== RBAC: функциональный слой прав (вкладки/действия/данные) =====
 // Каталог управляемых пермишенов (раздел 3 ТЗ). Определён после RT (использует его).
 const RBAC_PERMS=[
-  {g:RT('Вкладки','Tabs'),items:[['view.portfolio',RT('Портфель','Portfolio')],['view.sectors',RT('Сектора','Sectors')],['view.type',RT('Тип','Type')],['view.diversification',RT('Диверсификация','Diversification')],['view.forecast',RT('Прогноз','Forecast')],['view.plan',RT('План','Plan')],['view.trades',RT('Сделки','Trades')],['view.dividends',RT('Дивиденды','Dividends')],['view.health',RT('Состояние портфеля','Health')],['view.ai_proto','AI Proto'],['view.suggestion',RT('Предложение','Suggestion')]]},
+  {g:RT('Вкладки','Tabs'),items:[['view.portfolio',RT('Портфель','Portfolio')],['view.sectors',RT('Сектора','Sectors')],['view.type',RT('Тип','Type')],['view.diversification',RT('Диверсификация','Diversification')],['view.forecast',RT('Прогноз','Forecast')],['view.plan',RT('План','Plan')],['view.trades',RT('Сделки','Trades')],['view.dividends',RT('Дивиденды','Dividends')],['view.health',RT('Состояние портфеля','Health')],['view.ai_proto','AI Proto'],['view.suggestion',RT('Предложение','Suggestion')],['view.ai_portfolio',RT('AI-Портфель (просмотр)','AI Portfolio (view)')]]},
   {g:RT('Действия','Actions'),items:[['action.add_position',RT('Добавлять/удалять позиции','Add/remove positions')],['action.edit_trades',RT('Вносить сделки','Edit trades')],['action.edit_plan',RT('Менять план','Edit plan')],['action.run_ai',RT('Запуск AI (тратит бюджет)','Run AI (spends budget)')],['action.chat_ai',RT('Чат с AI','AI chat')],['action.refresh_data',RT('Обновлять данные','Refresh data')],['action.manage_users',RT('Управление доступом','Manage access')]]},
   {g:RT('Данные','Data'),items:[['data.show_amounts',RT('Суммы в kr','Amounts (kr)')],['data.show_leverage',RT('Кредитное плечо','Leverage')],['data.show_ai_cost',RT('AI-расходы','AI cost')],['data.show_trades_pnl',RT('P&L по сделкам','Trades P&L')]]},
 ];
@@ -525,7 +525,7 @@ const RBAC_ROLES={
   admin:'*',
   owner:new Set(RBAC_ALL.filter(p=>p!=='action.manage_users')),
   editor:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.add_position','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
-  analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','action.refresh_data','data.show_amounts']),
+  analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','view.ai_portfolio','action.refresh_data','data.show_amounts']),
   viewer:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.dividends']),
 };
 const RBAC_ROLE_LABELS={admin:'Admin',owner:'Owner',editor:'Editor',analyst:'Analyst',viewer:'Viewer',custom:'Custom'};
@@ -893,7 +893,8 @@ function init(){
   aiPlaybookEnsure();   // 📚 засеять плейбук стандартными принципами при первом запуске
   migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
-  if((curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SECT_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if((curIdx===DUP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SECT_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
+  if(curIdx===AIP_KEY&&!can('view.ai_portfolio'))curIdx=keys[0]||Object.keys(DATA)[0];   // AIP — по праву просмотра (RBAC)
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&curIdx!==SIM_KEY&&curIdx!==SECT_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
   const mkTab=(n,lbl,noDrag)=>{
@@ -926,7 +927,7 @@ function init(){
   const portShort=k=>k===AIP_KEY?'AI-Portfolio':k===SIM_KEY?'🧪 '+RT('Симуляция','Simulation'):TAB_LABEL(k).replace(/^Portfolio\s*\((.+)\)$/i,'$1');
   const portTabs=[];
   if(keys.includes(PF3_KEY))portTabs.push(PF3_KEY);            // Dima
-  if(isAdmin())portTabs.push(AIP_KEY);                          // AI-Portfolio (виртуальная)
+  if(can('view.ai_portfolio'))portTabs.push(AIP_KEY);           // AI-Portfolio (виртуальная) — по праву просмотра (RBAC)
   keys.filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].port==='1').forEach(k=>portTabs.push(k));   // Anna, Sergei, …
   portTabs.push(SIM_KEY);                                       // 🧪 Симуляция — все тестовые позиции вместе
   const portMembers=new Set(portTabs.filter(k=>k!==AIP_KEY&&k!==SIM_KEY));  // DATA-вкладки портфелей (исключить из стран/негруппированных)

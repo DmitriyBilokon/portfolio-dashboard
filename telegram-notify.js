@@ -1868,10 +1868,13 @@ async function loadRow(env){
 }
 async function writeRow(env, userId, snap){
   const KEY = env.SUPABASE_SERVICE_KEY;
+  // Инкрементим rev — иначе БД-триггер optimistic-concurrency отклонит запись
+  // воркера (rev не вырос). Так серверные изменения (AI-портфель/алерты) проходят.
+  const data = { ...snap, rev: (Number(snap && snap.rev) || 0) + 1 };
   await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?user_id=eq.${userId}`, {
     method: 'PATCH',
     headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ data: snap, updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ data, updated_at: new Date().toISOString() }),
   });
 }
 // Add the target column if missing, fill it (FMP → Yahoo consensus fallback for

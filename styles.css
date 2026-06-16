@@ -1295,3 +1295,18 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .sig-tag.up{color:var(--green-t);background:color-mix(in srgb,var(--green-t) 12%,transparent)}
 .sig-tag.down{color:var(--red-t);background:color-mix(in srgb,var(--red-t) 12%,transparent)}
 .cl-ins{color:var(--text2);font-weight:600}
+
+/* 💵 Cash-drag монитор */
+.cd-grid{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;margin:4px 0 8px}
+.cd-main{padding:10px 16px;border-radius:12px;border:1px solid var(--border);text-align:center;min-width:140px}
+.cd-main.cd-ok{background:color-mix(in srgb,var(--green-t) 8%,transparent)}
+.cd-main.cd-warn{background:color-mix(in srgb,var(--gold,#e8b339) 12%,transparent);border-color:color-mix(in srgb,var(--gold,#e8b339) 40%,var(--border))}
+.cd-main.cd-high{background:color-mix(in srgb,var(--red-t) 10%,transparent);border-color:color-mix(in srgb,var(--red-t) 40%,var(--border))}
+.cd-big{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.cd-cap{font-size:11px;color:var(--text2);margin-top:3px}
+.cd-stats{display:flex;flex-direction:column;gap:5px;font-size:13px}
+.cd-stats b{font-variant-numeric:tabular-nums}
+.cd-dim{color:var(--text3);font-size:11.5px}
+.cd-counter{color:var(--text2);font-size:12.5px}
+.cd-hint{font-size:12.5px;color:var(--text2);margin-top:4px;line-height:1.5}
+@media(max-width:600px){.cd-grid{grid-template-columns:1fr}.cd-big{font-size:26px}}

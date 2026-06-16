@@ -2774,6 +2774,86 @@ function pf3RiskHTML(){
   </div>
   <div class="pf3-risk-note">${RT(`по дневным доходностям за последний год (${R.days} торг. дней), веса — текущие доли позиций`,`from daily returns over the past year (${R.days} trading days), weighted by current position shares`)}</div>`;
 }
+// ── 💵 Cash-drag монитор: отставание доходности из-за доли свободного кэша ──
+const CASH_TARGET=[15,20];   // правило инвестора: целевая доля кэша 15–20%
+let cashDrag={period:'ytd',bench:null};   // bench null = авто по базовой валюте
+let _cashIdxLoading=false;
+function cashDragSet(k,v){cashDrag[k]=v;renderPF3();}
+function cashDragEnsureIdx(){
+  if((IDX_HIST['^OMX']&&IDX_HIST['^NDX'])||_cashIdxLoading)return;
+  _cashIdxLoading=true;
+  aiLoadIdxHist().then(()=>{_cashIdxLoading=false;if(isV3()&&pf3Tab==='health')renderPF3();});
+}
+// Доходность индекса-бенчмарка за период из IDX_HIST (карта 'YYYY-MM-DD'→close).
+function idxReturnPct(sym,period){
+  const m=IDX_HIST[sym]; if(!m)return null;
+  const keys=Object.keys(m).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort();
+  if(keys.length<2)return null;
+  const lastDate=keys[keys.length-1], last=m[lastDate];
+  if(!(last>0))return null;
+  let start;
+  if(period==='day'){ start=m[keys[keys.length-2]]; }
+  else{
+    let startDate; const dd=new Date(lastDate+'T00:00:00Z');
+    if(period==='month'){ dd.setUTCMonth(dd.getUTCMonth()-1); startDate=dd.toISOString().slice(0,10); }
+    else if(period==='ytd'){ startDate=lastDate.slice(0,4)+'-01-01'; }
+    else { startDate=keys[0]; }   // '1y' — самая ранняя точка ряда
+    let res=null; for(const k of keys){ if(k<=startDate)res=m[k]; else break; }
+    start=res!=null?res:m[keys[0]];
+  }
+  return start>0?(last/start-1)*100:null;
+}
+// Чистая модель cash-drag — покрыта тестом.
+function cashDragModel(free,equity,benchRet,targetHi){
+  const cashPct=equity>0?free/equity*100:0;
+  const excessPct=Math.max(0,cashPct-targetHi);
+  const excessKr=excessPct/100*equity;
+  const dragPct=benchRet==null?null:-(cashPct/100)*benchRet;   // вклад полной кэш-позиции в доходность
+  const counterKr=benchRet==null?null:excessKr*benchRet/100;   // недополучено на ИЗБЫТКЕ кэша
+  const status=cashPct<=targetHi?'ok':cashPct<=30?'warn':'high';
+  return {cashPct,excessPct,excessKr,dragPct,counterKr,status};
+}
+function cashDragHTML(d,rows){
+  cashDragEnsureIdx();
+  const fxB=pf3BaseFx(d), unit=pf3BaseUnit(d);
+  const free=(parseFloat(d.cashFree)||0)*fxB;
+  const totalVal=rows.reduce((a,x)=>a+x.val,0), equity=totalVal+free;
+  const baseUSD=unit!=='kr';
+  const bench=cashDrag.bench||(baseUSD?'^NDX':'^OMX');
+  const benchName=bench==='^NDX'?'Nasdaq 100':'OMXS30';
+  const period=cashDrag.period, benchRet=idxReturnPct(bench,period);
+  const m=cashDragModel(free,equity,benchRet,CASH_TARGET[1]);
+  // Перегрев рынка: доля позиций с критерием «Перегрев» → смягчаем подсказку.
+  let ohN=0,oh=0;
+  d.rows.forEach((r,i)=>{const q=parseFloat(r[6])||0;if(!(q>0))return;ohN++;try{const c=pf3Criterion(d,r);if(c&&/перегрев|overheat/i.test(c.label||''))oh++;}catch(e){}});
+  const overheat=ohN>0&&oh/ohN>=0.5;
+  const PERIODS=[['day',RT('день','day')],['month',RT('месяц','month')],['ytd','YTD'],['1y',RT('1 год','1Y')]];
+  const segP=`<span class="pf3-hz-seg">${PERIODS.map(([k,l])=>`<button class="pf3-hz-b${period===k?' on':''}" onclick="cashDragSet('period','${k}')">${l}</button>`).join('')}</span>`;
+  const segB=`<span class="pf3-hz-seg">${[['^OMX','OMX'],['^NDX','NDX']].map(([k,l])=>`<button class="pf3-hz-b${bench===k?' on':''}" onclick="cashDragSet('bench','${k}')">${l}</button>`).join('')}</span>`;
+  const dragTxt=m.dragPct==null?'—':`${m.dragPct>=0?'+':''}${m.dragPct.toFixed(2)}%`;
+  const dragCls=m.dragPct==null?'':m.dragPct>=0?'pf3-up':'pf3-down';
+  const hint=m.status==='ok'
+    ?RT('Доля кэша в пределах правила 15–20% — отставание из-за резерва незначительно.','Cash is within the 15–20% rule — drag from the reserve is minor.')
+    :RT(`Размещайте избыточный кэш частями по сигналам докупки на вкладке «Портфель», уважая правило 15–20%${overheat?'. Рынок перегрет — часть резерва под откат оправдана':''}.`,`Deploy the excess cash gradually on buy signals from the Portfolio tab, respecting the 15–20% rule${overheat?'. The market is overheated — keeping part of the reserve for a pullback is reasonable':''}.`);
+  const counter=(m.counterKr!=null&&m.excessPct>0.5&&Math.abs(m.counterKr)>=1)
+    ? `<div class="cd-counter">${m.counterKr>=0?RT('Недополучено на избытке','Forgone on excess'):RT('Сэкономлено на избытке','Saved on excess')} ≈ <b>${pf3Fmt(Math.abs(m.counterKr),0)} ${unit}</b> ${RT('за','over')} ${({day:RT('день','day'),month:RT('месяц','month'),ytd:'YTD','1y':RT('1 год','1Y')})[period]}</div>`:'';
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
+    <div class="cd-grid">
+      <div class="cd-main cd-${m.status}">
+        <div class="cd-big ${dragCls}">${dragTxt}</div>
+        <div class="cd-cap">${RT('вклад кэша в доходность','cash contribution to return')} · ${benchName} ${benchRet==null?'…':(benchRet>=0?'+':'')+benchRet.toFixed(1)+'%'}</div>
+      </div>
+      <div class="cd-stats">
+        <div><span class="label">${RT('Доля кэша','Cash share')}</span><b class="${m.status==='high'?'pf3-down':m.status==='warn'?'val-mid':''}">${m.cashPct.toFixed(1)}%</b> <span class="cd-dim">${RT('цель','target')} ${CASH_TARGET[0]}–${CASH_TARGET[1]}%</span></div>
+        <div><span class="label">${RT('Избыток','Excess')}</span><b>${m.excessPct.toFixed(1)}%</b> ${m.excessKr>0?`≈ ${pf3Fmt(m.excessKr,0)} ${unit}`:''}</div>
+        ${counter}
+      </div>
+    </div>
+    <div class="cd-hint">💡 ${hint}</div>
+    <div class="pf3-ai-note">${RT('cash_drag = доля кэша × доходность бенчмарка (кэш под 0%). Справочная аналитика, не рекомендация.','cash_drag = cash share × benchmark return (cash at 0%). Reference analytics, not advice.')}</div>
+  </section>`;
+}
 function pf3HealthTab(){
   const d=pf3D(),{s200}=smaIdx(d),fxB=pf3BaseFx(d);
   // cashFree/leverage хранятся в базовой валюте вкладки — приводим к SEK,
@@ -2861,6 +2941,7 @@ function pf3HealthTab(){
     <div class="pf3-panel-hd"><span>${RT('📐 Риск и доходность — 1 год','📐 Risk & return — 1Y')}</span></div>
     <div id="pf3RiskBox">${pf3RiskHTML()}</div>
   </section>
+  ${cashDragHTML(d,rows)}
   <section class="pf3-grid">
     <div class="pf3-panel"><div class="pf3-panel-hd"><span>${T('🏭 Распределение по секторам')}</span></div>${bars(secs)}</div>
     <div class="pf3-panel"><div class="pf3-panel-hd"><span>${T('💱 Распределение по валютам')}</span></div>${bars(ccys)}</div>

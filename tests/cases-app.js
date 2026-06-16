@@ -176,6 +176,24 @@ grp('signal score', function(){
   __ok('value trap not rewarded', s3.n <= 0);
 });
 
+// 9h) 💵 Cash-drag модель
+grp('cash drag', function(){
+  // кэш 50% капитала, бенчмарк +10%, цель 20%
+  var m = cashDragModel(100, 200, 10, 20);
+  __approx('cashPct 50', m.cashPct, 50);
+  __approx('excessKr 60', m.excessKr, 60);        // (50-20)% × 200
+  __approx('dragPct -5', m.dragPct, -5);           // -(0.5 × 10)
+  __approx('counterKr 6', m.counterKr, 6);         // 60 × 10%
+  __eq('status high', m.status, 'high');
+  // в пределах цели → ok, без избытка
+  var m2 = cashDragModel(20, 100, 10, 20);
+  __eq('status ok', m2.status, 'ok');
+  __approx('no excess', m2.excessKr, 0);
+  // падающий рынок → кэш защищает (drag положительный)
+  var m3 = cashDragModel(50, 100, -8, 20);
+  __ok('falling market → drag positive', m3.dragPct > 0);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

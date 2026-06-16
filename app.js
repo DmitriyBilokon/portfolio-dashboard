@@ -4606,8 +4606,8 @@ async function valUpdateAll(){
   let done=0,withData=0,cheap=0;
   try{
     const tok=await sbToken();
-    for(let i=0;i<list.length;i+=12){
-      const chunk=list.slice(i,i+12);
+    for(let i=0;i<list.length;i+=6){   // 6 симв/вызов: yValuation+FMP ratios, лимит субзапросов Cloudflare
+      const chunk=list.slice(i,i+6);
       try{
         const r=await fetch(PRICE_PROXY+'?action=valuation',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
         const j=await r.json();
@@ -4624,8 +4624,8 @@ async function valUpdateAll(){
     }
     _valSecCache=valSectorMedians();
     // 🎯 A.1: агрегированные аналит. таргеты тем же набором символов (отдельный проход).
-    for(let i=0;i<list.length;i+=12){
-      const chunk=list.slice(i,i+12);
+    for(let i=0;i<list.length;i+=5){   // 5 симв/вызов: 3 FMP-запроса/символ (+редиректы), лимит субзапросов Cloudflare
+      const chunk=list.slice(i,i+5);
       try{
         const r=await fetch(PRICE_PROXY+'?action=targets',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
         const j=await r.json();

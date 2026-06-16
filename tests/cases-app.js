@@ -209,6 +209,25 @@ grp('fx scenario', function(){
   __approx('no impact', m2.impact, 0);
 });
 
+// 9j) 🔐 RBAC: резолвер прав (deny-by-default, приоритет override → роль)
+grp('rbac resolve', function(){
+  // роль editor: видит health, НЕ видит ai_proto (по пресету)
+  __ok('editor sees health', rbacResolve('editor', {}, 'view.health') === true);
+  __ok('editor no ai_proto', rbacResolve('editor', {}, 'view.ai_proto') === false);
+  // override allow побеждает роль
+  __ok('override allow wins', rbacResolve('editor', { 'view.ai_proto': 'allow' }, 'view.ai_proto') === true);
+  // override deny побеждает роль
+  __ok('override deny wins', rbacResolve('owner', { 'view.health': 'deny' }, 'view.health') === false);
+  // viewer — узкий набор
+  __ok('viewer no trades', rbacResolve('viewer', {}, 'view.trades') === false);
+  __ok('viewer sees portfolio', rbacResolve('viewer', {}, 'view.portfolio') === true);
+  // custom без overrides = всё закрыто (deny-by-default)
+  __ok('custom denies by default', rbacResolve('custom', {}, 'view.portfolio') === false);
+  __ok('custom allows via override', rbacResolve('custom', { 'view.portfolio': 'allow' }, 'view.portfolio') === true);
+  // неизвестный перм у owner → закрыто
+  __ok('unknown perm denied', rbacResolve('owner', {}, 'view.nope') === false);
+});
+
 grp('plan triggers', function(){
   // подсунуть цену через DATA, чтобы planCurPrice её нашёл
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];

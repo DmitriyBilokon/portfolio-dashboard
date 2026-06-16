@@ -167,7 +167,14 @@ async function initAccess(){
       if(Array.isArray(data.tabs)&&userRole!=='admin')allowedTabs=data.tabs;
     }
   }catch(e){ console.warn('access init failed',e); }
-  const st=document.getElementById('settingsBtn'); if(st)st.style.display=userRole==='admin'?'':'none';
+  // RBAC: функциональные права текущего пользователя (колонки role_id/overrides).
+  // До миграции supabase-rbac.sql колонок нет → select упадёт, остаются дефолты (≈ editor).
+  ACCESS={roleId:null,overrides:{}};
+  try{
+    const{data:acc}=await sb.from('user_access').select('role_id,overrides').eq('user_id',currentUser.id).maybeSingle();
+    if(acc){ ACCESS.roleId=acc.role_id||null; if(acc.overrides&&typeof acc.overrides==='object')ACCESS.overrides=acc.overrides; }
+  }catch(e){}
+  const st=document.getElementById('settingsBtn'); if(st)st.style.display=can('action.manage_users')?'':'none';
   const eb=document.getElementById('editBtn'); if(eb)eb.style.display=userRole==='admin'?'':'none';
   const pb=document.getElementById('promptBtn'); if(pb)pb.style.display=userRole==='admin'?'':'none';
   const hs=document.querySelector('.header-sub'); if(hs&&userRole!=='admin')hs.textContent='Аналитика и технические уровни';
@@ -505,6 +512,39 @@ let LANG='ru';
 const T=x=>(LANG==='en'&&I18N_EN[x])||x;
 const TAB_LABEL=k=>{const d=typeof DATA!=='undefined'&&DATA[k];return(d&&d.title)?d.title:(k===PF3_KEY?T('Портфель'):T(k))};
 const RT=(ru,en)=>LANG==='en'?en:ru;   // для строк с подстановками
+// ===== RBAC: функциональный слой прав (вкладки/действия/данные) =====
+// Каталог управляемых пермишенов (раздел 3 ТЗ). Определён после RT (использует его).
+const RBAC_PERMS=[
+  {g:RT('Вкладки','Tabs'),items:[['view.portfolio',RT('Портфель','Portfolio')],['view.sectors',RT('Сектора','Sectors')],['view.type',RT('Тип','Type')],['view.diversification',RT('Диверсификация','Diversification')],['view.forecast',RT('Прогноз','Forecast')],['view.plan',RT('План','Plan')],['view.trades',RT('Сделки','Trades')],['view.dividends',RT('Дивиденды','Dividends')],['view.health',RT('Состояние портфеля','Health')],['view.ai_proto','AI Proto'],['view.suggestion',RT('Предложение','Suggestion')]]},
+  {g:RT('Действия','Actions'),items:[['action.add_position',RT('Добавлять/удалять позиции','Add/remove positions')],['action.edit_trades',RT('Вносить сделки','Edit trades')],['action.edit_plan',RT('Менять план','Edit plan')],['action.run_ai',RT('Запуск AI (тратит бюджет)','Run AI (spends budget)')],['action.chat_ai',RT('Чат с AI','AI chat')],['action.refresh_data',RT('Обновлять данные','Refresh data')],['action.manage_users',RT('Управление доступом','Manage access')]]},
+  {g:RT('Данные','Data'),items:[['data.show_amounts',RT('Суммы в kr','Amounts (kr)')],['data.show_leverage',RT('Кредитное плечо','Leverage')],['data.show_ai_cost',RT('AI-расходы','AI cost')],['data.show_trades_pnl',RT('P&L по сделкам','Trades P&L')]]},
+];
+const RBAC_ALL=RBAC_PERMS.reduce((a,g)=>a.concat(g.items.map(i=>i[0])),[]);
+// Пресет-роли (раздел 2). Значение '*' = всё.
+const RBAC_ROLES={
+  admin:'*',
+  owner:new Set(RBAC_ALL.filter(p=>p!=='action.manage_users')),
+  editor:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.plan','view.trades','view.dividends','view.health','action.add_position','action.edit_trades','action.edit_plan','action.refresh_data','data.show_amounts','data.show_leverage','data.show_trades_pnl']),
+  analyst:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.forecast','view.health','view.ai_proto','view.suggestion','action.refresh_data','data.show_amounts']),
+  viewer:new Set(['view.portfolio','view.sectors','view.type','view.diversification','view.dividends']),
+};
+const RBAC_ROLE_LABELS={admin:'Admin',owner:'Owner',editor:'Editor',analyst:'Analyst',viewer:'Viewer',custom:'Custom'};
+let ACCESS={roleId:null,overrides:{}};   // текущего пользователя (из user_access)
+// Резолвер deny-by-default: явный override → роль → закрыто (раздел 6). Чистая ф-я.
+function rbacResolve(roleId,overrides,perm){
+  const ov=overrides||{};
+  if(ov[perm]==='allow')return true;
+  if(ov[perm]==='deny')return false;
+  const preset=RBAC_ROLES[roleId||'editor'];   // ненастроенный non-admin ≈ editor (как сейчас)
+  if(preset==='*')return true;
+  return preset?preset.has(perm):false;
+}
+function can(perm){
+  if(!SYNC_ENABLED||userRole==='admin')return true;   // админ — всё; без синка — локальный режим
+  return rbacResolve(ACCESS.roleId,ACCESS.overrides,perm);
+}
+const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',aim:'ai_proto'};
+const canTab=k=>can('view.'+(PFTAB_PERM[k]||k));
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
 const I18N_EN={
@@ -1250,13 +1290,13 @@ function renderAll(){
     if(isAip&&!['list','sec','typ','div','fcast','trades','health','aim'].includes(pf3Tab))pf3Tab='list';
     else if(isPort&&!['list','sec','typ','div','fcast','trades','plan','cal','health','ai','prop'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
-    if(!isAdmin()&&(pf3Tab==='ai'||pf3Tab==='prop'))pf3Tab='list';   // AI-вкладки — только админу
+    if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
-    ).filter(([,k])=>isAdmin()||(k!=='ai'&&k!=='prop'));
+    ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
     eapply('sub:'+curIdx,_subs.map(([l,k])=>({id:k,l,k}))).forEach(({l,k})=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.dataset.eid=k;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
@@ -1476,11 +1516,22 @@ async function renderSettings(){
     const on=u.last_seen&&(Date.now()-Date.parse(u.last_seen))<150000;   // heartbeat раз в минуту → онлайн = < 2.5 мин
     const seen=on?'<span class="set-on">🟢 онлайн</span>':`<span class="set-off">⚪ ${u.last_seen?ago(u.last_seen):'не заходил'}</span>`;
     const adm=u.role==='admin';
-    const grants=adm?'<span class="set-all">полный доступ ко всем вкладкам</span>'
+    const rid=adm?'admin':(u.role_id||'editor');
+    const ov=(u.overrides&&typeof u.overrides==='object')?u.overrides:{};
+    // выбор роли (раздел 2)
+    const roleSel=`<select class="set-rolesel" onchange="setUserRole('${u.user_id}',this.value)">${['admin','owner','editor','analyst','viewer','custom'].map(r=>`<option value="${r}"${rid===r?' selected':''}>${RBAC_ROLE_LABELS[r]}</option>`).join('')}</select>`;
+    // матрица переопределений (раздел 5.2) — для не-админов
+    const ovEditor=adm?'<span class="set-all">полный доступ (Admin)</span>':RBAC_PERMS.map(g=>`<div class="set-pg"><div class="set-pg-h">${g.g}</div>${g.items.map(([p,l])=>{const cur=ov[p]||'inherit';const def=rbacResolve(rid,{},p);return`<label class="set-perm"><span>${l}</span><select onchange="setOverride('${u.user_id}','${p}',this.value)"><option value="inherit"${cur==='inherit'?' selected':''}>${RT('по роли','by role')} (${def?'✓':'✕'})</option><option value="allow"${cur==='allow'?' selected':''}>${RT('Разрешить','Allow')}</option><option value="deny"${cur==='deny'?' selected':''}>${RT('Запретить','Deny')}</option></select></label>`}).join('')}</div>`).join('');
+    // предпросмотр видимых под-вкладок
+    const prevTabs=RBAC_PERMS[0].items.filter(([p])=>adm||rbacResolve(rid,ov,p)).map(([,l])=>l).join(' · ')||RT('нет','none');
+    // портфельный доступ (раздел 4) — существующие галочки вкладок
+    const grants=adm?'<span class="set-all">все портфели/вкладки</span>'
       :tabs.map(t=>`<label class="set-tab"><input type="checkbox"${(u.tabs||[]).includes(t)?' checked':''} onchange="setGrant('${u.user_id}','${t.replace(/'/g,"\\'")}',this.checked)"><span>${META[t]||''} ${t}</span></label>`).join('');
     return`<div class="set-user">
-      <div class="set-user-hd"><b>${u.email||u.user_id}</b><span class="set-role${adm?' adm':''}">${adm?'Админ':'User'}</span>${seen}</div>
-      <div class="set-tabs">${grants}</div>
+      <div class="set-user-hd"><b>${u.email||u.user_id}</b>${roleSel}${seen}</div>
+      <div class="set-preview">👁 ${RT('Видит вкладки','Sees tabs')}: ${prevTabs}</div>
+      <details class="set-perms"><summary>🔐 ${RT('Права (переопределения)','Permissions (overrides)')}</summary>${ovEditor}</details>
+      <details class="set-tabs-d"><summary>💼 ${RT('Доступ к портфелям/вкладкам','Portfolio/tab access')}</summary><div class="set-tabs">${grants}</div></details>
     </div>`;
   }).join('');
   card.innerHTML=`<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2>
@@ -1498,6 +1549,33 @@ async function setGrant(uid,tab,on){
     const r=await sb.from('user_access').update({tabs:t}).eq('user_id',uid);
     if(r.error)throw r.error;
   }catch(e){ alert('Не удалось сохранить доступ: '+(e.message||e)); renderSettings(); }
+}
+// RBAC: сменить роль пользователя. Admin → role='admin'; иначе role='user' + role_id.
+// Защита от самоблокировки (7.4): нельзя снять последнего админа.
+async function setUserRole(uid,val){
+  try{
+    if(val!=='admin'){
+      const{data:adm}=await sb.from('user_access').select('user_id').eq('role','admin');
+      const list=adm||[];
+      if(list.length<=1&&list.some(a=>a.user_id===uid)){ alert(RT('Нельзя снять роль с последнего администратора.','Cannot demote the last administrator.')); renderSettings(); return; }
+    }
+    const patch=val==='admin'?{role:'admin'}:{role:'user',role_id:val};
+    const r=await sb.from('user_access').update(patch).eq('user_id',uid);
+    if(r.error)throw r.error;
+    renderSettings();
+  }catch(e){ alert((RT('Не удалось сохранить роль','Could not save role'))+': '+(e.message||e)); renderSettings(); }
+}
+// RBAC: переопределение одного пермишена (allow/deny/inherit). reread→merge→write.
+async function setOverride(uid,perm,val){
+  try{
+    const{data,error}=await sb.from('user_access').select('overrides').eq('user_id',uid).single();
+    if(error)throw error;
+    const ov=(data&&data.overrides&&typeof data.overrides==='object')?{...data.overrides}:{};
+    if(val==='inherit')delete ov[perm]; else ov[perm]=val;
+    const r=await sb.from('user_access').update({overrides:ov}).eq('user_id',uid);
+    if(r.error)throw r.error;
+    renderSettings();
+  }catch(e){ alert((RT('Не удалось сохранить право','Could not save permission'))+': '+(e.message||e)); renderSettings(); }
 }
 
 function toggleFaq(){

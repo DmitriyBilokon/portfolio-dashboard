@@ -130,3 +130,59 @@ grp('pf3FcTable smoke', function(){
   __ok('fcTable has rows', html.indexOf('fc-row')>=0);
   __ok('fcTable has net worth', html.indexOf('fc-net')>=0);
 });
+
+// 12) Торговая математика pfTrade: позиция / средняя / кэш / журнал (кэш МЕНЯЕТСЯ)
+grp('pfTrade math', function(){
+  renderPF3 = function(){}; toast = function(){};   // изолируем побочки рендера/тостов
+  var origGet = document.getElementById, inputs = {};
+  document.getElementById = function(id){ return Object.prototype.hasOwnProperty.call(inputs,id) ? {value:inputs[id]} : origGet(id); };
+  FX.USD = 10;
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK'];
+  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',100,0,0,0,10000];
+  DATA = { 'TP': { headers:h, rows:[r], baseCcy:'SEK', cashFree:100000, v3:'1', port:'1' } };
+  v3Key='TP'; pf3Sel='ACME'; PF_TRADES=[];
+
+  // BUY 5 @ 120 → avg=(1000+600)/15=106.67, qty=15, fee USD600=7.5, cash-=(600+7.5)*10
+  inputs.pfTrQty='5'; inputs.pfTrPrice='120';
+  pfTrade('buy');
+  __eq('buy qty 10->15', r[6], 15);
+  __approx('buy avg recompute 106.67', r[9], 106.67, 0.02);
+  __approx('buy cash -=(600+fee)*10', DATA.TP.cashFree, 100000-(600+7.5)*10, 0.5);
+  __eq('journal 1 entry', PF_TRADES.length, 1);
+  __approx('buy fee 7.5', PF_TRADES[0].feeNative, 7.5);
+
+  // SELL 5 @ 130 → qty=10, fee USD650=7.625, P&L=(130-106.67)*5-7.625
+  inputs.pfTrQty='5'; inputs.pfTrPrice='130';
+  var cashBefore = DATA.TP.cashFree;
+  pfTrade('sell');
+  __eq('sell qty 15->10', r[6], 10);
+  __approx('sell P&L net of fee', PF_TRADES[1].plNative, (130-106.67)*5-7.625, 0.15);
+  __approx('sell cash +=(650-fee)*10', DATA.TP.cashFree, cashBefore+(650-7.625)*10, 0.5);
+  __eq('journal 2 entries', PF_TRADES.length, 2);
+
+  // SELL больше, чем есть → ограничивается позицией (не уходит в минус)
+  inputs.pfTrQty='999'; inputs.pfTrPrice='130';
+  pfTrade('sell');
+  __eq('sell capped → qty 0', r[6], 0);
+
+  document.getElementById = origGet;   // restore
+});
+
+// 13) pfTradeAddRecord (ручное восстановление): меняет позицию, НЕ трогает кэш
+grp('pfTradeAddRecord no-cash', function(){
+  renderPF3 = function(){}; toast = function(){};
+  var origGet = document.getElementById, inputs = {};
+  document.getElementById = function(id){ return Object.prototype.hasOwnProperty.call(inputs,id) ? {value:inputs[id]} : origGet(id); };
+  FX.USD = 10;
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK'];
+  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',100,0,0,0,10000];
+  DATA = { 'TP': { headers:h, rows:[r], baseCcy:'SEK', cashFree:50000, v3:'1', port:'1' } };
+  v3Key='TP'; PF_TRADES=[];
+  inputs.pfTrAct='buy'; inputs.pfTrTk='ACME'; inputs.pfTrRq='5'; inputs.pfTrRp='120'; inputs.pfTrCcy='USD'; inputs.pfTrRd='2026-06-01';
+  pfTradeAddRecord();
+  __eq('record updates qty 10->15', r[6], 15);
+  __approx('record recompute avg', r[9], 106.67, 0.02);
+  __eq('record cash UNCHANGED', DATA.TP.cashFree, 50000);
+  __eq('record journal +1', PF_TRADES.length, 1);
+  document.getElementById = origGet;
+});

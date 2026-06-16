@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Блокирует коммит при красных функциональных тестах.
+# Активация (один раз после клона): git config core.hooksPath .githooks
+# Обход (на свой риск): git commit --no-verify
+changed=$(git diff --cached --name-only)
+if echo "$changed" | grep -qE '^(app\.js|telegram-notify\.js|tests/)'; then
+  echo "▶ Регрессионные тесты (tests/run.sh)…"
+  if ! bash tests/run.sh >/tmp/precommit-tests.log 2>&1; then
+    echo "❌ Тесты упали — коммит заблокирован:"
+    tail -40 /tmp/precommit-tests.log
+    echo "Обойти (не рекомендуется): git commit --no-verify"
+    exit 1
+  fi
+  echo "✅ Тесты зелёные"
+fi
+exit 0

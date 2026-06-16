@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-16daypct3';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-16stream-ai';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -111,6 +111,45 @@ function streamJson(workFn){
 // чтобы не жечь деньги бесконечным поиском. Ответ стримится (см. streamJson), поэтому
 // таймаут Cloudflare ~100с больше не ограничивает — можно держать осмысленный бюджет.
 const AI_RESEARCH_MS = 90 * 1000;
+// Один раунд к Anthropic ЧЕРЕЗ STREAMING (SSE). Долгая генерация отчёта без
+// стрима упиралась в таймаут Cloudflare ~100с → 524. Стрим держит соединение
+// живым и заодно даёт усечённые usage/content/stop_reason из событий.
+async function anthropicRound(env, body){
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if(!r.ok || !r.body){ const e = new Error('Claude API ' + r.status + ': ' + (await r.text().catch(() => '')).slice(0, 200)); e.status = r.status; throw e; }
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
+  let buf = '', blocks = [], partial = {}, stop_reason = null;
+  for(;;){
+    const { done, value } = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while((i = buf.indexOf('\n\n')) >= 0){
+      const blk = buf.slice(0, i); buf = buf.slice(i + 2);
+      for(const ln of blk.split('\n')){
+        if(!ln.startsWith('data:')) continue;
+        const data = ln.slice(5).trim(); if(!data || data === '[DONE]') continue;
+        let ev; try{ ev = JSON.parse(data); }catch(e){ continue; }
+        if(ev.type === 'message_start'){ const u = ev.message && ev.message.usage; if(u){ usage.input_tokens += u.input_tokens || 0; usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0; usage.cache_read_input_tokens += u.cache_read_input_tokens || 0; } }
+        else if(ev.type === 'content_block_start'){ blocks[ev.index] = ev.content_block ? JSON.parse(JSON.stringify(ev.content_block)) : { type: 'text', text: '' }; partial[ev.index] = ''; }
+        else if(ev.type === 'content_block_delta'){ const d = ev.delta || {}, b = blocks[ev.index] || (blocks[ev.index] = { type: 'text', text: '' });
+          if(d.type === 'text_delta') b.text = (b.text || '') + (d.text || '');
+          else if(d.type === 'thinking_delta') b.thinking = (b.thinking || '') + (d.thinking || '');
+          else if(d.type === 'input_json_delta') partial[ev.index] = (partial[ev.index] || '') + (d.partial_json || '');
+          else if(d.type === 'signature_delta') b.signature = (b.signature || '') + (d.signature || ''); }
+        else if(ev.type === 'content_block_stop'){ const b = blocks[ev.index]; if(b && partial[ev.index]){ try{ b.input = JSON.parse(partial[ev.index]); }catch(e){} } }
+        else if(ev.type === 'message_delta'){ if(ev.delta && ev.delta.stop_reason) stop_reason = ev.delta.stop_reason; const u = ev.usage; if(u){ usage.output_tokens += u.output_tokens || 0; if(u.server_tool_use && typeof u.server_tool_use.web_search_requests === 'number') usage.server_tool_use.web_search_requests += u.server_tool_use.web_search_requests; } }
+        else if(ev.type === 'error'){ throw new Error('Claude API stream: ' + JSON.stringify(ev.error || {}).slice(0, 150)); }
+      }
+    }
+  }
+  return { content: blocks.filter(Boolean), usage, stop_reason };
+}
 async function anthropicRun(env, body){
   const started = Date.now();
   let messages = (body.messages || []).slice();
@@ -120,21 +159,13 @@ async function anthropicRun(env, body){
   for(let round = 0; round < 6; round++){
     // В режиме summarize убираем tools → модель не ищет, а сводит найденное.
     const reqBody = summarize ? { ...body, tools: undefined, messages } : { ...body, messages };
-    // Ретрай временных ошибок (429 / 5xx — перегрузка, таймаут вроде 529/542).
     let j = null, lastErr = '';
     for(let attempt = 0; attempt < 4; attempt++){
-      let r;
-      try{
-        r = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify(reqBody),
-        });
-      }catch(e){ lastErr = 'Claude API сеть: ' + (e.message || e); if(attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; } throw new Error(lastErr); }
-      if(r.ok){ j = await r.json(); break; }
-      lastErr = 'Claude API ' + r.status + ': ' + (await r.text()).slice(0, 200);
-      if((r.status === 429 || r.status >= 500) && attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; }
-      throw new Error(lastErr);
+      try{ j = await anthropicRound(env, reqBody); break; }
+      catch(e){ lastErr = String(e.message || e); const st = e.status || 0;
+        const retr = st === 429 || st >= 500 || /network|сеть|stream|timeout|524|529/i.test(lastErr);
+        if(retr && attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; }
+        throw new Error(lastErr); }
     }
     if(!j) throw new Error(lastErr || 'Claude API: нет ответа после ретраев');
     const u = j.usage || {};

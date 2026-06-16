@@ -4251,7 +4251,7 @@ async function homeUpdateAll(){
       const b=document.getElementById('homeUpdBtn');
       if(b)b.textContent=`⏳ ${Math.round(done/keys.length*100)}% · ${TAB_LABEL(key)}`;
     }
-    pf3LastRefresh=Date.now();
+    keys.forEach(k=>{pf3LastRefresh[k]=Date.now();});   // обновили все вкладки разом
     toast(RT(`✓ Обновлено: ${updated}/${total} акций · ${keys.length} вкладок · курсы валют`,`✓ Updated: ${updated}/${total} stocks · ${keys.length} tabs · FX rates`),updated===0);
   }finally{
     _homeUpd=false;
@@ -5038,7 +5038,7 @@ async function pf3Refresh(silent){
   if(btn&&!silent){btn.disabled=true;btn.textContent='⏳ Обновляю…';}
   try{
     const updated=await pf3FetchPrices(d,v3Key);
-    if(updated)pf3LastRefresh=Date.now();
+    if(updated)pf3LastRefresh[v3Key]=Date.now();
     try{await pf3RefreshTargets(d)}catch(e){}   // аналит. таргеты — раз в сутки, тем же батч-паттерном
     if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
   }catch(e){if(!silent)toast('Прокси цен недоступен',true);}
@@ -5222,11 +5222,12 @@ async function pf3RefreshTargets(d){
 }
 
 // Auto-refresh while the Портфель 3.0 tab is open: immediately when stale, then every 5 min.
-let pf3Timer=null,pf3LastRefresh=0;
+let pf3Timer=null,pf3LastRefresh={};   // время последнего обновления ПО ВКЛАДКАМ (раньше было общим → индексные вкладки показывали устаревшие seed-цены)
 const PF3_REFRESH_MS=5*60*1000;
 function pf3EnsureAutoRefresh(){
   if(!pf3Timer)pf3Timer=setInterval(()=>{if(isV3())pf3Refresh(true)},PF3_REFRESH_MS);
-  if(Date.now()-pf3LastRefresh>PF3_REFRESH_MS)pf3Refresh(true);
+  const last=pf3LastRefresh[v3Key]||0;
+  if(Date.now()-last>PF3_REFRESH_MS)pf3Refresh(true);   // открыли вкладку, чьи цены устарели → обновить сразу
 }
 function pf3StopAutoRefresh(){if(pf3Timer){clearInterval(pf3Timer);pf3Timer=null}}
 

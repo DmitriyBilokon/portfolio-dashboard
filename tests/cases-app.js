@@ -131,6 +131,15 @@ grp('pf3FcTable smoke', function(){
   __ok('fcTable has net worth', html.indexOf('fc-net')>=0);
 });
 
+// 11b) exSymbol: правильный Yahoo-символ по валюте (защита от «кривых цен OMXS30»)
+grp('exSymbol', function(){
+  __eq('SEK class-share → .ST', exSymbol('VOLV B','SEK'), 'VOLV-B.ST');
+  __eq('SEK plain → .ST', exSymbol('SAND','SEK'), 'SAND.ST');
+  __eq('USD → bare', exSymbol('AAPL','USD'), 'AAPL');
+  __eq('NOK → .OL', exSymbol('EQNR','NOK'), 'EQNR.OL');
+  __eq('dotted passthrough', exSymbol('AIR.PA','EUR'), 'AIR.PA');
+});
+
 // 12) Торговая математика pfTrade: позиция / средняя / кэш / журнал (кэш МЕНЯЕТСЯ)
 grp('pfTrade math', function(){
   renderPF3 = function(){}; toast = function(){};   // изолируем побочки рендера/тостов

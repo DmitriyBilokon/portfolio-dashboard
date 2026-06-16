@@ -1,4 +1,4 @@
-import type { Snapshot, Portfolio, Position } from './types';
+import type { Snapshot, Portfolio, Position, Trade } from './types';
 
 // Снапшот текущего сайта = snapshotState(): { data: DATA(map вкладок), fx, rev, ... }.
 // Каждая вкладка-портфель = { headers:[…], rows:[[…]] }. Колонки могут отличаться
@@ -75,7 +75,24 @@ export function parseSnapshot(snap: any, updatedAt: string | null): Snapshot {
   }
   // Самый «крупный» портфель — первым.
   portfolios.sort((a, b) => totalValue(b) - totalValue(a));
-  return { portfolios, fx, updatedAt, rev: num(snap && snap.rev) };
+  return { portfolios, trades: parseTrades(snap), fx, updatedAt, rev: num(snap && snap.rev) };
+}
+
+// Журнал сделок текущего сайта (snap.pfTrades) → плоский список Trade.
+function parseTrades(snap: any): Trade[] {
+  const raw = snap && Array.isArray(snap.pfTrades) ? snap.pfTrades : [];
+  return raw.map((t: any) => ({
+    tab: String(t.tab || ''),
+    ticker: String(t.tk || t.ticker || '').toUpperCase(),
+    name: String(t.name || t.tk || ''),
+    ccy: String(t.ccy || 'USD').toUpperCase(),
+    act: t.act === 'sell' ? 'sell' : 'buy',
+    qty: num(t.qty),
+    price: num(t.price),
+    plNative: t.plNative != null && isFinite(parseFloat(t.plNative)) ? num(t.plNative) : null,
+    date: String(t.date || ''),
+    feeNative: t.feeNative != null && isFinite(parseFloat(t.feeNative)) ? num(t.feeNative) : null,
+  }));
 }
 
 export function totalValue(p: Portfolio): number {

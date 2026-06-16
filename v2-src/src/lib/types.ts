@@ -20,8 +20,22 @@ export interface Portfolio {
   positions: Position[];
 }
 
+export interface Trade {
+  tab: string; // ключ портфеля
+  ticker: string;
+  name: string;
+  ccy: string;
+  act: 'buy' | 'sell';
+  qty: number;
+  price: number;
+  plNative: number | null; // реализованный P&L по продаже, в валюте бумаги
+  date: string;
+  feeNative: number | null;
+}
+
 export interface Snapshot {
   portfolios: Portfolio[];
+  trades: Trade[];
   fx: Record<string, number>; // SEK за 1 единицу валюты
   updatedAt: string | null;
   rev: number;
@@ -29,7 +43,7 @@ export interface Snapshot {
 
 export type Lang = 'ru' | 'en';
 export type Theme = 'dark' | 'light';
-export type Route = 'dashboard' | 'holdings';
+export type Route = 'dashboard' | 'holdings' | 'sectors' | 'divers' | 'trades';
 
 // Живая котировка от воркера (?symbols=…).
 export interface Quote {

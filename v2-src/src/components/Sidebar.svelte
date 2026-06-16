@@ -6,6 +6,9 @@
   const items: { k: Route; icon: string; key: string }[] = [
     { k: 'dashboard', icon: '◧', key: 'dashboard' },
     { k: 'holdings', icon: '☷', key: 'holdings' },
+    { k: 'sectors', icon: '⬡', key: 'sectors' },
+    { k: 'divers', icon: '◉', key: 'diversification' },
+    { k: 'trades', icon: '↺', key: 'trades' },
   ];
   export let onnav: () => void = () => {};
 </script>

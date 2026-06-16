@@ -9,6 +9,9 @@
   import Toasts from './components/Toasts.svelte';
   import Dashboard from './routes/Dashboard.svelte';
   import Holdings from './routes/Holdings.svelte';
+  import Sectors from './routes/Sectors.svelte';
+  import Diversification from './routes/Diversification.svelte';
+  import Trades from './routes/Trades.svelte';
   import Login from './routes/Login.svelte';
 
   let menuOpen = false;
@@ -47,6 +50,12 @@
         <Login />
       {:else if $route === 'holdings'}
         <Holdings />
+      {:else if $route === 'sectors'}
+        <Sectors />
+      {:else if $route === 'divers'}
+        <Diversification />
+      {:else if $route === 'trades'}
+        <Trades />
       {:else}
         <Dashboard />
       {/if}

@@ -1428,7 +1428,7 @@ function renderAll(){
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
     if(isAip&&!['list','sec','typ','div','fcast','trades','health','aim'].includes(pf3Tab))pf3Tab='list';
-    else if(isPort&&!['list','sec','typ','div','fcast','trades','plan','cal','health','ai','prop'].includes(pf3Tab))pf3Tab='list';
+    else if(isPort&&!['list','stats','sec','typ','div','fcast','trades','plan','cal','health','ai','prop'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
     if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
@@ -1825,8 +1825,13 @@ const SEC_INFO={
   pfdeep:{t:['🔬 Глубокое сравнение портфелей','🔬 Deep portfolio comparison'],b:()=>infoP('Расширенные сравнения всех портфелей за период (с создания 12.06.2026). Только для администратора.','Advanced comparisons of all portfolios over the period (since 12 Jun 2026). Admin-only.')+infoRows([
     ['Волатильность','годовой разброс доходности (×√252) — мера риска; ниже спокойнее.','annualized dispersion of returns (×√252) — a risk measure; lower = calmer.'],
     ['Просадка','макс. падение от пика до дна за период.','max peak-to-trough decline over the period.'],
-    ['Sharpe','доходность на единицу риска (rf=0); >1 — хорошо.','return per unit of risk (rf=0); >1 is good.'],
+    ['Sharpe','доходность на единицу общего риска (rf=0); >1 — хорошо.','return per unit of total risk (rf=0); >1 is good.'],
+    ['Sortino','как Sharpe, но риск = только просадочная волатильность (штрафует лишь падения).','like Sharpe but risk = downside volatility only (penalizes drops only).'],
+    ['Calmar','годовая доходность ÷ макс. просадку — доходность на единицу «боли».','annual return ÷ max drawdown — return per unit of pain.'],
     ['IR','information ratio — альфа к S&P 500 на единицу tracking error; >0 — обгон с поправкой на риск.','information ratio — alpha vs S&P 500 per unit of tracking error; >0 = risk-adjusted outperformance.'],
+    ['β и захват','β — чувствительность к индексу; захват ↑/↓ — какую долю роста/падения индекса портфель повторяет (идеал: ↑>100%, ↓<100%).','β — sensitivity to the index; up/down capture — share of the index up/down moves the portfolio repeats (ideal: ↑>100%, ↓<100%).'],
+    ['Корреляция','матрица дневных доходностей: низкая корреляция между портфелями = реальная диверсификация.','daily-return matrix: low correlation between portfolios = real diversification.'],
+    ['Концентрация','топ-5 вес и эфф. число бумаг (1/HHI); win-rate — доля прибыльных позиций.','top-5 weight and effective # of holdings (1/HHI); win-rate — share of profitable positions.'],
     ['По окнам','доходность за день / неделю / с создания.','return over day / week / since start.'],
     ['Вклад','бумаги, давшие/съевшие больше всего прибыли (kr) с покупки.','holdings that contributed/detracted the most profit (kr) since purchase.'],
     ['Перекрытие','бумаги, которые держат ≥2 портфеля (схожесть/диверсификация между ними).','holdings shared by ≥2 portfolios (similarity/diversification across them).'],
@@ -4544,10 +4549,48 @@ function pfSeriesSlice(series,from){const iso=from.toISOString().slice(0,10);ret
 function pfDailyRets(sl){const r=[];for(let i=1;i<sl.length;i++){if(sl[i-1].v>0&&sl[i].v>0)r.push(sl[i].v/sl[i-1].v-1);}return r;}
 function pfRiskStats(series,from){
   const sl=pfSeriesSlice(series,from);if(sl.length<2)return null;
-  const rets=pfDailyRets(sl),mean=rets.length?rets.reduce((a,b)=>a+b,0)/rets.length:0,sd=pfStd(rets);
-  let peak=sl[0].v,dd=0;sl.forEach(x=>{if(x.v>peak)peak=x.v;const d=x.v/peak-1;if(d<dd)dd=d;});
-  return{ret:(sl[sl.length-1].v/sl[0].v-1)*100,vol:sd*Math.sqrt(252)*100,dd:dd*100,sharpe:sd>0?(mean/sd)*Math.sqrt(252):null};
+  const rets=pfDailyRets(sl),n=rets.length,mean=n?rets.reduce((a,b)=>a+b,0)/n:0,sd=pfStd(rets);
+  const dn=n?Math.sqrt(rets.reduce((a,r)=>a+(r<0?r*r:0),0)/n):0;   // downside deviation (MAR=0)
+  let peak=sl[0].v,ddf=0;sl.forEach(x=>{if(x.v>peak)peak=x.v;const d=x.v/peak-1;if(d<ddf)ddf=d;});
+  const tot=sl[sl.length-1].v/sl[0].v-1,ann=sl.length>1?Math.pow(1+tot,252/sl.length)-1:tot;
+  return{ret:tot*100,vol:sd*Math.sqrt(252)*100,dd:ddf*100,
+    sharpe:sd>0?(mean/sd)*Math.sqrt(252):null,
+    sortino:dn>0?(mean/dn)*Math.sqrt(252):null,
+    calmar:ddf<0?ann/Math.abs(ddf):null,
+    best:n?Math.max(...rets)*100:null,worst:n?Math.min(...rets)*100:null};
 }
+// Бета и захват (up/down capture) портфеля к индексу из выровненных дневных доходностей.
+function pfBetaCap(ps,is,from){
+  const iso=from.toISOString().slice(0,10),pm={},im={};
+  ps.filter(x=>x.d>=iso).forEach(x=>pm[x.d]=x.v);is.filter(x=>x.d>=iso).forEach(x=>im[x.d]=x.v);
+  const days=Object.keys(pm).filter(d=>im[d]!=null).sort(),pr=[],ir=[];
+  for(let i=1;i<days.length;i++){const a=pm[days[i]]/pm[days[i-1]]-1,b=im[days[i]]/im[days[i-1]]-1;if(isFinite(a)&&isFinite(b)){pr.push(a);ir.push(b);}}
+  if(pr.length<3)return null;
+  const mi=ir.reduce((x,y)=>x+y,0)/ir.length,mp=pr.reduce((x,y)=>x+y,0)/pr.length;
+  let cov=0,vi=0,upP=0,upI=0,dnP=0,dnI=0;
+  for(let i=0;i<pr.length;i++){cov+=(pr[i]-mp)*(ir[i]-mi);vi+=(ir[i]-mi)**2;if(ir[i]>0){upP+=pr[i];upI+=ir[i];}else if(ir[i]<0){dnP+=pr[i];dnI+=ir[i];}}
+  return{beta:vi>0?cov/vi:null,up:upI!==0?upP/upI*100:null,dn:dnI!==0?dnP/dnI*100:null};
+}
+// Корреляция дневных доходностей двух серий за период.
+function pfCorr(aS,bS,from){
+  const iso=from.toISOString().slice(0,10),am={},bm={};
+  aS.filter(x=>x.d>=iso).forEach(x=>am[x.d]=x.v);bS.filter(x=>x.d>=iso).forEach(x=>bm[x.d]=x.v);
+  const days=Object.keys(am).filter(d=>bm[d]!=null).sort(),a=[],b=[];
+  for(let i=1;i<days.length;i++){const ra=am[days[i]]/am[days[i-1]]-1,rb=bm[days[i]]/bm[days[i-1]]-1;if(isFinite(ra)&&isFinite(rb)){a.push(ra);b.push(rb);}}
+  if(a.length<3)return null;
+  const ma=a.reduce((x,y)=>x+y,0)/a.length,mb=b.reduce((x,y)=>x+y,0)/b.length;
+  let cov=0,va=0,vb=0;for(let i=0;i<a.length;i++){cov+=(a[i]-ma)*(b[i]-mb);va+=(a[i]-ma)**2;vb+=(b[i]-mb)**2;}
+  return(va>0&&vb>0)?cov/Math.sqrt(va*vb):null;
+}
+// Концентрация: топ-5 вес и «эффективное число бумаг» (1/HHI).
+function pfConcentration(rows){
+  const ws=rows.map(o=>parseFloat((o.r||o)[13])||0).filter(v=>v>0);
+  const tot=ws.reduce((a,b)=>a+b,0);if(!(tot>0))return null;
+  const sh=ws.map(w=>w/tot).sort((a,b)=>b-a);
+  const hhi=sh.reduce((a,w)=>a+w*w,0);
+  return{top5:sh.slice(0,5).reduce((a,b)=>a+b,0)*100,effN:hhi>0?1/hhi:0,n:ws.length};
+}
+function pfWinRate(rows){const pl=rows.map(o=>parseFloat((o.r||o)[11])).filter(v=>isFinite(v));return pl.length?pl.filter(v=>v>0).length/pl.length*100:null;}
 function pfInfoRatio(ps,is,from){
   const iso=from.toISOString().slice(0,10),pm={},im={};
   ps.filter(x=>x.d>=iso).forEach(x=>pm[x.d]=x.v);is.filter(x=>x.d>=iso).forEach(x=>im[x.d]=x.v);
@@ -4566,9 +4609,23 @@ function pfDeepCmpHTML(){
   const realRows=pfRealRows();
   const portRows=k=>k==='__ALL__'?realRows:(DATA[k]?DATA[k].rows.map(r=>({r})):[]);
   const dayOf=e=>e.kind==='ai'?((AI_PORT&&Array.isArray(AI_PORT.equityHistory)&&AI_PORT.equityHistory.length>=2)?(AI_PORT.equityHistory.slice(-1)[0].v/AI_PORT.equityHistory.slice(-2)[0].v-1)*100:null):pfDayPctOf(portRows(e.key));
-  // 1+2) Риск-метрики + IR vs S&P 500
+  const num2=v=>v==null?'—':v.toFixed(2);
+  // 1+2) Риск-метрики: Sharpe · Sortino · Calmar · IR vs S&P 500
   const riskRows=ents.map(e=>{const st=pfRiskStats(H.ports[e.key],from);if(!st)return'';const ir=spx?pfInfoRatio(H.ports[e.key],spx,from):null;
-    return`<tr><td class="bp-name">${e.name}</td><td>${pc(st.ret)}</td><td>${st.vol.toFixed(1)}%</td><td class="${st.dd<0?'pf3-down':''}">${st.dd.toFixed(1)}%</td><td><b>${st.sharpe==null?'—':st.sharpe.toFixed(2)}</b></td><td>${ir==null?'—':(ir>=0?'+':'')+ir.toFixed(2)}</td></tr>`}).join('');
+    return`<tr><td class="bp-name">${e.name}</td><td>${pc(st.ret)}</td><td>${st.vol.toFixed(1)}%</td><td class="${st.dd<0?'pf3-down':''}">${st.dd.toFixed(1)}%</td><td><b>${num2(st.sharpe)}</b></td><td>${num2(st.sortino)}</td><td>${num2(st.calmar)}</td><td>${ir==null?'—':(ir>=0?'+':'')+ir.toFixed(2)}</td></tr>`}).join('');
+  // β и захват (up/down capture) vs S&P 500
+  const betaRows=ents.map(e=>{const bc=spx?pfBetaCap(H.ports[e.key],spx,from):null;if(!bc)return'';
+    return`<tr><td class="bp-name">${e.name}</td><td><b>${num2(bc.beta)}</b></td><td class="${bc.up!=null&&bc.up>=100?'pf3-up':''}">${bc.up==null?'—':bc.up.toFixed(0)+'%'}</td><td class="${bc.dn==null?'':bc.dn<100?'pf3-up':'pf3-down'}">${bc.dn==null?'—':bc.dn.toFixed(0)+'%'}</td></tr>`}).join('');
+  // лучший/худший день
+  const bwRows=ents.map(e=>{const st=pfRiskStats(H.ports[e.key],from);if(!st)return'';return`<tr><td class="bp-name">${e.name}</td><td>${pc(st.best,2)}</td><td>${pc(st.worst,2)}</td></tr>`}).join('');
+  // корреляционная матрица (портфели + индексы)
+  const cE=[...ents.map(e=>({lbl:e.name,ser:H.ports[e.key]})),...D.idx.map(i=>({lbl:PFCMP_SHORT[i.name]||i.name,ser:H.bench[i.sym]}))].filter(x=>x.ser);
+  const corrTint=v=>v==null?'':`background:rgba(${v>=0?'16,185,129':'239,68,68'},${Math.min(.4,Math.abs(v)*.4).toFixed(2)})`;
+  const corrHead=`<tr><th></th>${cE.map(x=>`<th>${x.lbl}</th>`).join('')}</tr>`;
+  const corrBody=cE.map((a,i)=>`<tr><td class="bp-name">${a.lbl}</td>${cE.map((b,j)=>{const c=i===j?1:pfCorr(a.ser,b.ser,from);return`<td style="${corrTint(c)}">${c==null?'—':c.toFixed(2)}</td>`}).join('')}</tr>`).join('');
+  // концентрация + win rate (real-портфели + сводная)
+  const concRows=ents.filter(e=>e.kind!=='ai').map(e=>{const rs=portRows(e.key),co=pfConcentration(rs),wr=pfWinRate(rs);if(!co)return'';
+    return`<tr><td class="bp-name">${e.name}</td><td>${co.n}</td><td>${co.top5.toFixed(0)}%</td><td><b>${co.effN.toFixed(1)}</b></td><td>${wr==null?'—':wr.toFixed(0)+'%'}</td></tr>`}).join('');
   // 6) Окна
   const winRows=ents.map(e=>`<tr><td class="bp-name">${e.name}</td><td>${pc(dayOf(e),2)}</td><td>${pc(pfPerfPct(H.ports[e.key],pfPerfFrom('fri')),2)}</td><td><b>${pc(e.ret,2)}</b></td></tr>`).join('');
   // 5) Вклад в доходность (по прибыли SEK с покупки ≈ с создания)
@@ -4592,7 +4649,11 @@ function pfDeepCmpHTML(){
   const det=(title,body,open)=>`<details class="pfcmp-det"${open?' open':''}><summary>${title}</summary><div class="pfcmp-detbody">${body}</div></details>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('Глубокое сравнение','Deep comparison')} ${infoBtn('pfdeep')}</span><span class="pf3-asof">${RT('всё за период · только админ','over the period · admin-only')}</span></div>
-    ${det('📉 '+RT('Риск-метрики (волатильность · просадка · Sharpe · IR vs S&P)','Risk metrics (volatility · drawdown · Sharpe · IR vs S&P)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('Доходн.','Return')}</th><th>${RT('Волат.','Vol')}</th><th>${RT('Просадка','Drawdown')}</th><th>Sharpe</th><th>IR</th></tr></thead><tbody>${riskRows}</tbody></table><div class="pf3-risk-note">${RT('Годовые (×√252), безрисковая ставка = 0. На коротком окне (с 12.06) значения шумные — для ориентира. Sharpe>1 — хорошо; IR>0 — обгон с поправкой на риск.','Annualized (×√252), risk-free = 0. Over a short window (since 12 Jun) values are noisy — indicative. Sharpe>1 good; IR>0 risk-adjusted outperformance.')}</div>`,true)}
+    ${det('📉 '+RT('Риск-метрики (Sharpe · Sortino · Calmar · IR)','Risk metrics (Sharpe · Sortino · Calmar · IR)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('Доходн.','Return')}</th><th>${RT('Волат.','Vol')}</th><th>${RT('Просадка','DD')}</th><th>Sharpe</th><th>Sortino</th><th>Calmar</th><th>IR</th></tr></thead><tbody>${riskRows}</tbody></table><div class="pf3-risk-note">${RT('Годовые (×√252), rf=0. Sharpe — на единицу общего риска; Sortino — только просадочного; Calmar — годовая доходн./макс.просадку; IR — альфа к S&P 500 / tracking error. >1 (Sharpe/Sortino), >0 (IR) — хорошо. Окно короткое (с 12.06) → шумно, индикативно.','Annualized (×√252), rf=0. Sharpe — per total risk; Sortino — downside only; Calmar — annual return/max drawdown; IR — alpha vs S&P 500 / tracking error. >1 (Sharpe/Sortino), >0 (IR) is good. Short window (since 12 Jun) → noisy, indicative.')}</div>`,true)}
+    ${det('📐 '+RT('Бета и захват (vs S&P 500)','Beta & capture (vs S&P 500)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>β</th><th>${RT('Захват ↑','Up capture')}</th><th>${RT('Захват ↓','Down capture')}</th></tr></thead><tbody>${betaRows}</tbody></table><div class="pf3-risk-note">${RT('β — чувствительность к индексу (1 = как рынок, >1 резче). Захват ↑ >100% = на росте индекса портфель растёт сильнее; захват ↓ <100% = на падении падает слабее (идеал — высокий ↑, низкий ↓).','β — sensitivity to the index (1 = like the market, >1 sharper). Up capture >100% = rises more than the index on up days; down capture <100% = falls less on down days (ideal — high ↑, low ↓).')}</div>`)}
+    ${det('🔗 '+RT('Корреляция (портфели + индексы)','Correlation (portfolios + indices)'),`<div class="pfcmp-corrwrap"><table class="bp-tbl pfcmp-corr"><thead>${corrHead}</thead><tbody>${corrBody}</tbody></table></div><div class="pf3-risk-note">${RT('Корреляция дневных доходностей. 1 — двигаются одинаково, 0 — независимо, <0 — противоположно. Низкая корреляция между портфелями = реальная диверсификация.','Correlation of daily returns. 1 — move together, 0 — independent, <0 — opposite. Low correlation between portfolios = real diversification.')}</div>`)}
+    ${det('🎯 '+RT('Концентрация и win-rate','Concentration & win-rate'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('Бумаг','Names')}</th><th>${RT('Топ-5 вес','Top-5 wt')}</th><th>${RT('Эфф. число','Eff. N')}</th><th>Win-rate</th></tr></thead><tbody>${concRows}</tbody></table><div class="pf3-risk-note">${RT('Топ-5 вес — доля 5 крупнейших позиций. Эфф. число бумаг (1/HHI) — сколько «равных» позиций по факту (ниже фактического числа = концентрация). Win-rate — доля прибыльных позиций.','Top-5 weight — share of the 5 largest positions. Effective # of holdings (1/HHI) — how many «equal» positions in effect (below the raw count = concentration). Win-rate — share of profitable positions.')}</div>`)}
+    ${det('⚡ '+RT('Лучший / худший день','Best / worst day'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('Лучший день','Best day')}</th><th>${RT('Худший день','Worst day')}</th></tr></thead><tbody>${bwRows}</tbody></table>`)}
     ${det('📅 '+RT('По окнам (день · неделя · с создания)','By window (day · week · since start)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('День','Day')}</th><th>${RT('Неделя','Week')}</th><th>${RT('С создания','Since start')}</th></tr></thead><tbody>${winRows}</tbody></table>`)}
     ${det('🥇 '+RT('Вклад в доходность — лидеры и аутсайдеры','Contribution — winners & losers'),`<div class="pfcmp-two"><div><div class="pfcmp-sech pf3-up">▲ ${RT('Дали больше всего','Top winners')}</div>${win.map(contribRow).join('')||'—'}</div><div><div class="pfcmp-sech pf3-down">▼ ${RT('Съели больше всего','Top losers')}</div>${los.length?los.map(contribRow).join(''):`<div class="pf3-empty">${RT('убыточных нет','no losers')}</div>`}</div></div><div class="pf3-risk-note">${RT('По прибыли в kr с момента покупки (≈ с создания портфелей).','By profit in kr since purchase (≈ since portfolio creation).')}</div>`)}
     ${det('🧩 '+RT('Перекрытие портфелей (общие бумаги)','Portfolio overlap (shared holdings)'),overlap.length?overlap.map(ovRow).join(''):`<div class="pf3-empty">${RT('Общих бумаг между портфелями нет','No shared holdings')}</div>`)}

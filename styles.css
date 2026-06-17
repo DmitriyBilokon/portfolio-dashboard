@@ -1494,3 +1494,9 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pfcmp-secrow span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pfcmp-secrow b{color:var(--text1);font-family:'JetBrains Mono',monospace;flex:none}
 @media(max-width:560px){.pfcmp-two{grid-template-columns:1fr}}
+/* 🔗 Корреляционная матрица в глубоком сравнении */
+.pfcmp-corrwrap{overflow-x:auto}
+.pfcmp-corr{font-size:11px}
+.pfcmp-corr th,.pfcmp-corr td{text-align:center;font:600 11px 'JetBrains Mono',monospace;padding:4px 7px;white-space:nowrap}
+.pfcmp-corr th:first-child,.pfcmp-corr td:first-child{text-align:left;font-family:inherit;position:sticky;left:0;background:var(--bg)}
+.pfcmp-corr td{border-radius:4px}

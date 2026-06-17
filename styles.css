@@ -1476,3 +1476,21 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pfcmp-extra{margin-top:10px;font-size:12px;color:var(--text2);line-height:1.5}
 .pfcmp-extra b{color:var(--text1)}
 @media(max-width:560px){.pfcmp-row{grid-template-columns:20px 1fr 60px auto;gap:7px}.pfcmp-arow{flex-direction:column;align-items:flex-start;gap:3px}}
+/* 🔬 Глубокое сравнение портфелей */
+.pfcmp-det{border-top:1px solid var(--border);margin-top:2px}
+.pfcmp-det>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--text2);padding:9px 2px;list-style:none}
+.pfcmp-det>summary::-webkit-details-marker{display:none}
+.pfcmp-det>summary::before{content:'▸ ';color:var(--text3)}
+.pfcmp-det[open]>summary::before{content:'▾ '}
+.pfcmp-detbody{padding:2px 0 10px}
+.pfcmp-tbl th,.pfcmp-tbl td{text-align:right;font:600 12px 'JetBrains Mono',monospace;padding:5px 8px}
+.pfcmp-tbl th:first-child,.pfcmp-tbl td:first-child{text-align:left;font-family:inherit}
+.pfcmp-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.pfcmp-two .pfcmp-row{grid-template-columns:1fr auto}
+.pfcmp-sech{font-size:12px;font-weight:700;color:var(--text2);margin:2px 0 5px}
+.pfcmp-sec{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+.pfcmp-seccol{min-width:0}
+.pfcmp-secrow{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text2);padding:2px 0}
+.pfcmp-secrow span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pfcmp-secrow b{color:var(--text1);font-family:'JetBrains Mono',monospace;flex:none}
+@media(max-width:560px){.pfcmp-two{grid-template-columns:1fr}}

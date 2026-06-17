@@ -1822,6 +1822,17 @@ const SEC_INFO={
     ['α (альфа)','доходность портфеля минус индекс, в процентных пунктах (п.п.). >0 — обгон.','portfolio return minus the index, in percentage points. >0 = outperformance.'],
     ['Индексы','S&P 500 / Nasdaq 100 / OMXS30 за тот же период.','S&P 500 / Nasdaq 100 / OMXS30 over the same period.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  pfdeep:{t:['🔬 Глубокое сравнение портфелей','🔬 Deep portfolio comparison'],b:()=>infoP('Расширенные сравнения всех портфелей за период (с создания 12.06.2026). Только для администратора.','Advanced comparisons of all portfolios over the period (since 12 Jun 2026). Admin-only.')+infoRows([
+    ['Волатильность','годовой разброс доходности (×√252) — мера риска; ниже спокойнее.','annualized dispersion of returns (×√252) — a risk measure; lower = calmer.'],
+    ['Просадка','макс. падение от пика до дна за период.','max peak-to-trough decline over the period.'],
+    ['Sharpe','доходность на единицу риска (rf=0); >1 — хорошо.','return per unit of risk (rf=0); >1 is good.'],
+    ['IR','information ratio — альфа к S&P 500 на единицу tracking error; >0 — обгон с поправкой на риск.','information ratio — alpha vs S&P 500 per unit of tracking error; >0 = risk-adjusted outperformance.'],
+    ['По окнам','доходность за день / неделю / с создания.','return over day / week / since start.'],
+    ['Вклад','бумаги, давшие/съевшие больше всего прибыли (kr) с покупки.','holdings that contributed/detracted the most profit (kr) since purchase.'],
+    ['Перекрытие','бумаги, которые держат ≥2 портфеля (схожесть/диверсификация между ними).','holdings shared by ≥2 portfolios (similarity/diversification across them).'],
+    ['Сектора','доли по секторам: портфели (по стоимости) vs индексы (по числу бумаг).','sector shares: portfolios (by value) vs indices (by stock count).'],
+    ['Валюты','доля активов по валютам.','asset share by currency.'],
+  ])+infoNote('На коротком окне риск-метрики шумные — для ориентира. '+INFO_DISCLAIM[0],'Over a short window risk metrics are noisy — indicative. '+INFO_DISCLAIM[1])},
   playbook:{t:['📚 Инвест-плейбук','📚 Investing playbook'],b:()=>infoP('Набор стратегических принципов «как обгонять индекс». Передаётся во ВСЕ анализы AI Proto и в AI-Портфель как рамка решений — это единственный способ направлять автономного AI Proto.','A set of strategic «how to beat the index» principles. Passed to EVERY AI Proto analysis and to the AI portfolio as the decision framework — the only way to steer the autonomous AI Proto.')+infoRows([
     ['Зачем','приоритетнее общих эвристик: AI применяет эти принципы в каждом совете и сделке.','takes priority over generic heuristics: the AI applies these in every call and trade.'],
     ['✨ Подтянуть практики (AI)','AI ищет в вебе свежие лучшие практики и дописывает новые принципы (платно, админ).','the AI web-searches fresh best practices and appends new principles (paid, admin).'],
@@ -4334,7 +4345,7 @@ function renderPF3(){
   }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
-  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML()+pfCmpHTML():''}<div class="pf3-layout${open?' open':''}">
+  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML()+pfCmpHTML()+pfDeepCmpHTML():''}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
       <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button>${can('action.refresh_data')?`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`:''}${pf3XMenuHTML(d)}</span>`}</div>
@@ -4517,6 +4528,68 @@ function pfCmpHTML(){
     <div class="pfcmp-alpha">${alpha}</div>
     <div class="pfcmp-extra">🏆 ${RT('лидер','leader')}: <b>${top.name}</b> ${fmt(top.ret)} · 🐌 ${RT('аутсайдер','laggard')}: <b>${bot.name}</b> ${fmt(bot.ret)} · ${RT('спред','spread')} ${(top.ret-bot.ret).toFixed(1)} п.п. · ${RT('обгоняют индекс','beat the index')}: ${beats}</div>
     <div class="pf3-risk-note">${RT('α = доходность портфеля минус индекс за период (процентные пункты, п.п.). Положительная α = обгон. Период — с создания 12.06.2026. Видно только администратору.','α = portfolio return minus the index over the period (percentage points). Positive α = outperformance. Period — since 12 Jun 2026. Admin-only.')}</div>
+  </section>`;
+}
+// ── Глубокое сравнение: риск-метрики, окна, вклад, перекрытие, сектора, валюты ──
+function pfStd(a){if(a.length<2)return 0;const m=a.reduce((x,y)=>x+y,0)/a.length;return Math.sqrt(a.reduce((x,y)=>x+(y-m)*(y-m),0)/(a.length-1));}
+function pfSeriesSlice(series,from){const iso=from.toISOString().slice(0,10);return series.filter(x=>x.d>=iso);}
+function pfDailyRets(sl){const r=[];for(let i=1;i<sl.length;i++){if(sl[i-1].v>0&&sl[i].v>0)r.push(sl[i].v/sl[i-1].v-1);}return r;}
+function pfRiskStats(series,from){
+  const sl=pfSeriesSlice(series,from);if(sl.length<2)return null;
+  const rets=pfDailyRets(sl),mean=rets.length?rets.reduce((a,b)=>a+b,0)/rets.length:0,sd=pfStd(rets);
+  let peak=sl[0].v,dd=0;sl.forEach(x=>{if(x.v>peak)peak=x.v;const d=x.v/peak-1;if(d<dd)dd=d;});
+  return{ret:(sl[sl.length-1].v/sl[0].v-1)*100,vol:sd*Math.sqrt(252)*100,dd:dd*100,sharpe:sd>0?(mean/sd)*Math.sqrt(252):null};
+}
+function pfInfoRatio(ps,is,from){
+  const iso=from.toISOString().slice(0,10),pm={},im={};
+  ps.filter(x=>x.d>=iso).forEach(x=>pm[x.d]=x.v);is.filter(x=>x.d>=iso).forEach(x=>im[x.d]=x.v);
+  const days=Object.keys(pm).filter(d=>im[d]!=null).sort(),diffs=[];
+  for(let i=1;i<days.length;i++){const pr=pm[days[i]]/pm[days[i-1]]-1,ir=im[days[i]]/im[days[i-1]]-1;if(isFinite(pr)&&isFinite(ir))diffs.push(pr-ir);}
+  if(diffs.length<2)return null;const m=diffs.reduce((a,b)=>a+b,0)/diffs.length,sd=pfStd(diffs);
+  return sd>0?(m/sd)*Math.sqrt(252):null;
+}
+function pfRealRows(){const out=[];pfpPorts().forEach(p=>{if(p.ai)return;const d=DATA[p.key];if(!d)return;d.rows.forEach((r,i)=>{recalcPF(i,p.key);out.push({r,port:p.name});});});return out;}
+function pfDayPctOf(rows){let v=0,s=0;rows.forEach(o=>{const r=o.r||o,val=parseFloat(r[13])||0,dp=parseFloat(r[10]);if(val>0&&isFinite(dp)){v+=val*dp;s+=val;}});return s>0?v/s:null;}
+function pfDeepCmpHTML(){
+  const D=pfCmpData();if(!D)return'';const H=pfPerf.hist;
+  const cls=v=>v>=0?'pf3-up':'pf3-down';
+  const pc=(v,d)=>v==null?'—':`<span class="${cls(v)}">${v>=0?'+':''}${v.toFixed(d==null?2:d)}%</span>`;
+  const ents=D.ents,from=D.from,spx=H.bench['^GSPC'];
+  const realRows=pfRealRows();
+  const portRows=k=>k==='__ALL__'?realRows:(DATA[k]?DATA[k].rows.map(r=>({r})):[]);
+  const dayOf=e=>e.kind==='ai'?((AI_PORT&&Array.isArray(AI_PORT.equityHistory)&&AI_PORT.equityHistory.length>=2)?(AI_PORT.equityHistory.slice(-1)[0].v/AI_PORT.equityHistory.slice(-2)[0].v-1)*100:null):pfDayPctOf(portRows(e.key));
+  // 1+2) Риск-метрики + IR vs S&P 500
+  const riskRows=ents.map(e=>{const st=pfRiskStats(H.ports[e.key],from);if(!st)return'';const ir=spx?pfInfoRatio(H.ports[e.key],spx,from):null;
+    return`<tr><td class="bp-name">${e.name}</td><td>${pc(st.ret)}</td><td>${st.vol.toFixed(1)}%</td><td class="${st.dd<0?'pf3-down':''}">${st.dd.toFixed(1)}%</td><td><b>${st.sharpe==null?'—':st.sharpe.toFixed(2)}</b></td><td>${ir==null?'—':(ir>=0?'+':'')+ir.toFixed(2)}</td></tr>`}).join('');
+  // 6) Окна
+  const winRows=ents.map(e=>`<tr><td class="bp-name">${e.name}</td><td>${pc(dayOf(e),2)}</td><td>${pc(pfPerfPct(H.ports[e.key],pfPerfFrom('fri')),2)}</td><td><b>${pc(e.ret,2)}</b></td></tr>`).join('');
+  // 5) Вклад в доходность (по прибыли SEK с покупки ≈ с создания)
+  const withPL=realRows.map(o=>({tk:String(o.r[2]||''),name:String(o.r[1]||o.r[2]||''),port:o.port,pl:parseFloat(o.r[11])||0,plp:parseFloat(o.r[12])})).filter(x=>x.tk);
+  const win=withPL.slice().sort((a,b)=>b.pl-a.pl).slice(0,5),los=withPL.slice().sort((a,b)=>a.pl-b.pl).slice(0,5).filter(x=>x.pl<0);
+  const contribRow=x=>`<div class="pfcmp-row"><span class="pfcmp-name">${x.name} <span class="bp-tk">${x.tk}</span> <small>${x.port}</small></span><span class="pfcmp-v ${cls(x.pl)}">${x.pl>=0?'+':''}${pf3Fmt(x.pl)} kr${isFinite(x.plp)?` · ${x.plp>=0?'+':''}${x.plp.toFixed(1)}%`:''}</span></div>`;
+  // 3) Перекрытие портфелей
+  const byTk={};realRows.forEach(o=>{const tk=String(o.r[2]||'').toUpperCase();if(!tk)return;const val=parseFloat(o.r[13])||0;(byTk[tk]=byTk[tk]||{tk,name:String(o.r[1]||tk),ports:new Set(),val:0});byTk[tk].ports.add(o.port);byTk[tk].val+=val;});
+  const overlap=Object.values(byTk).filter(x=>x.ports.size>=2).sort((a,b)=>b.ports.size-a.ports.size||b.val-a.val).slice(0,12);
+  const ovRow=x=>`<div class="pfcmp-row"><span class="pfcmp-name">${x.name} <span class="bp-tk">${x.tk}</span></span><span class="pfcmp-acells">${[...x.ports].map(p=>`<span class="pfcmp-acell">${p}</span>`).join('')}</span><span class="pfcmp-v">${pf3Fmt(x.val)} kr</span></div>`;
+  // 4) Сектора: портфели (по стоимости) vs индексы (по числу бумаг — aiBenchmarks)
+  const psec={};let pt=0;realRows.forEach(o=>{const s=String(o.r[4]||'').trim(),val=parseFloat(o.r[13])||0;if(s&&s!=='—'&&val>0){psec[s]=(psec[s]||0)+val;pt+=val;}});
+  const pSecTop=Object.entries(psec).map(([s,v])=>({s,pct:pt?v/pt*100:0})).sort((a,b)=>b.pct-a.pct).slice(0,8);
+  const bm=(typeof aiBenchmarks==='function')?aiBenchmarks():[];
+  const secCol=(title,arr)=>`<div class="pfcmp-seccol"><div class="pfcmp-sech">${title}</div>${arr.map(x=>`<div class="pfcmp-secrow"><span>${x.s||x.sector}</span><b>${(x.pct).toFixed(1)}%</b></div>`).join('')||'<div class="pf3-empty">—</div>'}</div>`;
+  const secCols=secCol(RT('Портфели (по стоимости)','Portfolios (by value)'),pSecTop)+bm.slice(0,2).map(b=>secCol(b.index+RT(' (по числу)',' (by count)'),b.sectors)).join('');
+  // 7) Валютная структура
+  const cur={};let ct=0;realRows.forEach(o=>{const c=String(o.r[8]||'').toUpperCase(),val=parseFloat(o.r[13])||0;if(c&&val>0){cur[c]=(cur[c]||0)+val;ct+=val;}});
+  const curArr=Object.entries(cur).map(([c,v])=>({c,pct:ct?v/ct*100:0})).sort((a,b)=>b.pct-a.pct);
+  const curRow=curArr.map(x=>`<span class="pfcmp-idx">${x.c} <b>${x.pct.toFixed(0)}%</b></span>`).join(' ');
+  const det=(title,body,open)=>`<details class="pfcmp-det"${open?' open':''}><summary>${title}</summary><div class="pfcmp-detbody">${body}</div></details>`;
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🔬 ${RT('Глубокое сравнение','Deep comparison')} ${infoBtn('pfdeep')}</span><span class="pf3-asof">${RT('всё за период · только админ','over the period · admin-only')}</span></div>
+    ${det('📉 '+RT('Риск-метрики (волатильность · просадка · Sharpe · IR vs S&P)','Risk metrics (volatility · drawdown · Sharpe · IR vs S&P)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('Доходн.','Return')}</th><th>${RT('Волат.','Vol')}</th><th>${RT('Просадка','Drawdown')}</th><th>Sharpe</th><th>IR</th></tr></thead><tbody>${riskRows}</tbody></table><div class="pf3-risk-note">${RT('Годовые (×√252), безрисковая ставка = 0. На коротком окне (с 12.06) значения шумные — для ориентира. Sharpe>1 — хорошо; IR>0 — обгон с поправкой на риск.','Annualized (×√252), risk-free = 0. Over a short window (since 12 Jun) values are noisy — indicative. Sharpe>1 good; IR>0 risk-adjusted outperformance.')}</div>`,true)}
+    ${det('📅 '+RT('По окнам (день · неделя · с создания)','By window (day · week · since start)'),`<table class="bp-tbl pfcmp-tbl"><thead><tr><th>${RT('Портфель','Portfolio')}</th><th>${RT('День','Day')}</th><th>${RT('Неделя','Week')}</th><th>${RT('С создания','Since start')}</th></tr></thead><tbody>${winRows}</tbody></table>`)}
+    ${det('🥇 '+RT('Вклад в доходность — лидеры и аутсайдеры','Contribution — winners & losers'),`<div class="pfcmp-two"><div><div class="pfcmp-sech pf3-up">▲ ${RT('Дали больше всего','Top winners')}</div>${win.map(contribRow).join('')||'—'}</div><div><div class="pfcmp-sech pf3-down">▼ ${RT('Съели больше всего','Top losers')}</div>${los.length?los.map(contribRow).join(''):`<div class="pf3-empty">${RT('убыточных нет','no losers')}</div>`}</div></div><div class="pf3-risk-note">${RT('По прибыли в kr с момента покупки (≈ с создания портфелей).','By profit in kr since purchase (≈ since portfolio creation).')}</div>`)}
+    ${det('🧩 '+RT('Перекрытие портфелей (общие бумаги)','Portfolio overlap (shared holdings)'),overlap.length?overlap.map(ovRow).join(''):`<div class="pf3-empty">${RT('Общих бумаг между портфелями нет','No shared holdings')}</div>`)}
+    ${det('🏭 '+RT('Сектора: портфели vs индексы','Sectors: portfolios vs indices'),`<div class="pfcmp-sec">${secCols}</div><div class="pf3-risk-note">${RT('Портфели — доля по стоимости; индексы — доля по ЧИСЛУ бумаг (разные базы, таксономия секторов может отличаться) — для грубого ориентира перевеса/недовеса.','Portfolios — share by value; indices — share by NUMBER of stocks (different bases; sector taxonomy may differ) — a rough over/under-weight guide.')}</div>`)}
+    ${det('💱 '+RT('Валютная структура (все портфели)','Currency mix (all portfolios)'),`<div class="pfcmp-idxrow">${curRow||'—'}</div><div class="pf3-risk-note">${RT('Доля активов по валютам (по стоимости). Точное разложение «доходность от акций vs от FX» требует истории курсов (пока не хранится) — могу добавить отдельно.','Asset share by currency (by value). A precise «stock vs FX» return split needs FX-rate history (not stored yet) — can be added separately.')}</div>`)}
   </section>`;
 }
 let _pfPerfChart=null;

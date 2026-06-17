@@ -3077,6 +3077,7 @@ function pf3PropHTML(){
     return h;
   }
   if(P.summary)h+=`<div class="pf3-prop-sum">${pf3Md(P.summary)}</div>`;
+  if(P.changedSince&&String(P.changedSince).trim())h+=`<div class="pf3-prop-changed">🔄 <b>${RT('Что изменилось с прошлого анализа','What changed since last time')}:</b> ${pf3Md(String(P.changedSince))}</div>`;
   (P.actions||[]).forEach((a,i)=>{
     const cls=/куп/i.test(a.action)?'buy':/прода|сократ/i.test(a.action)?'sell':'hold';
     h+=`<div class="pf3-prop-row">
@@ -3086,6 +3087,14 @@ function pf3PropHTML(){
       <span class="pf3-prop-amt">${typeof a.amountSEK==='number'&&a.amountSEK>0?'≈'+pf3Fmt(a.amountSEK)+' kr':''}</span>
     </div>`;
   });
+  const wl=(P.watchlist||[]).filter(w=>w&&w.ticker);
+  if(wl.length){
+    h+=`<div class="pf3-prop-wl-h">👁 ${RT('Лист ожидания','Watchlist')} <span class="pf3-asof">${RT('приоритет 4 · на подтверждении','priority 4 · awaiting confirmation')}</span></div>`;
+    wl.forEach(w=>{h+=`<div class="pf3-prop-row pf3-prop-wl">
+      <span class="pf3-prop-act hold">👁</span>
+      <div class="pf3-prop-info"><b>${w.name||''} <span class="pf3-cal-tk">${w.ticker||''}</span></b><span>${w.condition?`<b>${RT('Условие','When')}:</b> ${w.condition}. `:''}${w.rationale||''}</span></div>
+    </div>`;});
+  }
   h+='</section>';
   return h;
 }
@@ -6252,7 +6261,8 @@ function planStatus(rule){
 }
 function planReadyCount(tab){ return (PLAN_RULES||[]).filter(r=>(!tab||(r.tab||PF3_KEY)===tab)&&!r.done&&planStatus(r).ready).length; }
 function planBadge(tab){ const n=planReadyCount(tab); return n?` 🔔${n}`:''; }
-function planActIcon(act){ return act==='sell'?'🔴':'🟢'; }
+function planActIcon(act){ return act==='sell'?'🔴':act==='watch'?'👁':'🟢'; }
+function planActLabel(act){ return act==='sell'?RT('Сократить','Trim'):act==='watch'?RT('Наблюдать','Watch'):RT('Купить','Buy'); }
 function planNotify(title,body){
   try{
     if(typeof Notification==='undefined')return;
@@ -6329,12 +6339,22 @@ function planParseLevel(text, act){
 function planImportFromAi(){
   const H=pf3AiHist(),last=H[0],P=last&&last.proposal;
   const acts=(P&&P.actions)||[];
-  if(!acts.length){toast(RT('Нет структурированного совета — запустите анализ на «🤖 AI Proto»','No structured advice — run analysis on «🤖 AI Proto»'),true);return;}
+  const wl=(P&&P.watchlist)||[];
+  if(!acts.length&&!wl.length){toast(RT('Нет структурированного совета — запустите анализ на «🤖 AI Proto»','No structured advice — run analysis on «🤖 AI Proto»'),true);return;}
+  // Версии плана: если уже есть перенесённый из AI план — заменить его новой версией или добавить как следующую версию.
+  const existing=(PLAN_RULES||[]).filter(r=>r.fromAi&&!r.done&&(r.tab||PF3_KEY)===v3Key);
+  let ver='1.0';
+  if(existing.length){
+    const maxV=existing.reduce((m,r)=>Math.max(m,parseFloat(r.ver)||1),1);
+    const replace=confirm(RT(`Уже перенесён план v${maxV.toFixed(1)}.\n\nОК — заменить его новой версией (старые непросмотренные пункты удалятся).\nОтмена — добавить как новую версию v${(maxV+0.1).toFixed(1)} (старые останутся).`,`A plan v${maxV.toFixed(1)} is already imported.\n\nOK — replace it with a new version (old pending items removed).\nCancel — add as a new version v${(maxV+0.1).toFixed(1)} (old kept).`));
+    if(replace){ PLAN_RULES=PLAN_RULES.filter(r=>!(r.fromAi&&!r.done&&(r.tab||PF3_KEY)===v3Key)); ver='1.0'; }
+    else ver=(maxV+0.1).toFixed(1);
+  }
   const d=pf3D(); let added=0;
   acts.forEach((a,i)=>{
     const isSell=/прода|сократ|уменьш|fix|sell|trim|reduce/i.test(a.action||'');
     const isBuy=/куп|докуп|добав|нарасти|buy|add|increase/i.test(a.action||'');
-    if(!isBuy&&!isSell)return;   // «держать/наблюдать» — пропускаем
+    if(!isBuy&&!isSell)return;   // «держать» — пропускаем (наблюдение идёт из watchlist)
     const act=isSell?'sell':'buy';
     const tk=String(a.ticker||'').trim().toUpperCase(); if(!tk)return;
     if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act===act))return;   // дедуп
@@ -6345,10 +6365,20 @@ function planImportFromAi(){
     else if(/€|eur/i.test(a.details||''))ccy='EUR';
     else if(/£|gbp/i.test(a.details||''))ccy='GBP';
     const amount=typeof a.amountSEK==='number'&&a.amountSEK>0?a.amountSEK:0;
-    PLAN_RULES.push({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1});
+    PLAN_RULES.push({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1,ver});
     added++;
   });
-  if(added){planAskNotify(true);scheduleSave();renderPF3();toast('📥 '+RT('Перенесено из совета AI','Imported from AI advice')+': '+added+'. '+RT('Проверьте уровни и кол-во ✏','Check levels & qty ✏'));}
+  // 👁 Лист ожидания (приоритет 4) — отдельным типом «watch».
+  wl.forEach((w,i)=>{
+    const tk=String(w&&w.ticker||'').trim().toUpperCase(); if(!tk)return;
+    if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act==='watch'))return;   // дедуп
+    const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
+    const ccy=row&&row[8]?String(row[8]).toUpperCase():'USD';
+    const note=[w.condition?RT('Условие','When')+': '+w.condition:'',w.rationale||''].filter(Boolean).join(' · ');
+    PLAN_RULES.push({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[1])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver});
+    added++;
+  });
+  if(added){planAskNotify(true);scheduleSave();renderPF3();toast('📥 '+RT('Перенесено из совета AI','Imported from AI advice')+` (v${ver}): ${added}. `+RT('Проверьте уровни и кол-во ✏','Check levels & qty ✏'));}
   else toast(RT('Новых правил нет (уже добавлены или нет торговых действий)','No new rules (already added or no trade actions)'));
 }
 function planEdit(id){ planEditId=(planEditId===id?null:id); renderPF3(); }
@@ -6399,6 +6429,7 @@ function planRulesHTML(){
     if(planEditId===r.id)return editRow(r);
     let badge;
     if(r.done)badge=`<span class="plan-badge plan-done">✓ ${RT('Исполнено','Done')}</span>`;
+    else if(r.act==='watch')badge=`<span class="plan-badge plan-watch">👁 ${RT('Наблюдение','Watch')}</span>`;
     else if(st.ready)badge=`<span class="plan-badge plan-ready">🔔 ${RT('Пора','Act now')}</span>`;
     else if(st.overdue)badge=`<span class="plan-badge plan-over">⌛ ${RT('Просрочено','Overdue')}</span>`;
     else badge=`<span class="plan-badge plan-wait">⏳ ${RT('Ждём','Waiting')}</span>`;
@@ -6415,8 +6446,8 @@ function planRulesHTML(){
     const qb=planQtyBit(r, st.price>0?st.price:st.lvl);
     if(qb)bits.push(qb);
     return`<div class="plan-row${st.ready&&!r.done?' is-ready':''}${r.done?' is-done':''}">
-      <span class="plan-act ${r.act}">${planActIcon(r.act)} ${r.act==='sell'?RT('Сократить','Trim'):RT('Купить','Buy')}</span>
-      <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}">🤖</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
+      <span class="plan-act ${r.act}">${planActIcon(r.act)} ${planActLabel(r.act)}</span>
+      <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}${r.ver?' · v'+r.ver:''}">🤖${r.ver?' v'+r.ver:''}</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
       ${can('action.edit_plan')?`<span class="plan-btns">
         <button class="pf3-del" onclick="planEdit('${r.id}')" title="${RT('Редактировать','Edit')}">✏</button>
         ${r.done?`<button class="pf3-del" onclick="planDone('${r.id}',0)" title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" onclick="planDone('${r.id}',1)" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}

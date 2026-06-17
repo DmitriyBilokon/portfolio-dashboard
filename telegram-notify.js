@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18chat';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18plan';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -947,9 +947,13 @@ const AI_SYSTEM = `Ты — AI Proto, главная и самая важная 
 
 Правила: опирайся на переданные данные и свои знания о компаниях; называй конкретные цифры (уровни входа, доли, суммы); будь лаконичен — без воды; если есть marketContext — это живая статистика рыночных фаз по всем индексным вкладкам (Nasdaq 100, S&P 500, OMXS30, OMXSPI, DAX 40, CAC 40, FTSE MIB, OBX 25) и сводки их последних AI-обзоров: используй её как картину рынка (breadth, моментум); в конце отчёта одна строка: «Это аналитическая сводка, а не индивидуальная инвестиционная рекомендация.»
 
+ПОСЛЕДОВАТЕЛЬНОСТЬ С ПРОШЛЫМ АНАЛИЗОМ (changedSince). Если в снапшоте/контексте есть прежние твои выводы (trackRecord, lastAiReview, recentTrades) — НЕ противоречь им без причины. Если ты ИЗМЕНИЛ мнение по бумаге относительно прошлого раза (поднял/снял приоритет, развернул совет) — кратко объясни ЧТО и ПОЧЕМУ изменилось в поле changedSince. Если это первый анализ или существенных изменений нет — оставь changedSince пустой строкой.
+
+ЛИСТ ОЖИДАНИЯ (watchlist). Кроме готовых действий, добавь 0–4 идеи «на подтверждении» в watchlist: бумаги, которые интересны, но входить ПОКА рано — с условием входа (condition) и причиной (rationale). Это приоритет 4 (наблюдение), не немедленная сделка.
+
 В САМОМ КОНЦЕ ответа добавь машиночитаемый план ребалансировки (он отображается на вкладке «Предложение») — fenced json, открой и закрой его символами ${FENCE} :
 ${FENCE}json
-{"summary":"<2–3 предложения о целевой структуре, нацеленной на обгон индексов>","actions":[{"action":"Купить|Докупить|Сократить|Продать|Держать","name":"<компания>","ticker":"<тикер>","details":"<уровень входа/выхода и краткое обоснование>","amountSEK":<число или null>}]}
+{"summary":"<2–3 предложения о целевой структуре, нацеленной на обгон индексов>","changedSince":"<что изменилось с прошлого анализа и почему; пусто, если первый анализ или без изменений>","actions":[{"action":"Купить|Докупить|Сократить|Продать|Держать","name":"<компания>","ticker":"<тикер>","details":"<уровень входа/выхода и краткое обоснование>","amountSEK":<число или null>}],"watchlist":[{"name":"<компания>","ticker":"<тикер>","condition":"<при каком условии входить>","rationale":"<почему интересна>"}]}
 ${FENCE}`;
 
 // Structured output: report (markdown) + machine-readable rebalancing proposal
@@ -962,6 +966,7 @@ const AI_SCHEMA = {
       type: 'object',
       properties: {
         summary: { type: 'string', description: '2–3 предложения о целевой структуре портфеля' },
+        changedSince: { type: 'string', description: 'Что изменилось с прошлого анализа и почему; пусто, если первый анализ или без изменений' },
         actions: {
           type: 'array',
           items: {
@@ -977,8 +982,23 @@ const AI_SCHEMA = {
             additionalProperties: false,
           },
         },
+        watchlist: {
+          type: 'array',
+          description: 'Идеи «на подтверждении» — приоритет 4, не немедленная сделка',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              ticker: { type: 'string' },
+              condition: { type: 'string', description: 'Условие входа' },
+              rationale: { type: 'string' },
+            },
+            required: ['name', 'ticker', 'condition', 'rationale'],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ['summary', 'actions'],
+      required: ['summary', 'changedSince', 'actions', 'watchlist'],
       additionalProperties: false,
     },
   },

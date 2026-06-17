@@ -3690,6 +3690,8 @@ function pf3RecoHorizons(d,r){
     :nowV==='avoid'?RT('падающий нож — ждать стабилизации у поддержки','falling knife — wait for support to hold')
     :nowV==='sell'?RT('у сопротивления / перегрев — зона фиксации','at resistance / overheated — take-profit')
     :nowV==='buy'?RT(`цена у уровня ${sig.n||'входа'} в восходящем тренде`,`price at level ${sig.n||'entry'} in uptrend`)
+    // Ждать, хотя buy-сигнал сработал (цена у уровня входа) — значит тренд не подтверждён (цена ниже SMA 200).
+    :(sig.type==='buy')?RT(`у входа (${sig.n||''}), но цена ниже SMA 200 — тренд не подтверждён`,`at entry (${sig.n||''}), but price below SMA 200 — trend unconfirmed`)
     :RT(`до уровня входа ${sig.dist!=null?'≈ '+sig.dist.toFixed(1)+'%':'далеко'}`,`${sig.dist!=null?sig.dist.toFixed(1)+'% to entry':'far from entry'}`);
   const now=pack(nF,nT,nR,nowV,{note:nNote,entry:(nowV==='buy'||nowV==='wait')?entry:null});
 

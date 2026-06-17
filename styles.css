@@ -1390,3 +1390,42 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-opt-im{font-size:12px;color:var(--text2);margin:2px 0 10px;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:inline-block;cursor:help}
 .pf3-opt-im b{color:var(--text1)}
 .pf3-opt-im .pf3-opt-sub{color:var(--text3);font-size:11px}
+/* 🏠 HOME — карточки индексов с лестницей поддержки/сопротивления */
+.idx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:4px}
+.idx-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:13px 15px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.idx-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.idx-name{font-size:12.5px;color:var(--text1);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.idx-sym{font:600 9.5px 'JetBrains Mono',monospace;color:var(--text3);flex:none}
+.idx-px-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.idx-px{font:800 20px 'JetBrains Mono',monospace;color:var(--text1);letter-spacing:-.5px}
+.idx-ch{font:700 12px 'JetBrains Mono',monospace}
+.idx-levels{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--border);padding-top:7px}
+.idx-lvl{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:6px;font:600 11px 'JetBrains Mono',monospace;padding:1px 0}
+.idx-lvl-tag{color:var(--text3);font-weight:700}
+.idx-lvl-v{color:var(--text2);text-align:left}
+.idx-lvl-d{color:var(--text3);font-size:10px}
+.idx-lvl.res .idx-lvl-tag,.idx-lvl.res .idx-lvl-v{color:#ef4444}
+.idx-lvl.sup .idx-lvl-tag,.idx-lvl.sup .idx-lvl-v{color:#10b981}
+.idx-lvl.idx-now{background:var(--bg);border-radius:6px;margin:2px 0;padding:2px 4px}
+.idx-lvl.idx-now .idx-lvl-tag,.idx-lvl.idx-now .idx-lvl-v{color:var(--text1);font-weight:800}
+.idx-lvl-load{font-size:11px;color:var(--text3);border-top:1px solid var(--border);padding-top:7px}
+.idx-trend{font-size:10.5px;font-weight:600}
+.idx-trend.up{color:#10b981}.idx-trend.down{color:#ef4444}.idx-trend.mid{color:var(--text3)}
+@media(max-width:560px){.idx-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.idx-lvl.res:first-child,.idx-lvl.sup:last-child{display:none}}
+/* 🏠 HOME — шапка, единый рейтинг (балл-бар), сворачиваемые горизонты */
+.home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.home-head-l{display:flex;flex-direction:column;gap:2px;min-width:0}
+.home-title{font-size:15px;font-weight:800;color:var(--text1)}
+.home-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pf3-btn-primary{box-shadow:0 8px 22px rgba(99,102,241,.40)}
+.home-admin-tools{display:inline-flex;gap:6px;padding-left:8px;border-left:1px solid var(--border)}
+.hb-score{white-space:nowrap}
+.hb-score b{font:800 12px 'JetBrains Mono',monospace;color:var(--text1);margin-left:6px;vertical-align:middle}
+.hb-bar{display:inline-block;width:54px;height:7px;border-radius:4px;background:var(--bg);overflow:hidden;vertical-align:middle}
+.hb-bar-f{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--v3-acc),#8b5cf6)}
+.home-details{margin:2px 0}
+.home-details>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--text2);padding:8px 2px;list-style:none}
+.home-details>summary::-webkit-details-marker{display:none}
+.home-details>summary::before{content:'▸ ';color:var(--text3)}
+.home-details[open]>summary::before{content:'▾ '}
+.home-details-body{margin-top:6px}

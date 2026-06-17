@@ -295,6 +295,24 @@ grp('scenario v1.4', function(){
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
 });
 
+// 9q) 🏆 homeCompositeScore — единый балл из всех сигналов (чистая функция)
+grp('homeCompositeScore', function(){
+  // сильный кандидат: апсайд 30, аптренд, ROE 20, рост 18, P/E 15, у входа, buy, недооценка
+  var strong = homeCompositeScore({up:30,roe:20,revg:18,pe:15,entry:2,upTrend:true,phase:'undr',reco:'buy',sigN:3,insBuy:true,aiV:'buy',undervalued:true});
+  // слабый: падающий нож, апсайд −20, ROE −5, avoid
+  var weak = homeCompositeScore({up:-20,roe:-5,revg:-3,pe:60,entry:null,upTrend:false,phase:'knife',reco:'avoid',sigN:-2,insBuy:false,aiV:'avoid',undervalued:false});
+  __ok('сильный балл > слабого', strong.score > weak.score);
+  __ok('сильный близок к 100', strong.score >= 90);
+  __ok('слабый близок к 0', weak.score <= 15);
+  __ok('балл в [0..100]', strong.score <= 100 && weak.score >= 0);
+  __ok('почему-чипы у сильного', strong.why.length > 0 && strong.why.length <= 3);
+  // нейтрал/нет данных → ~50, без штрафов
+  var empty = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
+  __eq('пустой вход → нейтральные 50', empty.score, 50);
+  // отсутствие данных не штрафует сильнее, чем плохие данные
+  __ok('пустой ≥ слабого', empty.score >= weak.score);
+});
+
 // 9l) 📊 Блок D — детектор сценарных алертов
 grp('scenario alerts', function(){
   // первое наблюдение (нет prev) → без событий

@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17options3';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17levels';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -325,6 +325,51 @@ async function optionsImplied(symbol){
     }catch(e){}
     return out;
   }catch(e){ return null; }
+}
+// ── 📐 Уровни индексов: поддержка/сопротивление (daily pivots + свинги окна) ──
+// Чистая функция: цена + дневные H/L/C → ближайшие S/R по обе стороны цены.
+// Схлопывает близкие уровни (в пределах 0.3%); до 2 сопротивлений выше и 2 поддержек ниже.
+function collapseLevels(arr, tol){
+  const s = arr.filter(v => v > 0 && isFinite(v)).sort((a, b) => a - b), out = [];
+  for(const v of s){ if(!out.length || Math.abs(v - out[out.length - 1]) / out[out.length - 1] > tol) out.push(v); }
+  return out;
+}
+function indexLevels(price, closes, highs, lows){
+  price = +price;
+  if(!(price > 0) || !Array.isArray(closes) || closes.length < 2) return null;
+  highs = Array.isArray(highs) ? highs : []; lows = Array.isArray(lows) ? lows : [];
+  const C = closes[closes.length - 1], H = highs.length ? highs[highs.length - 1] : 0, L = lows.length ? lows[lows.length - 1] : 0;
+  const cand = []; let pivot = null;
+  if(H > 0 && L > 0 && C > 0){
+    const P = (H + L + C) / 3; pivot = round2(P);
+    cand.push(2 * P - L, 2 * P - H, P + (H - L), P - (H - L));   // R1, S1, R2, S2
+  }
+  const W = Math.min(SR_WINDOW, closes.length);
+  if(highs.length) cand.push(Math.max(...highs.slice(-W)));   // свинг-хай окна → сопротивление
+  if(lows.length)  cand.push(Math.min(...lows.slice(-W)));    // свинг-лоу окна → поддержка
+  const res = collapseLevels(cand.filter(v => v > price), 0.003).slice(0, 2).map(round2);            // выше цены, ближайший первым
+  const sup = collapseLevels(cand.filter(v => v < price), 0.003).sort((a, b) => b - a).slice(0, 2).map(round2); // ниже цены, ближайший первым
+  return { pivot, res, sup };
+}
+// Кэш уровней (S/R меняются медленно) — на изолят, TTL 10 мин.
+let _levelsCache = {};
+async function levelsFor(sym){
+  const c = _levelsCache[sym];
+  if(c && Date.now() - c.at < 600000) return c.data;
+  const res = await yChart(sym, '1d', '1y');
+  const m = res?.meta;
+  if(!m || typeof m.regularMarketPrice !== 'number') return null;
+  const q = res?.indicators?.quote?.[0] || {};
+  const closes = (q.close || []).filter(v => typeof v === 'number' && v > 0);
+  const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0);
+  const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0);
+  const price = m.regularMarketPrice;
+  const lv = indexLevels(price, closes, highs, lows);
+  if(!lv) return null;
+  const pct = typeof m.regularMarketChangePercent === 'number' ? round2(m.regularMarketChangePercent * 100) : null;
+  const data = { price: round2(price), pct, sma50: smaLast(closes, 50), sma200: smaLast(closes, 200), ...lv, at: new Date().toISOString() };
+  _levelsCache[sym] = { data, at: Date.now() };
+  return data;
 }
 async function dailyHistory(sym, range = '2y'){
   const res = await yChart(sym, '1d', range);
@@ -2468,6 +2513,13 @@ export default {
       // Implied move из опционов (ATM-стрэддл ближайшей экспирации). Публичные данные.
       const im = await optionsImplied(url.searchParams.get('options').trim());
       return json(im || { error: 'no options' });
+    }
+    if(url.searchParams.has('levels')){
+      // S/R уровни индексов (pivots + свинги). Кэш 10 мин; публичные данные.
+      const syms = url.searchParams.get('levels').split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+      const out = {};
+      for(const s of syms){ try{ const lv = await levelsFor(s); if(lv) out[s] = lv; }catch(e){} }
+      return json(out);
     }
     if(url.searchParams.has('history')){
       // Daily close series for one symbol → powers the dashboard's stock chart popup.

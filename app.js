@@ -4660,6 +4660,7 @@ async function homeUpdateAll(){
     toast(RT(`✓ Обновлено: ${updated}/${total} акций · ${keys.length} вкладок · курсы валют`,`✓ Updated: ${updated}/${total} stocks · ${keys.length} tabs · FX rates`),updated===0);
   }finally{
     _homeUpd=false;
+    _homeBestCache=null;   // 🏆 пересобрать общий рейтинг по свежим данным
     renderAll();
   }
 }
@@ -5432,6 +5433,83 @@ function homeBestHTML(){
     ${tbl('🥉 '+RT('Лучшие на 6–12 мес','Best 6–12 months'),RT('фундаментал и недооценка','fundamentals & value'),P.long,bpWhyLong)}
     <div class="pf3-ai-note">${RT('Детерминированный отбор из всех вкладок по обновлённым данным. Справочно, не инвестиционная рекомендация.','Deterministic screen across all tabs from refreshed data. Reference only, not investment advice.')}</div>`;
 }
+// ── 🏆 Единый композитный рейтинг: ОДИН балл из ВСЕХ сигналов сразу ──
+// Апсайд + тех-фаза + качество (ROE) + рост + оценка (P/E) + точка входа +
+// рекомендация движка + инсайдеры + AI-вердикт. Детерминированно по живым данным.
+const PHASE_PTS={knife:-3,down:-1,corr:0.3,flat:0,rev:1,undr:2,up:1.5,imp:0.5,heat:-1.5};
+// Чистая функция балла: нормированные вклады всех сигналов → {score 0..100, raw, why}.
+// Отсутствующие данные не штрафуют (вклад 0) — иначе EU/Nordic без VAL/AI проваливались бы.
+function homeCompositeScore(x){
+  let raw=0;const why=[];
+  const {up,roe,revg,pe,entry,upTrend,phase,reco,sigN,insBuy,aiV,undervalued}=x;
+  if(up!=null){if(up>=25){raw+=3;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=10){raw+=2;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=0)raw+=1;else if(up>=-10)raw-=1;else raw-=2;}
+  raw+=PHASE_PTS[phase]||0;
+  if(roe!=null){if(roe>=15){raw+=2;why.push(`ROE ${roe.toFixed(0)}%`);}else if(roe>=10)raw+=1;else if(roe<0)raw-=1.5;}
+  if(revg!=null){if(revg>=15){raw+=2;why.push(`${RT('рост','growth')} ${revg.toFixed(0)}%`);}else if(revg>=8){raw+=1;why.push(`${RT('рост','growth')} ${revg.toFixed(0)}%`);}else if(revg<0)raw-=1;}
+  if(pe!=null&&pe>0){if(pe<=18){raw+=1;why.push(`P/E ${pe.toFixed(0)}`);}else if(pe>=45)raw-=1;}
+  if(entry!=null&&upTrend){if(entry<=3){raw+=2;why.push(RT('у точки входа','near entry'));}else if(entry<=7){raw+=1;why.push(RT('близко к входу','near entry'));}}
+  if(reco==='buy')raw+=2;else if(reco==='sell'||reco==='avoid')raw-=2;
+  if(sigN)raw+=Math.max(-2,Math.min(3,sigN));
+  if(insBuy)why.push(RT('инсайдеры↑','insiders↑'));
+  if(undervalued)why.push(RT('недооценка','undervalued'));
+  if(aiV==='buy')raw+=1;else if(aiV==='avoid'||aiV==='sell')raw-=1;
+  const score=Math.max(0,Math.min(100,Math.round(50+raw*4)));
+  return {score,raw,why:[...new Set(why)].slice(0,3)};
+}
+function homeBestComposite(){
+  const sm=(typeof _valSecCache!=='undefined'&&_valSecCache)||valSectorMedians();
+  const seen=new Set(),out=[];
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
+    const h=d.headers,{s50,s200}=smaIdx(d);
+    const peC=h.indexOf('P/E'),roC=h.indexOf('ROE'),rgC=h.indexOf('Рост выручки'),supC=h.indexOf('Поддержка');
+    d.rows.forEach((r,i)=>{
+      const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[7])||0;if(!(price>0))return;
+      recalcPF(i,k);seen.add(tk);
+      const num=c=>{const v=c>=0?parseFloat(r[c]):NaN;return isFinite(v)?v:null};
+      const D=c=>{const v=num(c);return(v&&v>0)?(price/v-1)*100:null};
+      const up=pf3EffUpside(d,r),pe=num(peC),roe=num(roC),revg=num(rgC);
+      let phase='flat';try{phase=pf3Criterion(d,r).cls||'flat'}catch(e){}
+      let reco=null;try{reco=pf3Reco(d,r).v}catch(e){}
+      const sig=signalScore(INSIDER[tk],VAL[tk],sm[(VAL[tk]||{}).sector]);
+      const insBuy=!!(INSIDER[tk]&&(INSIDER[tk].cluster||INSIDER[tk].netUSD>0));
+      const aiV=(AI_RECO[tk]||{}).verdict||null;
+      const d50=D(s50),dSup=D(supC),d200=D(s200);
+      const entryRaw=[d50,dSup].filter(v=>v!=null).map(Math.abs).reduce((a,b)=>Math.min(a,b),Infinity);
+      const entry=isFinite(entryRaw)?entryRaw:null;
+      const undervalued=!!(sig&&sig.items.some(it=>it.d>0&&/недооцен|дешевле|undervalued|cheaper/.test(it.t)));
+      const sc=homeCompositeScore({up,roe,revg,pe,entry,upTrend:d200!=null&&d200>0,phase,reco,sigN:sig?sig.n:0,insBuy,aiV,undervalued});
+      out.push({tk,name:String(r[1]||tk),ccy:r[8]||'',price,score:sc.score,up,roe,revg,pe,entry,phase,reco,sigN:sig?sig.n:0,aiV,why:sc.why});
+    });
+  });
+  return out;
+}
+const HOME_BEST_SORTS=[['overall',['Общий','Overall']],['upside',['Апсайд','Upside']],['value',['Недооценка','Value']],['quality',['Качество','Quality']],['entry',['У входа','Entry']]];
+let homeBestSort='overall',_homeBestCache=null;
+function homeBestList(){
+  if(!_homeBestCache)_homeBestCache=homeBestComposite();
+  const a=_homeBestCache.slice(),BIG=1e9;
+  const by={
+    overall:(x,y)=>y.score-x.score,
+    upside:(x,y)=>(y.up==null?-BIG:y.up)-(x.up==null?-BIG:x.up),
+    quality:(x,y)=>(y.roe==null?-BIG:y.roe)-(x.roe==null?-BIG:x.roe),
+    value:(x,y)=>(y.sigN-x.sigN)||((x.pe==null?BIG:x.pe)-(y.pe==null?BIG:y.pe)),
+    entry:(x,y)=>(x.entry==null?BIG:x.entry)-(y.entry==null?BIG:y.entry),
+  };
+  return a.sort(by[homeBestSort]||by.overall);
+}
+function homeBestSetSort(s){homeBestSort=s;const el=document.getElementById('homeBestBoard');if(el)el.innerHTML=homeBestBoardInner();}
+function homeBestBoardInner(){
+  const seg=HOME_BEST_SORTS.map(s=>`<button class="pf3-hz-b${homeBestSort===s[0]?' on':''}" onclick="homeBestSetSort('${s[0]}')">${RT(s[1][0],s[1][1])}</button>`).join('');
+  const arr=homeBestList().slice(0,12);
+  if(!arr.length)return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><div class="pf3-empty">${RT('Нет данных — нажмите «🔄 Обновить всё».','No data — press «🔄 Update all».')}</div>`;
+  const max=Math.max(1,...arr.map(x=>x.score));
+  const rows=arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="hb-score"><span class="hb-bar"><span class="hb-bar-f" style="width:${Math.round(x.score/max*100)}%"></span></span><b>${x.score}</b></td><td class="bp-why">${x.why.join(' · ')||'—'}</td></tr>`).join('');
+  return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Балл','Score')}</th><th>${RT('Сигналы','Signals')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function homeBestBoardHTML(){
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏆 ${RT('Лучшие акции — общий рейтинг','Best stocks — overall rank')}</span><span class="pf3-asof">${RT('композит всех сигналов','composite of all signals')}</span></div><div id="homeBestBoard">${homeBestBoardInner()}</div><div class="pf3-ai-note">${RT('Один балл из апсайда, фазы, качества, роста, оценки, точки входа, рекомендации, инсайдеров и AI. Детерминированно по обновлённым данным. Справочно, не рекомендация.','One score from upside, phase, quality, growth, valuation, entry, recommendation, insiders and AI. Deterministic from refreshed data. Reference only.')}</div></section>`;
+}
 // ── 📈 Лайв-рынки на Home: фьючерсы + сырьё + мировые индексы ──
 // Фьючерсы (=F) трейдятся ~23ч → живой барометр риска; спот-индексы (^…) —
 // в часы своей биржи. Всё тянем одним ?symbols= (yahoo: цена + дневное изм. %).
@@ -5447,8 +5525,19 @@ async function homeLoadFutures(){
   }catch(e){}
   _homeFutLoading=false;
 }
-function homeFutStart(){homeLoadFutures();if(_homeFutTimer)return;_homeFutTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadFutures();},20000);}
-function homeFutStop(){if(_homeFutTimer){clearInterval(_homeFutTimer);_homeFutTimer=null;}}
+// 📐 S/R уровни индексов (медленные) — отдельный фон-поллинг раз в 5 мин.
+let HOME_LVL={},_homeLvlLoading=false,_homeLvlTimer=null;
+async function homeLoadLevels(){
+  if(_homeLvlLoading)return;_homeLvlLoading=true;
+  try{
+    const syms=HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0]).join(',');
+    const j=await fetch(PRICE_PROXY+'?levels='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
+    if(j&&typeof j==='object'){HOME_LVL=j;const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();}
+  }catch(e){}
+  _homeLvlLoading=false;
+}
+function homeFutStart(){homeLoadFutures();homeLoadLevels();if(!_homeFutTimer)_homeFutTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadFutures();},20000);if(!_homeLvlTimer)_homeLvlTimer=setInterval(()=>{if(curIdx===HOME_KEY&&!document.hidden)homeLoadLevels();},300000);}
+function homeFutStop(){if(_homeFutTimer){clearInterval(_homeFutTimer);_homeFutTimer=null;}if(_homeLvlTimer){clearInterval(_homeLvlTimer);_homeLvlTimer=null;}}
 
 // ===== 🔄 Live Sector Tracker (вкладка «Сектора») =====
 let SECT={data:null,prev:null,period:'dayPct',at:0,err:null};
@@ -5542,17 +5631,37 @@ function sectInfo(){
   o.classList.remove('hidden');
 }
 function homeFutAtLbl(){return _homeFutAt?RT('обновлено','updated')+' '+new Date(_homeFutAt).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):RT('загрузка…','loading…');}
-function homeFutTiles(list){
-  return list.map(([sym,ru,en])=>{
-    const q=HOME_FUT[sym],p=q&&typeof q.price==='number'?q.price:null,pct=q&&typeof q.pct==='number'?q.pct:null;
-    const cls=pct==null?'':pct>=0?'pf3-up':'pf3-down';
-    return`<div class="fut-tile"><div class="fut-name">${RT(ru,en)}</div><div class="fut-px">${p!=null?pf3Fmt(p,2):'—'}</div><div class="fut-ch ${cls}">${pct!=null?(pct>=0?'▲ +':'▼ ')+pct.toFixed(2)+'%':'…'}</div></div>`;
-  }).join('');
+// Карточка индекса/фьючерса: живая цена (HOME_FUT, 20с) + лестница S/R (HOME_LVL, 5 мин).
+function homeIdxCard(sym,label){
+  const q=HOME_FUT[sym],lv=HOME_LVL[sym];
+  const p=(q&&typeof q.price==='number')?q.price:(lv&&typeof lv.price==='number'?lv.price:null);
+  const pct=(q&&typeof q.pct==='number')?q.pct:(lv&&typeof lv.pct==='number'?lv.pct:null);
+  const cls=pct==null?'':pct>=0?'pf3-up':'pf3-down';
+  const head=`<div class="idx-top"><span class="idx-name">${label}</span><span class="idx-sym">${sym}</span></div>
+    <div class="idx-px-row"><span class="idx-px">${p!=null?pf3Fmt(p,2):'—'}</span><span class="idx-ch ${cls}">${pct!=null?(pct>=0?'▲ +':'▼ ')+pct.toFixed(2)+'%':'…'}</span></div>`;
+  let ladder='';
+  if(lv&&p!=null&&((lv.res&&lv.res.length)||(lv.sup&&lv.sup.length))){
+    const row=(tag,v,kind)=>{const d=(v/p-1)*100;return`<div class="idx-lvl ${kind}"><span class="idx-lvl-tag">${tag}</span><span class="idx-lvl-v">${pf3Fmt(v,2)}</span><span class="idx-lvl-d">${d>=0?'+':''}${d.toFixed(1)}%</span></div>`;};
+    const res=(lv.res||[]),sup=(lv.sup||[]);
+    const resHtml=res.slice().reverse().map((v,i)=>row('R'+(res.length-i),v,'res')).join('');   // дальнее сверху
+    const supHtml=sup.map((v,i)=>row('S'+(i+1),v,'sup')).join('');                                // ближнее сверху
+    const nowHtml=`<div class="idx-lvl idx-now"><span class="idx-lvl-tag">▸</span><span class="idx-lvl-v">${pf3Fmt(p,2)}</span><span class="idx-lvl-d">${RT('цена','price')}</span></div>`;
+    ladder=`<div class="idx-levels">${resHtml}${nowHtml}${supHtml}</div>`;
+  }else if(!lv){
+    ladder=`<div class="idx-lvl-load">⏳ ${RT('уровни…','levels…')}</div>`;
+  }
+  let trend='';
+  if(lv&&p!=null&&lv.sma50>0&&lv.sma200>0){
+    const a=p>lv.sma50,b=p>lv.sma200;
+    trend=`<div class="idx-trend ${a&&b?'up':(!a&&!b?'down':'mid')}">${a&&b?'▲ '+RT('выше SMA50/200','above SMA50/200'):(!a&&!b?'▼ '+RT('ниже SMA50/200','below SMA50/200'):'↔ '+RT('между SMA','between SMAs'))}</div>`;
+  }
+  return`<div class="idx-card">${head}${ladder}${trend}</div>`;
 }
+function homeFutTiles(list){return list.map(([sym,ru,en])=>homeIdxCard(sym,RT(ru,en))).join('');}
 function homeMktInner(){
-  const sec=(title,list,sub)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} <span class="fut-live">● LIVE</span></span><span class="pf3-asof">${sub}</span></div><div class="fut-grid">${homeFutTiles(list)}</div></section>`;
+  const sec=(title,list,sub)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} <span class="fut-live">● LIVE</span></span><span class="pf3-asof">${sub}</span></div><div class="idx-grid">${homeFutTiles(list)}</div></section>`;
   return sec('📈 '+RT('Фьючерсы и сырьё','Futures & commodities'),HOME_MKT_FUT,homeFutAtLbl())
-    +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи','spot · during market hours'));
+    +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи · S/R: pivots + свинги','spot · market hours · S/R: pivots + swings'));
 }
 function homeFuturesHTML(){return`<div id="homeFutWrap">${homeMktInner()}</div>`;}
 // 🔮 HOME-прогноз: топ-10 акций по ОЖИДАЕМОЙ доходности на 3 горизонта.
@@ -5615,10 +5724,20 @@ function homeForecastHTML(){
   return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')}</span><span class="pf3-asof">${sub}</span>${aiBtn}</div>${body}<div class="pf3-reco-note">${note}</div></section>`;
 }
 function homeHTML(){
+  // Шапка: статус/время + ОДНА первичная кнопка «Обновить всё»; админ-инструменты — отдельной группой.
+  const adminTools=isAdmin()?`<span class="home-admin-tools" title="${RT('Сбор данных (только админ)','Data collection (admin only)')}">
+    <button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>
+    <button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>
+  </span>`:'';
+  const head=`<section class="pf3-panel home-head">
+    <div class="home-head-l"><span class="home-title">🏠 ${RT('Главная','Home')}</span><span class="pf3-asof">${RT('рынки, уровни и лучшие акции','markets, levels & best stocks')} · ${homeFutAtLbl()}</span></div>
+    <div class="home-head-actions"><button class="pf3-btn pf3-btn-primary" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${adminTools}</div>
+  </section>`;
   const items=[
+    {id:'head',html:head},
     {id:'futures',html:homeFuturesHTML()},
-    {id:'tools',html:`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📊 ${RT('Рынок сейчас','Market now')}</span><span class="pf3-asof">${RT('лучшие кандидаты по горизонтам','best candidates by horizon')}</span><button class="pf3-btn pf3-btn-sm" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="insiderBtn" onclick="insiderUpdateAll()" title="${RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)')}">🕵 AI Insider</button>`:''}${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="valBtn" onclick="valUpdateAll()" title="${RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history')}">📐 ${RT('Оценка','Valuation')}</button>`:''}</div></section>`},
-    {id:'best',html:homeBestHTML()},
+    {id:'best',html:homeBestBoardHTML()},
+    {id:'horizons',html:`<details class="home-details"><summary>🏅 ${RT('Разбивка по горизонтам (1–3 · 3–6 · 6–12 мес)','By horizon (1–3 · 3–6 · 6–12 m)')}</summary><div class="home-details-body">${homeBestHTML()}</div></details>`},
     {id:'forecast',html:homeForecastHTML()},
   ];
   if(isAdmin()){ items.push({id:'signal',html:homeSignalHTML()}); items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }

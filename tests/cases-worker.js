@@ -57,6 +57,22 @@ grp('impliedMove', function(){
   __approx('uses lastPrice fallback (11%)', im2.movePct, 11, 0.1);
 });
 
+// 7c) 📐 indexLevels — S/R уровни индекса (pivots + свинги, классификация по цене)
+grp('indexLevels', function(){
+  // последний бар H=110,L=90,C=100 → P=100; R1=110, S1=90, R2=120, S2=80.
+  var closes = [95, 98, 100], highs = [105, 108, 110], lows = [92, 94, 90];
+  var lv = indexLevels(100, closes, highs, lows);
+  __eq('pivot = 100', lv.pivot, 100);
+  __ok('сопротивления выше цены', lv.res.every(function(v){ return v > 100; }));
+  __ok('поддержки ниже цены', lv.sup.every(function(v){ return v < 100; }));
+  __ok('ближайшее сопротивление первым (R1=110 < R2=120)', lv.res[0] < lv.res[1]);
+  __ok('ближайшая поддержка первой (S1=90 > S2=80)', lv.sup[0] > lv.sup[1]);
+  __eq('R1 = 110', lv.res[0], 110);
+  __eq('S1 = 90', lv.sup[0], 90);
+  __ok('мало данных → null', indexLevels(100, [100], [110], [90]) === null);
+  __ok('нет цены → null', indexLevels(0, closes, highs, lows) === null);
+});
+
 // 7b) 📅 pickEarnExpiry — экспирация, покрывающая дату отчёта (первая по дню ≥ дня отчёта)
 grp('pickEarnExpiry', function(){
   var D = function(s){ return Date.parse(s + 'T00:00:00Z'); };

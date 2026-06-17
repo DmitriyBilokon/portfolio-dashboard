@@ -145,7 +145,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules;
   if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
-  if(Array.isArray(s.aiPrefs)) AI_PREFS=s.aiPrefs;
+  AI_PREFS=[];   // 🤖 автономия: личные правила инвестора отменены — не восстанавливаем из снапшота
   if(typeof s.news==='string') NEWS_TEXT=s.news;
   if(s.newsImpact&&typeof s.newsImpact==='object') NEWS_IMPACT=s.newsImpact;
   if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
@@ -348,8 +348,10 @@ let STOCK_AI_LOG=[];   // обучающая база: разборы акций
 
 // 📚 Инвест-плейбук: курируемая методичка «как обгонять индекс». Редактируется
 // инвестором, синхронизируется (aiPlaybook) и передаётся во все анализы AI Proto.
+const PLAYBOOK_GOAL_OLD='Цель — риск-скорректированное опережение индекса (OMXS30/Nasdaq 100/S&P 500), а не максимальная доходность любой ценой.';
+const PLAYBOOK_GOAL='Цель — опережать ВСЕ эталонные индексы (OMXS30/Nasdaq 100/S&P 500) и МАКСИМИЗИРОВАТЬ рост капитала во всех портфелях; риск-менеджмент — инструмент устойчивого роста, а не потолок амбиций.';
 const DEFAULT_PLAYBOOK=[
-  'Цель — риск-скорректированное опережение индекса (OMXS30/Nasdaq 100/S&P 500), а не максимальная доходность любой ценой.',
+  PLAYBOOK_GOAL,
   'Победителям давай расти; не режь сильные прибыльные позиции ради ребаланса — недовес закрывай кэшем и новыми идеями.',
   'Перевешивай качество: высокий и стабильный ROE/ROIC, низкий долг, растущие выручка и маржа, устойчивое конкурентное преимущество (moat).',
   'Комбинируй факторы: качество + моментум (цена выше SMA 200, здоровый тренд) исторически обгоняют «дёшево, но падает».',
@@ -371,12 +373,28 @@ const DEFAULT_PLAYBOOK=[
 ];
 // Принципы, добавленные в v2 — дописываются к уже синхронизированному плейбуку один раз.
 const PLAYBOOK_V2_ADD=DEFAULT_PLAYBOOK.slice(-4);
-const PLAYBOOK_SEED_V=2;
+// v3 (2026-06): автономный AI Proto, цель — обогнать ВСЕ индексы и максимизировать прибыль.
+const PLAYBOOK_V3_ADD=[
+  'Концентрируйся в лучших идеях: позициям высокой убеждённости давай вес; широкая диверсификация ради диверсификации размывает альфу — 12–20 сильных имён обычно достаточно.',
+  'Лови структурные тренды (ИИ-инфраструктура, энергетика/электрификация, реиндустриализация, оборона): сильный попутный ветер сектора усиливает отдельные имена.',
+  'Покупай силу: добавляй к лидерам, подтверждающим тренд новыми максимумами на растущем объёме; не жди идеальной цены входа в сильную историю.',
+  'Ищи асимметрию: идеи с потенциалом ×2–×5 при ограниченном риске на позицию; несколько таких перекрывают много мелких ошибок.',
+  'Свежие данные решают: перед каждым советом подтягивай последние новости, отчёты и пересмотры таргетов — действуй по актуальной картине, а не устаревшей.',
+  'Ребалансируй из слабых в сильные, не наоборот; продавай тезисно (сломался драйвер), а не механически по весу — победителей не режь.',
+  'Быстро признавай ошибку: ломается тезис — выходи без привязки к цене входа, освобождая капитал под лучшие идеи.',
+  'Действуй проактивно и решительно: давай конкретные советы (что купить/добавить/сократить и почему), а не обтекаемые формулировки — цель измеряется ростом капитала и альфой.',
+];
+const PLAYBOOK_SEED_V=3;
 let AI_PLAYBOOK=[],AI_PLAYBOOK_SEEDV=0;
 function aiPlaybookEnsure(){
   if(!Array.isArray(AI_PLAYBOOK))AI_PLAYBOOK=[];
   if(!AI_PLAYBOOK.length){ AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice(); }
-  else if(AI_PLAYBOOK_SEEDV<PLAYBOOK_SEED_V){ PLAYBOOK_V2_ADD.forEach(p=>{ if(!AI_PLAYBOOK.includes(p))AI_PLAYBOOK.push(p); }); }
+  else if(AI_PLAYBOOK_SEEDV<PLAYBOOK_SEED_V){
+    // Обновляем цель на новую (автономия + максимизация) и дописываем новые принципы один раз.
+    const gi=AI_PLAYBOOK.indexOf(PLAYBOOK_GOAL_OLD); if(gi>=0)AI_PLAYBOOK[gi]=PLAYBOOK_GOAL;
+    if(AI_PLAYBOOK_SEEDV<2)PLAYBOOK_V2_ADD.forEach(p=>{ if(!AI_PLAYBOOK.includes(p))AI_PLAYBOOK.push(p); });
+    PLAYBOOK_V3_ADD.forEach(p=>{ if(!AI_PLAYBOOK.includes(p))AI_PLAYBOOK.push(p); });
+  }
   if(AI_PLAYBOOK_SEEDV<PLAYBOOK_SEED_V){ AI_PLAYBOOK_SEEDV=PLAYBOOK_SEED_V; if(!applyingRemote)scheduleSave(); }
   return AI_PLAYBOOK;
 }
@@ -673,7 +691,7 @@ const I18N_EN={
 '💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','🔄 AI-Рекомендация':'🔄 AI recommendation','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
 'Календарь — отчёты и дивиденды':'Calendar — earnings & dividends','Сегодня':'Today','отчёт':'earnings','экс-дата':'ex-div','выплата':'payout','клик по событию открывает карточку':'click an event to open the card','💰 Дивиденды':'💰 Dividends','kr/год по текущим позициям':'kr/yr at current positions','Дивид./год':'Div./yr','Доходность':'Yield','Экс-дата':'Ex-date','Выплата':'Pay date','Мне в год':'My yearly','Дивидендных бумаг в портфеле нет':'No dividend payers here','Дат отчётов пока нет':'No earnings dates yet','Загружаю календарь отчётов и дивидендов…':'Loading the earnings & dividends calendar…',
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
-'🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы':'🤖 AI Proto — learns, analyzes the portfolio and beats the indices','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с AI Proto':'💬 AI Proto chat','видит портфель, цены и ваши правила':'sees your portfolio, prices and rules','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память AI Proto — правила инвестора':'🧠 AI Proto memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
+'🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы':'🤖 AI Proto — learns, analyzes the portfolio and beats the indices','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с AI Proto':'💬 AI Proto chat','видит портфель, цены и ваши правила':'sees your portfolio and prices (autonomous)','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память AI Proto — правила инвестора':'🧠 AI Proto memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
 '❓ Справка':'❓ Help','Нажмите на раздел, чтобы развернуть его':'Click a section to expand it','🗂 Вкладки и виды':'🗂 Tabs & views','🏷 Тип акции':'🏷 Stock type','📊 Критерий — рыночная фаза (техника + фундаментал)':'📊 Criterion — market phase (technicals + fundamentals)','🎯 Сигнал — цена у технического уровня (±2%)':'🎯 Signal — price at a technical level (±2%)','🧪 Симуляция — тестовые покупки':'🧪 Simulation — paper trades','📐 Технические уровни и колонки':'📐 Technical levels & columns','💼 Портфельные значения':'💼 Portfolio values','💪 Здоровье бизнеса (карточка акции)':'💪 Business health (stock card)',
 'Нажмите на строку — карточка с полными данными откроется слева от списка':'Click a row — the full card opens to the left of the list','📋 Акции':'📋 Stocks','🔄 Обновить акции':'🔄 Refresh stocks','Рекомендация':'Recommendation','🤖 AI Портфель':'🤖 AI Portfolio','🔬 AI-разборы':'🔬 AI analyses',
 'Критично':'Critical','Слабо':'Weak','Средне':'Fair','Хорошо':'Good','Отлично':'Excellent',
@@ -1788,6 +1806,19 @@ const SEC_INFO={
     ['Хедж','компенсация валютного риска; hedge ratio — какая часть закрыта.','offsetting FX risk; hedge ratio — what fraction is covered.'],
     ['Сценарий ±%','эффект на портфель при движении курса.','effect on the portfolio if the rate moves.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  playbook:{t:['📚 Инвест-плейбук','📚 Investing playbook'],b:()=>infoP('Набор стратегических принципов «как обгонять индекс». Передаётся во ВСЕ анализы AI Proto и в AI-Портфель как рамка решений — это единственный способ направлять автономного AI Proto.','A set of strategic «how to beat the index» principles. Passed to EVERY AI Proto analysis and to the AI portfolio as the decision framework — the only way to steer the autonomous AI Proto.')+infoRows([
+    ['Зачем','приоритетнее общих эвристик: AI применяет эти принципы в каждом совете и сделке.','takes priority over generic heuristics: the AI applies these in every call and trade.'],
+    ['✨ Подтянуть практики (AI)','AI ищет в вебе свежие лучшие практики и дописывает новые принципы (платно, админ).','the AI web-searches fresh best practices and appends new principles (paid, admin).'],
+    ['➕ / 🗑','добавить свой принцип / удалить.','add your own principle / remove one.'],
+    ['Сбросить к стандарту','вернуть встроенный набор принципов.','restore the built-in principle set.'],
+  ])+infoNote('Цель плейбука — обогнать все индексы и максимизировать прибыль. '+INFO_DISCLAIM[0],'The playbook’s goal is to beat all indices and maximize profit. '+INFO_DISCLAIM[1])},
+  aiauto:{t:['🤖 Автономный режим AI Proto','🤖 AI Proto autonomous mode'],b:()=>infoP('AI Proto работает самостоятельно, без ваших ограничений.','AI Proto operates on its own, without your constraints.')+infoRows([
+    ['Правила отменены','личные правила инвестора больше не передаются и не ограничивают советы.','personal investor rules are no longer sent and do not constrain advice.'],
+    ['Анализ всех акций','сам анализирует бумаги и даёт конкретные советы по всем портфелям.','it analyzes every stock and gives concrete advice across all portfolios.'],
+    ['AI-Портфель','ведёт независимый бумажный портфель без искусственных лимитов, по плейбуку и фактам.','runs an independent paper portfolio with no artificial limits, by the playbook and facts.'],
+    ['Цель','обогнать ВСЕ индексы и максимизировать рост капитала.','beat ALL indices and maximize capital growth.'],
+    ['Как направлять','через 📚 Плейбук — это единственный набор принципов, которым он следует.','via the 📚 Playbook — the only set of principles it follows.'],
+  ])+infoNote('AI-Портфель — симуляция (бумажная), для сравнения с вашим реальным портфелем. '+INFO_DISCLAIM[0],'The AI portfolio is a paper simulation, to benchmark vs your real portfolio. '+INFO_DISCLAIM[1])},
   newslive:{t:['📰 Новости (Yahoo)','📰 News (Yahoo)'],b:()=>infoP('Живые заголовки по акции с Yahoo Finance. Тянутся автоматически при открытии карточки (обновление ~10 мин), без платных токенов.','Live per-stock headlines from Yahoo Finance. Fetched automatically when the card opens (refresh ~10 min), no paid tokens.')+infoRows([
     ['🟢 / 🔴 / ⚪','тональность заголовка по словарю: позитив / негатив / нейтрально.','headline tone by lexicon: positive / negative / neutral.'],
     ['настрой ±N','суммарный новостной фон с весом по свежести (новое весомее): >0 позитивный, <0 негативный.','overall news tone, recency-weighted (newer matters more): >0 positive, <0 negative.'],
@@ -2279,7 +2310,7 @@ function pf3AiSnapshot(key){
           analystTarget:tgC>=0?nm(r[tgC]):null,pe:peC>=0?nm(r[peC]):null,ps:psC>=0?nm(r[psC]):null,
           phase:c.label,signal:sig.type!=='none'?`${sig.type}${sig.n?' '+sig.n:''}${typeof sig.dist==='number'?' '+sig.dist.toFixed(1)+'%':''}`:null};
       }),
-      investorRules:AI_PREFS,
+      investorRules:[],   // 🤖 автономия: личные правила отменены
       playbook:aiPlaybookEnsure(),
       trackRecord:aiTrackRecord(),
       userNews:newsForAi(),
@@ -2308,7 +2339,7 @@ function pf3AiSnapshot(key){
     // Уже СОВЕРШЁННЫЕ сделки по этому портфелю (журнал) — AI обязан учитывать их
     // ПЕРЕД советами: не предлагать обратное недавнему действию без причины и т.д.
     recentTrades:trades,realizedPLSEK,
-    investorRules:AI_PREFS,   // личные правила инвестора — AI обязан их учитывать
+    investorRules:[],   // 🤖 автономия: личные правила отменены — AI оптимизирует свободно
     playbook:aiPlaybookEnsure(),   // 📚 методичка «как обгонять индекс» — применяй
     trackRecord:aiTrackRecord(),   // 🎯 сбывались ли прошлые вердикты — учись на результатах
     benchmarks:aiBenchmarks(),     // 🆚 состав индексов по секторам — для оценки недовеса
@@ -2904,13 +2935,13 @@ async function aiChatSend(){
   aiChatBusy=true;scheduleSave();renderPF3();
   try{
     const r=await fetch(PRICE_PROXY+'?action=chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},
-      body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:AI_PREFS,snapshot:pf3AiSnapshot()})});
+      body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:[],snapshot:pf3AiSnapshot()})});
     const j=await r.json();
     if(j&&j.reply){
       aiSpendAdd(j.cost);
       AI_CHAT.push({role:'assistant',content:j.reply,at:new Date().toISOString()});
       AI_CHAT=AI_CHAT.slice(-40);   // держим последние 40 сообщений
-      (j.memory||[]).forEach(m=>{const t=String(m).trim();if(t&&!AI_PREFS.includes(t)){AI_PREFS.push(t);toast('🧠 Запомнил: '+t)}});
+      // 🤖 автономия: новые «правила инвестора» больше не накапливаем — AI решает сам
       scheduleSave();
     }else toast((j&&j.error)||'AI не ответил',true);
   }catch(e){toast('Worker недоступен или не обновлён (нужен эндпоинт ?action=chat)',true);}
@@ -2929,13 +2960,31 @@ function aiPrefDel(i){AI_PREFS.splice(i,1);scheduleSave();renderPF3()}
 function aiPlaybookAdd(){const inp=document.getElementById('aiPbInp');const t=(inp&&inp.value||'').trim();if(!t)return;aiPlaybookEnsure();if(!AI_PLAYBOOK.includes(t))AI_PLAYBOOK.push(t);inp.value='';scheduleSave();renderPF3()}
 function aiPlaybookDel(i){aiPlaybookEnsure();AI_PLAYBOOK.splice(i,1);scheduleSave();renderPF3()}
 function aiPlaybookReset(){if(confirm(RT('Вернуть плейбук к стандартному набору принципов?','Reset the playbook to the default principles?'))){AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice();scheduleSave();renderPF3()}}
+// ✨ AI подтягивает свежие лучшие практики (web_search) и дописывает их в плейбук.
+let _aiPbBusy=false;
+async function aiPlaybookAiRun(){
+  if(_aiPbBusy||!isAdmin())return;
+  _aiPbBusy=true;renderPF3();
+  try{
+    const r=await fetch(PRICE_PROXY+'?action=playbook',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify({current:aiPlaybookEnsure()})});
+    const j=await r.json();
+    if(j&&j.playbook&&Array.isArray(j.playbook.items)){
+      aiSpendAdd(j.cost);
+      let added=0;
+      j.playbook.items.forEach(p=>{const t=String(p).trim();if(t&&!AI_PLAYBOOK.includes(t)){AI_PLAYBOOK.push(t);added++;}});
+      scheduleSave();
+      toast(RT(`✓ Плейбук: добавлено ${added} принципов`,`✓ Playbook: added ${added} principles`),added===0);
+    }else toast((j&&j.error)||RT('AI не ответил','AI did not respond'),true);
+  }catch(e){toast('AI: '+(e&&e.message||RT('сеть/worker','network/worker')),true);}
+  _aiPbBusy=false;renderPF3();
+}
 function aiChatScroll(){const b=document.getElementById('aiChatBox');if(b)b.scrollTop=b.scrollHeight}
 
 function pf3PlaybookHTML(){
   aiPlaybookEnsure();
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${RT('📚 Инвест-плейбук — методичка «как обгонять индекс»','📚 Investing playbook — how to beat the index')}</span><span class="pf3-asof"><a href="#" onclick="aiPlaybookReset();return false">${RT('сбросить к стандарту','reset to default')}</a></span></div>
+    <div class="pf3-panel-hd"><span>${RT('📚 Инвест-плейбук — методичка «как обгонять индекс»','📚 Investing playbook — how to beat the index')} ${infoBtn('playbook')}</span><span class="pf3-asof"><a href="#" onclick="aiPlaybookReset();return false">${RT('сбросить к стандарту','reset to default')}</a></span>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="aiPbBtn" onclick="aiPlaybookAiRun()"${_aiPbBusy?' disabled':''}>${_aiPbBusy?'⏳ '+RT('Ищу практики…','Searching…'):'✨ '+RT('Подтянуть практики (AI)','Pull practices (AI)')}</button>`:''}</div>
     <div class="pf3-ai-note">${RT('Передаётся во все анализы AI Proto как стратегические принципы. Редактируйте под себя.','Sent to every AI Proto analysis as strategic principles. Edit to your taste.')}</div>
     ${AI_PLAYBOOK.map((p,i)=>`<div class="ai-pref"><span>• ${esc(p)}</span><button class="pf3-del" onclick="aiPlaybookDel(${i})" title="${RT('Удалить принцип','Remove principle')}">🗑</button></div>`).join('')||`<div class="pf3-empty">${RT('Плейбук пуст','Playbook is empty')}</div>`}
     <form class="ai-chat-form" onsubmit="event.preventDefault();aiPlaybookAdd()">
@@ -2990,7 +3039,7 @@ function pf3AiHTML(){
     ?`<div class="ai-msg user">${m.content.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
     :`<div class="ai-msg bot">${pf3Md(m.content)}</div>`).join('');
   h+=`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${T('💬 Чат с AI Proto')}</span><span class="pf3-asof">${AI_CHAT.length?`<a href="#" onclick="aiChatClear();return false">${T('очистить')}</a>`:T('видит портфель, цены и ваши правила')}</span></div>
+    <div class="pf3-panel-hd"><span>${T('💬 Чат с AI Proto')}</span><span class="pf3-asof">${AI_CHAT.length?`<a href="#" onclick="aiChatClear();return false">${T('очистить')}</a>`:RT('видит портфель и цены · автономный','sees your portfolio and prices · autonomous')}</span></div>
     <div class="ai-chat-box" id="aiChatBox">${msgs||'<div class="pf3-empty">Спросите что угодно о портфеле и рынке: «Стоит ли докупать Micron?», «Куда вложить 20 000 kr?». Скажите ассистенту свои правила — он запомнит их и будет учитывать в анализах.</div>'}${aiChatBusy?'<div class="ai-msg bot ai-typing">⏳ AI Proto думает…</div>':''}</div>
     <form class="ai-chat-form" onsubmit="event.preventDefault();aiChatSend()">
       <input id="aiChatInp" placeholder="${T('Ваш вопрос или указание ассистенту…')}" autocomplete="off" ${aiChatBusy?'disabled':''}>
@@ -2998,12 +3047,8 @@ function pf3AiHTML(){
     </form>
   </section>
   <section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${T('🧠 Память AI Proto — правила инвестора')}</span><span class="pf3-asof">${T('учитываются в чате и в полном анализе')}</span></div>
-    ${AI_PREFS.map((p,i)=>`<div class="ai-pref"><span>• ${p.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><button class="pf3-del" onclick="aiPrefDel(${i})" title="Забыть правило">🗑</button></div>`).join('')||'<div class="pf3-empty">Правил пока нет — напишите их в чате («никогда не предлагай плечо», «хочу долю защитных 20%») или добавьте вручную ниже</div>'}
-    <form class="ai-chat-form" onsubmit="event.preventDefault();aiPrefAdd()">
-      <input id="aiPrefInp" placeholder="${T('Добавить правило вручную…')}" autocomplete="off">
-      <button class="pf3-btn" type="submit">${T('➕ Запомнить')}</button>
-    </form>
+    <div class="pf3-panel-hd"><span>🤖 ${RT('Автономный режим AI Proto','AI Proto autonomous mode')} ${infoBtn('aiauto')}</span><span class="pf3-asof">${RT('пользовательские правила отменены','user rules cancelled')}</span></div>
+    <div class="pf3-reco-note">${RT('AI Proto работает автономно: личные правила инвестора отменены и НЕ ограничивают советы. Он сам анализирует все акции, ведёт AI-Портфель и оптимизирует все портфели по плейбуку и свежим фактам. Цель — обогнать все индексы и максимизировать прибыль. Ориентир задаётся через 📚 Плейбук ниже.','AI Proto runs autonomously: personal investor rules are cancelled and do NOT constrain advice. It analyzes all stocks, runs the AI portfolio and optimizes every portfolio by the playbook and fresh facts. The goal is to beat all indices and maximize profit. Steer it via the 📚 Playbook below.')}</div>
   </section>
   ${pf3PlaybookHTML()}
   ${pf3TrackHTML()}`;

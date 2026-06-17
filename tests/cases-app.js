@@ -318,6 +318,23 @@ grp('homeCompositeScore', function(){
   __ok('негативные новости < нейтрал', nNeg.score < empty.score);
 });
 
+// 9s) 📚 aiPlaybookEnsure — миграция плейбука на v3 (автономия + новые практики)
+grp('playbook v3 migration', function(){
+  var savedRemote = (typeof applyingRemote!=='undefined')?applyingRemote:false;
+  applyingRemote = true;   // не дёргать scheduleSave в тесте
+  // существующий плейбук со старой целью и seedv=2 → цель заменяется, дописываются v3
+  AI_PLAYBOOK = [PLAYBOOK_GOAL_OLD, 'Произвольный старый принцип']; AI_PLAYBOOK_SEEDV = 2;
+  aiPlaybookEnsure();
+  __ok('старая цель заменена на новую', AI_PLAYBOOK.indexOf(PLAYBOOK_GOAL_OLD) < 0 && AI_PLAYBOOK.includes(PLAYBOOK_GOAL));
+  __ok('v3-принципы дописаны', PLAYBOOK_V3_ADD.every(function(p){ return AI_PLAYBOOK.includes(p); }));
+  __eq('seedv = 3', AI_PLAYBOOK_SEEDV, 3);
+  // пустой плейбук → дефолт уже с новой целью
+  AI_PLAYBOOK = []; AI_PLAYBOOK_SEEDV = 0; aiPlaybookEnsure();
+  __ok('дефолт содержит новую цель (максимизация)', AI_PLAYBOOK.includes(PLAYBOOK_GOAL));
+  __ok('цель — про максимизацию', /максимизир/i.test(PLAYBOOK_GOAL));
+  applyingRemote = savedRemote;
+});
+
 // 9r) 📰 newsSentiment / newsRecencyWeight — новостной фон с весом по свежести
 grp('newsSentiment', function(){
   var now = 1750000000000;

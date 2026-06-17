@@ -1699,6 +1699,115 @@ function toggleFaq(){
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
+// ── ❗ Справка по секциям: «!» в заголовке → модалка с описанием всех значений/аббревиатур ──
+// Один реестр SEC_INFO + общий рендер. infoBtn(key) вставляется в pf3-panel-hd.
+function infoBtn(key){return `<span class="dash-info-btn" onclick="event.stopPropagation();secInfo('${key}')" title="${RT('Что это? Описание значений и аббревиатур','What is this? Field & abbreviation guide')}">!</span>`;}
+function infoRows(rows){return `<dl class="info-gloss">${rows.map(x=>`<dt>${x[0]}</dt><dd>${RT(x[1],x[2])}</dd>`).join('')}</dl>`;}
+function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
+function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
+const INFO_DISCLAIM=['Справочные данные, не индивидуальная инвестиционная рекомендация.','Reference data, not individual investment advice.'];
+const SEC_INFO={
+  markets:{t:['📈 Рынки и уровни индексов','📈 Markets & index levels'],b:()=>infoP('Живые цены индексов/фьючерсов и их ключевые уровни. Цена обновляется ~20 c, уровни — раз в 5 мин.','Live index/futures prices and their key levels. Price refreshes ~20 s, levels every 5 min.')+infoRows([
+    ['● LIVE','фьючерсы торгуются ~23 ч → барометр риска; спот-индексы (^…) — в часы своей биржи.','futures trade ~23 h → a risk barometer; spot indices (^…) trade in their exchange hours.'],
+    ['▲/▼ %','изменение за день (авторитетное regularMarketChangePercent от Yahoo).','daily change (authoritative regularMarketChangePercent from Yahoo).'],
+    ['R / R1, R2','сопротивление — уровни ВЫШЕ цены (красным), ближайший первым.','resistance — levels ABOVE price (red), nearest first.'],
+    ['S / S1, S2','поддержка — уровни НИЖЕ цены (зелёным), ближайший первым.','support — levels BELOW price (green), nearest first.'],
+    ['▸ цена','маркер текущей цены между поддержками и сопротивлениями.','marker of the current price between support and resistance.'],
+    ['Pivot','опорный уровень дня P = (High+Low+Close)/3 предыдущего бара; R1=2P−L, S1=2P−H, R2=P+(H−L), S2=P−(H−L).','daily pivot P = (High+Low+Close)/3 of the prior bar; R1=2P−L, S1=2P−H, R2=P+(H−L), S2=P−(H−L).'],
+    ['свинг','максимум/минимум за окно ~60 торговых дней — как дополнительный уровень.','high/low over a ~60-trading-day window — an extra level.'],
+    ['SMA 50/200','простая скользящая средняя за 50/200 дней; «выше/ниже SMA» = направление тренда.','simple moving average over 50/200 days; «above/below SMA» = trend direction.'],
+    ['± % у уровня','расстояние от цены до уровня в процентах.','distance from price to the level, in percent.'],
+  ])+infoNote('Уровни считаются из дневной истории (pivots + свинги). '+INFO_DISCLAIM[0],'Levels computed from daily history (pivots + swings). '+INFO_DISCLAIM[1])},
+  bestrank:{t:['🏆 Лучшие акции — общий рейтинг','🏆 Best stocks — overall rank'],b:()=>infoP('Единый балл 0–100 из ВСЕХ сигналов сразу. Детерминированно по обновлённым данным (кнопка «Обновить всё»).','A single 0–100 score from ALL signals at once. Deterministic from refreshed data («Update all»).')+infoRows([
+    ['Балл 0–100','свод всех вкладов; 50 — нейтрально, выше — сильнее. Бар показывает относительную силу.','sum of all contributions; 50 is neutral, higher is stronger. The bar shows relative strength.'],
+    ['Сигналы','топ-3 причины балла (чипы): апсайд, ROE, рост, P/E, у входа, инсайдеры, недооценка.','top-3 reasons for the score (chips): upside, ROE, growth, P/E, near entry, insiders, undervalued.'],
+    ['Апсайд','потенциал роста к таргету аналитиков, %.','upside to the analyst target, %.'],
+    ['Фаза','тех-фаза цены: 🔪 нож, 📉 даунтренд, ⚠️ коррекция, ⚖️ боковик, 🔄 разворот, 💎 недооценка, 📈 аптренд, 🚀 импульс, 🌡 перегрев.','price phase: 🔪 falling knife, 📉 downtrend, ⚠️ correction, ⚖️ range, 🔄 reversal, 💎 undervalued, 📈 uptrend, 🚀 momentum, 🌡 overheated.'],
+    ['У входа','цена близка к уровню входа (SMA50/поддержка) при аптренде.','price is near an entry level (SMA50/support) in an uptrend.'],
+    ['Сорт','Общий / Апсайд / Недооценка / Качество (ROE) / У входа — переключают ранжирование.','Overall / Upside / Value / Quality (ROE) / Entry — switch the ranking.'],
+    ['Нет данных','отсутствующий сигнал не штрафует (вклад 0) — бумаги без оценки/AI не проваливаются.','a missing signal does not penalize (0 contribution) — stocks without valuation/AI are not buried.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  horizons:{t:['🏅 Лучшие по горизонтам','🏅 Best by horizon'],b:()=>infoP('Те же кандидаты, но разнесены по сроку удержания — у каждого свой акцент.','Same candidates split by holding horizon — each with its own focus.')+infoRows([
+    ['1–3 мес','импульс и точки входа: тренд выше SMA, близость к уровню, дневная динамика.','momentum & entries: trend above SMA, proximity to a level, daily move.'],
+    ['3–6 мес','тренд + разумная цена: аптренд, умеренный апсайд, приемлемый P/E.','trend + fair value: uptrend, moderate upside, acceptable P/E.'],
+    ['6–12 мес','фундаментал и недооценка: ROE, рост выручки, апсайд, низкий P/E.','fundamentals & value: ROE, revenue growth, upside, low P/E.'],
+    ['Почему','3 коротких причины попадания в список.','3 short reasons for inclusion.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  forecast:{t:['🔮 Прогноз — топ-10 по горизонтам','🔮 Forecast — top-10 by horizon'],b:()=>infoP('Ожидаемая доходность по 3 горизонтам. По умолчанию — детерминированно от консенсус-таргета; «✨ AI-прогноз» — версия со свежим веб-поиском (платно, админ).','Expected return across 3 horizons. By default deterministic from the consensus target; «✨ AI forecast» is the fresh web-search version (paid, admin).')+infoRows([
+    ['3 мес / 6–9 мес / 12+ мес','доля пути к таргету: ~⅓ / ~⅔ / полностью.','share of the path to target: ~1/3 / ~2/3 / full.'],
+    ['ƒ','оценка по фундаменталу (рост выручки/ROE), когда нет таргета.','fundamental estimate (revenue growth/ROE) when no target.'],
+    ['≈','нет таргета/данных — без изменения.','no target/data — held flat.'],
+    ['Сегменты','переключают сортировку топ-10 по выбранному горизонту.','switch the top-10 sort by the chosen horizon.'],
+  ])+infoNote('Оценка, не индивидуальная рекомендация.','An estimate, not advice.')},
+  scenario:{t:['📊 Сценарии акции','📊 Stock scenarios'],b:()=>infoP('Два РАЗДЕЛЬНЫХ горизонта со своим R/R: краткосрок (дни-недели, тех-уровни) и среднесрок (до отчёта, таргеты + событие).','Two SEPARATE horizons, each with its own R/R: short-term (days-weeks, technical levels) and mid-term (to earnings, targets + event).')+infoRows([
+    ['Bull / Base / Bear','оптимистичный / базовый / пессимистичный сценарий цены.','optimistic / base / pessimistic price scenario.'],
+    ['R/R','risk/reward — отношение потенциала роста к риску снижения; >1 благоприятно.','risk/reward — upside vs downside; >1 is favourable.'],
+    ['ATR','average true range — средний дневной диапазон (волатильность) для коридора.','average true range — typical daily range (volatility) for the corridor.'],
+    ['RSI 1D / 1W','relative strength index (0–100) на дневном/недельном баре; >70 перекупленность, <30 перепроданность.','relative strength index (0–100) on the daily/weekly bar; >70 overbought, <30 oversold.'],
+    ['Проекция ±ATR×√N','полоса ≈±1σ за N дней — диапазон неопределённости, НЕ цель.','a ≈±1σ band over N days — an uncertainty range, NOT a target.'],
+    ['Событийный Bear','просадка на провале отчёта (−R%); R по умолчанию 20% либо по опционам (см. ниже).','drawdown on an earnings miss (−R%); R defaults to 20% or comes from options (below).'],
+    ['📉 Опционы закладывают ход ±X%','implied move — ожидаемая амплитуда из ATM-стрэддла (call+put)/цена к ближайшей экспирации.','implied move — expected amplitude from the ATM straddle (call+put)/price to the nearest expiry.'],
+    ['📅 На отчёт ±X%','implied move у экспирации, покрывающей дату отчёта — «чистый» скачок на событии.','implied move at the expiration covering the earnings date — the «clean» event jump.'],
+    ['IV','implied volatility — годовая подразумеваемая волатильность ATM-опционов.','implied volatility — annualized IV of the ATM options.'],
+  ])+infoNote('Sanity-check скрывает R/R при сломанных/устаревших входах. '+INFO_DISCLAIM[0],'A sanity check hides R/R on broken/stale inputs. '+INFO_DISCLAIM[1])},
+  targets:{t:['🎯 Аналитические таргеты','🎯 Analyst targets'],b:()=>infoP('Агрегированные ценовые цели аналитиков. US — FMP, EU/Nordic — резерв Yahoo.','Aggregated analyst price targets. US via FMP, EU/Nordic via Yahoo fallback.')+infoRows([
+    ['Консенсус','средний таргет; берём свежий квартальный срез, если «за всё время» устарел.','average target; we use the fresh quarterly slice if the all-time one is stale.'],
+    ['High / Low','максимальный / минимальный таргет в выборке.','highest / lowest target in the set.'],
+    ['Апсайд %','(таргет / цена − 1) × 100.','(target / price − 1) × 100.'],
+    ['Изменения','свежие пересмотры таргета аналитиками за ~30 дней.','recent analyst target revisions over ~30 days.'],
+    ['Рейтинги','распределение Strong Buy / Buy / Hold / Sell / Strong Sell.','distribution of Strong Buy / Buy / Hold / Sell / Strong Sell.'],
+    ['span q / m','окно свежего среза: квартал / месяц.','fresh-slice window: quarter / month.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  valuation:{t:['📐 Оценка — мультипликаторы','📐 Valuation — multiples'],b:()=>infoP('Дёшево или дорого относительно сектора и собственной истории.','Cheap or expensive vs the sector and the stock’s own history.')+infoRows([
+    ['P/E','price/earnings — цена на прибыль; ниже = дешевле.','price/earnings; lower = cheaper.'],
+    ['fwd P/E','форвардный P/E на прогнозную прибыль; fwd<trailing ⇒ EPS растёт.','forward P/E on expected earnings; fwd<trailing ⇒ EPS rising.'],
+    ['P/S','price/sales — цена на выручку (для убыточных/растущих).','price/sales — for unprofitable/growth names.'],
+    ['EV/EBITDA','стоимость бизнеса к EBITDA — без искажений структуры капитала.','enterprise value to EBITDA — capital-structure neutral.'],
+    ['PEG','P/E с поправкой на рост; ~1 — справедливо.','P/E adjusted for growth; ~1 is fair.'],
+    ['vs сектор','% относительно медианы сектора (ниже медианы = дешевле).','% vs the sector median (below median = cheaper).'],
+    ['vs история','против собственного исторического диапазона мультипликатора.','vs the stock’s own historical multiple range.'],
+    ['⚠ ловушка','дёшево, но EPS падает — мнимая недооценка.','cheap but EPS falling — a value trap.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  insider:{t:['🕵 Инсайдеры','🕵 Insiders'],b:()=>infoP('Сделки инсайдеров компании. US — Finnhub, Швеция — Finansinspektionen.','Company insider transactions. US via Finnhub, Sweden via Finansinspektionen.')+infoRows([
+    ['Кластер покупок','несколько РАЗНЫХ инсайдеров купили в близком окне — сильный сигнал.','several DIFFERENT insiders bought within a tight window — a strong signal.'],
+    ['Нетто USD','покупки минус продажи в деньгах за окно; >0 — чистая покупка.','buys minus sells in money over the window; >0 = net buying.'],
+    ['Покупка/продажа','тип сделки; покупки информативнее (продажи бывают плановыми).','transaction type; buys are more informative (sells are often planned).'],
+    ['Окно','период, за который собраны сделки.','the period over which trades are collected.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  signal:{t:['🧭 Инсайдеры × Недооценка','🧭 Insiders × Undervaluation'],b:()=>infoP('Скрещивание двух модулей: где инсайдеры ПОКУПАЮТ и при этом бумага НЕДООЦЕНЕНА.','Crossing two modules: where insiders are BUYING and the stock is also UNDERVALUED.')+infoRows([
+    ['🧭 Сигнал ±N','сумма баллов инсайдеров и оценки; 🟢 положительный, 🔴 отрицательный.','sum of insider and valuation points; 🟢 positive, 🔴 negative.'],
+    ['Кластер +2 / нетто +1','вклад инсайдеров в балл.','insider contribution to the score.'],
+    ['Недооценка +1/+2','вклад дешевизны по сектору/истории.','undervaluation contribution vs sector/history.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  cashdrag:{t:['💵 Cash-drag','💵 Cash drag'],b:()=>infoP('Сколько доходности теряет портфель из-за доли в кэше.','How much return the portfolio loses by holding cash.')+infoRows([
+    ['Cash drag','недополученная доходность = доля кэша × доходность индекса за период.','foregone return = cash share × index return over the period.'],
+    ['Доля кэша','деньги, не вложенные в активы, % от портфеля.','money not invested in assets, % of the portfolio.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  fxhedge:{t:['💱 Валютный риск и хедж','💱 Currency risk & hedge'],b:()=>infoP('Влияние курсов на портфель в базовой валюте (SEK) и сценарий хеджирования.','How FX moves affect the portfolio in the base currency (SEK), and a hedge scenario.')+infoRows([
+    ['Валютная экспозиция','доля активов в каждой валюте.','share of assets in each currency.'],
+    ['Хедж','компенсация валютного риска; hedge ratio — какая часть закрыта.','offsetting FX risk; hedge ratio — what fraction is covered.'],
+    ['Сценарий ±%','эффект на портфель при движении курса.','effect on the portfolio if the rate moves.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  news:{t:['📰 Новости → влияние','📰 News → impact'],b:()=>infoP('Вставьте текст новостей — детерминированный разбор без платных токенов сопоставит их с вашими бумагами.','Paste news text — a deterministic, token-free pass maps it to your holdings.')+infoRows([
+    ['🟢 Bull / 🔴 Bear / ⚪ Нейтрал','тональность по словарю: позитив / негатив / нейтрально.','lexicon polarity: positive / negative / neutral.'],
+    ['Тикер · имя','совпадение по тикеру или словам названия компании.','match by ticker or company-name words.'],
+    ['✨ Платный анализ','углублённый разбор через AI (только админ).','deeper AI analysis (admin only).'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  riskret:{t:['📐 Риск и доходность','📐 Risk & return'],b:()=>infoP('Профиль риск/доходность портфеля за ~1 год.','The portfolio’s risk/return profile over ~1 year.')+infoRows([
+    ['Доходность','рост стоимости за период, %.','value growth over the period, %.'],
+    ['Волатильность','разброс доходности (стандартное отклонение) — мера риска.','dispersion of returns (standard deviation) — a risk measure.'],
+    ['Beta','чувствительность к индексу: 1 — как рынок, >1 — резче.','sensitivity to the index: 1 = like the market, >1 = sharper.'],
+    ['Alpha','доходность сверх индекса с поправкой на риск.','return above the index, risk-adjusted.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  health:{t:['💪 Здоровье бизнеса','💪 Business health'],b:()=>infoP('Качество фундамента компании в простых баллах.','Company fundamental quality in simple scores.')+infoRows([
+    ['Баланс','долговая нагрузка (Debt/Equity) — ниже лучше.','leverage (Debt/Equity) — lower is better.'],
+    ['Кэш','генерация денег (FCF-маржа).','cash generation (FCF margin).'],
+    ['Рост','динамика выручки (CAGR / YoY).','revenue trajectory (CAGR / YoY).'],
+    ['ROE','return on equity — отдача на капитал; >15% сильно.','return on equity; >15% is strong.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+};
+function secInfo(key){const o=document.getElementById('faqOverlay');if(!o)return;const e=SEC_INFO[key];if(!e)return;document.getElementById('faqCard').innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>${RT(e.t[0],e.t[1])}</h2><div class="faq-body">${e.b()}</div>`;o.classList.remove('hidden');}
+
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 }
@@ -2548,7 +2657,7 @@ function insiderHTML(d,r){
   const cc=v&&v.valCcy;
   const cluster=v&&v.cluster;
   const srcL=v&&v.src==='fi'?' <span class="ins-src">FI 🇸🇪</span>':'';
-  const head=`<div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')}${srcL} ${cluster?`<span class="ins-cluster">🟢 CLUSTER BUY · ${cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${cluster.sumUSD?' · '+insiderFmtUSD(cluster.sumUSD,cc):''}</span>`:''}</span>
+  const head=`<div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдеры','Insiders')} ${infoBtn('insider')}${srcL} ${cluster?`<span class="ins-cluster">🟢 CLUSTER BUY · ${cluster.uniqueBuyers} ${RT('инсайд.','insiders')}${cluster.sumUSD?' · '+insiderFmtUSD(cluster.sumUSD,cc):''}</span>`:''}</span>
     <span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
   if(!v||v.err)return`<section class="pf3-panel">${head}<div class="pf3-empty">${v&&v.err==='auth'?RT('Неверный Finnhub-ключ (FINNHUB_KEY)','Invalid Finnhub key'):v&&v.err==='no-key'?RT('Для US-бумаг нужен FINNHUB_KEY в воркере.','FINNHUB_KEY needed in the worker for US tickers.'):RT('Нет данных. Нажмите «🕵 AI Insider» на 🏠 Home (US — Finnhub, SE — Finansinspektionen).','No data. Press «🕵 AI Insider» on 🏠 Home (US — Finnhub, SE — Finansinspektionen).')}</div></section>`;
   if(!v.txCount)return`<section class="pf3-panel">${head}<div class="pf3-empty">${RT('Инсайдерских сделок за 30 дней не найдено','No insider transactions in the last 30 days')}</div></section>`;
@@ -2849,7 +2958,7 @@ function pf3AiHTML(){
   const H=pf3AiHist(),last=H[0];
   const newsHas=Object.keys(NEWS_IMPACT||{}).length;
   let h=`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>📰 ${RT('Новости → влияние (без токенов)','News → impact (no tokens)')}</span><span class="pf3-asof">${RT('вставьте сводку — оцените влияние на все акции','paste a summary — score the impact on all stocks')}</span></div>
+    <div class="pf3-panel-hd"><span>📰 ${RT('Новости → влияние (без токенов)','News → impact (no tokens)')} ${infoBtn('news')}</span><span class="pf3-asof">${RT('вставьте сводку — оцените влияние на все акции','paste a summary — score the impact on all stocks')}</span></div>
     <textarea id="newsInp" class="news-inp" placeholder="${RT('Вставьте сводку последних мировых новостей…','Paste a summary of recent world news…')}" oninput="newsSetText(this.value)">${(NEWS_TEXT||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea>
     <div class="pf3-ai-bar">
       <button class="pf3-btn" onclick="newsAnalyzeFree()">🔎 ${RT('Проанализировать (бесплатно)','Analyze (free)')}</button>
@@ -3047,7 +3156,7 @@ function cashDragHTML(d,rows){
   const perRow=PERIODS.map(([k,l])=>{const br=idxReturnPct(bench,k);const dg=br==null?null:-(m.cashPct/100)*br;return`<div class="cd-pp"><span class="cd-pp-l">${l}</span><b class="${dg==null?'cd-dim':dg>=0?'pf3-up':'pf3-down'}">${dg==null?'…':(dg>=0?'+':'')+dg.toFixed(1)+'%'}</b></div>`;}).join('');
   const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" onclick="pf3Tab='list';renderAll()">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
+    <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')} ${infoBtn('cashdrag')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
     <div class="cd-grid">
       <div class="cd-main cd-${m.status}">
         <div class="cd-big ${dragCls}">${dragTxt}</div>
@@ -3083,7 +3192,7 @@ function fxHedgeHTML(d,rows,equity){
   const seg=`<span class="pf3-hz-seg">${[5,10,15].map(v=>`<button class="pf3-hz-b${fxScn===v?' on':''}" onclick="fxScnSet(${v})">+${v}%</button>`).join('')}</span>`;
   const ccyRows=m.ccyList.slice(0,5).map(x=>`<div class="fx-row"><span class="fx-c">${x.c}</span><span class="cd-dim">${x.pct.toFixed(0)}% ${RT('акций','of stocks')}</span><b class="pf3-down">${pf3Fmt(x.impact,0)} ${unit}</b></div>`).join('');
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>💱 ${RT('Валютный риск и хедж','Currency risk & hedge')}</span><span class="pf3-asof">${RT('SEK крепнет','SEK strengthens')} ${seg}</span></div>
+    <div class="pf3-panel-hd"><span>💱 ${RT('Валютный риск и хедж','Currency risk & hedge')} ${infoBtn('fxhedge')}</span><span class="pf3-asof">${RT('SEK крепнет','SEK strengthens')} ${seg}</span></div>
     <div class="cd-grid">
       <div class="cd-main ${verdict.c}">
         <div class="cd-big pf3-down">${pf3Fmt(m.impact,0)} <small>${unit}</small></div>
@@ -3182,7 +3291,7 @@ function pf3HealthTab(){
     </div>
   </section>
   <section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${RT('📐 Риск и доходность — 1 год','📐 Risk & return — 1Y')}</span></div>
+    <div class="pf3-panel-hd"><span>${RT('📐 Риск и доходность — 1 год','📐 Risk & return — 1Y')} ${infoBtn('riskret')}</span></div>
     <div id="pf3RiskBox">${pf3RiskHTML()}</div>
   </section>
   ${cashDragHTML(d,rows)}
@@ -4939,7 +5048,7 @@ function pf3ScenarioHTML(d,r){
   }
   const mdBlock=`<div class="scn-hz"><div class="scn-hz-h">📅 ${RT('Среднесрок','Mid-term')} <span class="scn-hz-s">${RT('до отчёта · таргеты + событие','to earnings · targets + event')} · RSI ${tf(tech.rsiW,'1W')}</span>${md.stretch?` <span class="scn-stretch">⚠ ${RT('растяжение','stretched')}</span>`:''}</div>${mdBody}</div>`;
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)} 1D`:''}</span></div>
+    <div class="pf3-panel-hd"><span>📊 ${RT('Сценарии','Scenarios')} ${infoBtn('scenario')}</span><span class="pf3-asof">${RT('от','from')} ${pf3Fmt(price,2)} ${ccy}${tech.atr>0?` · ATR ${pf3Fmt(tech.atr,2)} 1D`:''}</span></div>
     ${opt&&opt.movePct>0?`<div class="pf3-opt-im" title="${RT('Закладываемый опционами ход — из ATM-стрэддла (call+put). Ближайшая экспирация + отдельно ход на отчёт (экспирация, покрывающая дату отчёта). Живое значение с Yahoo, без платных токенов.','Implied move from the ATM straddle (call+put). Nearest expiry plus the earnings move (expiration covering the report date). Live from Yahoo, no paid tokens.')}">📉 ${RT('Опционы закладывают ход','Options imply a move of')} <b>±${opt.movePct.toFixed(1)}%</b> ${RT('к','to')} ${opt.expiry}${opt.days>0?` · ${opt.days} ${RT('дн','d')}`:''}${opt.iv>0?` · IV ${opt.iv.toFixed(0)}%`:''}${opt.earn&&opt.earn.movePct>0?`<br>📅 ${RT('На отчёт','Earnings')} ${opt.earn.date}: <b>±${opt.earn.movePct.toFixed(1)}%</b> <span class="pf3-opt-sub">(${RT('эксп','exp')} ${opt.earn.expiry}${opt.earn.days>0?` · ${opt.earn.days} ${RT('дн','d')}`:''}${opt.earn.iv>0?` · IV ${opt.earn.iv.toFixed(0)}%`:''})</span>`:''}</div>`:''}
     ${shBlock}${mdBlock}
     <div class="pf3-ai-note">${RT('Два РАЗДЕЛЬНЫХ горизонта со своим R/R. Краткосрок — ближайшие S/R в коридоре ±2.5·ATR (RSI/ATR 1D), плюс полоса проекции ±ATR×√10 (≈±1σ за 2 нед, не цель). Среднесрок — Bull/Base только от СВЕЖИХ таргетов (иначе «недостаточно данных»), Bear событийный; RSI 1W. Sanity-check скрывает R/R при сломанных/устаревших входах. Справочно, не рекомендация.','Two SEPARATE horizons, each with its own R/R. Short-term — nearest S/R within ±2.5·ATR (RSI/ATR 1D) plus an ±ATR×√10 projection band (≈±1σ over 2 weeks, not a target). Mid-term — Bull/Base only from FRESH targets (else «not enough data»), event-based Bear; RSI 1W. A sanity check hides R/R on broken/stale inputs. Reference only.')}</div>
@@ -5054,7 +5163,7 @@ function targetsBlockHTML(d,r){
     if(tot)ratingBar=`<div class="tgf-bar">${segs.map(([k,c])=>{const n=rt[k]||0;return n?`<span style="width:${n/tot*100}%;background:${c}" title="${k}: ${n}"></span>`:'';}).join('')}</div><div class="tgf-bar-l">${segs.filter(([k])=>rt[k]).map(([k,,l])=>`${l} ${rt[k]}`).join(' · ')}${rt.consensus?` · <b>${rt.consensus}</b>`:''}</div>`;}
   const changes=(t.changes&&t.changes.length)?`<details class="tgf-ch"><summary>📝 ${RT('Изменения таргетов (30д)','Target changes (30d)')} · ${t.changes.length}</summary>${t.changes.map(c=>`<div class="tgf-ch-row"><span class="tgf-firm">${String(c.firm||'—').replace(/</g,'&lt;')}</span><span class="tgf-chv">${c.from!=null?pf3Fmt(c.from,0)+' → ':''}<b>${pf3Fmt(c.to,0)}</b> ${ccy}</span><span class="tgf-date">${c.date||''}</span></div>`).join('')}</details>`:'';
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>🎯 ${RT('Аналитические таргеты','Analyst targets')}</span><span class="pf3-asof">${t.src?`<span class="tg-src">${t.src==='yahoo'?'Yahoo':'FMP'}</span> `:''}${t.count?`${t.count} ${RT('аналит.','an.')}`:''}${t.lastDate?` · ${RT('посл.','last')} ${t.lastDate}`:(t.src==='yahoo'?` · ${RT('живой','live')}`:'')}${stale?` <span class="tg-stale">⚠️ ${RT('устар.','stale')}</span>`:''}</span></div>
+    <div class="pf3-panel-hd"><span>🎯 ${RT('Аналитические таргеты','Analyst targets')} ${infoBtn('targets')}</span><span class="pf3-asof">${t.src?`<span class="tg-src">${t.src==='yahoo'?'Yahoo':'FMP'}</span> `:''}${t.count?`${t.count} ${RT('аналит.','an.')}`:''}${t.lastDate?` · ${RT('посл.','last')} ${t.lastDate}`:(t.src==='yahoo'?` · ${RT('живой','live')}`:'')}${stale?` <span class="tg-stale">⚠️ ${RT('устар.','stale')}</span>`:''}</span></div>
     <div class="tgf-top">
       <div><span class="label">${RT('Консенсус','Consensus')}</span> <b>${t.consensus!=null?pf3Fmt(t.consensus,0)+' '+ccy:'—'}</b>${upPct!=null?` <span class="${upPct>=0?'pf3-up':'pf3-down'}">${upPct>=0?'+':''}${upPct.toFixed(1)}%</span>`:''}</div>
       <div><span class="label">${RT('Диапазон','Range')}</span> <b>${t.low!=null&&t.high!=null?pf3Fmt(t.low,0)+'–'+pf3Fmt(t.high,0)+' '+ccy:'—'}</b></div>
@@ -5068,7 +5177,7 @@ function targetsBlockHTML(d,r){
 function valHTML(d,r){
   const tk=String(r[2]||'').trim().toUpperCase();
   const v=VAL[tk];
-  const hd=`<div class="pf3-panel-hd"><span>📐 ${RT('Оценка — мультипликаторы','Valuation — multiples')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
+  const hd=`<div class="pf3-panel-hd"><span>📐 ${RT('Оценка — мультипликаторы','Valuation — multiples')} ${infoBtn('valuation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
   if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))
     return`<section class="pf3-panel">${hd}<div class="pf3-empty">${v?RT('Нет данных по мультипликаторам для этой бумаги.','No multiples data for this stock.'):RT('Нажмите «📐 Оценка» на 🏠 Home — соберём мультипликаторы по всему портфелю.','Press «📐 Valuation» on 🏠 Home to pull multiples across the portfolio.')}</div></section>`;
   const secMed=(_valSecCache||valSectorMedians())[v.sector]||null;
@@ -5175,7 +5284,7 @@ function homeSignalHTML(){
     <div style="flex:1">${x.s.items.map(it=>`<span class="sig-tag ${it.d>0?'up':'down'}">${it.d>0?'+':'−'} ${it.t}</span>`).join(' ')}</div>
     <span class="sig-badge ${signalLevel(x.s.n).c}">${signalLevel(x.s.n).i} ${x.s.n>0?'+':''}${x.s.n}</span></div>`).join('')
     :`<div class="pf3-empty">${RT('Пока нет бумаг, где инсайдерская покупка совпадает с недооценкой. Соберите «🕵 AI Insider» и «📐 Оценку» на Home.','No stocks yet where insider buying meets undervaluation. Run «🕵 AI Insider» and «📐 Valuation» on Home.')}</div>`;
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🧭 ${RT('Инсайдеры × Недооценка','Insiders × Undervaluation')}</span><span class="pf3-asof">${RT('связка сигналов — справочно','signal crossover — reference')}</span></div>${body}</section>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🧭 ${RT('Инсайдеры × Недооценка','Insiders × Undervaluation')} ${infoBtn('signal')}</span><span class="pf3-asof">${RT('связка сигналов — справочно','signal crossover — reference')}</span></div>${body}</section>`;
 }
 function homeValHTML(){
   const ents=Object.keys(VAL||{}).map(tk=>({tk,...VAL[tk]}));
@@ -5194,7 +5303,7 @@ function homeValHTML(){
   const body=cheap.length
     ? `<div class="home-ins-sec"><div class="home-ins-h">🟢 ${RT('Дёшево по сектору и истории','Cheap vs sector & history')}</div>${cheap.slice(0,12).map(row).join('')}</div>`
     : `<div class="pf3-empty">${RT('Сильной недооценки не найдено. Откройте карточку акции — там полная разбивка по мультипликаторам.','No strong undervaluation found. Open a stock card for the full multiples breakdown.')}</div>`;
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📐 ${RT('Недооценка по мультипликаторам','Undervaluation by multiples')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📐 ${RT('Недооценка по мультипликаторам','Undervaluation by multiples')} ${infoBtn('valuation')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
 }
 
 // 🕵 Сводка инсайдерской активности на Home — результат кнопки «AI Insider».
@@ -5217,7 +5326,7 @@ function homeInsiderHTML(){
   if(clHtml)body+=`<div class="home-ins-sec"><div class="home-ins-h">🟢 ${RT('Кластерные покупки','Cluster buys')}</div>${clHtml}</div>`;
   if(nbHtml)body+=`<div class="home-ins-sec"><div class="home-ins-h">📈 ${RT('Нетто-покупки инсайдеров','Net insider buying')}</div>${nbHtml}</div>`;
   if(!body)body=`<div class="pf3-empty">${RT('Инсайдерских покупок не найдено. Откройте карточку акции — там полная сводка по каждой бумаге.','No insider buying found. Open a stock card for the full per-stock breakdown.')}</div>`;
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдерская активность','Insider activity')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🕵 ${RT('Инсайдерская активность','Insider activity')} ${infoBtn('insider')}</span><span class="pf3-asof">${sub}</span></div>${body}</section>`;
 }
 function insiderHomeTab(tk){
   const U=String(tk).toUpperCase();
@@ -5426,7 +5535,7 @@ function bpWhyLong(x){const a=[];if(x.roe!=null&&x.roe>=12)a.push(`ROE ${x.roe.t
   return a.slice(0,3).join(' · ')||RT('качество и оценка','quality + value');}
 function homeBestHTML(){
   const P=homeBestPicks();
-  const tbl=(title,sub,arr,why)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title}</span><span class="pf3-asof">${sub}</span></div>${arr.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Почему','Why')}</th></tr></thead><tbody>${arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="bp-why">${why(x)}</td></tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Подходящих кандидатов нет — нажмите «🔄 Обновить всё».','No suitable candidates — press «🔄 Update all».')}</div>`}</section>`;
+  const tbl=(title,sub,arr,why)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} ${infoBtn('horizons')}</span><span class="pf3-asof">${sub}</span></div>${arr.length?`<table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Почему','Why')}</th></tr></thead><tbody>${arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="bp-why">${why(x)}</td></tr>`).join('')}</tbody></table>`:`<div class="pf3-empty">${RT('Подходящих кандидатов нет — нажмите «🔄 Обновить всё».','No suitable candidates — press «🔄 Update all».')}</div>`}</section>`;
   return`
     ${tbl('🥇 '+RT('Лучшие на 1–3 мес','Best 1–3 months'),RT('импульс и точки входа','momentum & entry'),P.short,bpWhyShort)}
     ${tbl('🥈 '+RT('Лучшие на 3–6 мес','Best 3–6 months'),RT('тренд + разумная цена','trend + fair value'),P.medium,bpWhyMed)}
@@ -5508,7 +5617,7 @@ function homeBestBoardInner(){
   return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Балл','Score')}</th><th>${RT('Сигналы','Signals')}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function homeBestBoardHTML(){
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏆 ${RT('Лучшие акции — общий рейтинг','Best stocks — overall rank')}</span><span class="pf3-asof">${RT('композит всех сигналов','composite of all signals')}</span></div><div id="homeBestBoard">${homeBestBoardInner()}</div><div class="pf3-ai-note">${RT('Один балл из апсайда, фазы, качества, роста, оценки, точки входа, рекомендации, инсайдеров и AI. Детерминированно по обновлённым данным. Справочно, не рекомендация.','One score from upside, phase, quality, growth, valuation, entry, recommendation, insiders and AI. Deterministic from refreshed data. Reference only.')}</div></section>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏆 ${RT('Лучшие акции — общий рейтинг','Best stocks — overall rank')} ${infoBtn('bestrank')}</span><span class="pf3-asof">${RT('композит всех сигналов','composite of all signals')}</span></div><div id="homeBestBoard">${homeBestBoardInner()}</div><div class="pf3-ai-note">${RT('Один балл из апсайда, фазы, качества, роста, оценки, точки входа, рекомендации, инсайдеров и AI. Детерминированно по обновлённым данным. Справочно, не рекомендация.','One score from upside, phase, quality, growth, valuation, entry, recommendation, insiders and AI. Deterministic from refreshed data. Reference only.')}</div></section>`;
 }
 // ── 📈 Лайв-рынки на Home: фьючерсы + сырьё + мировые индексы ──
 // Фьючерсы (=F) трейдятся ~23ч → живой барометр риска; спот-индексы (^…) —
@@ -5659,7 +5768,7 @@ function homeIdxCard(sym,label){
 }
 function homeFutTiles(list){return list.map(([sym,ru,en])=>homeIdxCard(sym,RT(ru,en))).join('');}
 function homeMktInner(){
-  const sec=(title,list,sub)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} <span class="fut-live">● LIVE</span></span><span class="pf3-asof">${sub}</span></div><div class="idx-grid">${homeFutTiles(list)}</div></section>`;
+  const sec=(title,list,sub)=>`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${title} ${infoBtn('markets')}<span class="fut-live">● LIVE</span></span><span class="pf3-asof">${sub}</span></div><div class="idx-grid">${homeFutTiles(list)}</div></section>`;
   return sec('📈 '+RT('Фьючерсы и сырьё','Futures & commodities'),HOME_MKT_FUT,homeFutAtLbl())
     +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи · S/R: pivots + свинги','spot · market hours · S/R: pivots + swings'));
 }
@@ -5721,7 +5830,7 @@ function homeForecastHTML(){
     sub=RT('детерминированно · «Обновить всё»','deterministic · «Update all»');
     note=homeFcast.loading?RT('⏳ AI Proto собирает свежие данные…','⏳ AI Proto gathering fresh data…'):RT('Ожидаемая доходность от консенсус-таргета аналитиков (или фундаментала ƒ): ~⅓ за 3 мес, ~⅔ за 6–9 мес, полностью за 12+ мес. Топ-10 по 12-мес потенциалу. «✨ AI-прогноз» — версия со свежим веб-поиском. Оценка, не рекомендация.','Expected return from the analyst consensus target (or fundamentals ƒ): ~1/3 in 3m, ~2/3 in 6–9m, full at 12m+. Top-10 by 12m potential. «✨ AI forecast» is the fresh web-search version. An estimate, not advice.');
   }
-  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')}</span><span class="pf3-asof">${sub}</span>${aiBtn}</div>${body}<div class="pf3-reco-note">${note}</div></section>`;
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔮 ${RT('Прогноз — топ-10 акций по горизонтам','Forecast — top-10 stocks by horizon')} ${infoBtn('forecast')}</span><span class="pf3-asof">${sub}</span>${aiBtn}</div>${body}<div class="pf3-reco-note">${note}</div></section>`;
 }
 function homeHTML(){
   // Шапка: статус/время + ОДНА первичная кнопка «Обновить всё»; админ-инструменты — отдельной группой.
@@ -5808,7 +5917,7 @@ function pf3DetailHTML(){
     ${can('view.valuation')?valHTML(d,r):''}
     ${can('view.insider')?insiderHTML(d,r):''}
     <section class="pf3-panel">
-      <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} <span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>
+      <div class="pf3-panel-hd"><span>${T('💪 Здоровье бизнеса')} ${infoBtn('health')}<span class="pf3-asof" id="pf3FundAsof">${(pf3FundData()||{}).asOf?T('отчёт от')+' '+pf3FundData().asOf:''}</span></span><span class="pf3-tf"><button id="pf3FundAnnualBtn" class="pf3-tfbtn${pf3Fund.period==='annual'?' on':''}" onclick="pf3SetFundPeriod('annual')">${T('Годовой отчёт')}</button><button id="pf3FundQuarterBtn" class="pf3-tfbtn${pf3Fund.period==='quarter'?' on':''}" onclick="pf3SetFundPeriod('quarter')">${T('Посл. квартал')}</button></span></div>
       <div class="pf3-health-grid" id="pf3HealthGrid">${pf3Health()}</div>
     </section>
     <section class="pf3-panel">

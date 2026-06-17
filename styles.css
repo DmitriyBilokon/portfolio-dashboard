@@ -1429,3 +1429,8 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .home-details>summary::before{content:'▸ ';color:var(--text3)}
 .home-details[open]>summary::before{content:'▾ '}
 .home-details-body{margin-top:6px}
+/* ❗ Справка по секциям — глоссарий значений/аббревиатур */
+.info-gloss{margin:8px 0 0;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:13px;line-height:1.45}
+.info-gloss dt{font-weight:700;color:var(--text1);white-space:nowrap}
+.info-gloss dd{margin:0;color:var(--text2)}
+@media(max-width:520px){.info-gloss{grid-template-columns:1fr;gap:1px 0}.info-gloss dd{margin:0 0 7px;color:var(--text3)}}

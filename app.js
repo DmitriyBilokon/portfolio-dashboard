@@ -1815,6 +1815,13 @@ const SEC_INFO={
     ['Хедж','компенсация валютного риска; hedge ratio — какая часть закрыта.','offsetting FX risk; hedge ratio — what fraction is covered.'],
     ['Сценарий ±%','эффект на портфель при движении курса.','effect on the portfolio if the rate moves.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  pfcmp:{t:['🏁 Сравнение портфелей','🏁 Portfolio leaderboard'],b:()=>infoP('Сравнение доходности всех портфелей, AI-Портфеля и индексов за период (по умолчанию — с создания 12.06.2026). Только для администратора.','Returns of all portfolios, the AI portfolio and indices over the period (default — since creation 12 Jun 2026). Admin-only.')+infoRows([
+    ['📊 Все портфели','сводная доходность всех real-портфелей (взвешено стоимостью).','combined return of all real portfolios (value-weighted).'],
+    ['🤖 AI / 🧑 портфели','AI-Портфель — по реальной истории капитала; Dima/Anna/Sergei — по текущему составу.','AI portfolio — real capital history; Dima/Anna/Sergei — current composition.'],
+    ['Рейтинг','портфели ранжированы по доходности за период; бар — относительная величина.','portfolios ranked by period return; bar = relative size.'],
+    ['α (альфа)','доходность портфеля минус индекс, в процентных пунктах (п.п.). >0 — обгон.','portfolio return minus the index, in percentage points. >0 = outperformance.'],
+    ['Индексы','S&P 500 / Nasdaq 100 / OMXS30 за тот же период.','S&P 500 / Nasdaq 100 / OMXS30 over the same period.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
   playbook:{t:['📚 Инвест-плейбук','📚 Investing playbook'],b:()=>infoP('Набор стратегических принципов «как обгонять индекс». Передаётся во ВСЕ анализы AI Proto и в AI-Портфель как рамка решений — это единственный способ направлять автономного AI Proto.','A set of strategic «how to beat the index» principles. Passed to EVERY AI Proto analysis and to the AI portfolio as the decision framework — the only way to steer the autonomous AI Proto.')+infoRows([
     ['Зачем','приоритетнее общих эвристик: AI применяет эти принципы в каждом совете и сделке.','takes priority over generic heuristics: the AI applies these in every call and trade.'],
     ['✨ Подтянуть практики (AI)','AI ищет в вебе свежие лучшие практики и дописывает новые принципы (платно, админ).','the AI web-searches fresh best practices and appends new principles (paid, admin).'],
@@ -4327,7 +4334,7 @@ function renderPF3(){
   }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
-  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML():''}<div class="pf3-layout${open?' open':''}">
+  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML()+pfCmpHTML():''}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
       <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button>${can('action.refresh_data')?`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`:''}${pf3XMenuHTML(d)}</span>`}</div>
@@ -4472,6 +4479,46 @@ function pfPerfHTML(){
   </section>`;
 }
 function pfPerfRange(k){pfPerf.range=k;renderPF3()}
+// 🏁 Сравнение всех портфелей + AI + индексов за период (из уже загруженной pfPerf.hist).
+function pfCmpData(){
+  const H=pfPerf.hist;if(!H)return null;
+  const from=pfPerfFrom(pfPerf.range);
+  const ents=[];
+  const pAll=H.ports['__ALL__'];const rAll=pAll?pfPerfPct(pAll,from):null;
+  if(rAll!=null)ents.push({key:'__ALL__',name:RT('Все портфели','All portfolios'),ret:rAll,kind:'all'});
+  pfpPorts().forEach(p=>{const s=H.ports[p.key];if(!s)return;const r=pfPerfPct(s,from);if(r!=null)ents.push({key:p.key,name:p.name,ret:r,kind:p.ai?'ai':'port'});});
+  const idx=PFP_BENCH.map(([sym,n])=>{const s=H.bench[sym];const r=s?pfPerfPct(s,from):null;return r!=null?{sym,name:n,ret:r}:null}).filter(Boolean);
+  return ents.length?{ents,idx,from}:null;
+}
+const PFCMP_SHORT={'S&P 500':'SPX','Nasdaq 100':'NDX','OMXS30':'OMX'};
+function pfCmpHTML(){
+  const D=pfCmpData();if(!D)return'';
+  const cls=v=>v>=0?'pf3-up':'pf3-down';
+  const fmt=v=>`${v>=0?'+':''}${v.toFixed(2)}%`;
+  const ico=e=>e.kind==='all'?'📊':e.kind==='ai'?'🤖':'🧑';
+  const rows=D.ents.slice().sort((a,b)=>b.ret-a.ret);
+  const maxAbs=Math.max(1,...D.ents.map(e=>Math.abs(e.ret)),...D.idx.map(i=>Math.abs(i.ret)));
+  const lb=rows.map((e,i)=>`<div class="pfcmp-row${e.kind==='all'?' pfcmp-all':''}">
+    <span class="pfcmp-rank">${i+1}</span>
+    <span class="pfcmp-name">${ico(e)} ${e.name}</span>
+    <span class="pfcmp-bar"><span class="pfcmp-bar-f ${e.ret>=0?'pos':'neg'}" style="width:${Math.min(100,Math.abs(e.ret)/maxAbs*100)}%"></span></span>
+    <span class="pfcmp-v ${cls(e.ret)}">${fmt(e.ret)}</span>
+  </div>`).join('');
+  const idxRow=D.idx.map(i=>`<span class="pfcmp-idx ${cls(i.ret)}">${i.name} <b>${fmt(i.ret)}</b></span>`).join('');
+  const alpha=rows.filter(e=>e.kind!=='all'||rows.length<=2).map(p=>`<div class="pfcmp-arow"><span class="pfcmp-name">${ico(p)} ${p.name}</span><span class="pfcmp-acells">${D.idx.map(i=>{const a=p.ret-i.ret;return`<span class="pfcmp-acell ${cls(a)}" title="${p.name} − ${i.name}">${PFCMP_SHORT[i.name]||i.name} ${a>=0?'+':''}${a.toFixed(1)}</span>`}).join('')}</span></div>`).join('');
+  // лидер/аутсайдер + сколько обгоняют каждый индекс
+  const top=rows[0],bot=rows[rows.length-1];
+  const beats=D.idx.map(i=>{const n=D.ents.filter(e=>e.kind!=='all'&&e.ret>i.ret).length;return`${PFCMP_SHORT[i.name]||i.name}: ${n}/${D.ents.filter(e=>e.kind!=='all').length}`}).join(' · ');
+  return`<section class="pf3-panel">
+    <div class="pf3-panel-hd"><span>🏁 ${RT('Сравнение портфелей','Portfolio leaderboard')} ${infoBtn('pfcmp')}</span><span class="pf3-asof">${RT('доходность с','return since')} ${D.from.toISOString().slice(0,10)}</span></div>
+    <div class="pfcmp">${lb}</div>
+    <div class="pfcmp-idxrow"><span class="pfcmp-idxlbl">${RT('Индексы','Indices')}:</span> ${idxRow}</div>
+    <div class="pf3-panel-hd pfcmp-hd2"><span>🆚 ${RT('Альфа vs индексы','Alpha vs indices')}</span><span class="pf3-asof">${RT('портфель − индекс (п.п.)','portfolio − index (pp)')}</span></div>
+    <div class="pfcmp-alpha">${alpha}</div>
+    <div class="pfcmp-extra">🏆 ${RT('лидер','leader')}: <b>${top.name}</b> ${fmt(top.ret)} · 🐌 ${RT('аутсайдер','laggard')}: <b>${bot.name}</b> ${fmt(bot.ret)} · ${RT('спред','spread')} ${(top.ret-bot.ret).toFixed(1)} п.п. · ${RT('обгоняют индекс','beat the index')}: ${beats}</div>
+    <div class="pf3-risk-note">${RT('α = доходность портфеля минус индекс за период (процентные пункты, п.п.). Положительная α = обгон. Период — с создания 12.06.2026. Видно только администратору.','α = portfolio return minus the index over the period (percentage points). Positive α = outperformance. Period — since 12 Jun 2026. Admin-only.')}</div>
+  </section>`;
+}
 let _pfPerfChart=null;
 async function pfPerfDraw(){
   if(!(isV3()&&v3Key===PF3_KEY&&pf3Tab==='list'&&!pf3Sel))return;

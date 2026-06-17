@@ -1455,3 +1455,24 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-prop-act.hold{background:var(--bg);color:var(--text2)}
 .plan-badge.plan-watch{background:rgba(99,102,241,.14);color:#818cf8}
 .plan-act.watch{background:rgba(99,102,241,.12);color:#818cf8}
+/* 🏁 Сравнение портфелей + альфа (вкладка Portfolio, только админ) */
+.pfcmp{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.pfcmp-row{display:grid;grid-template-columns:24px 1fr 90px auto;align-items:center;gap:10px;padding:5px 4px;border-radius:8px}
+.pfcmp-row.pfcmp-all{background:var(--bg2)}
+.pfcmp-rank{font:800 12px 'JetBrains Mono',monospace;color:var(--text3);text-align:center}
+.pfcmp-name{font-size:13px;font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pfcmp-bar{height:7px;border-radius:4px;background:var(--bg);overflow:hidden;min-width:50px}
+.pfcmp-bar-f{display:block;height:100%;border-radius:4px}
+.pfcmp-bar-f.pos{background:#10b981}.pfcmp-bar-f.neg{background:#ef4444}
+.pfcmp-v{font:800 13px 'JetBrains Mono',monospace;text-align:right}
+.pfcmp-idxrow{margin:8px 0 2px;font-size:12px;color:var(--text2);display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.pfcmp-idxlbl{color:var(--text3);font-weight:700}
+.pfcmp-idx{font:600 12px 'JetBrains Mono',monospace}
+.pfcmp-hd2{margin-top:14px}
+.pfcmp-alpha{display:flex;flex-direction:column;gap:4px;margin-top:2px}
+.pfcmp-arow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pfcmp-acells{display:inline-flex;gap:6px;flex-wrap:wrap}
+.pfcmp-acell{font:700 11px 'JetBrains Mono',monospace;padding:2px 8px;border-radius:999px;background:var(--bg2)}
+.pfcmp-extra{margin-top:10px;font-size:12px;color:var(--text2);line-height:1.5}
+.pfcmp-extra b{color:var(--text1)}
+@media(max-width:560px){.pfcmp-row{grid-template-columns:20px 1fr 60px auto;gap:7px}.pfcmp-arow{flex-direction:column;align-items:flex-start;gap:3px}}

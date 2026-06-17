@@ -1434,7 +1434,7 @@ function renderAll(){
     const _subs=(isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
+      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
@@ -4343,9 +4343,17 @@ function renderPF3(){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${aipManageHTML()}</div>`;
     return;
   }
+  if(pf3Tab==='stats'){   // 📊 Статистика: сравнение всех портфелей + индексы (только админ, только Портфель)
+    if(!isAdmin()||v3Key!==PF3_KEY){pf3Tab='list';}
+    else{
+      el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pfPerfHTML()}${pfCmpHTML()}${pfDeepCmpHTML()}</div>`;
+      pfPerfDraw();   // дорисовать график развития портфелей
+      return;
+    }
+  }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
-  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML()+pfCmpHTML()+pfDeepCmpHTML():''}<div class="pf3-layout${open?' open':''}">
+  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
       <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button>${can('action.refresh_data')?`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`:''}${pf3XMenuHTML(d)}</span>`}</div>
@@ -4369,7 +4377,7 @@ function renderPF3(){
     pf3LoadEarnings();       // same for the earnings calendar panel
     pf3RefreshCardPrice(d,r);   // живая цена → актуальный «потенциал роста»
     cardPPStart(String(r[2]||''),exSymbol(r[2],r[8]));   // лайв pre/post-маркет
-  }else if(v3Key===PF3_KEY&&isAdmin())pfPerfDraw();   // график развития портфелей (сравнение) — только админ
+  }
 }
 
 // The full card for the selected holding (everything: hero, stats, health, earnings, chart, buy levels).
@@ -4466,7 +4474,7 @@ async function pfPerfLoad(){
     pfPerf.hist={ports:portsSer,bench};pfPerf.loaded=Date.now();
   }catch(e){pfPerf.failed=true;}
   pfPerf.loading=false;
-  if(isV3()&&v3Key===PF3_KEY&&pf3Tab==='list'&&!pf3Sel)renderPF3();
+  if(isV3()&&v3Key===PF3_KEY&&pf3Tab==='stats')renderPF3();
 }
 function pfPerfHTML(){
   const H=pfPerf.hist;
@@ -4594,7 +4602,7 @@ function pfDeepCmpHTML(){
 }
 let _pfPerfChart=null;
 async function pfPerfDraw(){
-  if(!(isV3()&&v3Key===PF3_KEY&&pf3Tab==='list'&&!pf3Sel))return;
+  if(!(isV3()&&v3Key===PF3_KEY&&pf3Tab==='stats'))return;
   if(!pfPerf.hist){pfPerfLoad();return}
   const box=document.getElementById('pfPerfBox');
   if(!box)return;

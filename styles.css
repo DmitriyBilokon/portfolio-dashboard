@@ -1444,3 +1444,6 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .nlv-title{font-size:13px;color:var(--text1);line-height:1.35}
 .nlv-row:hover .nlv-title{color:var(--accent,#818cf8)}
 .nlv-meta{font-size:11px;color:var(--text3)}
+/* 💬 Тумблер «учесть чат в анализе портфеля» */
+.pf3-incl-chat{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--text2);cursor:pointer;user-select:none;white-space:nowrap}
+.pf3-incl-chat input{cursor:pointer;width:15px;height:15px;accent-color:var(--accent,#6366f1)}

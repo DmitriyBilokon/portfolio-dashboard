@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18aiport';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18efftgt';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1205,6 +1205,7 @@ function aipUniverse(snap){
     const ix = {
       s50: h.findIndex(x => /sma.?50$/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
       sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'), tg: h.findIndex(x => /аналит/i.test(x)),
+      tgr: h.findIndex(x => /таргет 3м/i.test(x)),
       pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
       reco: h.indexOf('Реком. скоринг'),
     };
@@ -1219,7 +1220,11 @@ function aipUniverse(snap){
       if(!(price > 0)) continue;
       const num = i => { const v = i >= 0 ? parseFloat(r[i]) : NaN; return isFinite(v) ? v : null; };
       const dist = v => (v && v > 0) ? Math.round((price - v) / v * 1000) / 10 : null;
-      const tg = num(ix.tg);
+      // Эффективный таргет: устаревший консенсус (расходится со свежим «Таргет 3м»
+      // на ≥10%) → берём свежий. Тот же расчёт, что pf3EffTarget на сайте — чтобы
+      // upside (и производный перегрев в aipVerdict) не противоречил карточке.
+      const tgMain = num(ix.tg), tgRec = num(ix.tgr);
+      const tg = (tgMain > 0 && tgRec > 0 && Math.abs(tgRec - tgMain) / tgMain * 100 >= 10) ? tgRec : (tgMain || tgRec);
       out.push([tk, ccy, String(r[4] || ''), String(r[5] || ''), price, parseFloat(r[10]) || 0,
         dist(num(ix.s50)), dist(num(ix.s200)), dist(num(ix.sup)), dist(num(ix.res)),
         (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,

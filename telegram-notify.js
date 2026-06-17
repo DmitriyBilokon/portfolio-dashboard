@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18fresh';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18aiport';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1340,7 +1340,10 @@ async function aiPortfolioRun(env, force){
   if(bak && bak.startedAt){
     const apEmpty = !ap || !ap.startedAt || (!(ap.positions || []).length && !(ap.trades || []).length);
     const bakHas = (bak.positions || []).length || (bak.trades || []).length;
-    if(apEmpty && bakHas){
+    // Резерв НОВЕЕ (того же/старшего поколения startedAt и больший lastRunAt) → ledger затёрли
+    // клиентом; восстанавливаем даже если он не пустой. Сброс (ledger новее по startedAt) не трогаем.
+    const bakNewer = bakHas && (bak.startedAt || 0) >= ((ap && ap.startedAt) || 0) && (bak.lastRunAt || 0) > ((ap && ap.lastRunAt) || 0);
+    if((apEmpty && bakHas) || bakNewer){
       ap = snap.aiPort = JSON.parse(JSON.stringify(bak));
       restored = true;
       // Персистим восстановление СРАЗУ: дальше цикл может выйти по «рынки
@@ -2141,6 +2144,39 @@ async function writeRow(env, userId, snap){
     body: JSON.stringify({ data, updated_at: new Date().toISOString() }),
   });
 }
+// 🤝 Примирение состояния AI-портфеля: «настоящее» = более СВЕЖЕЕ из ledger_state.aiPort
+// и резерва ai_state (по поколению startedAt → затем lastRunAt → затем объёму журнала).
+// Если победил резерв (клиент затёр сделки воркера) — пишем его обратно в ledger, сохраняя
+// клиентские НАСТРОЙКИ. Возвращает авторитетное состояние. Чинит «застрявшее» расхождение.
+const AIPORT_SETTINGS = ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'myStartEquity', 'myStartLive'];
+async function aiPortAuthoritative(env){
+  const row = await loadRow(env);
+  if(!row) return null;
+  const led = (row.snap && row.snap.aiPort) || null;
+  const bak = (await loadBak(env, row.userId)) || (row.snap && row.snap.aiPortBak) || null;
+  const sc = s => (s && s.startedAt) ? [s.startedAt || 0, s.lastRunAt || 0, (s.trades || []).length] : null;
+  const a = sc(led), b = sc(bak);
+  const bNewer = b && (!a || b[0] > a[0] || (b[0] === a[0] && (b[1] > a[1] || (b[1] === a[1] && b[2] > a[2]))));
+  let best = bNewer ? bak : led;
+  if(!best || !best.startedAt) return led || bak || null;
+  if(best === bak && bNewer){
+    // Резерв новее → ledger затёрли. Восстанавливаем, оставляя клиентские настройки из ledger.
+    try{
+      const fresh = await loadRow(env);
+      if(fresh){
+        const fap = (fresh.snap && fresh.snap.aiPort) || {};
+        const merged = JSON.parse(JSON.stringify(best));
+        AIPORT_SETTINGS.forEach(k => { if(fap[k] !== undefined && (fap.startedAt || 0) >= (merged.startedAt || 0)) merged[k] = fap[k]; });
+        fresh.snap.aiPort = merged;
+        fresh.snap.aiPortBak = JSON.parse(JSON.stringify(merged));
+        await writeRow(env, fresh.userId, fresh.snap);
+        await saveBak(env, fresh.userId, merged);
+        return merged;
+      }
+    }catch(e){}
+  }
+  return best;
+}
 // Add the target column if missing, fill it (FMP → Yahoo consensus fallback for
 // EU/Nordic tickers) on BOTH portfolio tabs, and persist back to Supabase.
 async function updateTargets(env){
@@ -2474,6 +2510,13 @@ export default {
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{ return json({ result: await aiPortfolioRun(env, true) }); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'aiportstate'){
+      // Авторитетное состояние AI-портфеля (примиряет ledger ↔ резерв ai_state) — для дисплея сайта.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ return json({ port: await aiPortAuthoritative(env) }); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'prompts'){

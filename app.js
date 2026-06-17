@@ -34,8 +34,10 @@ async function pushState(){
   // записью берём его СЕРВЕРНУЮ копию — наша могла отстать, если realtime-канал
   // спал (сон ноутбука, фоновая вкладка), и тогда push стирал сделки AI.
   // За клиентом остаются только настройки.
+  let aiPortReadOk=false;
   try{
     const { data:rw } = await sb.from('ledger_state').select('aiPort:data->aiPort').eq('user_id',currentUser.id).maybeSingle();
+    aiPortReadOk=true;   // чтение прошло (даже если на сервере пусто)
     const srv = rw && rw.aiPort;
     if(srv && typeof srv==='object' && srv.startedAt){
       const mine = AI_PORT || {};
@@ -43,7 +45,10 @@ async function pushState(){
       ['strategy','intervalMin','commissionPct','minTradeSEK','enabled','startCapital','startedAt','myStartEquity','myStartLive']
         .forEach(k=>{ if(mine[k]!==undefined) AI_PORT[k]=mine[k]; });
     }
-  }catch(e){ /* сеть/колонка недоступна — пушим как есть */ }
+  }catch(e){ aiPortReadOk=false; }
+  // 🛡 fail-closed: не смогли перечитать серверный aiPort — НЕ перезаписываем торговое состояние
+  // воркера устаревшей копией (это и затирало сделки). Отложим пуш и попробуем снова.
+  if(!aiPortReadOk && AI_PORT && AI_PORT.startedAt){ schedulePush(); return; }
   // 🛡 Защита истории сделок: перед записью перечитываем облако. Если наша
   // PF_TRADES пуста, а в облаке журнал есть — НЕ затираем (адаптируем облачную),
   // чтобы устаревшая вкладка/гонка не стёрла сделки. Та же логика, что для aiPort.
@@ -1362,6 +1367,7 @@ function grpAssign(tab,gi){
 function renderAll(){
   if(curIdx!==HOME_KEY)homeFutStop();   // лайв-фьючерсы крутятся только на Home
   if(curIdx!==SECT_KEY)sectStop();      // лайв-поллинг секторов — только на вкладке Сектора
+  if(curIdx===AIP_KEY&&isAdmin())aipStart();else aipStop();   // синхрон AI-портфеля с воркером (эндпоинт admin-only) — только на вкладке AI-Портфель
   if(curIdx!==_pfPPKey)pfSumPPStop();   // лайв изм. баланса — только на открытом портфеле
   editScheduleWire();                   // навесить drag на блоки после перерисовки (режим ✏️)
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
@@ -4728,8 +4734,29 @@ async function aipRunNow(ev){
     const j=await r.json();
     toast(j.error?j.error:String(j.result||'OK').split('\n')[0],!!j.error);
   }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
+  await aipPullState();   // подтянуть актуальное состояние воркера и перерисовать
   if(btn){btn.disabled=false;btn.textContent='▶ '+RT('Запустить цикл сейчас','Run cycle now');}
 }
+// 🤝 Подтянуть авторитетное состояние AI-портфеля из воркера (примиряет ledger ↔ резерв).
+// Лечит «застрявшее» расхождение и держит дисплей в синхроне с Telegram.
+let _aipPulling=false,_aipTimer=null;
+async function aipPullState(){
+  if(_aipPulling)return;_aipPulling=true;
+  try{
+    const r=await fetch(PRICE_PROXY+'?action=aiportstate',{headers:{'Authorization':'Bearer '+await sbToken()}});
+    const j=await r.json();
+    if(j&&j.port&&typeof j.port==='object'&&j.port.startedAt){
+      const mine=AI_PORT||{};
+      AI_PORT={...j.port};
+      // несохранённые локальные настройки сохраняем (сервер уже смержил сохранённые)
+      ['intervalMin','commissionPct','minTradeSEK','enabled','strategy'].forEach(k=>{ if(mine[k]!==undefined&&(mine.startedAt||0)>=(AI_PORT.startedAt||0))AI_PORT[k]=mine[k]; });
+      if(isV3())renderPF3();
+    }
+  }catch(e){}
+  _aipPulling=false;
+}
+function aipStart(){aipPullState();if(_aipTimer)return;_aipTimer=setInterval(()=>{if(curIdx===AIP_KEY&&!document.hidden)aipPullState();},60000);}
+function aipStop(){if(_aipTimer){clearInterval(_aipTimer);_aipTimer=null;}}
 // ♻️ Обнуление через worker: он владеет состоянием и резервами (ai_state),
 // поэтому чистит всё атомарно — клиентский сброс воскресал бы из бэкапа.
 async function aipResetRemote(ev){

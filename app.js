@@ -5842,15 +5842,15 @@ function homeHTML(){
     <div class="home-head-l"><span class="home-title">🏠 ${RT('Главная','Home')}</span><span class="pf3-asof">${RT('рынки, уровни и лучшие акции','markets, levels & best stocks')} · ${homeFutAtLbl()}</span></div>
     <div class="home-head-actions"><button class="pf3-btn pf3-btn-primary" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${adminTools}</div>
   </section>`;
+  // Шапка ВНЕ перетаскиваемой раскладки — всегда сверху и видима (не зависит от сохранённого порядка секций).
   const items=[
-    {id:'head',html:head},
     {id:'futures',html:homeFuturesHTML()},
     {id:'best',html:homeBestBoardHTML()},
     {id:'horizons',html:`<details class="home-details"><summary>🏅 ${RT('Разбивка по горизонтам (1–3 · 3–6 · 6–12 мес)','By horizon (1–3 · 3–6 · 6–12 m)')}</summary><div class="home-details-body">${homeBestHTML()}</div></details>`},
     {id:'forecast',html:homeForecastHTML()},
   ];
   if(isAdmin()){ items.push({id:'signal',html:homeSignalHTML()}); items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }
-  return erow('home',items,'edit-rows-v');
+  return head+erow('home',items,'edit-rows-v');
 }
 
 function pf3DetailHTML(){

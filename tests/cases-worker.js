@@ -57,6 +57,22 @@ grp('impliedMove', function(){
   __approx('uses lastPrice fallback (11%)', im2.movePct, 11, 0.1);
 });
 
+// 7d) 📰 newsItemsFromYahoo — парсер новостей Yahoo search
+grp('newsItemsFromYahoo', function(){
+  var j = { news: [
+    { title: 'Micron beats earnings, raises guidance', publisher: 'Reuters', link: 'http://x/1', providerPublishTime: 1750000000 },
+    { title: '', publisher: 'Empty', link: 'http://x/2', providerPublishTime: 1750000100 },   // без заголовка → отброшен
+    { title: 'Analyst upgrades MU to Buy', publisher: 'Bloomberg', link: 'http://x/3' },         // без времени → time=0
+  ] };
+  var it = newsItemsFromYahoo(j);
+  __eq('2 заголовка (пустой отброшен)', it.length, 2);
+  __eq('первый title', it[0].title, 'Micron beats earnings, raises guidance');
+  __eq('time = providerPublishTime×1000', it[0].time, 1750000000000);
+  __eq('нет времени → 0', it[1].time, 0);
+  __ok('нет news → []', newsItemsFromYahoo({}).length === 0);
+  __ok('null → []', newsItemsFromYahoo(null).length === 0);
+});
+
 // 7c) 📐 indexLevels — S/R уровни индекса (pivots + свинги, классификация по цене)
 grp('indexLevels', function(){
   // последний бар H=110,L=90,C=100 → P=100; R1=110, S1=90, R2=120, S2=80.

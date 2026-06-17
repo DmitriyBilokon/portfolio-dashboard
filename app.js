@@ -1788,6 +1788,13 @@ const SEC_INFO={
     ['Хедж','компенсация валютного риска; hedge ratio — какая часть закрыта.','offsetting FX risk; hedge ratio — what fraction is covered.'],
     ['Сценарий ±%','эффект на портфель при движении курса.','effect on the portfolio if the rate moves.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  newslive:{t:['📰 Новости (Yahoo)','📰 News (Yahoo)'],b:()=>infoP('Живые заголовки по акции с Yahoo Finance. Тянутся автоматически при открытии карточки (обновление ~10 мин), без платных токенов.','Live per-stock headlines from Yahoo Finance. Fetched automatically when the card opens (refresh ~10 min), no paid tokens.')+infoRows([
+    ['🟢 / 🔴 / ⚪','тональность заголовка по словарю: позитив / негатив / нейтрально.','headline tone by lexicon: positive / negative / neutral.'],
+    ['настрой ±N','суммарный новостной фон с весом по свежести (новое весомее): >0 позитивный, <0 негативный.','overall news tone, recency-weighted (newer matters more): >0 positive, <0 negative.'],
+    ['источник · время','издатель и как давно вышла новость.','publisher and how long ago it was published.'],
+    ['🔄','обновить заголовки вручную (иначе раз в ~10 мин).','refresh headlines manually (otherwise every ~10 min).'],
+    ['в рекомендации','новостной фон входит в 💡 Рекомендацию и общий рейтинг 🏆 (небольшой вес).','news tone feeds the 💡 Recommendation and the 🏆 overall rank (small weight).'],
+  ])+infoNote('Заголовки — публичные данные Yahoo. '+INFO_DISCLAIM[0],'Headlines are public Yahoo data. '+INFO_DISCLAIM[1])},
   news:{t:['📰 Новости → влияние','📰 News → impact'],b:()=>infoP('Вставьте текст новостей — детерминированный разбор без платных токенов сопоставит их с вашими бумагами.','Paste news text — a deterministic, token-free pass maps it to your holdings.')+infoRows([
     ['🟢 Bull / 🔴 Bear / ⚪ Нейтрал','тональность по словарю: позитив / негатив / нейтрально.','lexicon polarity: positive / negative / neutral.'],
     ['Тикер · имя','совпадение по тикеру или словам названия компании.','match by ticker or company-name words.'],
@@ -3541,6 +3548,12 @@ function pf3Reco(d,r){
   else if(sig.type==='sell')ts+=push(TT,-1.5,'цена у сопротивления — зона фиксации','price at resistance — take-profit zone');
   else if(sig.type==='wait')ts+=push(TT,0,`до уровня ${sig.n} ещё −${sig.dist.toFixed(1)}%`,`${sig.dist.toFixed(1)}% above level ${sig.n}`);
   else if(sig.type==='below')ts+=push(TT,-1,'цена ниже всех уровней поддержки','price below all support levels');
+  // 📰 Новостной фон (живые заголовки Yahoo, если подгружены в карточке)
+  const _nv=NEWS_LIVE[String(r[2]||'').toUpperCase()];
+  if(_nv&&_nv.items&&_nv.items.length){
+    if(_nv.sent>=2)ts+=push(TT,1,`позитивный новостной фон (+${_nv.sent})`,`positive news flow (+${_nv.sent})`);
+    else if(_nv.sent<=-2)ts+=push(TT,-1,`негативный новостной фон (${_nv.sent})`,`negative news flow (${_nv.sent})`);
+  }
   // Риск
   if(spec)rs+=push(R,-1.5,'спекулятивный профиль','speculative profile');
   if(m.beta!=null&&m.beta>1.5)rs+=push(R,-0.5,`высокая волатильность: β ${m.beta.toFixed(1)}`,`high volatility: β ${m.beta.toFixed(1)}`);
@@ -4973,6 +4986,73 @@ function pf3OptEnsure(tk,ccy){
     if(isV3()&&pf3Sel===tk)renderPF3();
   }).catch(()=>{OPT_IV[tk]={data:null,at:Date.now(),loading:false};});
 }
+// ── 📰 Живые новости Yahoo по тикеру + sentiment для рекомендаций ──
+let NEWS_LIVE={};   // {tk:{items:[{title,publisher,link,time,pol}], sent, pos, neg, at, loading}}
+// Чистая функция: заголовки → sentiment с весом по свежести (новое весомее).
+// Вес: ≤2 дн = 1.0; линейно до ~0.15 на 14 дн; >21 дн = 0. sent = Σ(полярность×вес).
+function newsRecencyWeight(ageDays){ if(!(ageDays>=0))return 1; if(ageDays<=2)return 1; if(ageDays>=21)return 0; return Math.max(0.1,1-(ageDays-2)/19); }
+function newsSentiment(items,nowMs){
+  if(!Array.isArray(items)||!items.length)return {sent:0,pos:0,neg:0,n:0};
+  let sent=0,pos=0,neg=0;
+  items.forEach(it=>{
+    const pol=(typeof it.pol==='number')?it.pol:newsPolarity(it.title||'');
+    const age=it.time>0?(nowMs-it.time)/864e5:5;   // нет даты → считаем ~5 дней
+    sent+=pol*newsRecencyWeight(age);
+    if(pol>0)pos++;else if(pol<0)neg++;
+  });
+  return {sent:Math.round(sent*10)/10,pos,neg,n:items.length};
+}
+function pf3NewsEnsure(tk,ccy){
+  const cur=NEWS_LIVE[tk];
+  if(cur&&cur.loading)return;
+  if(cur&&cur.at&&Date.now()-cur.at<10*60000)return;   // кэш 10 мин = «онлайн»
+  NEWS_LIVE[tk]={...(cur||{}),loading:true};
+  fetch(PRICE_PROXY+'?news='+encodeURIComponent(exSymbol(tk,ccy))).then(r=>r.json()).then(j=>{
+    const items=(j&&Array.isArray(j.items))?j.items.map(it=>({...it,pol:newsPolarity(it.title||'')})):[];
+    const s=newsSentiment(items,Date.now());
+    NEWS_LIVE[tk]={items,sent:s.sent,pos:s.pos,neg:s.neg,at:Date.now(),loading:false};
+    if(isV3()&&pf3Sel===tk)renderPF3();
+  }).catch(()=>{NEWS_LIVE[tk]={...(NEWS_LIVE[tk]||{}),loading:false,at:Date.now()};});
+}
+function newsAgoLbl(ms){ if(!(ms>0))return ''; const d=Math.floor((Date.now()-ms)/864e5),h=Math.floor((Date.now()-ms)/36e5);
+  if(d>=1)return RT(d+' дн назад',d+'d ago'); if(h>=1)return RT(h+' ч назад',h+'h ago'); return RT('недавно','just now'); }
+function pf3NewsLiveHTML(tk,ccy){
+  pf3NewsEnsure(tk,ccy);
+  const n=NEWS_LIVE[tk];
+  const sub=(n&&n.items&&n.items.length)?`${n.items.length} ${RT('заголовков','headlines')} · ${RT('настрой','tone')} ${n.sent>0?'🟢 +':n.sent<0?'🔴 ':'⚪ '}${n.sent}`:RT('Yahoo Finance','Yahoo Finance');
+  let body;
+  if(n&&n.items&&n.items.length){
+    body=`<div class="nlv-list">${n.items.map(it=>{
+      const pol=it.pol||0,ic=pol>0?'🟢':pol<0?'🔴':'⚪';
+      const link=it.link?`href="${it.link}" target="_blank" rel="noopener"`:'';
+      return`<a class="nlv-row" ${link}><span class="nlv-pol">${ic}</span><span class="nlv-main"><span class="nlv-title">${(it.title||'').replace(/</g,'&lt;')}</span><span class="nlv-meta">${it.publisher?it.publisher+' · ':''}${newsAgoLbl(it.time)}</span></span></a>`;
+    }).join('')}</div>`;
+  }else if(n&&n.loading){ body=`<div class="pf3-empty">⏳ ${RT('Загрузка новостей…','Loading news…')}</div>`; }
+  else { body=`<div class="pf3-empty">${RT('Свежих новостей не найдено.','No recent news found.')}</div>`; }
+  return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📰 ${RT('Новости (Yahoo)','News (Yahoo)')} ${infoBtn('newslive')}</span><span class="pf3-asof">${sub}</span><button class="pf3-btn pf3-btn-sm" onclick="pf3NewsRefresh('${tk}','${ccy}')" title="${RT('Обновить новости','Refresh news')}">🔄</button></div>${body}<div class="pf3-reco-note">${RT('Заголовки тянутся с Yahoo Finance (обновление ~10 мин). Тональность — по словарю, учитывается в рекомендации. Справочно, не индивидуальная рекомендация.','Headlines from Yahoo Finance (refresh ~10 min). Tone is lexicon-based and factors into the recommendation. Reference only, not advice.')}</div></section>`;
+}
+function pf3NewsRefresh(tk,ccy){ if(NEWS_LIVE[tk])NEWS_LIVE[tk].at=0; pf3NewsEnsure(tk,ccy); }
+// 📰 Массовая подгрузка новостей по всем тикерам портфелей — чтобы рейтинг 🏆 учитывал фон.
+let _homeNewsLoad=false;
+async function homeNewsAll(){
+  if(_homeNewsLoad)return;_homeNewsLoad=true;
+  const btn=document.getElementById('homeNewsBtn');if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
+  const seen=new Set(),list=[];
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD';if(!tk||seen.has(tk)||!((parseFloat(r[7])||0)>0))return;seen.add(tk);list.push([tk,ccy]);});});
+  let done=0;
+  for(const it of list){
+    try{
+      const j=await fetch(PRICE_PROXY+'?news='+encodeURIComponent(exSymbol(it[0],it[1]))).then(r=>r.json());
+      const items=(j&&Array.isArray(j.items))?j.items.map(n=>({...n,pol:newsPolarity(n.title||'')})):[];
+      const s=newsSentiment(items,Date.now());
+      NEWS_LIVE[it[0]]={items,sent:s.sent,pos:s.pos,neg:s.neg,at:Date.now(),loading:false};
+    }catch(e){}
+    done++;const b=document.getElementById('homeNewsBtn');if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
+  }
+  _homeNewsLoad=false;_homeBestCache=null;
+  toast(RT(`✓ Новости подтянуты: ${list.length} акций`,`✓ News pulled: ${list.length} stocks`));
+  if(curIdx===HOME_KEY)renderAll();
+}
 // Свежий консенсус-таргет для среднесрочного сценария — тот же источник, что и
 // карточка: TG_FULL (агрегация A.1) → квартальный срез pf3EffTarget → eff (если не
 // stale). Устаревшим (не используется) считается ТОЛЬКО all-time (eff.main).
@@ -5550,7 +5630,7 @@ const PHASE_PTS={knife:-3,down:-1,corr:0.3,flat:0,rev:1,undr:2,up:1.5,imp:0.5,he
 // Отсутствующие данные не штрафуют (вклад 0) — иначе EU/Nordic без VAL/AI проваливались бы.
 function homeCompositeScore(x){
   let raw=0;const why=[];
-  const {up,roe,revg,pe,entry,upTrend,phase,reco,sigN,insBuy,aiV,undervalued}=x;
+  const {up,roe,revg,pe,entry,upTrend,phase,reco,sigN,insBuy,aiV,undervalued,newsSent}=x;
   if(up!=null){if(up>=25){raw+=3;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=10){raw+=2;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=0)raw+=1;else if(up>=-10)raw-=1;else raw-=2;}
   raw+=PHASE_PTS[phase]||0;
   if(roe!=null){if(roe>=15){raw+=2;why.push(`ROE ${roe.toFixed(0)}%`);}else if(roe>=10)raw+=1;else if(roe<0)raw-=1.5;}
@@ -5562,6 +5642,7 @@ function homeCompositeScore(x){
   if(insBuy)why.push(RT('инсайдеры↑','insiders↑'));
   if(undervalued)why.push(RT('недооценка','undervalued'));
   if(aiV==='buy')raw+=1;else if(aiV==='avoid'||aiV==='sell')raw-=1;
+  if(newsSent!=null){if(newsSent>=2){raw+=1.5;why.push(RT('новости↑','news↑'));}else if(newsSent>0)raw+=0.5;else if(newsSent<=-2){raw-=1.5;why.push(RT('новости↓','news↓'));}else if(newsSent<0)raw-=0.5;}
   const score=Math.max(0,Math.min(100,Math.round(50+raw*4)));
   return {score,raw,why:[...new Set(why)].slice(0,3)};
 }
@@ -5587,7 +5668,8 @@ function homeBestComposite(){
       const entryRaw=[d50,dSup].filter(v=>v!=null).map(Math.abs).reduce((a,b)=>Math.min(a,b),Infinity);
       const entry=isFinite(entryRaw)?entryRaw:null;
       const undervalued=!!(sig&&sig.items.some(it=>it.d>0&&/недооцен|дешевле|undervalued|cheaper/.test(it.t)));
-      const sc=homeCompositeScore({up,roe,revg,pe,entry,upTrend:d200!=null&&d200>0,phase,reco,sigN:sig?sig.n:0,insBuy,aiV,undervalued});
+      const newsSent=(NEWS_LIVE[tk]&&NEWS_LIVE[tk].items&&NEWS_LIVE[tk].items.length)?NEWS_LIVE[tk].sent:null;
+      const sc=homeCompositeScore({up,roe,revg,pe,entry,upTrend:d200!=null&&d200>0,phase,reco,sigN:sig?sig.n:0,insBuy,aiV,undervalued,newsSent});
       out.push({tk,name:String(r[1]||tk),ccy:r[8]||'',price,score:sc.score,up,roe,revg,pe,entry,phase,reco,sigN:sig?sig.n:0,aiV,why:sc.why});
     });
   });
@@ -5840,7 +5922,7 @@ function homeHTML(){
   </span>`:'';
   const head=`<section class="pf3-panel home-head">
     <div class="home-head-l"><span class="home-title">🏠 ${RT('Главная','Home')}</span><span class="pf3-asof">${RT('рынки, уровни и лучшие акции','markets, levels & best stocks')} · ${homeFutAtLbl()}</span></div>
-    <div class="home-head-actions"><button class="pf3-btn pf3-btn-primary" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button>${adminTools}</div>
+    <div class="home-head-actions"><button class="pf3-btn pf3-btn-primary" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button><button class="pf3-btn pf3-btn-sm" id="homeNewsBtn" onclick="homeNewsAll()" title="${RT('Подтянуть свежие новости Yahoo по всем акциям — учитываются в рейтинге','Pull fresh Yahoo news for all stocks — factored into the rank')}">📰 ${RT('Новости','News')}</button>${adminTools}</div>
   </section>`;
   // Шапка ВНЕ перетаскиваемой раскладки — всегда сверху и видима (не зависит от сохранённого порядка секций).
   const items=[
@@ -5912,6 +5994,7 @@ function pf3DetailHTML(){
     ${stockReportHTML(d,r)}
     ${can('view.ai_reco')?aiRecoHTML(d,r):''}
     ${pf3ScenarioHTML(d,r)}
+    ${pf3NewsLiveHTML(tk,ccy)}
     ${can('view.valuation')?targetsBlockHTML(d,r):''}
     ${isAdmin()?stockAiHTML(d,r):''}
     ${can('view.valuation')?valHTML(d,r):''}

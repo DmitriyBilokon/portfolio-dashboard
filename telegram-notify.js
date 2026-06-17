@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-17levels';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-17news';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -350,6 +350,30 @@ function indexLevels(price, closes, highs, lows){
   const res = collapseLevels(cand.filter(v => v > price), 0.003).slice(0, 2).map(round2);            // выше цены, ближайший первым
   const sup = collapseLevels(cand.filter(v => v < price), 0.003).sort((a, b) => b - a).slice(0, 2).map(round2); // ниже цены, ближайший первым
   return { pivot, res, sup };
+}
+// ── 📰 Новости акции (Yahoo Finance search) — заголовки в реальном времени ──
+// Чистый парсер ответа Yahoo search → нормализованный список заголовков (тестируемо).
+function newsItemsFromYahoo(j){
+  const news = (j && Array.isArray(j.news)) ? j.news : [];
+  return news.map(n => ({
+    title: String((n && n.title) || '').trim().slice(0, 220),
+    publisher: String((n && n.publisher) || '').trim(),
+    link: String((n && n.link) || ''),
+    time: (n && typeof n.providerPublishTime === 'number') ? n.providerPublishTime * 1000 : 0,
+  })).filter(x => x.title).slice(0, 10);
+}
+let _newsCache = {};
+async function stockNews(symbol){
+  const c = _newsCache[symbol];
+  if(c && Date.now() - c.at < 600000) return c.data;   // TTL 10 мин
+  const a = await yAuth();   // search иногда требует cookie/crumb
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false`;
+  const r = await fetch(url, { headers: a ? { ...Y_UA, Cookie: a.cookie } : Y_UA });
+  if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
+  let j = null; try{ j = await r.json(); }catch(e){ return null; }
+  const data = { items: newsItemsFromYahoo(j), at: new Date().toISOString() };
+  _newsCache[symbol] = { data, at: Date.now() };
+  return data;
 }
 // Кэш уровней (S/R меняются медленно) — на изолят, TTL 10 мин.
 let _levelsCache = {};
@@ -2513,6 +2537,11 @@ export default {
       // Implied move из опционов (ATM-стрэддл ближайшей экспирации). Публичные данные.
       const im = await optionsImplied(url.searchParams.get('options').trim());
       return json(im || { error: 'no options' });
+    }
+    if(url.searchParams.has('news')){
+      // 📰 Заголовки новостей Yahoo по тикеру (кэш 10 мин). Публичные данные.
+      const nw = await stockNews(url.searchParams.get('news').trim());
+      return json(nw || { error: 'no news' });
     }
     if(url.searchParams.has('levels')){
       // S/R уровни индексов (pivots + свинги). Кэш 10 мин; публичные данные.

@@ -311,6 +311,33 @@ grp('homeCompositeScore', function(){
   __eq('пустой вход → нейтральные 50', empty.score, 50);
   // отсутствие данных не штрафует сильнее, чем плохие данные
   __ok('пустой ≥ слабого', empty.score >= weak.score);
+  // 📰 новостной фон двигает балл в нужную сторону
+  var nPos = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false,newsSent:3});
+  var nNeg = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false,newsSent:-3});
+  __ok('позитивные новости > нейтрал', nPos.score > empty.score);
+  __ok('негативные новости < нейтрал', nNeg.score < empty.score);
+});
+
+// 9r) 📰 newsSentiment / newsRecencyWeight — новостной фон с весом по свежести
+grp('newsSentiment', function(){
+  var now = 1750000000000;
+  var day = 864e5;
+  // свежий позитив весомее старого негатива
+  var items = [
+    { title: 'Company beats earnings and raises guidance', time: now - day },        // pol +? свежий
+    { title: 'Stock plunge on lawsuit and probe', time: now - 15*day },               // pol − старый
+  ];
+  var s = newsSentiment(items, now);
+  __ok('есть тональность', typeof s.sent === 'number');
+  __ok('pos посчитан', s.pos >= 1);
+  __ok('neg посчитан', s.neg >= 1);
+  __eq('n = число заголовков', s.n, 2);
+  // вес: свежее весомее
+  __ok('свежее (0–2 дн) вес 1', newsRecencyWeight(1) === 1);
+  __ok('старое (>21 дн) вес 0', newsRecencyWeight(30) === 0);
+  __ok('вес убывает со временем', newsRecencyWeight(2) > newsRecencyWeight(10));
+  // пусто → 0
+  __eq('пусто → sent 0', newsSentiment([], now).sent, 0);
 });
 
 // 9l) 📊 Блок D — детектор сценарных алертов

@@ -1434,3 +1434,13 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .info-gloss dt{font-weight:700;color:var(--text1);white-space:nowrap}
 .info-gloss dd{margin:0;color:var(--text2)}
 @media(max-width:520px){.info-gloss{grid-template-columns:1fr;gap:1px 0}.info-gloss dd{margin:0 0 7px;color:var(--text3)}}
+/* 📰 Живые новости Yahoo в карточке акции */
+.nlv-list{display:flex;flex-direction:column;gap:1px;margin-top:2px}
+.nlv-row{display:flex;gap:9px;align-items:flex-start;padding:8px 6px;border-radius:8px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border)}
+.nlv-row:last-child{border-bottom:none}
+.nlv-row:hover{background:var(--bg2)}
+.nlv-pol{flex:none;font-size:12px;line-height:1.5}
+.nlv-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.nlv-title{font-size:13px;color:var(--text1);line-height:1.35}
+.nlv-row:hover .nlv-title{color:var(--accent,#818cf8)}
+.nlv-meta{font-size:11px;color:var(--text3)}

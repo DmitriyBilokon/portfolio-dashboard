@@ -3681,14 +3681,22 @@ function pf3RecoHorizons(d,r){
     if(_scn.rr<1)P(nR,-1,`R/R ${_scn.rr.toFixed(1)} < 1 — риск > потенциала`,`R/R ${_scn.rr.toFixed(1)} < 1 — risk > reward`);
     else if(_scn.rr>2)P(nF,1,`R/R ${_scn.rr.toFixed(1)} — асимметрия в пользу роста`,`R/R ${_scn.rr.toFixed(1)} — upside asymmetry`);
   }
+  // 📰 Свежий новостной фон (живые заголовки Yahoo, если подгружены в карточке) — краткосрочный фактор.
+  const _nv=NEWS_LIVE[String(r[2]||'').toUpperCase()];
+  const _newsNeg=!!(_nv&&_nv.items&&_nv.items.length&&_nv.sent<=-2);
+  if(_nv&&_nv.items&&_nv.items.length){
+    if(_nv.sent>=2)P(nT,1,`позитивный новостной фон (+${_nv.sent})`,`positive news flow (+${_nv.sent})`);
+    else if(_nv.sent<=-2)P(nR,-1,`негативный новостной фон (${_nv.sent})`,`negative news flow (${_nv.sent})`);
+  }
   if(!nR.length)P(nR,0,'красных флагов нет','no red flags');
   let nowV;
   if(noData)nowV='wait';else if(knife)nowV='avoid';
   else if(sig.type==='sell'||overheat||(up!=null&&up<=-5))nowV='sell';
-  else if(sig.type==='buy'&&(d200==null||d200>=0))nowV='buy';else nowV='wait';
+  else if(sig.type==='buy'&&(d200==null||d200>=0)&&!_newsNeg)nowV='buy';else nowV='wait';   // сильный негатив новостей не даёт «покупать»
   const nNote=noData?RT('недостаточно данных — обновите акции','not enough data — refresh stocks')
     :nowV==='avoid'?RT('падающий нож — ждать стабилизации у поддержки','falling knife — wait for support to hold')
     :nowV==='sell'?RT('у сопротивления / перегрев — зона фиксации','at resistance / overheated — take-profit')
+    :_newsNeg?RT('негативный новостной фон — дождитесь стабилизации','negative news flow — wait for it to settle')
     :nowV==='buy'?RT(`цена у уровня ${sig.n||'входа'} в восходящем тренде`,`price at level ${sig.n||'entry'} in uptrend`)
     // Ждать, хотя buy-сигнал сработал (цена у уровня входа) — значит тренд не подтверждён (цена ниже SMA 200).
     :(sig.type==='buy')?RT(`у входа (${sig.n||''}), но цена ниже SMA 200 — тренд не подтверждён`,`at entry (${sig.n||''}), but price below SMA 200 — trend unconfirmed`)
@@ -3767,7 +3775,7 @@ function recoInfoHTML(){
   <p>${RT('Горизонты могут расходиться — например «сокращать сейчас» из-за перегрева, но «покупать на лонг». Это нормально.','Horizons may diverge — e.g. «trim now» on overheating but «buy for the long run». That is expected.')}</p>
   <p><b>${RT('Четыре инструмента','Four tools')}:</b></p>
   <ul class="dash-bul">
-  ${li('💡 <b>'+RT('Рекомендация','Recommendation')+'</b> — '+RT('детерминированный скоринг сайта (техника + фундаментал + риск). Бесплатно, без токенов, считается всегда.','deterministic site scoring (technicals + fundamentals + risk). Free, no tokens, always computed.'))}
+  ${li('💡 <b>'+RT('Рекомендация','Recommendation')+'</b> — '+RT('детерминированный скоринг сайта (техника + фундаментал + риск + свежий новостной фон Yahoo, если подгружен в карточке). Сильный негатив новостей минусует и снимает «покупать». Не входят: инсайдеры, опционы, AI Proto. Бесплатно, без токенов.','deterministic site scoring (technicals + fundamentals + risk + fresh Yahoo news flow if loaded in the card). Strong negative news subtracts and removes «buy». Not included: insiders, options, AI Proto. Free, no tokens.'))}
   ${li('🔎 <b>'+RT('Анализ акции','Stock analysis')+'</b> — '+RT('детерминированный текстовый разбор по метрикам дашборда. Бесплатно.','deterministic written analysis from dashboard metrics. Free.'))}
   ${li('🔄 <b>'+RT('AI-Рекомендация','AI recommendation')+'</b> — '+RT('Claude взвешивает технику, фундаментал и оценку + веб-поиск свежих новостей и макро. Платный AI-вызов на бумагу.','Claude weighs technicals, fundamentals and valuation + web search of fresh news and macro. A paid AI call per stock.'))}
   ${li('🔬 <b>'+RT('AI-анализ акции','AI stock analysis')+'</b> — '+RT('Claude собирает цены, уровни, фундаментал и свежие новости и даёт разбор по горизонтам; сохраняется в обучающую базу 🔬 AI-разборы.','Claude gathers prices, levels, fundamentals and fresh news and analyses by horizon; saved to the 🔬 AI analyses learning base.'))}

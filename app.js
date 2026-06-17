@@ -3560,10 +3560,11 @@ function pf3Criterion(d,r){
   const g=i=>i>=0?(parseFloat(r[i])||0):0;
   const p=parseFloat(r[7])||0,day=parseFloat(r[10])||0;
   const a50=g(s50),a100=g(s100),a200=g(s200),sup=g(h.indexOf('Поддержка'));
-  const tg=g(h.findIndex(x=>/аналит/i.test(x)));
   const B=(rank,cls,ico,label)=>({rank,cls,ico,label,html:`<span class="pf3-crit ${cls}">${ico} ${T(label)}</span>`});
   if(!(p>0)||!(a50>0)||!(a200>0))return{rank:3,cls:'flat',ico:'',label:'—',html:'<span class="pf3-crit flat">—</span>'};
-  const upTg=tg>0?(tg-p)/p*100:null;
+  // Перегрев по таргету считаем от ЭФФЕКТИВНОГО таргета (свежий «Таргет 3м» при
+  // устаревшем «Аналит. таргет»), чтобы бейдж не противоречил отображаемому потенциалу.
+  const upTg=pf3EffUpside(d,r);
   const belowAll=p<a50&&(!(a100>0)||p<a100)&&p<a200;
   const aboveAll=p>a50&&(!(a100>0)||p>a100)&&p>a200;
   if(belowAll&&(day<=-3||(sup>0&&p<sup)))return B(0,'knife','🔪','Падающий нож');

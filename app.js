@@ -4327,7 +4327,7 @@ function renderPF3(){
   }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
-  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open?pfPerfHTML():''}<div class="pf3-layout${open?' open':''}">
+  el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${v3Key===PF3_KEY&&!open&&isAdmin()?pfPerfHTML():''}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
       <div class="pf3-list-hd"><span>${T('📋 Акции')} · ${TAB_LABEL(v3Key)}</span>${open?'':`<span class="pf3-hd-act">${pf3XC(d).includes('reco')?`<span class="pf3-hz-seg" title="${RT('Горизонт колонки «Рекомендация»','«Recommendation» column horizon')}">${[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9'+RT('м','m')],['long','🚀 '+RT('Лонг','Long')]].map(([k,l])=>`<button class="pf3-hz-b${k===pf3Hz?' on':''}" onclick="pf3SetHz('${k}')">${l}</button>`).join('')}</span>`:''}<button class="pf3-btn pf3-btn-sm" onclick="pf3XMenuToggle(event)">⚙ ${T('Колонки')}</button>${can('action.refresh_data')?`<button class="pf3-btn pf3-btn-sm" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить акции')}</button>`:''}${pf3XMenuHTML(d)}</span>`}</div>
@@ -4351,7 +4351,7 @@ function renderPF3(){
     pf3LoadEarnings();       // same for the earnings calendar panel
     pf3RefreshCardPrice(d,r);   // живая цена → актуальный «потенциал роста»
     cardPPStart(String(r[2]||''),exSymbol(r[2],r[8]));   // лайв pre/post-маркет
-  }else if(v3Key===PF3_KEY)pfPerfDraw();   // график развития портфеля под сводкой
+  }else if(v3Key===PF3_KEY&&isAdmin())pfPerfDraw();   // график развития портфелей (сравнение) — только админ
 }
 
 // The full card for the selected holding (everything: hero, stats, health, earnings, chart, buy levels).
@@ -4442,8 +4442,8 @@ async function pfPerfLoad(){
     const allSer=pfpSeriesFromPos(pfpCombinedPos(),histBy);   // 📊 сводная «Все портфели»
     if(allSer)portsSer['__ALL__']=allSer;
     if(!Object.keys(portsSer).length)throw new Error('no port history');
-    // По умолчанию: показываем сводную «Все портфели» + индексы; отдельные портфели — выкл (можно включить).
-    if(!pfPerf._init){pfpPorts().forEach(p=>{pfPerf.on[p.key]=false;});pfPerf._init=true;}
+    // По умолчанию: сводная «Все портфели» + AI-Portfolio + индексы; отдельные real-портфели — выкл (можно включить).
+    if(!pfPerf._init){pfpPorts().forEach(p=>{if(!p.ai)pfPerf.on[p.key]=false;});pfPerf._init=true;}
     const bench={};PFP_BENCH.forEach(b=>{const h=histBy[b[0]];if(h&&Array.isArray(h.c))bench[b[0]]=h.c.map((c,i2)=>({d:new Date(h.t[i2]*1000).toISOString().slice(0,10),v:c})).filter(x=>x.v>0)});
     pfPerf.hist={ports:portsSer,bench};pfPerf.loaded=Date.now();
   }catch(e){pfPerf.failed=true;}
@@ -4468,7 +4468,7 @@ function pfPerfHTML(){
     <div class="pf3-panel-hd"><span>${RT('📈 Развитие портфелей','📈 Portfolios performance')}</span><span class="pfp-chips">${chips}</span></div>
     <div id="pfPerfBox" class="pfp-chart">${H?'':`<div class="pf3-empty">${pfPerf.loading?RT('Загружаю истории цен всех позиций…','Loading price histories…'):pfPerf.failed?RT('Не удалось загрузить истории цен','Failed to load price histories'):'…'}</div>`}</div>
     <div class="pfp-ranges">${ranges.map(btn).join('')}</div>
-    <div class="pf3-risk-note">${RT('Сводная «Все портфели» (жирная) + S&P 500 / Nasdaq 100 / OMXS30. По умолчанию старт — с создания портфелей 12.06.2026. Состав считается текущим на периоде. Клик по названию — вкл/выкл линию, по квадрату — цвет.','«All portfolios» (bold) + S&P 500 / Nasdaq 100 / OMXS30. Default start — portfolio creation 12 Jun 2026. Composition taken as current over the period. Click a name to toggle, the swatch to recolour.')}</div>
+    <div class="pf3-risk-note">${RT('Сводная «Все портфели» (жирная) + AI-Portfolio + S&P 500 / Nasdaq 100 / OMXS30. По умолчанию старт — с создания портфелей 12.06.2026. AI-Portfolio — по реальной истории капитала; остальные — по текущему составу. Клик по названию — вкл/выкл линию, по квадрату — цвет. Видно только администратору.','«All portfolios» (bold) + AI-Portfolio + S&P 500 / Nasdaq 100 / OMXS30. Default start — portfolio creation 12 Jun 2026. AI-Portfolio uses real capital history; others use current composition. Click a name to toggle, the swatch to recolour. Admin-only.')}</div>
   </section>`;
 }
 function pfPerfRange(k){pfPerf.range=k;renderPF3()}

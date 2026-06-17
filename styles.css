@@ -1500,3 +1500,4 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pfcmp-corr th,.pfcmp-corr td{text-align:center;font:600 11px 'JetBrains Mono',monospace;padding:4px 7px;white-space:nowrap}
 .pfcmp-corr th:first-child,.pfcmp-corr td:first-child{text-align:left;font-family:inherit;position:sticky;left:0;background:var(--bg)}
 .pfcmp-corr td{border-radius:4px}
+.pfp-upd{font:600 10px 'JetBrains Mono',monospace;color:var(--text3);margin-left:6px}

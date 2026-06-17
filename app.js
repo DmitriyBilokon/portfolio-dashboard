@@ -4453,8 +4453,8 @@ function pfpCombinedPos(){
   pfpPorts().forEach(p=>{if(p.ai)return;const d=DATA[p.key];if(!d)return;d.rows.forEach((r,i)=>{recalcPF(i,p.key);const sym=exSymbol(r[2],r[8]),w=parseFloat(r[13])||0;if(sym&&w>0)pos.push({sym,w});});});
   return pos;
 }
-async function pfPerfLoad(){
-  if(pfPerf.loading||(pfPerf.hist&&Date.now()-pfPerf.loaded<6*3600*1000))return;
+async function pfPerfLoad(force){
+  if(pfPerf.loading||(!force&&pfPerf.hist&&Date.now()-pfPerf.loaded<20*60*1000))return;   // авто-кэш 20 мин (было 6 ч)
   pfPerf.loading=true;pfPerf.failed=false;
   try{
     const ports=pfpPorts();
@@ -4495,8 +4495,9 @@ function pfPerfHTML(){
     +pfpPorts().map(p=>chip(p.key,p.name,p.def,H&&H.ports[p.key])).join('')
     +PFP_BENCH.map(([sym,n,def])=>chip(sym,n,def,H&&H.bench[sym])).join('');
   const btn=([k,l])=>`<button class="pfp-r${pfPerf.range===k?' on':''}" onclick="pfPerfRange('${k}')">${l}</button>`;
+  const upd=pfPerf.loaded?new Date(pfPerf.loaded).toLocaleTimeString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit'}):'';
   return`<section class="pf3-panel pfp">
-    <div class="pf3-panel-hd"><span>${RT('📈 Развитие портфелей','📈 Portfolios performance')}</span><span class="pfp-chips">${chips}</span></div>
+    <div class="pf3-panel-hd"><span>${RT('📈 Развитие портфелей','📈 Portfolios performance')} <button class="pf3-btn pf3-btn-sm" id="pfPerfRefBtn" onclick="pfPerfRefresh()" title="${RT('Обновить статистику: свежие цены + истории','Refresh stats: fresh prices + histories')}"${pfPerf.loading?' disabled':''}>${pfPerf.loading?'⏳':'🔄'}</button>${upd?`<small class="pfp-upd">${RT('обновлено','updated')} ${upd}</small>`:''}</span><span class="pfp-chips">${chips}</span></div>
     <div id="pfPerfBox" class="pfp-chart">${H?'':`<div class="pf3-empty">${pfPerf.loading?RT('Загружаю истории цен всех позиций…','Loading price histories…'):pfPerf.failed?RT('Не удалось загрузить истории цен','Failed to load price histories'):'…'}</div>`}</div>
     <div class="pfp-ranges">${ranges.map(btn).join('')}</div>
     <div class="pf3-risk-note">${RT('Сводная «Все портфели» (жирная) + AI-Portfolio + S&P 500 / Nasdaq 100 / OMXS30. По умолчанию старт — с создания портфелей 12.06.2026. AI-Portfolio — по реальной истории капитала; остальные — по текущему составу. Клик по названию — вкл/выкл линию, по квадрату — цвет. Видно только администратору.','«All portfolios» (bold) + AI-Portfolio + S&P 500 / Nasdaq 100 / OMXS30. Default start — portfolio creation 12 Jun 2026. AI-Portfolio uses real capital history; others use current composition. Click a name to toggle, the swatch to recolour. Admin-only.')}</div>
@@ -4662,9 +4663,21 @@ function pfDeepCmpHTML(){
   </section>`;
 }
 let _pfPerfChart=null;
+// 🔄 Ручное обновление статистики: свежие цены текущего портфеля + перетянуть истории.
+let _pfPerfRefreshing=false;
+async function pfPerfRefresh(){
+  if(_pfPerfRefreshing)return;_pfPerfRefreshing=true;
+  const btn=document.getElementById('pfPerfRefBtn');if(btn){btn.disabled=true;btn.textContent='⏳';}
+  try{await pf3Refresh(true)}catch(e){}   // свежие цены → веса/вклад/концентрация/валюты
+  pfPerf.loaded=0;
+  await pfPerfLoad(true);                  // принудительно перетянуть истории/индексы
+  _pfPerfRefreshing=false;
+  if(isV3()&&v3Key===PF3_KEY&&pf3Tab==='stats')renderPF3();
+}
 async function pfPerfDraw(){
   if(!(isV3()&&v3Key===PF3_KEY&&pf3Tab==='stats'))return;
-  if(!pfPerf.hist){pfPerfLoad();return}
+  pfPerfLoad();   // авто-обновление при устаревании кэша (>20 мин); само перерисует
+  if(!pfPerf.hist)return;
   const box=document.getElementById('pfPerfBox');
   if(!box)return;
   try{await loadLWC()}catch(e){return}

@@ -316,6 +316,13 @@ grp('homeCompositeScore', function(){
   var nNeg = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false,newsSent:-3});
   __ok('позитивные новости > нейтрал', nPos.score > empty.score);
   __ok('негативные новости < нейтрал', nNeg.score < empty.score);
+  // ⚠ ловушка устаревшего таргета: большой апсайд при даунтренде НЕ должен задирать балл как при аптренде
+  var upTrendBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:true,phase:'up',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
+  var downTrendBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'down',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
+  var knifeBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'knife',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
+  __ok('апсайд при даунтренде НЕ награждается как при аптренде', downTrendBig.score < upTrendBig.score);
+  __ok('падающий нож с «апсайдом» — низкий балл', knifeBig.score < empty.score);
+  __ok('даунтренд+апсайд помечается флагом устаревшего таргета', downTrendBig.why.some(function(w){return /устар|stale/i.test(w);}));
 });
 
 // 9s) 📚 aiPlaybookEnsure — миграция плейбука на v3 (автономия + новые практики)

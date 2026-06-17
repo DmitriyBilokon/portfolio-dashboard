@@ -2416,7 +2416,9 @@ async function pf3AiRun(){
     // and the «Состояние портфеля» tab all reflect the current market state.
     await pf3Refresh(true);
     await aiLoadIdxHist().catch(()=>{});   // история индексов → альфа в трек-рекорде
+    await pf3PullHoldingsNews(key).catch(()=>{});   // 📰 свежие новости по позициям → анализ актуален
     const snap=pf3AiSnapshot(key);
+    const ln=pf3LiveNewsForAi(key); if(ln)snap.liveNews=ln;   // живые заголовки + тональность по позициям
     // Вариант B: детерминированные вердикты скоринга сайта по всем тикерам —
     // чтобы «Предложение» AI было согласовано с вердиктом «Рекомендация» в карточке
     // и таблицах. Расхождение допускается, но AI обязан развести его по горизонтам.
@@ -3582,9 +3584,12 @@ function pf3Reco(d,r){
   const F=[],TT=[],R=[];let fs=0,ts=0,rs=0;
   const push=(arr,pts,ru,en)=>{arr.push({pts,txt:RT(ru,en)});return pts};
   // Фундаментал
+  // ⚠ Ловушка устаревшего таргета: большой апсайд при даунтренде/падающем ноже = таргет, вероятно,
+  // ещё не срезали под обвалившуюся цену. Не награждаем как недооценку — помечаем риск.
+  const staleTrap=(crit.cls==='knife'||crit.cls==='down');
   if(up!=null){
-    if(up>=25)fs+=push(F,2,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`);
-    else if(up>=10)fs+=push(F,1,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`);
+    if(up>=25){ if(staleTrap)fs+=push(F,-0.5,`апсайд +${up.toFixed(0)}% к ВОЗМОЖНО устаревшему таргету (даунтренд)`,`+${up.toFixed(0)}% upside to a possibly STALE target (downtrend)`); else fs+=push(F,2,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`); }
+    else if(up>=10){ if(staleTrap)fs+=push(F,0,`апсайд +${up.toFixed(0)}%, но даунтренд — таргет под вопросом`,`+${up.toFixed(0)}% upside, but downtrend — target questionable`); else fs+=push(F,1,`потенциал к таргету +${up.toFixed(0)}%`,`+${up.toFixed(0)}% upside to target`); }
     else if(up<=-5)fs+=push(F,-1.5,`цена выше таргета на ${(-up).toFixed(0)}%`,`price ${(-up).toFixed(0)}% above target`);
     else fs+=push(F,0,`таргет ≈ цена (${up>=0?'+':''}${up.toFixed(0)}%)`,`target ≈ price (${up>=0?'+':''}${up.toFixed(0)}%)`);
   }
@@ -5092,6 +5097,33 @@ function pf3NewsLiveHTML(tk,ccy){
   return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>📰 ${RT('Новости (Yahoo)','News (Yahoo)')} ${infoBtn('newslive')}</span><span class="pf3-asof">${sub}</span><button class="pf3-btn pf3-btn-sm" onclick="pf3NewsRefresh('${tk}','${ccy}')" title="${RT('Обновить новости','Refresh news')}">🔄</button></div>${body}<div class="pf3-reco-note">${RT('Заголовки тянутся с Yahoo Finance (обновление ~10 мин). Тональность — по словарю, учитывается в рекомендации. Справочно, не индивидуальная рекомендация.','Headlines from Yahoo Finance (refresh ~10 min). Tone is lexicon-based and factors into the recommendation. Reference only, not advice.')}</div></section>`;
 }
 function pf3NewsRefresh(tk,ccy){ if(NEWS_LIVE[tk])NEWS_LIVE[tk].at=0; pf3NewsEnsure(tk,ccy); }
+// 📰 Подтянуть свежие новости по ПОЗИЦИЯМ вкладки (qty>0) — для анализа портфеля,
+// чтобы AI видел события этой недели (даунгрейды, отчёты), а не только устаревшие таргеты.
+async function pf3PullHoldingsNews(key){
+  const d=DATA[key]; if(!d||!Array.isArray(d.rows))return;
+  const seen=new Set(),jobs=[];
+  d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD';if(!tk||seen.has(tk))return;if(!((parseFloat(r[6])||0)>0))return;seen.add(tk);jobs.push([tk,ccy]);});
+  for(const it of jobs.slice(0,20)){
+    const cur=NEWS_LIVE[it[0]];
+    if(cur&&cur.at&&Date.now()-cur.at<10*60000)continue;   // свежее (≤10 мин) уже есть
+    try{
+      const j=await fetch(PRICE_PROXY+'?news='+encodeURIComponent(exSymbol(it[0],it[1]))).then(r=>r.json());
+      const items=(j&&Array.isArray(j.items))?j.items.map(n=>({...n,pol:newsPolarity(n.title||'')})):[];
+      const s=newsSentiment(items,Date.now());
+      NEWS_LIVE[it[0]]={items,sent:s.sent,pos:s.pos,neg:s.neg,at:Date.now(),loading:false};
+    }catch(e){}
+  }
+}
+// Сводка живых новостей по позициям → в снапшот для AI (тональность + свежие заголовки).
+function pf3LiveNewsForAi(key){
+  const d=DATA[key]; if(!d||!Array.isArray(d.rows))return null;
+  const out={},seen=new Set();
+  d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;if(!((parseFloat(r[6])||0)>0))return;seen.add(tk);
+    const n=NEWS_LIVE[tk];if(!n||!n.items||!n.items.length)return;
+    out[tk]={sent:n.sent,headlines:n.items.slice(0,4).map(it=>({t:it.title,pol:it.pol||0,ageDays:it.time>0?Math.floor((Date.now()-it.time)/864e5):null}))};
+  });
+  return Object.keys(out).length?out:null;
+}
 // 📰 Массовая подгрузка новостей по всем тикерам портфелей — чтобы рейтинг 🏆 учитывал фон.
 let _homeNewsLoad=false;
 async function homeNewsAll(){
@@ -5691,7 +5723,14 @@ const PHASE_PTS={knife:-3,down:-1,corr:0.3,flat:0,rev:1,undr:2,up:1.5,imp:0.5,he
 function homeCompositeScore(x){
   let raw=0;const why=[];
   const {up,roe,revg,pe,entry,upTrend,phase,reco,sigN,insBuy,aiV,undervalued,newsSent}=x;
-  if(up!=null){if(up>=25){raw+=3;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=10){raw+=2;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);}else if(up>=0)raw+=1;else if(up>=-10)raw-=1;else raw-=2;}
+  // ⚠ Защита от ловушки устаревшего таргета: большой «апсайд» при даунтренде/падающем ноже
+  // обычно означает, что таргет ещё не срезали под обвалившуюся цену — не считаем это недооценкой.
+  const staleUp=(phase==='knife'||phase==='down');
+  if(up!=null){
+    if(up>=25){ if(staleUp){raw-=0.5;why.push(RT('⚠ таргет устарел?','⚠ stale target?'));} else {raw+=3;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);} }
+    else if(up>=10){ if(!staleUp){raw+=2;why.push(`+${up.toFixed(0)}% ${RT('к таргету','to target')}`);} }
+    else if(up>=0)raw+=1;else if(up>=-10)raw-=1;else raw-=2;
+  }
   raw+=PHASE_PTS[phase]||0;
   if(roe!=null){if(roe>=15){raw+=2;why.push(`ROE ${roe.toFixed(0)}%`);}else if(roe>=10)raw+=1;else if(roe<0)raw-=1.5;}
   if(revg!=null){if(revg>=15){raw+=2;why.push(`${RT('рост','growth')} ${revg.toFixed(0)}%`);}else if(revg>=8){raw+=1;why.push(`${RT('рост','growth')} ${revg.toFixed(0)}%`);}else if(revg<0)raw-=1;}

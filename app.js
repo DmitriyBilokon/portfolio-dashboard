@@ -681,7 +681,7 @@ function can(perm){
   if(!SYNC_ENABLED||userRole==='admin')return true;   // админ — всё; без синка — локальный режим
   return rbacResolve(ACCESS.roleId,ACCESS.overrides,perm);
 }
-const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',aim:'ai_proto'};
+const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',backtest:'ai_proto',aim:'ai_proto'};
 const canTab=k=>can('view.'+(PFTAB_PERM[k]||k));
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
@@ -1428,13 +1428,13 @@ function renderAll(){
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
     if(isAip&&!['list','sec','typ','div','fcast','trades','health','aim'].includes(pf3Tab))pf3Tab='list';
-    else if(isPort&&!['list','stats','sec','typ','div','fcast','trades','plan','cal','health','ai','prop','analysis'].includes(pf3Tab))pf3Tab='list';
+    else if(isPort&&!['list','stats','sec','typ','div','fcast','trades','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
     if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis']]
+      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
@@ -3156,6 +3156,152 @@ function pf3AnalysisHTML(){
   return h;
 }
 
+// ===== 🧪 Бэктест: rule-based прото-сигнал + проверка на истории (ТЗ AI-Proto, фаза 1) =====
+// Детерминированный слой: сигнал [-1..+1] из правил (SMA/RSI/ATR/уровни) + backtest на
+// истории (hit-rate vs buy&hold, кривая эквити, train/validation). Объясним и проверяем —
+// в отличие от LLM-вкладок. Всё на клиенте; история — ?history= (закрытия), индикаторы —
+// smaSeries + инкрементальные RSI/ATR. Без look-ahead: сигнал в точке i не видит баров > i
+// (бары > i используются ТОЛЬКО для метки исхода при оценке точности).
+const BT_DEFAULTS={H:20,thrUp:0.4,thrDown:-0.4,srWin:60,
+  rules:{breakUp:1,bounceSup:1,rejectRes:1,downtrend:1,uptrend:1,overheat:1}};
+const BT_RULE_LBL={breakUp:['пробой SMA50↑','SMA50 breakout↑'],bounceSup:['отскок у поддержки','support bounce'],
+  rejectRes:['откат у сопротивления','resistance reject'],downtrend:['даунтренд','downtrend'],
+  uptrend:['аптренд','uptrend'],overheat:['перегрев RSI','RSI overheat']};
+function btCfg(key){const d=DATA[key||v3Key]||{},c=d.btConfig||{};
+  return {...BT_DEFAULTS,...c,rules:{...BT_DEFAULTS.rules,...(c.rules||{})}};}
+// Инкрементальный RSI(Wilder)/ATR-серии, выровненные с closes; null пока не хватает баров.
+function btRsiSeries(c,n=14){const o=new Array(c.length).fill(null);if(c.length<n+1)return o;
+  let g=0,l=0;for(let i=1;i<=n;i++){const d=c[i]-c[i-1];if(d>=0)g+=d;else l-=d;}g/=n;l/=n;
+  o[n]=l===0?100:Math.round((100-100/(1+g/l))*10)/10;
+  for(let i=n+1;i<c.length;i++){const d=c[i]-c[i-1];g=(g*(n-1)+(d>0?d:0))/n;l=(l*(n-1)+(d<0?-d:0))/n;
+    o[i]=l===0?100:Math.round((100-100/(1+g/l))*10)/10;}return o;}
+function btAtrSeries(c,n=14){const o=new Array(c.length).fill(null);if(c.length<n+1)return o;
+  let s=0;for(let i=1;i<=n;i++)s+=Math.abs(c[i]-c[i-1]);o[n]=s/n;
+  for(let i=n+1;i<c.length;i++)o[i]=(o[i-1]*(n-1)+Math.abs(c[i]-c[i-1]))/n;return o;}
+// Признаки по ряду закрытий: SMA 50/100/200, RSI14, ATR14, rolling S/R за srWin.
+function btFeatures(c,cfg){
+  const n=c.length,W=cfg.srWin,sup=new Array(n).fill(null),res=new Array(n).fill(null);
+  for(let i=0;i<n;i++){if(i<W-1)continue;let mn=Infinity,mx=-Infinity;for(let k=i-W+1;k<=i;k++){if(c[k]<mn)mn=c[k];if(c[k]>mx)mx=c[k];}sup[i]=mn;res[i]=mx;}
+  return {sma50:smaSeries(c,50),sma100:smaSeries(c,100),sma200:smaSeries(c,200),rsi:btRsiSeries(c),atr:btAtrSeries(c),sup,res};
+}
+// Прото-сигнал в точке i из признаков (без баров > i). Возвращает {signal[-1..1], fired[]}.
+function btSignalAt(c,F,i,cfg){
+  if(i<1)return null;
+  const p=c[i],pp=c[i-1],s50=F.sma50[i],s50p=F.sma50[i-1],s100=F.sma100[i],s200=F.sma200[i],
+    rsi=F.rsi[i],atr=F.atr[i],atrp=F.atr[i-1],sup=F.sup[i],rs=F.res[i];
+  if(s50==null||s100==null||s200==null||rsi==null)return null;
+  const R=cfg.rules,fired=[];let num=0;
+  const add=(name,cond,sign)=>{const w=R[name]||0;if(w<=0||!cond)return;num+=sign*w;fired.push(name);};
+  add('breakUp', pp<=s50p&&p>s50&&rsi<70, +1);
+  add('bounceSup', sup>0&&(p-sup)/sup*100<2&&p>=sup&&atr!=null&&atrp!=null&&atr>atrp, +1);
+  add('rejectRes', rs>0&&Math.abs(p-rs)/rs*100<2&&rsi>70, -1);
+  add('downtrend', p<s200&&s50<s100, -1);
+  add('uptrend', p>s200&&s50>s100, +1);
+  add('overheat', rsi>70&&p>s50*1.15, -1);
+  // Масштаб 2: одно правило веса 1 → ±0.5 (пробивает порог 0.4), противоположные гасятся;
+  // вес правила усиливает вклад. Клампим в [-1..1].
+  return {signal:Math.max(-1,Math.min(1,Math.round(num/2*100)/100)),fired};
+}
+// Backtest по одному ряду закрытий. Хронологический сплит 70/30, без look-ahead.
+function btRun(c,cfg){
+  if(!Array.isArray(c)||c.length<260)return null;
+  const F=btFeatures(c,cfg),H=cfg.H,n=c.length,cut=Math.floor(n*0.7);
+  const stat=()=>({hit:0,dir:0});const tr=stat(),va=stat();
+  for(let i=200;i+H<n;i++){
+    const sig=btSignalAt(c,F,i,cfg);if(!sig)continue;
+    const ret=c[i+H]/c[i]-1,thr=Math.max(0.05,(F.atr[i]||0)/c[i]);
+    const outcome=ret>=thr?'up':ret<=-thr?'down':'range';
+    const bucket=i<cut?tr:va;
+    if(sig.signal>cfg.thrUp){bucket.dir++;if(outcome==='up')bucket.hit++;}
+    else if(sig.signal<cfg.thrDown){bucket.dir++;if(outcome==='down')bucket.hit++;}
+  }
+  // Кривая эквити на validation: лонг при сигнале > thrUp, иначе кэш (без шортов/плеча).
+  const eq=[],bh=[];let e=1,b=1;
+  for(let i=cut;i+1<n;i++){
+    const sig=btSignalAt(c,F,i,cfg);const r=c[i+1]/c[i]-1;
+    if(sig&&sig.signal>cfg.thrUp)e*=(1+r);eq.push(e);
+    b*=(1+r);bh.push(b);
+  }
+  const last=btSignalAt(c,F,n-1,cfg);
+  const hr=s=>s.dir?Math.round(s.hit/s.dir*100):null;
+  return {last,hitRate:hr(va),hitTrain:hr(tr),dir:va.dir,
+    stratPct:Math.round((e-1)*1000)/10,bhPct:Math.round((b-1)*1000)/10,eq,bh,
+    overfit:hr(tr)!=null&&hr(va)!=null&&hr(tr)-hr(va)>=20};
+}
+// История по тикеру для backtest (свой кэш, TTL 10 мин).
+let _btHist={},_btState={};
+async function btHistory(sym){
+  const h=_btHist[sym];if(h&&Date.now()-h.t<600000)return h.c;
+  try{const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(sym)+'&range=2y');const j=await r.json();
+    const c=(j&&Array.isArray(j.c)?j.c:[]).filter(x=>typeof x==='number'&&isFinite(x)&&x>0);
+    _btHist[sym]={c,t:Date.now()};return c;}catch(e){return [];}
+}
+// Прогон по всем позициям текущего портфеля (qty>0) → сохранить в _btState[key], перерисовать.
+async function btCompute(key){
+  key=key||v3Key;const d=DATA[key];if(!d)return;
+  _btState[key]={loading:true};if(isV3()&&pf3Tab==='backtest')renderPF3();
+  const cfg=btCfg(key);
+  const rows=(d.rows||[]).filter(r=>(parseFloat(r[6])||0)>0||!d.port);   // позиции (или все строки у watchlist)
+  const out=[];
+  await Promise.all(rows.map(async r=>{
+    const tk=String(r[2]||'').trim();if(!tk)return;
+    const c=await btHistory(exSymbol(tk,r[8]||'USD'));
+    const res=btRun(c,cfg);if(res)out.push({tk,name:String(r[1]||tk),res});
+  }));
+  out.sort((a,b)=>(b.res.last?b.res.last.signal:0)-(a.res.last?a.res.last.signal:0));
+  // Агрегат hit-rate (взвешенно по числу направленных сигналов).
+  let h=0,n=0;out.forEach(o=>{if(o.res.hitRate!=null){h+=o.res.hitRate*o.res.dir;n+=o.res.dir;}});
+  _btState[key]={loading:false,at:Date.now(),items:out,aggHit:n?Math.round(h/n):null};
+  if(isV3()&&pf3Tab==='backtest')renderPF3();
+}
+function btSig(v){const c=v>0.4?'buy':v<-0.4?'sell':'hold';
+  return `<span class="pf3-prop-act ${c}" style="min-width:48px;text-align:center">${v>0?'+':''}${v.toFixed(2)}</span>`;}
+function btSpark(eq,bh){
+  if(!eq||eq.length<2)return '';const a=eq.slice(-180),c=bh.slice(-180);
+  const all=a.concat(c),mn=Math.min(...all),mx=Math.max(...all),sp=(mx-mn)||1,W=600,H=90,pad=4;
+  const X=i=>pad+i/(a.length-1)*(W-2*pad),Y=v=>H-pad-(v-mn)/sp*(H-2*pad);
+  const line=(arr,col,w)=>`<polyline points="${arr.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${col}" stroke-width="${w}"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="aip-spark" preserveAspectRatio="none">${line(c,'#9ca3af',1.5)}${line(a,'#10b981',2.5)}</svg>`;
+}
+function pf3BacktestHTML(){
+  const key=v3Key,st=_btState[key];
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${RT('🧪 Бэктест — прото-сигнал на истории','🧪 Backtest — proto-signal on history')}</span>`
+    +`<span class="pf3-asof">${st&&st.at?RT('обновлено ','updated ')+pf3DtRu(new Date(st.at).toISOString()):''}</span></div>`;
+  if(!st||st.loading){
+    if(!st)setTimeout(()=>btCompute(key),0);
+    h+=`<div class="pf3-empty">⏳ ${RT('Считаю сигналы и backtest по истории (2 года)…','Computing signals and backtest over 2y history…')}</div></section>`;
+    return h;
+  }
+  const cfg=btCfg(key);
+  if(st.items&&st.items.length){
+    h+=`<div class="pf3-prop-sum">${RT('Детерминированный сигнал из правил (SMA/RSI/ATR/уровни), без LLM. Точность — на отложенной 30% выборке. Сигнал в точке не использует будущее.','Deterministic rule-based signal (SMA/RSI/ATR/levels), no LLM. Accuracy on a held-out 30% sample. The signal never uses future bars.')}</div>`;
+    if(st.aggHit!=null)h+=`<div class="pf3-prop-row"><b>${RT('Средний hit-rate портфеля','Portfolio avg hit-rate')}: <span style="color:${st.aggHit>=50?'#10b981':'#ef4444'}">${st.aggHit}%</span></b> <span class="pf3-asof">${RT('по направленным сигналам на validation','directional signals, validation')}</span></div>`;
+    st.items.forEach(o=>{const r=o.res,sg=r.last?r.last.signal:0,
+      fired=(r.last&&r.last.fired||[]).map(f=>(BT_RULE_LBL[f]||[f])[LANG==='en'?1:0]).join(', ')||RT('нет сработавших правил','no rules fired'),
+      vd=sg>cfg.thrUp?RT('лонг-гипотеза','long'):sg<cfg.thrDown?RT('сократить','reduce'):RT('нейтрально','neutral');
+      h+=`<div class="pf3-prop-row">${btSig(sg)}
+        <div class="pf3-prop-info"><b>${o.name} <span class="pf3-cal-tk">${o.tk}</span></b><span>${fired}</span></div>
+        <div style="text-align:right;font-size:12px"><b>${vd}</b><br><span class="pf3-asof">hit ${r.hitRate!=null?r.hitRate+'%':'—'} · ${RT('страт','strat')} ${r.stratPct>=0?'+':''}${r.stratPct}% vs B&H ${r.bhPct>=0?'+':''}${r.bhPct}%${r.overfit?' · ⚠️'+RT('оверфит','overfit'):''}</span></div>
+      </div>${btSpark(r.eq,r.bh)}`;
+    });
+  }else h+=`<div class="pf3-empty">${RT('Нет позиций с достаточной историей (нужно ≥1 года данных).','No positions with enough history (≥1y needed).')}</div>`;
+  // Панель конфига.
+  h+=`<div class="pf3-panel-hd" style="margin-top:14px"><span>⚙️ ${RT('Настройки сигнала','Signal settings')}</span></div>
+    <div class="pf3-prop-row"><div class="pf3-prop-info"><label>${RT('Горизонт H (дней)','Horizon H (days)')}: <input type="number" min="5" max="120" value="${cfg.H}" style="width:64px" onchange="btSet('H',+this.value)"></label>
+      <label style="margin-left:12px">${RT('Порог','Threshold')} ±<input type="number" min="0.1" max="0.9" step="0.05" value="${cfg.thrUp}" style="width:64px" onchange="btSet('thr',+this.value)"></label></div></div>`;
+  Object.keys(BT_DEFAULTS.rules).forEach(rn=>{h+=`<div class="pf3-prop-row"><div class="pf3-prop-info">
+    <label><input type="checkbox" ${cfg.rules[rn]>0?'checked':''} onchange="btSetRule('${rn}',this.checked?1:0)"> ${(BT_RULE_LBL[rn]||[rn])[LANG==='en'?1:0]}</label>
+    <input type="range" min="0" max="3" step="0.5" value="${cfg.rules[rn]}" style="margin-left:10px;vertical-align:middle" oninput="btSetRule('${rn}',+this.value)"> <span class="pf3-asof">×${cfg.rules[rn]}</span></div></div>`;});
+  h+=`<div class="pf3-prop-row"><button class="pf3-btn" onclick="btRecalc()">↻ ${RT('Пересчитать','Recompute')}</button>
+    <span class="pf3-asof" style="margin-left:8px">${RT('Это аналитика на истории, не прогноз и не инвестрекомендация.','Historical analytics, not a forecast or investment advice.')}</span></div>`;
+  h+='</section>';
+  return h;
+}
+function btEnsureCfg(){const d=DATA[v3Key];if(!d)return null;d.btConfig=d.btConfig||{};return d.btConfig;}
+function btSet(k,v){const c=btEnsureCfg();if(!c)return;if(k==='thr'){c.thrUp=Math.abs(v);c.thrDown=-Math.abs(v);}else c[k]=v;scheduleSave();}
+function btSetRule(rn,v){const c=btEnsureCfg();if(!c)return;c.rules=c.rules||{};c.rules[rn]=v;scheduleSave();renderPF3();}
+function btRecalc(){_btState[v3Key]=null;btCompute(v3Key);}
+
 // ===== «Состояние портфеля» sub-tab: client-side health analysis =====
 // Five dimensions scored 0–10 (diversification, sectors, currencies, cash &
 // leverage, trend & quality) + overall verdict, allocations and recommendations.
@@ -4373,6 +4519,10 @@ function renderPF3(){
   }
   if(pf3Tab==='analysis'){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3AnalysisHTML()}</div>`;
+    return;
+  }
+  if(pf3Tab==='backtest'){
+    el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3BacktestHTML()}</div>`;
     return;
   }
   if(pf3Tab==='aim'){

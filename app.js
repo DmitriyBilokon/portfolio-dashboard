@@ -2453,6 +2453,17 @@ async function pf3AiRun(){
     // и таблицах. Расхождение допускается, но AI обязан развести его по горизонтам.
     snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке/таблицах). Это КРАТКОСРОЧНО-технический вердикт.';
     snap.recoVerdicts=dashRecoMap(key);
+    // 🧪 Раздел 6 ТЗ: проверенный на истории rule-based прото-сигнал + реализованная
+    // точность правил из журнала — как «прото-уровень доверия» к технике.
+    try{
+      if(!(DATA[key]&&DATA[key].btSignals))await btCompute(key);   // history кэширована → дёшево
+      const dK=DATA[key];
+      if(dK&&dK.btSignals&&Object.keys(dK.btSignals).length){
+        snap.protoSignals=dK.btSignals;
+        snap.protoLegend='{ТИКЕР:{s:прото-сигнал[-1..+1], v:long|reduce|neutral, h:hit-rate% на отложенной выборке|null}} — ДЕТЕРМИНИРОВАННЫЙ rule-based сигнал (SMA/RSI/ATR/уровни), проверенный на 2-летней истории. Высокий h = сигнал исторически сбывался; используй как подтверждение/контраргумент к recoVerdict, не как приказ.';
+        if(dK.btRuleAcc&&Object.keys(dK.btRuleAcc).length)snap.ruleAccuracy=dK.btRuleAcc;
+      }
+    }catch(e){}
     // 💬 Опционально передаём последние сообщения из чата с AI Proto — чтобы анализ учёл пожелания/идеи из переписки.
     if(AI_INCL_CHAT&&AI_CHAT.length)snap.chatNotes=AI_CHAT.slice(-20).map(m=>({role:m.role,content:String(m.content||'').slice(0,2000)}));
     if(AI_BG_ENABLED&&await aiJobsReady()){ snap.jobId=aiJobId();snap.portfolioKey=key; }   // фон только при включённом флаге; иначе синхронный стриминг
@@ -3291,8 +3302,16 @@ async function btCompute(key){
     const res=btRun(h.c,cfg,h.t);if(!res)return;out.push({tk:it.tk,name:it.name,type:it.type,res});
     btJournalUpdate(key,it.tk,h,res,cfg);   // лог + авто-исход (разд. 7 ТЗ)
   }));
-  // Подрезать журнал и сохранить пополнение/разрешённые исходы.
-  const d=DATA[key];if(d&&Array.isArray(d.btJournal)){d.btJournal=d.btJournal.slice(-500);scheduleSave();}
+  // Компактные прото-сигналы для LLM (раздел 6 ТЗ): {ТИКЕР:{s,v,h}} + точность правил.
+  const d=DATA[key];
+  if(d){
+    const sm={};out.forEach(o=>{const sg=o.res.last?o.res.last.signal:0;sm[o.tk.toUpperCase()]={s:sg,v:sg>cfg.thrUp?'long':sg<cfg.thrDown?'reduce':'neutral',h:o.res.hitRate};});
+    d.btSignals=sm;
+    const rs=btRuleStats(key),acc={};Object.keys(rs).forEach(r=>{acc[r]=Math.round(rs[r].hit/rs[r].tot*100);});
+    d.btRuleAcc=acc;
+    if(Array.isArray(d.btJournal))d.btJournal=d.btJournal.slice(-500);
+    scheduleSave();
+  }
   out.sort((a,b)=>(b.res.last?b.res.last.signal:0)-(a.res.last?a.res.last.signal:0));
   // Агрегат hit-rate (взвешенно по числу направленных сигналов).
   let h=0,n=0;out.forEach(o=>{if(o.res.hitRate!=null){h+=o.res.hitRate*o.res.dir;n+=o.res.dir;}});

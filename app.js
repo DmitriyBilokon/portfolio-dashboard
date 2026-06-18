@@ -4984,8 +4984,10 @@ async function aipRunNow(ev){
   if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Цикл идёт (до минуты)…','Cycle running (up to a minute)…');}
   try{
     const r=await fetch(PRICE_PROXY+'?action=aiport',{headers:{'Authorization':'Bearer '+await sbToken()}});
-    const j=await r.json();
-    toast(j.error?j.error:String(j.result||'OK').split('\n')[0],!!j.error);
+    // Ответ стримится (heartbeat-пробелы/переводы строки) — читаем весь текст и парсим.
+    const tx=await r.text(); let j={}; try{ j=JSON.parse(tx); }catch(_){ j={result:tx}; }
+    // Показываем и статус цикла, и строку анализа портфелей (через · ).
+    toast(j.error?j.error:String(j.result||'OK').split('\n').filter(Boolean).join(' · '),!!j.error);
   }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
   await aipPullState();   // подтянуть актуальное состояние воркера и перерисовать
   // Цикл также пишет авто-анализ реальных портфелей (data[key].analysis) — тянем

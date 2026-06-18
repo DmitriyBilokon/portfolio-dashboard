@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18pfanalyze';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18pfanalyze2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2712,11 +2712,15 @@ export default {
       // Последовательно: оба пишут ledger_state.data.
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
+      // streamJson: цикл + 2 анализа Opus могут занять >100с — синхронный ответ
+      // упёрся бы в таймаут Cloudflare (524), и запись анализа не успевала бы.
       // Сбой одного шага не должен ронять другой — оба независимы.
-      let cycle = '', analysis = '';
-      try{ cycle = await aiPortfolioRun(env, true); }catch(e){ cycle = 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e); }
-      try{ analysis = await runPortfolioAnalyses(env, true); }catch(e){ analysis = 'анализ портфелей: ошибка — ' + String((e && e.message) || e); }
-      return json({ result: cycle + '\n' + analysis });
+      return streamJson(async () => {
+        let cycle = '', analysis = '';
+        try{ cycle = await aiPortfolioRun(env, true); }catch(e){ cycle = 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e); }
+        try{ analysis = await runPortfolioAnalyses(env, true); }catch(e){ analysis = 'анализ портфелей: ошибка — ' + String((e && e.message) || e); }
+        return { result: cycle + '\n' + analysis };
+      });
     }
     if(url.searchParams.get('action') === 'aiportstate'){
       // Авторитетное состояние AI-портфеля (примиряет ledger ↔ резерв ai_state) — для дисплея сайта.

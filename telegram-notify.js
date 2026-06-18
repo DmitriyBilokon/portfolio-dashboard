@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18fed';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18pfanalyze';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -46,6 +46,11 @@ const MODELS = {
 const aiModel = k => MODELS[k] || AI_MODEL_DEFAULT;
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
+// Реальные портфели, которые авто-анализируются в цикле AI-портфеля (кнопка
+// «Запустить цикл сейчас» + cron) → результат пишется в data[key].analysis,
+// клиент рисует его во вкладке «📈 Анализ». Sergei намеренно не включён.
+const ANALYZE_PORTFOLIOS = [PF3_KEY, 'Portfolio (Anna)'];
+const PFANALYSIS_INTERVAL_MS = 60 * 60e3;   // на cron — не чаще раза в час
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
@@ -1538,6 +1543,186 @@ async function aiPortfolioRun(env, force){
     (ap.lastNote ? `\n💭 ${ap.lastNote}` : '');
 }
 
+// ── 📈 Авто-анализ реальных портфелей (Dima/Anna) в цикле AI-портфеля ──────
+// При нажатии «Запустить цикл сейчас» (и на cron) worker не только ведёт свой
+// виртуальный портфель, но и анализирует реальные портфели владельца, давая по
+// каждому рекомендации (купить/докупить/сократить/продать/держать). Результат
+// пишется в data[key].analysis, клиент рисует его во вкладке «📈 Анализ».
+// Структурный вывод (json_schema), без web_search — дёшево на часовом цикле;
+// глубокий FED-aware разбор с веб-поиском остаётся на ручной кнопке AI Proto.
+const PFANALYZE_SYSTEM = `Ты — AI Proto, главная аналитическая модель инвестиционного дашборда частного инвестора из Швеции (базовая валюта — шведская крона, kr). Тебе передают JSON-снапшот ОДНОГО реального портфеля (поле portfolioName): позиции с живыми ценами, P&L, долями, уровнями SMA 50/100/200, поддержкой/сопротивлением, консенсус-таргетами; аллокацию по секторам; свободный кэш; recoVerdicts (детерминированный вердикт скоринга сайта по тикерам, легенда — recoLegend); liveMarkets (живые фьючерсы/индексы/доходности/доллар — risk-фон и реакция на FED); при наличии — playbook.
+
+ЗАДАЧА: дай по этому портфелю КОНКРЕТНЫЕ рекомендации, что делать с каждой значимой позицией и какие новые идеи добавить, нацеленные на опережение эталонных индексов (OMXS30, Nasdaq 100, S&P 500) при разумном риске. Работай автономно по фактам снапшота и плейбуку; цифры портфеля бери из снапшота, не выдумывай.
+
+ПРАВИЛА:
+- Каждое действие — из набора: «Купить» (новая позиция), «Докупить» (увеличить существующую), «Сократить» (уменьшить), «Продать» (закрыть), «Держать». Увеличить = Докупить, уменьшить = Сократить.
+- Опирайся на технику (положение относительно SMA/поддержки/сопротивления, перегрев, падающий нож), оценку (потенциал к таргету) и риск (концентрация, тип бумаги). Для каждой рекомендации в details укажи уровень входа/выхода и краткую причину; amountSEK — ориентировочная сумма в kr или null.
+- СОГЛАСОВАННОСТЬ С КАРТОЧКОЙ: если рекомендация против recoVerdict (например, Докупить при recoVerdict=sell/avoid, или Сократить при buy) — кратко оговори расхождение и разведи по горизонтам.
+- ПОБЕДИТЕЛЕЙ НЕ РЕЖЬ РАДИ ДИВЕРСИФИКАЦИИ: сильные прибыльные растущие позиции сокращай только по объективной причине (перегрев/выше таргета/слом тренда/ухудшение фундаментала/опасная концентрация). Недовес закрывай кэшем и новыми идеями.
+- Учитывай liveMarkets как текущий risk-фон (VIX, доходности, доллар, реакция на FED) для тайминга.
+- summary: 2–3 предложения о состоянии портфеля и главном выводе. report: краткий разбор в markdown (состояние, что докупить, что сократить/продать, новые идеи, риски). actions: список конкретных рекомендаций.
+
+Верни ответ СТРОГО по заданной JSON-схеме. Это аналитическая сводка, не индивидуальная инвестиционная рекомендация.`;
+const PFANALYZE_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string', description: '2–3 предложения о состоянии портфеля и главном выводе' },
+    report: { type: 'string', description: 'Краткий разбор в markdown' },
+    actions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['Купить', 'Докупить', 'Сократить', 'Продать', 'Держать'] },
+          name: { type: 'string' },
+          ticker: { type: 'string' },
+          details: { type: 'string' },
+          amountSEK: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+        },
+        required: ['action', 'name', 'ticker', 'details', 'amountSEK'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['summary', 'report', 'actions'],
+  additionalProperties: false,
+};
+// Серверный аналог pf3AiSnapshot для портфеля: строки вкладки + живые котировки
+// Yahoo → позиции с уровнями/долями, аллокация, кэш, recoVerdict на тикер.
+const PFANALYZE_LEGEND = '{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке).';
+async function buildPortfolioSnapshot(env, key, snap){
+  const d = snap && snap.data && snap.data[key];
+  if(!d || !Array.isArray(d.rows) || !d.rows.length) return null;
+  const h = d.headers || [];
+  const ix = {
+    s50: h.findIndex(x => /sma.?50$/i.test(x)), s100: h.findIndex(x => /sma.?100/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
+    sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'),
+    tg: h.findIndex(x => /аналит/i.test(x)), tgr: h.findIndex(x => /таргет 3м/i.test(x)),
+    pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
+  };
+  const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
+  const num = (r, i) => { const v = i >= 0 ? parseFloat(r[i]) : NaN; return isFinite(v) ? v : null; };
+  // Живые котировки по позициям — как в торговом цикле.
+  const quotes = {};
+  await Promise.all(d.rows.map(async r => {
+    const tk = String(r[2] || '').trim(); if(!tk) return;
+    quotes[tk] = await yahoo(exSymbol(tk, r[8] || 'USD')).catch(() => null);
+  }));
+  const positions = [], recoVerdicts = {};
+  let totalVal = 0;
+  for(const r of d.rows){
+    const tk = String(r[2] || '').trim(); if(!tk) continue;
+    const ccy = String(r[8] || 'USD');
+    const q = quotes[tk] || {};
+    const price = (q && q.price > 0) ? round2(q.price) : num(r, 7);
+    if(!(price > 0)) continue;
+    const qty = num(r, 6) || 0, f = fx[ccy] || 1;
+    const sma50 = (q && q.sma50) || num(r, ix.s50), sma100 = (q && q.sma100) || num(r, ix.s100), sma200 = (q && q.sma200) || num(r, ix.s200);
+    const support = (q && q.support) || num(r, ix.sup), resistance = (q && q.resistance) || num(r, ix.res);
+    const buy = num(r, 9);
+    const valueSEK = Math.round(qty * price * f);
+    totalVal += valueSEK;
+    // Эффективный таргет (свежий «Таргет 3м» при устаревшем консенсусе ≥10%).
+    const tgMain = num(r, ix.tg), tgRec = num(r, ix.tgr);
+    const tg = (tgMain > 0 && tgRec > 0 && Math.abs(tgRec - tgMain) / tgMain * 100 >= 10) ? tgRec : (tgMain || tgRec);
+    const dist = v => (v && v > 0) ? Math.round((price - v) / v * 1000) / 10 : null;
+    // recoVerdict через ту же логику, что в карточке (aipVerdict по universe-строке).
+    const uRow = [tk, ccy, String(r[4] || ''), String(r[5] || ''), price, num(r, 10) || 0,
+      dist(sma50), dist(sma200), dist(support), dist(resistance),
+      (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,
+      num(r, ix.pe), num(r, ix.beta), num(r, ix.roe), num(r, ix.revg), null];
+    recoVerdicts[tk.toUpperCase()] = aipVerdict(uRow);
+    positions.push({
+      name: r[1], ticker: tk, sector: r[4] || '—', ccy,
+      qty, buyPrice: buy, price, valueSEK,
+      plPct: (buy > 0) ? Math.round((price / buy - 1) * 1000) / 10 : null,
+      sma50, sma100, sma200, support, resistance,
+      analystTarget: (tg && tg > 0) ? round2(tg) : null,
+      upsidePct: uRow[10],
+    });
+  }
+  if(!positions.length) return null;
+  positions.forEach(p => { p.sharePct = totalVal > 0 ? Math.round(p.valueSEK / totalVal * 1000) / 10 : 0; });
+  const bySector = {};
+  positions.forEach(p => { bySector[p.sector] = (bySector[p.sector] || 0) + p.valueSEK; });
+  const allocation = Object.entries(bySector).map(([name, v]) => ({ name, pct: totalVal > 0 ? Math.round(v / totalVal * 1000) / 10 : 0 })).sort((a, b) => b.pct - a.pct);
+  const cashSEK = Math.round((parseFloat(d.cashFree) || 0) * (fx[String(d.baseCcy || 'SEK').toUpperCase()] || 1));
+  return {
+    portfolioName: d.title || d.subtitle || key,
+    baseCurrency: 'SEK', fxToSEK: fx,
+    positions, allocation,
+    totals: { stocksSEK: Math.round(totalVal), freeCashSEK: cashSEK },
+    recoLegend: PFANALYZE_LEGEND,
+    recoVerdicts,
+    playbook: Array.isArray(snap.aiPlaybook) ? snap.aiPlaybook : [],
+  };
+}
+async function portfolioAnalyze(env, key, snap){
+  const payload = await buildPortfolioSnapshot(env, key, snap);
+  if(!payload) return null;
+  payload.liveMarkets = await liveMarkets().catch(() => []);
+  payload.today = new Date().toISOString().slice(0, 10);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: aiModel('portfolio'),
+      max_tokens: 6000,
+      thinking: { type: 'adaptive' },
+      output_config: { format: { type: 'json_schema', schema: PFANALYZE_SCHEMA } },
+      system: PFANALYZE_SYSTEM,
+      messages: [{ role: 'user', content: 'Снапшот портфеля (JSON):\n' + JSON.stringify(payload) }],
+    }),
+  });
+  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 200));
+  const j = await r.json();
+  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  let parsed = null; try{ parsed = JSON.parse(raw); }catch(e){}
+  if(!parsed || !Array.isArray(parsed.actions)) throw new Error('Пустой/некорректный ответ анализа');
+  return { summary: String(parsed.summary || ''), report: String(parsed.report || ''), actions: parsed.actions, cost: aiCost(j), at: new Date().toISOString() };
+}
+// Прогон авто-анализа по всем реальным портфелям. Гейт по pfAnalysisAt (cron —
+// не чаще раза в час); force=true (кнопка) считает сейчас. Пишет в data[key].analysis.
+async function runPortfolioAnalyses(env, force){
+  if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
+  const row = await loadRow(env);
+  const snap = row && row.snap;
+  if(!snap || !snap.data) return 'Нет данных портфелей';
+  const now = Date.now();
+  if(!force && snap.pfAnalysisAt && now - snap.pfAnalysisAt < PFANALYSIS_INTERVAL_MS){
+    return `Рано: авто-анализ портфелей через ${Math.ceil((snap.pfAnalysisAt + PFANALYSIS_INTERVAL_MS - now) / 60e3)} мин`;
+  }
+  const results = {};
+  for(const key of ANALYZE_PORTFOLIOS){
+    if(!snap.data[key]) continue;
+    try{ const a = await portfolioAnalyze(env, key, snap); if(a) results[key] = a; }
+    catch(e){ results[key] = { error: String((e && e.message) || e) }; }
+  }
+  if(!Object.keys(results).length) return 'Портфели для анализа не найдены';
+  // Перечитываем свежую строку и пишем анализ, не затирая параллельные изменения.
+  const fresh = await loadRow(env);
+  if(fresh && fresh.snap && fresh.snap.data){
+    for(const [key, a] of Object.entries(results)){
+      if(a.error || !fresh.snap.data[key]) continue;
+      const d = fresh.snap.data[key];
+      const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
+      d.analysis = entry;
+      d.analysisHistory = [entry, ...(d.analysisHistory || [])].slice(0, 5);
+    }
+    fresh.snap.pfAnalysisAt = now;
+    await writeRow(env, fresh.userId, fresh.snap);
+  }
+  // Telegram-сводка по каждому портфелю.
+  for(const [key, a] of Object.entries(results)){
+    if(a.error){ try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(a.error)}`); }catch(e){} continue; }
+    const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
+      .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
+    try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
+  }
+  const parts = Object.entries(results).map(([k, a]) => `${k}: ${a.error ? 'ошибка' : (a.actions || []).length + ' реком.'}`);
+  return 'Авто-анализ портфелей: ' + parts.join(' · ');
+}
+
 // ── 🕵 Инсайдерские сделки (Finnhub): сбор, агрегация, кластерные покупки ───
 // Finnhub Insider Transactions — только US (SEC Form 4). Соблюдаем 60 req/min;
 // при 429 — экспоненциальный backoff. Кластер: ≥3 уникальных инсайдера-
@@ -2299,7 +2484,12 @@ export default {
   async scheduled(event, env, ctx){
     ctx.waitUntil(Promise.all([
       runAlerts(env).catch(() => {}),
-      aiPortfolioRun(env, false).catch(() => {}),   // гейт intervalMin внутри
+      // Цикл AI-портфеля и авто-анализ реальных портфелей — ПОСЛЕДОВАТЕЛЬНО:
+      // оба делают read-modify-write ledger_state.data, параллельно затёрли бы.
+      (async () => {
+        await aiPortfolioRun(env, false).catch(() => {});       // гейт intervalMin внутри
+        await runPortfolioAnalyses(env, false).catch(() => {}); // гейт pfAnalysisAt внутри
+      })(),
     ]));
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
@@ -2518,10 +2708,15 @@ export default {
     }
     if(url.searchParams.get('action') === 'aiport'){
       // Принудительный цикл AI-портфеля (кнопка «▶» на вкладке 🤖, только админ).
+      // + авто-анализ реальных портфелей (Dima/Anna) → data[key].analysis.
+      // Последовательно: оба пишут ledger_state.data.
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      try{ return json({ result: await aiPortfolioRun(env, true) }); }
-      catch(e){ return json({ error: String(e.message || e) }, 500); }
+      // Сбой одного шага не должен ронять другой — оба независимы.
+      let cycle = '', analysis = '';
+      try{ cycle = await aiPortfolioRun(env, true); }catch(e){ cycle = 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e); }
+      try{ analysis = await runPortfolioAnalyses(env, true); }catch(e){ analysis = 'анализ портфелей: ошибка — ' + String((e && e.message) || e); }
+      return json({ result: cycle + '\n' + analysis });
     }
     if(url.searchParams.get('action') === 'aiportstate'){
       // Авторитетное состояние AI-портфеля (примиряет ledger ↔ резерв ai_state) — для дисплея сайта.

@@ -681,7 +681,7 @@ function can(perm){
   if(!SYNC_ENABLED||userRole==='admin')return true;   // админ — всё; без синка — локальный режим
   return rbacResolve(ACCESS.roleId,ACCESS.overrides,perm);
 }
-const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',aim:'ai_proto'};
+const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',aim:'ai_proto'};
 const canTab=k=>can('view.'+(PFTAB_PERM[k]||k));
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
@@ -1434,7 +1434,7 @@ function renderAll(){
     const _subs=(isAip
       ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop']]
+      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
@@ -3130,6 +3130,32 @@ function pf3PropHTML(){
   return h;
 }
 
+// ===== «📈 Анализ» sub-tab: авто-разбор портфеля из цикла AI-портфеля =====
+// Заполняется воркером при нажатии «▶ Запустить цикл сейчас» (и на cron):
+// data[key].analysis = {at, summary, report, actions:[{action,name,ticker,details,amountSEK}]}.
+function pf3AnalysisHTML(){
+  const d=DATA[v3Key],A=d&&d.analysis;
+  let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${RT('📈 AI-анализ портфеля','📈 AI portfolio analysis')}</span><span class="pf3-asof">${A&&A.at?RT('обновлено ','updated ')+pf3DtRu(A.at):''}</span></div>`;
+  if(!A){
+    h+=`<div class="pf3-empty">${RT('Анализ ещё не запускался — нажмите «▶ Запустить цикл сейчас» на вкладке AI-Portfolio (worker должен быть обновлён). Анализ обновляется автоматически по циклу.','No analysis yet — press «▶ Run cycle now» on the AI-Portfolio tab (worker must be updated). It also refreshes automatically on the cycle.')}</div></section>`;
+    return h;
+  }
+  if(A.summary)h+=`<div class="pf3-prop-sum">${pf3Md(A.summary)}</div>`;
+  (A.actions||[]).forEach((a,i)=>{
+    const cls=/куп/i.test(a.action)?'buy':/прода|сократ/i.test(a.action)?'sell':'hold';
+    h+=`<div class="pf3-prop-row">
+      <span class="pf3-prop-n">${i+1}</span>
+      <span class="pf3-prop-act ${cls}">${a.action||''}</span>
+      <div class="pf3-prop-info"><b>${a.name||''} <span class="pf3-cal-tk">${a.ticker||''}</span></b><span>${a.details||''}</span></div>
+      <span class="pf3-prop-amt">${typeof a.amountSEK==='number'&&a.amountSEK>0?'≈'+pf3Fmt(a.amountSEK)+' kr':''}</span>
+    </div>`;
+  });
+  if(A.report)h+=`<div class="pf3-ai-report">${pf3Md(A.report)}</div>`;
+  h+=`<div class="pf3-asof" style="margin-top:8px">${RT('Это аналитическая сводка, не индивидуальная инвестиционная рекомендация.','Informational summary, not individual investment advice.')}</div>`;
+  h+='</section>';
+  return h;
+}
+
 // ===== «Состояние портфеля» sub-tab: client-side health analysis =====
 // Five dimensions scored 0–10 (diversification, sectors, currencies, cash &
 // leverage, trend & quality) + overall verdict, allocations and recommendations.
@@ -4345,6 +4371,10 @@ function renderPF3(){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3PropHTML()}</div>`;
     return;
   }
+  if(pf3Tab==='analysis'){
+    el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3AnalysisHTML()}</div>`;
+    return;
+  }
   if(pf3Tab==='aim'){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${aipManageHTML()}</div>`;
     return;
@@ -4958,6 +4988,10 @@ async function aipRunNow(ev){
     toast(j.error?j.error:String(j.result||'OK').split('\n')[0],!!j.error);
   }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
   await aipPullState();   // подтянуть актуальное состояние воркера и перерисовать
+  // Цикл также пишет авто-анализ реальных портфелей (data[key].analysis) — тянем
+  // свежий снапшот облака, чтобы вкладка «📈 Анализ» у Dima/Anna обновилась.
+  try{ await pullState(); }catch(e){}
+  if(isV3())renderPF3();
   if(btn){btn.disabled=false;btn.textContent='▶ '+RT('Запустить цикл сейчас','Run cycle now');}
 }
 // 🤝 Подтянуть авторитетное состояние AI-портфеля из воркера (примиряет ledger ↔ резерв).

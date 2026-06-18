@@ -3234,6 +3234,7 @@ function btRun(c,cfg,t){
   return {last,hitRate:hr(va),hitTrain:hr(tr),dir:va.dir,
     stratPct:Math.round((e-1)*1000)/10,bhPct:Math.round((b-1)*1000)/10,eq,bh,
     valFrom:t?fmt(t[cut]):null,valTo:t?fmt(t[n-1]):null,valDays:n-cut,
+    lastAtrPct:Math.max(0.05,(F.atr[n-1]||0)/c[n-1]),
     overfit:hr(tr)!=null&&hr(va)!=null&&hr(tr)-hr(va)>=20};
 }
 // История по тикеру для backtest (свой кэш, TTL 10 мин).
@@ -3260,13 +3261,42 @@ async function btCompute(key){
   const out=[];
   await Promise.all(items.map(async it=>{
     const h=await btHistory(exSymbol(it.tk,it.ccy));
-    const res=btRun(h.c,cfg,h.t);if(res)out.push({tk:it.tk,name:it.name,res});
+    const res=btRun(h.c,cfg,h.t);if(!res)return;out.push({tk:it.tk,name:it.name,res});
+    btJournalUpdate(key,it.tk,h,res,cfg);   // лог + авто-исход (разд. 7 ТЗ)
   }));
+  // Подрезать журнал и сохранить пополнение/разрешённые исходы.
+  const d=DATA[key];if(d&&Array.isArray(d.btJournal)){d.btJournal=d.btJournal.slice(-500);scheduleSave();}
   out.sort((a,b)=>(b.res.last?b.res.last.signal:0)-(a.res.last?a.res.last.signal:0));
   // Агрегат hit-rate (взвешенно по числу направленных сигналов).
   let h=0,n=0;out.forEach(o=>{if(o.res.hitRate!=null){h+=o.res.hitRate*o.res.dir;n+=o.res.dir;}});
   _btState[key]={loading:false,at:Date.now(),items:out,aggHit:n?Math.round(h/n):null};
   if(isV3()&&pf3Tab==='backtest')renderPF3();
+}
+// 📓 Журнал гипотез (разд. 7 ТЗ): обучение со временем без демона. При заходе в
+// новый день логируем направленный сигнал по бумаге; у прошлых записей, чей
+// горизонт H уже прошёл, проставляем фактический исход по свежей истории.
+function btJournalUpdate(key,tk,h,res,cfg){
+  const d=DATA[key];if(!d)return;const J=d.btJournal=d.btJournal||[];
+  const c=h.c,t=h.t||[],today=new Date().toISOString().slice(0,10);
+  // Авто-исход для незакрытых записей этой бумаги.
+  J.forEach(e=>{
+    if(e.tk!==tk||e.out!=null)return;
+    let idx=-1;for(let i=0;i<t.length;i++){if(t[i]&&new Date(t[i]*1000).toISOString().slice(0,10)===e.d){idx=i;break;}}
+    if(idx<0||idx+e.H>=c.length)return;   // ещё не прошёл горизонт
+    const ret=c[idx+e.H]/c[idx]-1,thr=Math.max(0.05,e.atr||0.05);
+    e.ret=Math.round(ret*1000)/10;e.out=ret>=thr?'up':ret<=-thr?'down':'range';
+  });
+  // Логируем сегодняшний направленный сигнал (одна запись на бумагу в день).
+  const sg=res.last?res.last.signal:0,dir=sg>cfg.thrUp?'long':sg<cfg.thrDown?'reduce':null;
+  if(dir&&!J.some(e=>e.tk===tk&&e.d===today))
+    J.push({d:today,tk,sig:sg,verdict:dir,fired:(res.last&&res.last.fired)||[],H:cfg.H,px:c[c.length-1],atr:res.lastAtrPct||0.05,out:null,ret:null});
+}
+// Реализованная точность каждого правила по закрытым записям журнала.
+function btRuleStats(key){
+  const J=(DATA[key]&&DATA[key].btJournal)||[],m={};
+  J.forEach(e=>{if(e.out==null)return;const hit=(e.verdict==='long'&&e.out==='up')||(e.verdict==='reduce'&&e.out==='down');
+    (e.fired||[]).forEach(r=>{m[r]=m[r]||{hit:0,tot:0};m[r].tot++;if(hit)m[r].hit++;});});
+  return m;
 }
 // 🎯 Калибровка весов: grid-search по правилам. Сначала собираем «сработавшие
 // правила + исход + train/val» (НЕ зависит от весов), потом дёшево перебираем
@@ -3347,6 +3377,25 @@ function pf3BacktestHTML(){
       </div>${btSpark(r.eq,r.bh)}${cap}`;
     });
   }else h+=`<div class="pf3-empty">${RT('Нет позиций с достаточной историей (нужно ≥1 года данных).','No positions with enough history (≥1y needed).')}</div>`;
+  // 📓 Журнал гипотез + реализованная точность правил (обучение со временем, разд. 7).
+  const J=(DATA[key]&&DATA[key].btJournal)||[];
+  h+=`<div class="pf3-panel-hd" style="margin-top:14px"><span>📓 ${RT('Журнал гипотез','Hypothesis journal')}</span><span class="pf3-asof">${RT('обучение со временем','learning over time')}</span></div>`;
+  if(!J.length){h+=`<div class="pf3-empty">${RT('Журнал пуст. Запись добавляется при заходе на вкладку в новый день для бумаг с направленным сигналом; исход проставляется автоматически через горизонт H.','Journal is empty. An entry is logged when you open the tab on a new day for stocks with a directional signal; the outcome auto-fills after horizon H.')}</div>`;}
+  else{
+    const resolved=J.filter(e=>e.out!=null),pend=J.length-resolved.length;
+    const corr=resolved.filter(e=>(e.verdict==='long'&&e.out==='up')||(e.verdict==='reduce'&&e.out==='down')).length;
+    h+=`<div class="pf3-prop-row"><div class="pf3-prop-info"><b>${J.length} ${RT('записей','entries')}</b> · ${RT('закрыто','resolved')} ${resolved.length}${resolved.length?` (${RT('верных','correct')} ${corr}/${resolved.length} = ${Math.round(corr/resolved.length*100)}%)`:''} · ⏳ ${pend}</div></div>`;
+    // Реализованная точность правил (деградирующие < 40% подсвечены).
+    const rs=btRuleStats(key),rk=Object.keys(rs);
+    if(rk.length){h+=`<div class="pf3-prop-row"><div class="pf3-prop-info"><b>${RT('Точность правил (по закрытым)','Rule accuracy (resolved)')}:</b><br>`
+      +rk.map(r=>{const s=rs[r],pc=Math.round(s.hit/s.tot*100);return `<span style="color:${pc>=50?'#10b981':pc<40?'#ef4444':'inherit'}">${(BT_RULE_LBL[r]||[r])[LANG==='en'?1:0]} ${pc}% (${s.hit}/${s.tot})</span>`;}).join(' · ')
+      +`</div></div>`;}
+    // Последние записи.
+    J.slice(-15).reverse().forEach(e=>{const ic=e.out==null?'⏳':((e.verdict==='long'&&e.out==='up')||(e.verdict==='reduce'&&e.out==='down'))?'✅':e.out==='range'?'⚪':'❌';
+      h+=`<div class="pf3-prop-row"><span class="pf3-prop-act ${e.verdict==='long'?'buy':'sell'}" style="min-width:64px;text-align:center">${e.verdict==='long'?RT('лонг','long'):RT('сократ','reduce')}</span>
+        <div class="pf3-prop-info"><b>${e.tk}</b> <span class="pf3-asof">${e.d} · ${RT('сигнал','sig')} ${e.sig>0?'+':''}${e.sig}</span></div>
+        <div style="text-align:right;font-size:12px">${ic} ${e.out==null?RT('ждёт','pending'):e.ret+'%'}</div></div>`;});
+  }
   // Панель конфига.
   h+=`<div class="pf3-panel-hd" style="margin-top:14px"><span>⚙️ ${RT('Настройки сигнала','Signal settings')}</span></div>
     <div class="pf3-prop-row"><div class="pf3-prop-info"><label>${RT('Горизонт H (дней)','Horizon H (days)')}: <input type="number" min="5" max="120" value="${cfg.H}" style="width:64px" onchange="btSet('H',+this.value)"></label>

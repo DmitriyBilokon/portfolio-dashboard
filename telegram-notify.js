@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-18proto6';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-18cache1';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -119,11 +119,21 @@ const AI_RESEARCH_MS = 90 * 1000;
 // Один раунд к Anthropic ЧЕРЕЗ STREAMING (SSE). Долгая генерация отчёта без
 // стрима упиралась в таймаут Cloudflare ~100с → 524. Стрим держит соединение
 // живым и заодно даёт усечённые usage/content/stop_reason из событий.
+// Prompt caching: статический system-промпт оборачиваем в кэшируемый блок
+// (cache_control ephemeral, TTL 5 мин). Повторный вызов с тем же префиксом
+// читает кэш по ×0.1 вместо ×1 (запись ×1.25) — экономия учтена в aiCost.
+// Динамику (снапшот/контекст) держим в messages, не в system, иначе префикс
+// меняется и кэш не срабатывает. Минимум для кэша: Opus 4.8 ~4096 ток.,
+// Sonnet 4.6 ~2048 — крупные промпты (AI/AIPORT/PFANALYZE/...) выше порога.
+function cacheSys(s){
+  if(typeof s === 'string' && s) return [{ type: 'text', text: s, cache_control: { type: 'ephemeral' } }];
+  return s;   // уже массив блоков или пусто — не трогаем
+}
 async function anthropicRound(env, body){
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ ...body, stream: true }),
+    body: JSON.stringify({ ...body, system: cacheSys(body.system), stream: true }),
   });
   if(!r.ok || !r.body){ const e = new Error('Claude API ' + r.status + ': ' + (await r.text().catch(() => '')).slice(0, 200)); e.status = r.status; throw e; }
   const reader = r.body.getReader(), dec = new TextDecoder();
@@ -1115,7 +1125,7 @@ async function aiChat(env, body){
       max_tokens: 4000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: CHAT_SCHEMA } },
-      system: CHAT_SYSTEM + '\n\n' + ctx,
+      system: [{ type: 'text', text: CHAT_SYSTEM, cache_control: { type: 'ephemeral' } }, { type: 'text', text: ctx }],
       messages,
     }),
   });
@@ -1461,7 +1471,7 @@ async function aiPortfolioRun(env, force){
       max_tokens: 6000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: AIPORT_SCHEMA } },
-      system: AIPORT_SYSTEM,
+      system: cacheSys(AIPORT_SYSTEM),
       messages: [{ role: 'user', content: JSON.stringify(payload) }],
     }),
   });
@@ -1691,7 +1701,7 @@ async function portfolioAnalyze(env, key, snap){
       max_tokens: 6000,
       thinking: { type: 'adaptive' },
       output_config: { format: { type: 'json_schema', schema: PFANALYZE_SCHEMA } },
-      system: PFANALYZE_SYSTEM,
+      system: cacheSys(PFANALYZE_SYSTEM),
       messages: [{ role: 'user', content: 'Снапшот портфеля (JSON):\n' + JSON.stringify(payload) }],
     }),
   });

@@ -3249,9 +3249,35 @@ async function btHistory(sym){
 // Источник тикеров для backtest: AIP — из живого AI-портфеля (AI_PORT.positions),
 // остальные — позиции вкладки (qty>0; у watchlist — все строки).
 function btTickers(key){
-  if(key===AIP_KEY)return ((AI_PORT&&AI_PORT.positions)||[]).map(p=>({tk:String(p.ticker||'').trim(),name:p.name||p.ticker,ccy:p.ccy||'USD'})).filter(x=>x.tk);
+  if(key===AIP_KEY)return ((AI_PORT&&AI_PORT.positions)||[]).map(p=>({tk:String(p.ticker||'').trim(),name:p.name||p.ticker,ccy:p.ccy||'USD',type:p.type||''})).filter(x=>x.tk);
   const d=DATA[key]||{};
-  return (d.rows||[]).filter(r=>(parseFloat(r[6])||0)>0||!d.port).map(r=>({tk:String(r[2]||'').trim(),name:String(r[1]||r[2]||''),ccy:r[8]||'USD'})).filter(x=>x.tk);
+  return (d.rows||[]).filter(r=>(parseFloat(r[6])||0)>0||!d.port).map(r=>({tk:String(r[2]||'').trim(),name:String(r[1]||r[2]||''),ccy:r[8]||'USD',type:String(r[5]||'')})).filter(x=>x.tk);
+}
+// Лёгкий макро-режим из ^TNX (тренд доходностей) и ^VIX (аппетит к риску). Кэш 10 мин.
+// СОВЕТНЫЙ контекст: не меняет сам прото-сигнал и backtest (консистентность).
+let _btRegime=null;
+async function btRegime(){
+  if(_btRegime&&Date.now()-_btRegime.at<600000)return _btRegime;
+  try{
+    const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent('^TNX,^VIX')).then(r=>r.json());
+    const tnx=j&&j['^TNX'],vix=j&&j['^VIX'];
+    const rates=(tnx&&tnx.price>0&&tnx.sma50>0)?(tnx.price>tnx.sma50*1.005?'hawkish':tnx.price<tnx.sma50*0.995?'dovish':'neutral'):'neutral';
+    const risk=(vix&&vix.price>0&&vix.price>20)?'off':'on';
+    _btRegime={rates,risk,vix:(vix&&vix.price>0)?Math.round(vix.price*10)/10:null,at:Date.now()};
+  }catch(e){_btRegime={rates:'neutral',risk:'on',vix:null,at:Date.now()};}
+  return _btRegime;
+}
+// Советный тилт по типу бумаги в текущем режиме (разд. 13 ТЗ). dir<0 — встречный
+// ветер, dir>0 — попутный. НЕ меняет сигнал/вердикт, только подсказка.
+function btRegimeTilt(type,reg){
+  const t=String(type||'').toLowerCase();
+  const growth=/рост|growth|спекул|spec/.test(t),incomeRate=/дивид|divid|reit|недвиж|real est/.test(t),
+    cyc=/циклич|cyclic|финанс|financ|энерг|energy|материал|material/.test(t),defq=/качеств|qualit|защит|defens/.test(t);
+  let dir=0;const why=[];
+  if(reg.rates==='hawkish'){if(growth){dir--;why.push(RT('рост чувствителен к ↑ставкам','growth hit by ↑rates'));}if(incomeRate){dir--;why.push(RT('REIT/дивиденды против ↑ставок','REIT/dividend vs ↑rates'));}if(cyc){dir++;why.push(RT('value/цикл при ↑ставках','value/cyclical with ↑rates'));}}
+  else if(reg.rates==='dovish'){if(growth){dir++;why.push(RT('рост выигрывает при ↓ставках','growth wins on ↓rates'));}if(incomeRate){dir++;why.push(RT('REIT/дивиденды при ↓ставках','REIT/dividend on ↓rates'));}}
+  if(reg.risk==='off'){if(growth){dir--;why.push(RT('risk-off против спекулятивного','risk-off vs speculative'));}if(defq){dir++;why.push(RT('качество в risk-off','quality in risk-off'));}}
+  return {dir,why:why.join('; ')};
 }
 // Прогон по позициям текущего портфеля → сохранить в _btState[key], перерисовать.
 async function btCompute(key){
@@ -3259,9 +3285,10 @@ async function btCompute(key){
   _btState[key]={loading:true};if(isV3()&&pf3Tab==='backtest')renderPF3();
   const cfg=btCfg(key),items=btTickers(key);
   const out=[];
+  const regime=await btRegime();   // лёгкий макро-режим (контекст)
   await Promise.all(items.map(async it=>{
     const h=await btHistory(exSymbol(it.tk,it.ccy));
-    const res=btRun(h.c,cfg,h.t);if(!res)return;out.push({tk:it.tk,name:it.name,res});
+    const res=btRun(h.c,cfg,h.t);if(!res)return;out.push({tk:it.tk,name:it.name,type:it.type,res});
     btJournalUpdate(key,it.tk,h,res,cfg);   // лог + авто-исход (разд. 7 ТЗ)
   }));
   // Подрезать журнал и сохранить пополнение/разрешённые исходы.
@@ -3269,7 +3296,7 @@ async function btCompute(key){
   out.sort((a,b)=>(b.res.last?b.res.last.signal:0)-(a.res.last?a.res.last.signal:0));
   // Агрегат hit-rate (взвешенно по числу направленных сигналов).
   let h=0,n=0;out.forEach(o=>{if(o.res.hitRate!=null){h+=o.res.hitRate*o.res.dir;n+=o.res.dir;}});
-  _btState[key]={loading:false,at:Date.now(),items:out,aggHit:n?Math.round(h/n):null};
+  _btState[key]={loading:false,at:Date.now(),items:out,aggHit:n?Math.round(h/n):null,regime};
   if(isV3()&&pf3Tab==='backtest')renderPF3();
 }
 // 📓 Журнал гипотез (разд. 7 ТЗ): обучение со временем без демона. При заходе в
@@ -3366,13 +3393,24 @@ function pf3BacktestHTML(){
       <span style="display:inline-block;width:16px;height:3px;background:#9ca3af;vertical-align:middle"></span> ${RT('серая — buy&hold','grey — buy&hold')} ·
       ${RT('обе на окне validation (последние ~30% истории), старт = 1.0','both over the validation window (last ~30% of history), start = 1.0')}.
     </div>`;
+    // 🌡 Лёгкий макро-режим (разд. 13): советный контекст, не меняет сигнал/backtest.
+    const rg=st.regime;
+    if(rg){
+      const rl={hawkish:['🦅 '+RT('ястребиный','hawkish')+' (10Y ↑)',''],dovish:['🕊 '+RT('голубиный','dovish')+' (10Y ↓)',''],neutral:[RT('нейтральный по ставкам','neutral rates'),'']}[rg.rates][0];
+      const fav=rg.rates==='hawkish'?RT('за value/финансы/энергетику, против роста/REIT/дивидендных','favors value/financials/energy, against growth/REIT/dividend')
+        :rg.rates==='dovish'?RT('за рост/REIT, против защитных','favors growth/REIT, against defensives')
+        :RT('без явного перекоса по секторам','no clear sector tilt');
+      h+=`<div class="pf3-prop-row"><div class="pf3-prop-info"><b>🌡 ${RT('Макро-режим','Macro regime')}:</b> ${rl} · ${rg.risk==='off'?RT('risk-off (страх)','risk-off'):'risk-on'}${rg.vix!=null?' · VIX '+rg.vix:''}<br><span class="pf3-asof">${fav}. ${RT('Влияет только на подсказку по бумагам — сигнал и backtest без изменений.','Per-stock hint only — the signal and backtest are unchanged.')}</span></div></div>`;
+    }
     if(st.aggHit!=null)h+=`<div class="pf3-prop-row"><b>${RT('Средний hit-rate портфеля','Portfolio avg hit-rate')}: <span style="color:${st.aggHit>=50?'#10b981':'#ef4444'}">${st.aggHit}%</span></b> <span class="pf3-asof">${RT('по направленным сигналам на validation','directional signals, validation')}</span></div>`;
     st.items.forEach(o=>{const r=o.res,sg=r.last?r.last.signal:0,
       fired=(r.last&&r.last.fired||[]).map(f=>(BT_RULE_LBL[f]||[f])[LANG==='en'?1:0]).join(', ')||RT('нет сработавших правил','no rules fired'),
       vd=sg>cfg.thrUp?RT('лонг-гипотеза','long'):sg<cfg.thrDown?RT('сократить','reduce'):RT('нейтрально','neutral'),
       cap=r.valFrom&&r.valTo?`<div class="pf3-asof" style="margin:-2px 0 10px">🟢 ${RT('стратегия','strategy')} · ⚪ buy&hold · validation ${r.valFrom} → ${r.valTo} (${r.valDays} ${RT('дн','d')})</div>`:'';
+      const tl=st.regime?btRegimeTilt(o.type,st.regime):{dir:0};
+      const hint=tl.dir?` <span style="color:${tl.dir>0?'#10b981':'#ef4444'}" title="${tl.why}">· ${RT('режим','regime')} ${tl.dir>0?'▲':'▼'}</span>`:'';
       h+=`<div class="pf3-prop-row">${btSig(sg)}
-        <div class="pf3-prop-info"><b>${o.name} <span class="pf3-cal-tk">${o.tk}</span></b><span>${fired}</span></div>
+        <div class="pf3-prop-info"><b>${o.name} <span class="pf3-cal-tk">${o.tk}</span></b><span>${fired}${hint}</span></div>
         <div style="text-align:right;font-size:12px"><b>${vd}</b><br><span class="pf3-asof">hit ${r.hitRate!=null?r.hitRate+'%':'—'} · ${RT('страт','strat')} ${r.stratPct>=0?'+':''}${r.stratPct}% vs B&H ${r.bhPct>=0?'+':''}${r.bhPct}%${r.overfit?' · ⚠️'+RT('оверфит','overfit'):''}</span></div>
       </div>${btSpark(r.eq,r.bh)}${cap}`;
     });

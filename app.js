@@ -1427,12 +1427,12 @@ function renderAll(){
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
-    if(isAip&&!['list','sec','typ','div','fcast','trades','health','aim'].includes(pf3Tab))pf3Tab='list';
+    if(isAip&&!['list','sec','typ','div','fcast','trades','health','backtest','aim'].includes(pf3Tab))pf3Tab='list';
     else if(isPort&&!['list','stats','sec','typ','div','fcast','trades','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
     if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
-      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
+      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🧪 '+RT('Бэктест','Backtest'),'backtest'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
       ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
       :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
@@ -3184,28 +3184,35 @@ function btFeatures(c,cfg){
   for(let i=0;i<n;i++){if(i<W-1)continue;let mn=Infinity,mx=-Infinity;for(let k=i-W+1;k<=i;k++){if(c[k]<mn)mn=c[k];if(c[k]>mx)mx=c[k];}sup[i]=mn;res[i]=mx;}
   return {sma50:smaSeries(c,50),sma100:smaSeries(c,100),sma200:smaSeries(c,200),rsi:btRsiSeries(c),atr:btAtrSeries(c),sup,res};
 }
-// Прото-сигнал в точке i из признаков (без баров > i). Возвращает {signal[-1..1], fired[]}.
-function btSignalAt(c,F,i,cfg){
+// Какие правила сработали в точке i и с каким знаком (НЕ зависит от весов — это
+// чистая структура, нужная и для сигнала, и для калибровки). {rule:±1} или null.
+function btFiredAt(c,F,i){
   if(i<1)return null;
   const p=c[i],pp=c[i-1],s50=F.sma50[i],s50p=F.sma50[i-1],s100=F.sma100[i],s200=F.sma200[i],
     rsi=F.rsi[i],atr=F.atr[i],atrp=F.atr[i-1],sup=F.sup[i],rs=F.res[i];
   if(s50==null||s100==null||s200==null||rsi==null)return null;
+  const f={};
+  if(pp<=s50p&&p>s50&&rsi<70)f.breakUp=1;
+  if(sup>0&&(p-sup)/sup*100<2&&p>=sup&&atr!=null&&atrp!=null&&atr>atrp)f.bounceSup=1;
+  if(rs>0&&Math.abs(p-rs)/rs*100<2&&rsi>70)f.rejectRes=-1;
+  if(p<s200&&s50<s100)f.downtrend=-1;
+  if(p>s200&&s50>s100)f.uptrend=1;
+  if(rsi>70&&p>s50*1.15)f.overheat=-1;
+  return f;
+}
+// Прото-сигнал в точке i: взвешенная сумма сработавших правил. Масштаб 2: одно
+// правило веса 1 → ±0.5 (пробивает порог 0.4), противоположные гасятся. Клампим [-1..1].
+function btSignalAt(c,F,i,cfg){
+  const f=btFiredAt(c,F,i);if(!f)return null;
   const R=cfg.rules,fired=[];let num=0;
-  const add=(name,cond,sign)=>{const w=R[name]||0;if(w<=0||!cond)return;num+=sign*w;fired.push(name);};
-  add('breakUp', pp<=s50p&&p>s50&&rsi<70, +1);
-  add('bounceSup', sup>0&&(p-sup)/sup*100<2&&p>=sup&&atr!=null&&atrp!=null&&atr>atrp, +1);
-  add('rejectRes', rs>0&&Math.abs(p-rs)/rs*100<2&&rsi>70, -1);
-  add('downtrend', p<s200&&s50<s100, -1);
-  add('uptrend', p>s200&&s50>s100, +1);
-  add('overheat', rsi>70&&p>s50*1.15, -1);
-  // Масштаб 2: одно правило веса 1 → ±0.5 (пробивает порог 0.4), противоположные гасятся;
-  // вес правила усиливает вклад. Клампим в [-1..1].
+  for(const k in f){const w=R[k]||0;if(w>0){num+=f[k]*w;fired.push(k);}}
   return {signal:Math.max(-1,Math.min(1,Math.round(num/2*100)/100)),fired};
 }
 // Backtest по одному ряду закрытий. Хронологический сплит 70/30, без look-ahead.
-function btRun(c,cfg){
+function btRun(c,cfg,t){
   if(!Array.isArray(c)||c.length<260)return null;
   const F=btFeatures(c,cfg),H=cfg.H,n=c.length,cut=Math.floor(n*0.7);
+  const fmt=x=>x?new Date(x*1000).toISOString().slice(0,10):null;
   const stat=()=>({hit:0,dir:0});const tr=stat(),va=stat();
   for(let i=200;i+H<n;i++){
     const sig=btSignalAt(c,F,i,cfg);if(!sig)continue;
@@ -3226,33 +3233,77 @@ function btRun(c,cfg){
   const hr=s=>s.dir?Math.round(s.hit/s.dir*100):null;
   return {last,hitRate:hr(va),hitTrain:hr(tr),dir:va.dir,
     stratPct:Math.round((e-1)*1000)/10,bhPct:Math.round((b-1)*1000)/10,eq,bh,
+    valFrom:t?fmt(t[cut]):null,valTo:t?fmt(t[n-1]):null,valDays:n-cut,
     overfit:hr(tr)!=null&&hr(va)!=null&&hr(tr)-hr(va)>=20};
 }
 // История по тикеру для backtest (свой кэш, TTL 10 мин).
 let _btHist={},_btState={};
 async function btHistory(sym){
-  const h=_btHist[sym];if(h&&Date.now()-h.t<600000)return h.c;
+  const h=_btHist[sym];if(h&&Date.now()-h.at<600000)return {c:h.c,t:h.ts};
   try{const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(sym)+'&range=2y');const j=await r.json();
-    const c=(j&&Array.isArray(j.c)?j.c:[]).filter(x=>typeof x==='number'&&isFinite(x)&&x>0);
-    _btHist[sym]={c,t:Date.now()};return c;}catch(e){return [];}
+    const rc=(j&&Array.isArray(j.c))?j.c:[],rt=(j&&Array.isArray(j.t))?j.t:[];
+    const c=[],ts=[];for(let i=0;i<rc.length;i++){const v=rc[i];if(typeof v==='number'&&isFinite(v)&&v>0){c.push(v);ts.push(rt[i]);}}
+    _btHist[sym]={c,ts,at:Date.now()};return {c,t:ts};}catch(e){return {c:[],t:[]};}
 }
-// Прогон по всем позициям текущего портфеля (qty>0) → сохранить в _btState[key], перерисовать.
+// Источник тикеров для backtest: AIP — из живого AI-портфеля (AI_PORT.positions),
+// остальные — позиции вкладки (qty>0; у watchlist — все строки).
+function btTickers(key){
+  if(key===AIP_KEY)return ((AI_PORT&&AI_PORT.positions)||[]).map(p=>({tk:String(p.ticker||'').trim(),name:p.name||p.ticker,ccy:p.ccy||'USD'})).filter(x=>x.tk);
+  const d=DATA[key]||{};
+  return (d.rows||[]).filter(r=>(parseFloat(r[6])||0)>0||!d.port).map(r=>({tk:String(r[2]||'').trim(),name:String(r[1]||r[2]||''),ccy:r[8]||'USD'})).filter(x=>x.tk);
+}
+// Прогон по позициям текущего портфеля → сохранить в _btState[key], перерисовать.
 async function btCompute(key){
-  key=key||v3Key;const d=DATA[key];if(!d)return;
+  key=key||v3Key;
   _btState[key]={loading:true};if(isV3()&&pf3Tab==='backtest')renderPF3();
-  const cfg=btCfg(key);
-  const rows=(d.rows||[]).filter(r=>(parseFloat(r[6])||0)>0||!d.port);   // позиции (или все строки у watchlist)
+  const cfg=btCfg(key),items=btTickers(key);
   const out=[];
-  await Promise.all(rows.map(async r=>{
-    const tk=String(r[2]||'').trim();if(!tk)return;
-    const c=await btHistory(exSymbol(tk,r[8]||'USD'));
-    const res=btRun(c,cfg);if(res)out.push({tk,name:String(r[1]||tk),res});
+  await Promise.all(items.map(async it=>{
+    const h=await btHistory(exSymbol(it.tk,it.ccy));
+    const res=btRun(h.c,cfg,h.t);if(res)out.push({tk:it.tk,name:it.name,res});
   }));
   out.sort((a,b)=>(b.res.last?b.res.last.signal:0)-(a.res.last?a.res.last.signal:0));
   // Агрегат hit-rate (взвешенно по числу направленных сигналов).
   let h=0,n=0;out.forEach(o=>{if(o.res.hitRate!=null){h+=o.res.hitRate*o.res.dir;n+=o.res.dir;}});
   _btState[key]={loading:false,at:Date.now(),items:out,aggHit:n?Math.round(h/n):null};
   if(isV3()&&pf3Tab==='backtest')renderPF3();
+}
+// 🎯 Калибровка весов: grid-search по правилам. Сначала собираем «сработавшие
+// правила + исход + train/val» (НЕ зависит от весов), потом дёшево перебираем
+// веса {0,1,2}^6=729. Выбор по hit-rate на VALIDATION (train→val разрыв = оверфит).
+// НЕ применяется автоматически — только по кнопке (инвариант ТЗ).
+async function btCalibrate(key){
+  key=key||v3Key;
+  const stPrev=_btState[key]||{};_btState[key]={...stPrev,calibrating:true};if(isV3()&&pf3Tab==='backtest')renderPF3();
+  const cfg=btCfg(key),H=cfg.H;
+  const samples=[];
+  for(const it of btTickers(key)){
+    const c=(await btHistory(exSymbol(it.tk,it.ccy))).c;if(c.length<260)continue;
+    const F=btFeatures(c,cfg),n=c.length,cut=Math.floor(n*0.7);
+    for(let i=200;i+H<n;i++){const f=btFiredAt(c,F,i);if(!f||!Object.keys(f).length)continue;
+      const ret=c[i+H]/c[i]-1,thr=Math.max(0.05,(F.atr[i]||0)/c[i]);
+      samples.push({f,o:ret>=thr?1:ret<=-thr?-1:0,val:i>=cut});}
+  }
+  const keys=Object.keys(BT_DEFAULTS.rules),levels=[0,1,2];
+  const evalW=w=>{let trH=0,trD=0,vaH=0,vaD=0;
+    for(const s of samples){let num=0;for(const k in s.f)num+=s.f[k]*(w[k]||0);const sig=num/2;
+      let dir=0;if(sig>cfg.thrUp)dir=1;else if(sig<cfg.thrDown)dir=-1;if(!dir)continue;
+      const hit=(dir>0&&s.o>0)||(dir<0&&s.o<0);
+      if(s.val){vaD++;if(hit)vaH++;}else{trD++;if(hit)trH++;}}
+    return {trHit:trD?Math.round(trH/trD*100):null,trDir:trD,vaHit:vaD?Math.round(vaH/vaD*100):null,vaDir:vaD};};
+  let best=null;const total=Math.pow(levels.length,keys.length);
+  for(let t=0;t<total;t++){const w={};let x=t,nonzero=0;
+    for(let j=0;j<keys.length;j++){const lv=levels[x%levels.length];w[keys[j]]=lv;if(lv>0)nonzero++;x=Math.floor(x/levels.length);}
+    if(!nonzero)continue;const m=evalW(w);if(m.vaHit==null||m.vaDir<15)continue;
+    if(!best||m.vaHit>best.m.vaHit||(m.vaHit===best.m.vaHit&&m.vaDir>best.m.vaDir))best={w,m};}
+  const base=evalW(cfg.rules);
+  _btState[key]={...(_btState[key]||{}),calibrating:false,calib:{best,base,at:Date.now(),samples:samples.length}};
+  if(isV3()&&pf3Tab==='backtest')renderPF3();
+}
+function btApplyCalib(){
+  const st=_btState[v3Key];if(!st||!st.calib||!st.calib.best)return;
+  const c=btEnsureCfg();if(!c)return;c.rules={...(c.rules||{}),...st.calib.best.w};scheduleSave();
+  btRecalc();
 }
 function btSig(v){const c=v>0.4?'buy':v<-0.4?'sell':'hold';
   return `<span class="pf3-prop-act ${c}" style="min-width:48px;text-align:center">${v>0?'+':''}${v.toFixed(2)}</span>`;}
@@ -3274,15 +3325,26 @@ function pf3BacktestHTML(){
   }
   const cfg=btCfg(key);
   if(st.items&&st.items.length){
-    h+=`<div class="pf3-prop-sum">${RT('Детерминированный сигнал из правил (SMA/RSI/ATR/уровни), без LLM. Точность — на отложенной 30% выборке. Сигнал в точке не использует будущее.','Deterministic rule-based signal (SMA/RSI/ATR/levels), no LLM. Accuracy on a held-out 30% sample. The signal never uses future bars.')}</div>`;
+    // Пояснение метрик и линий (задача 1+2).
+    h+=`<div class="pf3-prop-sum">
+      ${RT('Детерминированный сигнал из правил (SMA/RSI/ATR/уровни), без LLM — объясним и проверяем на истории. Сигнал в точке не использует будущие бары.','Deterministic rule-based signal (SMA/RSI/ATR/levels), no LLM — explainable and validated on history. The signal never uses future bars.')}<br>
+      <b>${RT('Сигнал','Signal')}</b> −1..+1 (${RT('порог','threshold')} ±${cfg.thrUp}): &gt; +${cfg.thrUp} ${RT('= лонг-гипотеза','= long')}, &lt; −${cfg.thrUp} ${RT('= сократить','= reduce')}, ${RT('между — нейтрально','between — neutral')}.<br>
+      <b>hit</b> ${RT('— доля верных направленных сигналов на отложенных','— share of correct directional signals on the held-out')} 30% ${RT('истории (validation)','of history (validation)')}.
+      <b>${RT('страт','strat')} vs B&H</b> ${RT('— доходность следования сигналу против «купи и держи» на том же окне','— signal-following return vs buy&hold over the same window')}.
+      <b>⚠️ ${RT('оверфит','overfit')}</b> ${RT('— точность на train намного выше validation (подгонка под прошлое).','— train accuracy ≫ validation (overfit to the past).')}<br>
+      <span style="display:inline-block;width:16px;height:3px;background:#10b981;vertical-align:middle"></span> ${RT('зелёная — эквити стратегии','green — strategy equity')} ·
+      <span style="display:inline-block;width:16px;height:3px;background:#9ca3af;vertical-align:middle"></span> ${RT('серая — buy&hold','grey — buy&hold')} ·
+      ${RT('обе на окне validation (последние ~30% истории), старт = 1.0','both over the validation window (last ~30% of history), start = 1.0')}.
+    </div>`;
     if(st.aggHit!=null)h+=`<div class="pf3-prop-row"><b>${RT('Средний hit-rate портфеля','Portfolio avg hit-rate')}: <span style="color:${st.aggHit>=50?'#10b981':'#ef4444'}">${st.aggHit}%</span></b> <span class="pf3-asof">${RT('по направленным сигналам на validation','directional signals, validation')}</span></div>`;
     st.items.forEach(o=>{const r=o.res,sg=r.last?r.last.signal:0,
       fired=(r.last&&r.last.fired||[]).map(f=>(BT_RULE_LBL[f]||[f])[LANG==='en'?1:0]).join(', ')||RT('нет сработавших правил','no rules fired'),
-      vd=sg>cfg.thrUp?RT('лонг-гипотеза','long'):sg<cfg.thrDown?RT('сократить','reduce'):RT('нейтрально','neutral');
+      vd=sg>cfg.thrUp?RT('лонг-гипотеза','long'):sg<cfg.thrDown?RT('сократить','reduce'):RT('нейтрально','neutral'),
+      cap=r.valFrom&&r.valTo?`<div class="pf3-asof" style="margin:-2px 0 10px">🟢 ${RT('стратегия','strategy')} · ⚪ buy&hold · validation ${r.valFrom} → ${r.valTo} (${r.valDays} ${RT('дн','d')})</div>`:'';
       h+=`<div class="pf3-prop-row">${btSig(sg)}
         <div class="pf3-prop-info"><b>${o.name} <span class="pf3-cal-tk">${o.tk}</span></b><span>${fired}</span></div>
         <div style="text-align:right;font-size:12px"><b>${vd}</b><br><span class="pf3-asof">hit ${r.hitRate!=null?r.hitRate+'%':'—'} · ${RT('страт','strat')} ${r.stratPct>=0?'+':''}${r.stratPct}% vs B&H ${r.bhPct>=0?'+':''}${r.bhPct}%${r.overfit?' · ⚠️'+RT('оверфит','overfit'):''}</span></div>
-      </div>${btSpark(r.eq,r.bh)}`;
+      </div>${btSpark(r.eq,r.bh)}${cap}`;
     });
   }else h+=`<div class="pf3-empty">${RT('Нет позиций с достаточной историей (нужно ≥1 года данных).','No positions with enough history (≥1y needed).')}</div>`;
   // Панель конфига.
@@ -3292,6 +3354,26 @@ function pf3BacktestHTML(){
   Object.keys(BT_DEFAULTS.rules).forEach(rn=>{h+=`<div class="pf3-prop-row"><div class="pf3-prop-info">
     <label><input type="checkbox" ${cfg.rules[rn]>0?'checked':''} onchange="btSetRule('${rn}',this.checked?1:0)"> ${(BT_RULE_LBL[rn]||[rn])[LANG==='en'?1:0]}</label>
     <input type="range" min="0" max="3" step="0.5" value="${cfg.rules[rn]}" style="margin-left:10px;vertical-align:middle" oninput="btSetRule('${rn}',+this.value)"> <span class="pf3-asof">×${cfg.rules[rn]}</span></div></div>`;});
+  // 🎯 Калибровка весов (grid-search на train, выбор по validation).
+  h+=`<div class="pf3-panel-hd" style="margin-top:14px"><span>🎯 ${RT('Калибровка весов','Weight calibration')}</span></div>`;
+  if(st.calibrating){h+=`<div class="pf3-empty">⏳ ${RT('Перебор весов по истории…','Searching weights over history…')}</div>`;}
+  else{
+    h+=`<div class="pf3-prop-row"><button class="pf3-btn" onclick="btCalibrate()">🎯 ${RT('Подобрать веса','Calibrate')}</button>
+      <span class="pf3-asof" style="margin-left:8px">${RT('grid-search на train, выбор по validation','grid-search on train, selected on validation')}</span></div>`;
+    const cb=st.calib;
+    if(cb){
+      if(!cb.best){h+=`<div class="pf3-empty">${RT('Недостаточно сигналов для калибровки (мало истории/направленных сигналов).','Not enough signals to calibrate (too little history/directional signals).')}</div>`;}
+      else{
+        const b=cb.best,of=b.m.trHit!=null&&b.m.vaHit!=null&&b.m.trHit-b.m.vaHit>=20;
+        h+=`<div class="pf3-prop-row"><div class="pf3-prop-info">
+          <b>${RT('Текущие','Current')}:</b> val ${cb.base.vaHit!=null?cb.base.vaHit+'%':'—'} (${cb.base.vaDir}) · train ${cb.base.trHit!=null?cb.base.trHit+'%':'—'}<br>
+          <b>${RT('Найдено','Best')}:</b> <span style="color:${b.m.vaHit>=50?'#10b981':'#ef4444'}">val ${b.m.vaHit}%</span> (${b.m.vaDir}) · train ${b.m.trHit}%${of?' · ⚠️'+RT('оверфит','overfit'):''}<br>
+          <span class="pf3-asof">${RT('веса','weights')}: ${Object.keys(BT_DEFAULTS.rules).map(k=>(BT_RULE_LBL[k]||[k])[LANG==='en'?1:0]+' ×'+(b.w[k]||0)).join(' · ')}</span></div></div>
+          <div class="pf3-prop-row"><button class="pf3-btn" onclick="btApplyCalib()">✓ ${RT('Применить веса','Apply weights')}</button>
+          <span class="pf3-asof" style="margin-left:8px">${RT('применяется только по этой кнопке','applied only on this button')}</span></div>`;
+      }
+    }
+  }
   h+=`<div class="pf3-prop-row"><button class="pf3-btn" onclick="btRecalc()">↻ ${RT('Пересчитать','Recompute')}</button>
     <span class="pf3-asof" style="margin-left:8px">${RT('Это аналитика на истории, не прогноз и не инвестрекомендация.','Historical analytics, not a forecast or investment advice.')}</span></div>`;
   h+='</section>';

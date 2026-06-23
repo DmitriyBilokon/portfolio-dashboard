@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-22momentum1';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-23cyclemon1';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2046,6 +2046,39 @@ async function forecastGen(env, body){
   return { forecast: fc, cost: aiCost(j) };
 }
 
+// ── 🧭 Сигналы разворота цикла памяти: свежий статус метрик через web_search ──
+const CYCLE_SYSTEM = `Ты — AI Proto, аналитическая модель инвестиционного дашборда. Задача — оценить ТЕКУЩЕЕ состояние цикла памяти (DRAM/HBM/NAND) для переданной бумаги и заполнить набор сигнальных метрик СВЕЖИМИ данными.
+
+ОБЯЗАТЕЛЬНО используй web_search (на сегодняшнюю дату): динамика спотовых цен DRAM (индекс TrendForce DXI — растёт/флэт/падает и сколько недель уже), недели запасов в канале поставок, гайденс по capex гиперскейлеров (AWS, Microsoft, Meta, Google — рост/срез г/г), контрактные цены DDR5/NAND и HBM (тренд кв/кв и мес/мес, законтрактованность на 2026–2027), валовая маржа и capex компании из последнего отчёта, поставки consumer (mobile/PC). Бюджет ~90 секунд: несколько ТОЧЕЧНЫХ запросов по самому важному, без дублей, затем сведи.
+
+Тебе передают metrics — список метрик с полями id и label (label = формулировка порога-триггера). По КАЖДОЙ метрике из списка верни объект с тем же id и:
+- value: короткая фраза с текущим значением/направлением и стрелкой ↑/↓ (примеры: "растёт ↑", "2–4 нед ↑", "+60% г/г ↑", "~56% ↑", "sold out ↑", "−2…−9% ↓"),
+- status: "ok" (триггер НЕ сработал — на стороне быка, тезис цел), "warn" (близко к порогу / ранний варн-сигнал или структурный риск-контекст), "alert" (триггер сработал — пора действовать).
+
+Также верни phasePos — позиция в цикле памяти 0–100 (0 = дно, ~50 = разгон, 100 = пиковая фаза/перегрев), summary — 1–2 предложения о состоянии цикла и что мониторить, sources — главные источники через « · ».
+
+Ответ — СТРОГО ОДИН блок ${FENCE}json … ${FENCE} по схеме (только id из переданного списка):
+{"phasePos":88,"rows":[{"id":"t1_dxi","value":"растёт ↑","status":"ok"}],"summary":"…","sources":"TrendForce · Micron …"}
+Это аналитическая оценка по открытым данным, не гарантия и не индивидуальная инвестиционная рекомендация.`;
+async function cycleGen(env, body){
+  const today = new Date().toISOString().slice(0, 10);
+  const j = await anthropicRun(env, {
+    model: aiModel('reco'),
+    max_tokens: 4000,
+    thinking: { type: 'adaptive' },
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    system: CYCLE_SYSTEM,
+    messages: [{ role: 'user', content: 'Сегодня ' + today + '. Бумага и метрики (JSON):\n' + JSON.stringify(body || {}) }],
+  });
+  let raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  let cm = null;
+  const i = raw.lastIndexOf(FENCE + 'json');
+  if(i >= 0){ const rest = raw.slice(i + FENCE.length + 4); const end = rest.indexOf(FENCE); if(end >= 0){ try{ cm = JSON.parse(rest.slice(0, end).trim()); }catch(e){} } }
+  if(!cm){ try{ cm = JSON.parse(raw); }catch(e){} }
+  if(!cm || !Array.isArray(cm.rows)) throw new Error('Пустой/некорректный ответ по циклу памяти');
+  return { cyclemon: cm, cost: aiCost(j) };
+}
+
 // ── 📚 Подтянуть лучшие практики в плейбук (web_search актуальных подходов) ──
 const PLAYBOOK_SYSTEM = `Ты — AI Proto, аналитическая модель инвестиционного дашборда. Задача — собрать АКТУАЛЬНЫЕ лучшие практики и принципы, которые помогают портфелю ОБГОНЯТЬ индексы и МАКСИМИЗИРОВАТЬ прибыль, и оформить их как короткие принципы для плейбука.
 
@@ -2737,6 +2770,15 @@ export default {
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
       try{ const b = await request.json(); return streamJson(() => playbookGen(env, b)); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
+    }
+    if(url.searchParams.get('action') === 'cyclemon'){
+      // 🧭 POST {ticker,name,metrics,derived} → свежие статусы сигналов цикла памяти (web_search).
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ const b = await request.json(); return streamJson(() => cycleGen(env, b)); }
       catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'aipreset'){

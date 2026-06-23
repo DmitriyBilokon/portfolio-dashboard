@@ -1455,8 +1455,15 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .cyc-s-warn{background:#FAEEDA;color:#854F0B}
 .cyc-s-alert{background:var(--red-bg);color:var(--red-t)}
 .cyc-note{margin-top:11px;line-height:1.4}
+.cyc-actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.cyc-summary{background:var(--bg);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;font-size:12.5px;line-height:1.45;color:var(--text1);margin-bottom:12px}
+.cyc-src{font-size:10px;margin-right:5px;opacity:.7;cursor:default}
+.cyc-edit-k{font-size:13px;padding:3px 4px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text)}
+.cyc-edit-v{font-size:12px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);width:150px;outline:none}
+.cyc-edit-v:focus{border-color:var(--accent)}
+.cyc-edit-pos{width:58px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);margin-left:4px}
 [data-theme="dark"] .cyc-b-warn,[data-theme="dark"] .cyc-s-warn{background:#3a2c12;color:#f5b945}
-@media(max-width:560px){.cyc-l{font-size:12px}}
+@media(max-width:560px){.cyc-l{font-size:12px}.cyc-edit-v{width:110px}}
 /* 🏠 HOME — шапка, единый рейтинг (балл-бар), сворачиваемые горизонты */
 .home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .home-head-l{display:flex;flex-direction:column;gap:2px;min-width:0}

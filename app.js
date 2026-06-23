@@ -711,7 +711,7 @@ function can(perm){
   if(!SYNC_ENABLED||userRole==='admin')return true;   // админ — всё; без синка — локальный режим
   return rbacResolve(ACCESS.roleId,ACCESS.overrides,perm);
 }
-const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',backtest:'ai_proto',aim:'ai_proto'};
+const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',tax:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',backtest:'ai_proto',aim:'ai_proto'};
 // «Структура» (alloc) объединяет Сектора+Тип+Диверсификацию — видна при любом из трёх прав.
 const canTab=k=>k==='alloc'?(can('view.sectors')||can('view.type')||can('view.diversification')):can('view.'+(PFTAB_PERM[k]||k));
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}try{document.documentElement.lang=LANG}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
@@ -1472,13 +1472,13 @@ function renderAll(){
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
     if(['sec','typ','div'].includes(pf3Tab))pf3Tab='alloc';   // объединённая вкладка «Структура» (бывш. Сектора/Тип/Диверсификация)
     if(isAip&&!['list','alloc','fcast','trades','health','backtest','aim'].includes(pf3Tab))pf3Tab='list';
-    else if(isPort&&!['list','stats','alloc','fcast','trades','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
+    else if(isPort&&!['list','stats','alloc','fcast','trades','tax','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
     else if(!isPort&&!isAip&&!['list','cal','alloc','ai'].includes(pf3Tab))pf3Tab='list';
     if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
       ?[[T('📊 Портфель'),'list'],['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🧪 '+RT('Бэктест','Backtest'),'backtest'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
+      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],['🧾 '+RT('Налоги','Tax'),'tax'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
       :[[T('📊 Акции'),'list'],['🏭 '+RT('Структура','Breakdown'),'alloc'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
@@ -1840,6 +1840,13 @@ function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
 function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
 const INFO_DISCLAIM=['Справочные данные, не индивидуальная инвестиционная рекомендация.','Reference data, not individual investment advice.'];
 const SEC_INFO={
+  tax:{t:['🧾 Налоговый отчёт','🧾 Tax report'],b:()=>infoP('Реализованные прибыли/убытки из журнала сделок портфеля по годам. Считается из ваших покупок/продаж (вкладка «Сделки»): продажи сопоставляются с покупками выбранным методом.','Realized gains/losses from the portfolio trade journal, by year. Computed from your buys/sells (the «Trades» tab): sells are matched to buys by the chosen method.')+infoRows([
+    [RT('Средняя','Average'),'genomsnittsmetoden — средняя себестоимость. КОРРЕКТНО для шведской декларации K4 и совпадает с «Реализованный P&L» журнала.','genomsnittsmetoden — average cost. CORRECT for the Swedish K4 return and matches the journal Realized P&L.'],
+    ['FIFO','первый пришёл — первый ушёл. Для сверки / других юрисдикций (US и т.п.).','first in, first out. For cross-check / other jurisdictions (US etc.).'],
+    [RT('Сумма в kr','kr amount'),'пересчёт по ТЕКУЩЕМУ курсу, не на дату сделки — это оценка, НЕ готовая K4 (для K4 нужен курс на день сделки).','converted at the CURRENT FX, not the trade-date rate — an estimate, NOT a filing-ready K4 (K4 needs the trade-date rate).'],
+    [RT('Комиссии','Fees'),'комиссия покупки входит в себестоимость, комиссия продажи уменьшает выручку.','buy fees add to cost basis, sell fees reduce proceeds.'],
+    ['📥 CSV','импорт сделок (вкладка «Сделки») и экспорт отчёта. Колонки: date, action, ticker, qty, price, ccy, fee.','import trades (the «Trades» tab) and export the report. Columns: date, action, ticker, qty, price, ccy, fee.'],
+  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
   cycle:{t:['🧭 Тезис-монитор бумаги','🧭 Stock thesis monitor'],b:()=>infoP('Модуль-мониторинг инвестиционного тезиса по бумаге: набор опережающих сигналов, специфичных для ЕЁ сектора и истории (а не один индикатор). Метрики и пороги подбирает AI под конкретную компанию через web_search; для Micron (MU) это цикл памяти (DXI/запасы/capex/HBM) как образец. Кнопка «✨ Обновить (AI)» тянет свежие значения; «✏️ Правка» — ручная корректировка; ƒ — авто-derive из фундаментала.','A module that monitors a stock\'s investment thesis: a set of leading signals specific to ITS sector and story (not a single indicator). The AI picks the metrics and thresholds per company via web_search; for Micron (MU) it is the memory cycle (DXI/inventory/capex/HBM) as the template. «✨ Refresh (AI)» pulls fresh values; «✏️ Edit» for manual tweaks; ƒ — auto-derived from fundamentals.')+infoRows([
     ['Tier 1 · Exit','жёсткие триггеры выхода — пора действовать. Свои для каждого сектора (память: разворот спот-цен/DXI; банк: маржа и кредитные потери; биотех: провал испытаний/иссяк runway; энергетика: обвал цены сырья).','hard exit triggers — time to act. Sector-specific (memory: spot price/DXI turn; bank: margin & credit losses; biotech: trial fail / runway out; energy: commodity-price crash).'],
     ['Tier 2 · Trim','смягчённые триггеры — снизить позицию на 20–30% (ранние предупреждения).','softer triggers — trim 20–30% (early warnings).'],
@@ -4803,6 +4810,10 @@ function renderPF3(){
     pf3LoadCalendar();   // no-op when cached; re-renders this tab when done
     return;
   }
+  if(pf3Tab==='tax'){
+    el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pfTaxHTML()}</div>`;
+    return;
+  }
   if(pf3Tab==='trades'){
     el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pfTradesHTML()}</div>`;
     return;
@@ -7201,8 +7212,9 @@ function pfTradesHTML(filterTk){
       </div>
       <div class="pf3-reco-note">${RT('Обновляет количество и среднюю по тикеру (создаёт позицию, если её нет) и пишет в журнал. Свободный кэш НЕ меняется. Вводите сделки по порядку: сначала покупки, потом продажи. P&L по продаже считается от средней автоматически. Валюта берётся из существующей позиции, если она есть.','Updates qty and average by ticker (creates the position if missing) and writes the journal. Free cash is NOT changed. Enter trades in order: buys first, then sells. Sell P&L is computed from the average automatically. Currency comes from the existing position if present.')}</div>
     </details>`:'';
+  const importBtn=(!fk&&!isAi&&pf3MyPort(v3Key)&&can('action.edit_trades'))?`<label class="pf3-btn pf3-btn-sm tr-import" title="${RT('Импорт сделок из CSV (date, action, ticker, qty, price, ccy, fee)','Import trades from CSV (date, action, ticker, qty, price, ccy, fee)')}">📥 ${RT('Импорт CSV','Import CSV')}<input type="file" accept=".csv,text/csv" style="display:none" onchange="pfImportTradesCSV(this)"></label>`:'';
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>📜 ${RT('История сделок','Trade history')}${fk?'':' — '+TAB_LABEL(v3Key)}</span>${tot}</div>
+    <div class="pf3-panel-hd"><span>📜 ${RT('История сделок','Trade history')}${fk?'':' — '+TAB_LABEL(v3Key)}</span><span class="tr-hd-r">${tot}${importBtn}</span></div>
     ${mine.length?`<div class="sim-list">${rows}</div>`:`<div class="pf3-empty">${isAi?RT('AI-портфель ещё не совершал сделок — он торгует автономно по стратегии.','The AI portfolio has not traded yet — it trades autonomously by its strategy.'):RT('Сделок пока нет. Купите или продайте в блоке «💸 Сделка» в карточке акции.','No trades yet. Buy or sell in the «💸 Trade» box on a stock card.')}</div>`}
     ${addForm}
   </section>`;
@@ -7246,6 +7258,105 @@ function pfTradeAddRecord(){
   PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,date});
   recalcPF(ri,v3Key);scheduleSave();renderPF3();
   toast((act==='sell'?'🔴 '+RT('Продажа внесена','Sell recorded'):'🟢 '+RT('Покупка внесена','Buy recorded'))+` · ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*(FX[ccy]||1))}`:'')+' · '+RT('кэш не изменён','cash unchanged'));
+}
+
+// ── 🧾 Налоговый отчёт + 📥 CSV-импорт сделок ───────────────────────────────
+// Чистый движок (покрыт тестом): сделки сортируются по тикеру хронологически,
+// продажи сопоставляются с покупками. Методы: 'avg' — средняя цена
+// (genomsnittsmetoden — корректно для шведского K4 и совпадает с журналом),
+// 'fifo' — первый-пришёл-первый-ушёл (для сверки). Комиссия покупки входит в
+// себестоимость, комиссия продажи уменьшает выручку. Возвращает записи-продажи.
+let _taxMethod='avg';
+function pfTaxLots(trades, method){
+  const recs=[],byTk={};
+  const list=(trades||[]).slice().sort((a,b)=>{const da=String(a.date||''),db=String(b.date||'');return da<db?-1:da>db?1:((a.ord||0)-(b.ord||0));});
+  for(const t of list){
+    const tk=String(t.tk||'').toUpperCase();if(!tk)continue;
+    const q=Math.abs(parseFloat(t.qty)||0);if(!(q>0))continue;
+    const price=parseFloat(t.price)||0,fee=Math.abs(parseFloat(t.fee)||0);
+    const st=byTk[tk]||(byTk[tk]={qty:0,cost:0,lots:[]});
+    if(t.act==='sell'){
+      let cost=0;
+      if(method==='fifo'){let need=q;while(need>1e-9&&st.lots.length){const lot=st.lots[0],take=Math.min(need,lot.q);cost+=take*lot.cps;lot.q-=take;need-=take;if(lot.q<=1e-9)st.lots.shift();}st.qty=Math.max(0,st.qty-q);}
+      else{const cps=st.qty>0?st.cost/st.qty:0;cost=cps*q;st.cost=Math.max(0,st.cost-cost);st.qty=Math.max(0,st.qty-q);}
+      const proceeds=q*price-fee,gain=proceeds-cost;
+      recs.push({trade:t,tk,name:t.name||tk,ccy:t.ccy||'SEK',date:t.date||'',year:String(t.date||'').slice(0,4)||'—',qty:q,proceeds:Math.round(proceeds*100)/100,cost:Math.round(cost*100)/100,gain:Math.round(gain*100)/100});
+    }else{const cpsIncl=price+(q>0?fee/q:0);st.qty+=q;st.cost+=q*price+fee;st.lots.push({q,cps:cpsIncl});}
+  }
+  return recs;
+}
+// Журнал семейного портфеля → формат движка.
+function pfTaxTrades(tab){return (PF_TRADES||[]).filter(e=>(e.tab||PF3_KEY)===(tab||v3Key)).map((e,i)=>({tk:e.tk,name:e.name,ccy:e.ccy,act:e.act,qty:e.qty,price:e.price,fee:e.feeNative,date:e.date,ord:i,_e:e}));}
+// Пересчёт реализованного P&L журнала по средней цене (после импорта) — чтобы
+// сумма «Реализованный P&L» осталась консистентной (тот же метод, что у pfTrade).
+function pfRecalcRealized(tab){
+  const trades=pfTaxTrades(tab);
+  trades.forEach(t=>{if(t._e&&t._e.act==='sell')t._e.plNative=null;});
+  pfTaxLots(trades,'avg').forEach(r=>{if(r.trade&&r.trade._e)r.trade._e.plNative=Math.round(r.gain*100)/100;});
+}
+const _taxNormDate=s=>{s=String(s||'').trim();let m;if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10);if(m=s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/))return `${m[3]}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;return s.slice(0,10);};
+// Парсер CSV сделок: автоопределение разделителя (,/;), гибкие заголовки (ru/en/sv).
+function pfParseTradesCSV(text){
+  const lines=String(text||'').split(/\r?\n/).filter(l=>l.trim());if(lines.length<2)return 0;
+  const delim=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?';':',';
+  const split=l=>{const out=[];let cur='',q=false;for(let i=0;i<l.length;i++){const c=l[i];if(c==='"'){if(q&&l[i+1]==='"'){cur+='"';i++;}else q=!q;}else if(c===delim&&!q){out.push(cur);cur='';}else cur+=c;}out.push(cur);return out.map(s=>s.trim());};
+  const head=split(lines[0]).map(h=>h.toLowerCase().replace(/^﻿/,''));
+  const col=(...names)=>{for(const n of names){const i=head.indexOf(n);if(i>=0)return i;}return -1;};
+  const ci={date:col('date','дата','datum'),act:col('action','действие','type','тип','side','transaktion'),tk:col('ticker','тикер','symbol','инструмент'),qty:col('qty','quantity','кол-во','количество','shares','antal','volym'),price:col('price','цена','kurs','pris'),ccy:col('ccy','currency','валюта','valuta'),fee:col('fee','комиссия','courtage','avgift','commission')};
+  if(ci.tk<0||ci.qty<0||ci.price<0)return 0;
+  const num=s=>{const n=parseFloat(String(s||'').replace(/\s/g,'').replace(',','.'));return isFinite(n)?n:0;};
+  const today=new Date().toISOString().slice(0,10);let n=0;
+  for(let i=1;i<lines.length;i++){
+    const c=split(lines[i]);if(!c.length)continue;
+    const tk=String(c[ci.tk]||'').trim().toUpperCase();if(!tk)continue;
+    const rawQ=num(c[ci.qty]),qty=Math.abs(rawQ),price=num(c[ci.price]);if(!(qty>0)||!(price>0))continue;
+    const av=String(ci.act>=0?c[ci.act]:'').trim().toLowerCase();
+    const act=/sell|прода|s[äa]lj|sale|^s$/.test(av)?'sell':/buy|покуп|k[öo]p|^b$/.test(av)?'buy':(rawQ<0?'sell':'buy');
+    const ccy=String(ci.ccy>=0?c[ci.ccy]:'').trim().toUpperCase()||'USD';
+    const date=_taxNormDate(ci.date>=0?c[ci.date]:today)||today;
+    const fee=ci.fee>=0?Math.abs(num(c[ci.fee])):0;
+    PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e6)+'_'+i,tab:v3Key,tk,name:tk,ccy,act,qty,price,feeNative:fee||undefined,plNative:null,date,imp:1});n++;
+  }
+  return n;
+}
+function pfImportTradesCSV(input){
+  if(!pf3MyPort(v3Key)){toast(RT('Импорт только для семейных портфелей','Import only for family portfolios'),true);return;}
+  const file=input&&input.files&&input.files[0];if(!file){return;}
+  const rd=new FileReader();
+  rd.onload=()=>{try{const n=pfParseTradesCSV(String(rd.result||''));
+    if(!n)toast(RT('Сделки не найдены. Нужны колонки: date, action, ticker, qty, price, ccy (fee — опц.)','No trades found. Need columns: date, action, ticker, qty, price, ccy (fee optional)'),true);
+    else{pfRecalcRealized(v3Key);scheduleSave();renderPF3();toast(`📥 ${RT('Импортировано сделок','Imported trades')}: ${n}`);}
+  }catch(e){toast('CSV: '+(e&&e.message||e),true);}if(input)input.value='';};
+  rd.readAsText(file);
+}
+function pfTaxSetMethod(m){_taxMethod=m==='fifo'?'fifo':'avg';renderPF3();}
+function pfTaxHTML(){
+  const d=pf3D();
+  const recs=pfTaxLots(pfTaxTrades(),_taxMethod);
+  const hd=`<div class="pf3-panel-hd"><span>🧾 ${RT('Налоговый отчёт','Tax report')} ${infoBtn('tax')}</span><span class="pf3-tf"><button class="pf3-tfbtn${_taxMethod==='avg'?' on':''}" onclick="pfTaxSetMethod('avg')">${RT('Средняя','Average')}</button><button class="pf3-tfbtn${_taxMethod==='fifo'?' on':''}" onclick="pfTaxSetMethod('fifo')">FIFO</button></span></div>`;
+  if(!recs.length)return`<section class="pf3-panel tax">${hd}<div class="pf3-empty">${RT('В журнале этого портфеля нет продаж. Импортируйте CSV во вкладке «Сделки» или внесите продажи в карточке акции.','No sells in the journal of this portfolio. Import a CSV in «Trades» or add sells from a stock card.')}</div></section>`;
+  const years={};recs.forEach(r=>{(years[r.year]=years[r.year]||[]).push(r);});
+  const yrKeys=Object.keys(years).sort((a,b)=>a<b?1:-1);
+  const sek=(ccy,v)=>Math.round(v*(FX[ccy]||1));let totSEK=0;
+  const blocks=yrKeys.map(y=>{
+    const list=years[y],byCcy={};let ySEK=0;
+    list.forEach(r=>{const a=byCcy[r.ccy]||(byCcy[r.ccy]={gain:0});a.gain+=r.gain;ySEK+=sek(r.ccy,r.gain);});totSEK+=ySEK;
+    const ccyLines=Object.keys(byCcy).map(c=>`<span class="${byCcy[c].gain>=0?'pf3-up':'pf3-down'}">${byCcy[c].gain>=0?'+':''}${pf3Fmt(byCcy[c].gain,0)} ${c}</span>`).join(' · ');
+    const rowsH=list.slice().sort((a,b)=>a.date<b.date?1:-1).map(r=>`<div class="tax-row"><span>${r.date}</span><span class="pf3-row-name"><b>${r.tk}</b></span><span class="tr-qty">${pf3Fmt(r.qty)} ${RT('шт','sh')}</span><span>${pf3Fmt(r.proceeds,0)} ${r.ccy}</span><span class="${r.gain>=0?'pf3-up':'pf3-down'}">${r.gain>=0?'+':''}${pf3Fmt(r.gain,0)} ${r.ccy}</span></div>`).join('');
+    return`<div class="tax-year"><div class="tax-year-hd"><b>${y}</b> · ${ccyLines} · <span class="${ySEK>=0?'pf3-up':'pf3-down'}">≈${ySEK>=0?'+':''}${pf3Money(d,ySEK)}</span> <span class="pf3-asof">(${list.length} ${RT('прод.','sales')})</span></div><div class="tax-rows">${rowsH}</div></div>`;
+  }).join('');
+  return`<section class="pf3-panel tax">${hd}
+    <div class="tax-tot"><span>${RT('Итого реализованный результат','Total realized result')}: </span><b class="${totSEK>=0?'pf3-up':'pf3-down'}">${totSEK>=0?'+':''}${pf3Money(d,totSEK)}</b> <button class="pf3-btn pf3-btn-sm" onclick="pfTaxExportCSV()">📥 CSV</button></div>
+    ${blocks}
+    <p class="pf3-asof tax-note">${RT('«Средняя» = genomsnittsmetoden (корректно для шведской декларации K4); FIFO — для сверки. Суммы в kr — по ТЕКУЩЕМУ курсу (не на дату сделки): это оценка, не готовая K4. Комиссия покупки входит в себестоимость, комиссия продажи уменьшает выручку.','«Average» = genomsnittsmetoden (correct for the Swedish K4); FIFO is for cross-check. kr amounts use the CURRENT FX (not the trade-date rate): an estimate, not a filing-ready K4. Buy fees add to cost basis, sell fees reduce proceeds.')} ${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}</p>
+  </section>`;
+}
+function pfTaxExportCSV(){
+  const recs=pfTaxLots(pfTaxTrades(),_taxMethod);
+  const rows=[['year','date','ticker','qty','proceeds','cost','gain','ccy','gainSEK_est']];
+  recs.forEach(r=>rows.push([r.year,r.date,r.tk,r.qty,r.proceeds,r.cost,r.gain,r.ccy,Math.round(r.gain*(FX[r.ccy]||1))]));
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='tax_'+_taxMethod+'_'+TAB_LABEL(v3Key).replace(/\s/g,'_')+'.csv';a.click();
 }
 // ── 🎯 План действий: триггеры по уровням/датам с уведомлением ───────────────
 // Пользователь (или совет AI) заводит правила вида «купить TK у уровня X»,

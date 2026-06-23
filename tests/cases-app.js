@@ -517,3 +517,21 @@ grp('pfTradeAddRecord no-cash', function(){
   __eq('record journal +1', PF_TRADES.length, 1);
   document.getElementById = origGet;
 });
+
+// 🧾 Налоговый движок: FIFO vs средняя цена + комиссии
+grp('tax lots', function(){
+  var tr=[
+    {tk:'AAPL',ccy:'USD',act:'buy', qty:10,price:100,date:'2025-01-01',ord:0},
+    {tk:'AAPL',ccy:'USD',act:'buy', qty:10,price:120,date:'2025-02-01',ord:1},
+    {tk:'AAPL',ccy:'USD',act:'sell',qty:10,price:150,date:'2025-03-01',ord:2},
+  ];
+  __eq('avg gain 400',  pfTaxLots(tr,'avg')[0].gain,  400);   // cps 110 → cost 1100, proceeds 1500
+  __eq('fifo gain 500', pfTaxLots(tr,'fifo')[0].gain, 500);   // первый лот @100 → cost 1000
+  __eq('avg year', pfTaxLots(tr,'avg')[0].year, '2025');
+  // комиссии: покупка +в себестоимость, продажа −из выручки
+  var tr2=[
+    {tk:'X',ccy:'USD',act:'buy', qty:10,price:100,fee:10,date:'2025-01-01',ord:0},
+    {tk:'X',ccy:'USD',act:'sell',qty:10,price:120,fee:5, date:'2025-02-01',ord:1},
+  ];
+  __eq('avg gain with fees 185', pfTaxLots(tr2,'avg')[0].gain, 185);   // proceeds 1195, cost 1010
+});

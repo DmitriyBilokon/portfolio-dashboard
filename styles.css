@@ -1459,6 +1459,18 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .baro-chip b{color:var(--text1);font-weight:600}
 .baro-chip i{font-style:normal;color:var(--accent);font-weight:700;margin-left:2px}
 .baro-note{margin-top:9px;line-height:1.35}
+/* 🧾 Налоговый отчёт + импорт CSV */
+.tr-hd-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tr-import{cursor:pointer}
+.tax-tot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;font-size:13px}
+.tax-year{margin-bottom:12px}
+.tax-year-hd{font-size:13px;font-weight:600;padding:7px 0;border-bottom:1px solid var(--border);margin-bottom:4px}
+.tax-rows{display:flex;flex-direction:column}
+.tax-row{display:grid;grid-template-columns:84px 1fr auto auto auto;gap:10px;align-items:center;font-size:12px;padding:5px 0;border-bottom:.5px solid var(--border)}
+.tax-row:last-child{border-bottom:none}
+.tax-row .tr-qty{font-family:'JetBrains Mono',monospace;color:var(--text2)}
+.tax-note{margin-top:10px;line-height:1.4}
+@media(max-width:560px){.tax-row{grid-template-columns:72px 1fr auto;font-size:11px}.tax-row>span:nth-child(4){display:none}}
 /* 🧭 Сигналы разворота цикла памяти (карточка бумаги) */
 .cyc-phase{margin-bottom:14px}
 .cyc-phase-l{font-size:11px;color:var(--text2);margin-bottom:6px}

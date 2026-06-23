@@ -54,8 +54,8 @@ globalThis.__eq = function(n,g,e){ var p=JSON.stringify(g)===JSON.stringify(e); 
 globalThis.__ok = function(n,c,i){ __res.push({n:n,p:!!c,i:c?'':(i||'falsy')}); };
 globalThis.__approx = function(n,g,e,eps){ var p=(typeof g==='number')&&Math.abs(g-e)<=(eps||0.01); __res.push({n:n,p:p,i:p?'':('got '+g+' exp '+e)}); };
 
-// ── Грузим реальный app.js (без авто-boot) + кейсы в ОДНОМ eval ──
-var appSrc = rd('app.js').replace(/\nboot\(\);\s*$/, '\n');
+// ── Грузим реальный app.js (+ app-2.js, в порядке как в index.html; без авто-boot) + кейсы в ОДНОМ eval ──
+var appSrc = (rd('app.js') + '\n' + rd('app-2.js')).replace(/\nboot\(\);\s*$/, '\n');
 var caseSrc = rd('tests/cases-app.js');
 try { eval(appSrc + '\n;\n' + caseSrc); }
 catch(e){ __res.push({n:'EVAL app.js', p:false, i:String(e && e.message || e)}); }

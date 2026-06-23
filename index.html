@@ -13,23 +13,24 @@
 <link rel="preconnect" href="https://images.financialmodelingprep.com">
 <link rel="preconnect" href="https://assets.parqet.com">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('dash_theme')||'dark';if(localStorage.getItem('dash_ui2')!=='0')document.documentElement.classList.add('ui2')}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.classList.add('ui2')}</script>
-<link rel="stylesheet" href="styles.css?v=20260623i">
+<link rel="stylesheet" href="styles.css?v=20260623j">
 </head>
 <body>
-<div class="header"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="ui2Btn" onclick="toggleUI2()" title="Новый интерфейс (2026)" aria-label="Новый интерфейс / New UI">✨</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="editBtn" onclick="toggleEdit()" title="Редактор раскладки / Layout editor" aria-label="Редактор раскладки / Layout editor" style="display:none">✏️</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
-<div class="tabs" id="tabs"></div>
+<a class="skip-link" href="#contentArea">К содержимому / Skip to content</a>
+<div class="header" role="banner"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="ui2Btn" onclick="toggleUI2()" title="Новый интерфейс (2026)" aria-label="Новый интерфейс / New UI">✨</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="editBtn" onclick="toggleEdit()" title="Редактор раскладки / Layout editor" aria-label="Редактор раскладки / Layout editor" style="display:none">✏️</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
+<div class="tabs" id="tabs" role="navigation" aria-label="Вкладки / Tabs"></div>
 <div class="edit-bar hidden" id="editBar"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
 <div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" title="Удалить выбранное / Delete selected" aria-label="Удалить выбранное" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены и технические уровни (Yahoo) / Refresh prices & levels (Yahoo)" aria-label="Обновить цены">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
 <div class="stats" id="statsBar"></div>
-<div id="contentArea"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
-<div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard"></div></div>
-<div class="faq-overlay hidden" id="setOverlay" onclick="if(event.target===this)toggleSettings()"><div class="faq-card" id="setCard"></div></div>
-<div class="faq-overlay hidden" id="grpOverlay" onclick="if(event.target===this)toggleGroupsEditor()"><div class="faq-card" id="grpCard"></div></div>
-<div class="faq-overlay hidden" id="prmOverlay" onclick="if(event.target===this)togglePrompts()"><div class="faq-card" id="prmCard"></div></div>
+<div id="contentArea" role="main" tabindex="-1"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
+<div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard" role="dialog" aria-modal="true" aria-label="Справка / Help"></div></div>
+<div class="faq-overlay hidden" id="setOverlay" onclick="if(event.target===this)toggleSettings()"><div class="faq-card" id="setCard" role="dialog" aria-modal="true" aria-label="Настройки доступа / Access settings"></div></div>
+<div class="faq-overlay hidden" id="grpOverlay" onclick="if(event.target===this)toggleGroupsEditor()"><div class="faq-card" id="grpCard" role="dialog" aria-modal="true" aria-label="Группы вкладок / Tab groups"></div></div>
+<div class="faq-overlay hidden" id="prmOverlay" onclick="if(event.target===this)togglePrompts()"><div class="faq-card" id="prmCard" role="dialog" aria-modal="true" aria-label="AI-промпты / AI prompts"></div></div>
 <div class="auth-overlay hidden" id="authOverlay">
-  <form class="auth-card" onsubmit="handleLogin(event)">
+  <form class="auth-card" onsubmit="handleLogin(event)" role="dialog" aria-modal="true" aria-label="Вход / Sign in">
     <h1>📈 <span>Index</span> Dashboard</h1>
     <div class="auth-sub">Войдите, чтобы синхронизировать данные между устройствами</div>
     <input type="email" id="authEmail" placeholder="Email" autocomplete="username" required>
@@ -40,6 +41,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="data.js?v=20260618o"></script>
-<script src="app.js?v=20260623h"></script>
+<script src="app.js?v=20260623j"></script>
 </body>
 </html>

@@ -1750,6 +1750,60 @@ function toggleFaq(){
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
+// ♿ A11y интерактив. Многие кликабельные элементы — это <div>/<span>/<th> с onclick,
+// которые без role/tabindex не доступны с клавиатуры. Здесь, без правки сотен шаблонов:
+//  1) MutationObserver проставляет role="button"+tabindex="0" свежесгенерированным
+//     onclick-элементам (кроме нативных, contenteditable, подложек оверлеев и
+//     контейнеров с собственными кнопками внутри);
+//  2) глобальный keydown активирует их по Enter/Space;
+//  3) модалки получают focus-trap, фокус на открытии и возврат фокуса на закрытии.
+const A11Y_NATIVE='button,a,input,select,textarea';
+function a11yEnhance(root){
+  if(!root||!root.querySelectorAll)return;
+  root.querySelectorAll('[onclick]:not(button):not(a):not(input):not(select):not(textarea)').forEach(el=>{
+    if(el.hasAttribute('tabindex')||el.isContentEditable)return;
+    const oc=el.getAttribute('onclick')||'';
+    if(/===this/.test(oc))return;                       // подложка оверлея (закрытие по клику на себя) — не кнопка
+    if(el.querySelector(A11Y_NATIVE))return;            // контейнер со своими контролами — не делаем его кнопкой целиком
+    el.setAttribute('tabindex','0');
+    if(!el.hasAttribute('role'))el.setAttribute('role','button');
+  });
+}
+let _a11yT=0;
+function a11yInit(){
+  a11yEnhance(document.body);
+  // childList+subtree: ловим перерисовки; атрибуты не наблюдаем → не зациклимся на своих tabindex.
+  try{new MutationObserver(()=>{if(_a11yT)return;_a11yT=setTimeout(()=>{_a11yT=0;a11yEnhance(document.body)},60)}).observe(document.body,{childList:true,subtree:true});}catch(e){}
+  // Активация Enter/Space для role="button"-элементов (нативные кнопки/ссылки работают сами).
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Enter'&&e.key!==' ')return;
+    const el=e.target;if(!el||el.isContentEditable)return;
+    if((el.tagName==='BUTTON'||el.tagName==='A'||el.tagName==='INPUT'||el.tagName==='SELECT'||el.tagName==='TEXTAREA'))return;
+    if(el.getAttribute&&el.getAttribute('role')==='button'&&el.hasAttribute('onclick')){e.preventDefault();el.click();}
+  });
+  // Focus-trap по Tab внутри открытой модалки.
+  const openCard=()=>{const ov=document.querySelector('.faq-overlay:not(.hidden),.auth-overlay:not(.hidden)');return ov?ov.querySelector('.faq-card,.auth-card'):null;};
+  const focusables=card=>[...card.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>el.offsetParent!==null);
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Tab')return;const card=openCard();if(!card)return;
+    const f=focusables(card);if(!f.length)return;
+    const first=f[0],last=f[f.length-1];
+    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+  });
+  // Фокус на открытии модалки и возврат на элемент-открыватель при закрытии.
+  let _retFocus=null;
+  ['faqOverlay','setOverlay','grpOverlay','prmOverlay','authOverlay'].forEach(id=>{
+    const ov=document.getElementById(id);if(!ov)return;
+    try{new MutationObserver(()=>{
+      const open=!ov.classList.contains('hidden');
+      if(open){_retFocus=document.activeElement;const card=ov.querySelector('.faq-card,.auth-card');const t=(card&&(focusables(card)[0]||card));if(t&&t.focus)setTimeout(()=>t.focus(),30);}
+      else if(_retFocus&&_retFocus.focus){_retFocus.focus();_retFocus=null;}
+    }).observe(ov,{attributes:true,attributeFilter:['class']});}catch(e){}
+  });
+}
+if(document.readyState!=='loading')a11yInit();else document.addEventListener('DOMContentLoaded',a11yInit);
+
 // ── ❗ Справка по секциям: «!» в заголовке → модалка с описанием всех значений/аббревиатур ──
 // Один реестр SEC_INFO + общий рендер. infoBtn(key) вставляется в pf3-panel-hd.
 function infoBtn(key){return `<span class="dash-info-btn" onclick="event.stopPropagation();secInfo('${key}')" title="${RT('Что это? Описание значений и аббревиатур','What is this? Field & abbreviation guide')}">!</span>`;}

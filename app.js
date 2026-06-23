@@ -1749,13 +1749,13 @@ function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
 function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
 const INFO_DISCLAIM=['Справочные данные, не индивидуальная инвестиционная рекомендация.','Reference data, not individual investment advice.'];
 const SEC_INFO={
-  cycle:{t:['🧭 Сигналы разворота цикла памяти','🧭 Memory-cycle turn signals'],b:()=>infoP('Модуль-мониторинг тезиса по бумаге цикличного сектора (память/DRAM). Набор опережающих сигналов вместо одного: старый сигнал пика (слабость mobile/PC) сломан — HBM каннибализирует мощности обычного DDR5 ~3:1 и держит пол под ценами. Данные качественные, обновляются вручную (см. дату среза).','A thesis-monitoring module for a cyclical (memory/DRAM) holding. A SET of leading signals rather than one: the old peak signal (mobile/PC weakness) is broken — HBM cannibalises plain DDR5 capacity ~3:1 and props up the price floor. Data is qualitative, updated manually (see the as-of date).')+infoRows([
-    ['Tier 1 · Exit','жёсткие триггеры выхода — действовать в течение квартала. Spot DRAM (DXI, ежедневно TrendForce) разворачивается за 3–6 мес до пика — самый ранний будильник.','hard exit triggers — act within a quarter. Spot DRAM (DXI, daily TrendForce) turns 3–6 months before a peak — the earliest alarm.'],
-    ['Tier 2 · Trim','смягчённые триггеры — снизить позицию на 20–30%. HBM кв/кв, валовая маржа MU, контрактный DDR5 два месяца подряд вниз.','softer triggers — trim 20–30%. HBM QoQ, MU gross margin, DDR5 contract down two months in a row.'],
-    [RT('Запасы','Inventory'),'недели запасов в цепочке: порог тревоги > 8 нед; > 15 нед исторически предшествовало всем донышкам за 6 мес.','channel inventory weeks: alarm > 8 wk; > 15 wk historically preceded every bottom within 6 months.'],
-    [RT('Структурный риск','Structural risk'),'контекст, не сигнал: capex на пике → oversupply через 2–3 года (срок постройки fab).','context, not a signal: capex at the peak → oversupply in 2–3 years (fab build time).'],
-    [RT('Фаза','Phase'),'где в цикле сейчас: стрелка между дном, разгоном и пиковой фазой.','where in the cycle now: a needle between bottom, ramp-up and peak phase.'],
-  ])+infoNote('Цвет строки: 🟢 тезис цел / цикл на подъёме · 🟡 ранний варн-сигнал. '+INFO_DISCLAIM[0],'Row colour: 🟢 thesis intact / cycle rising · 🟡 early warning. '+INFO_DISCLAIM[1])},
+  cycle:{t:['🧭 Тезис-монитор бумаги','🧭 Stock thesis monitor'],b:()=>infoP('Модуль-мониторинг инвестиционного тезиса по бумаге: набор опережающих сигналов, специфичных для ЕЁ сектора и истории (а не один индикатор). Метрики и пороги подбирает AI под конкретную компанию через web_search; для Micron (MU) это цикл памяти (DXI/запасы/capex/HBM) как образец. Кнопка «✨ Обновить (AI)» тянет свежие значения; «✏️ Правка» — ручная корректировка; ƒ — авто-derive из фундаментала.','A module that monitors a stock\'s investment thesis: a set of leading signals specific to ITS sector and story (not a single indicator). The AI picks the metrics and thresholds per company via web_search; for Micron (MU) it is the memory cycle (DXI/inventory/capex/HBM) as the template. «✨ Refresh (AI)» pulls fresh values; «✏️ Edit» for manual tweaks; ƒ — auto-derived from fundamentals.')+infoRows([
+    ['Tier 1 · Exit','жёсткие триггеры выхода — пора действовать. Свои для каждого сектора (память: разворот спот-цен/DXI; банк: маржа и кредитные потери; биотех: провал испытаний/иссяк runway; энергетика: обвал цены сырья).','hard exit triggers — time to act. Sector-specific (memory: spot price/DXI turn; bank: margin & credit losses; biotech: trial fail / runway out; energy: commodity-price crash).'],
+    ['Tier 2 · Trim','смягчённые триггеры — снизить позицию на 20–30% (ранние предупреждения).','softer triggers — trim 20–30% (early warnings).'],
+    [RT('Структурный риск','Structural risk'),'контекст, не сигнал: то, что готовит проблему на горизонте лет (напр. capex на пике → oversupply через 2–3 года).','context, not a signal: what sets up trouble years out (e.g. capex at a peak → oversupply in 2–3 years).'],
+    [RT('Фаза','Phase'),'где бумага в своём цикле/истории: стрелка между ранней стадией, развитием и зрелостью/перегревом.','where the stock is in its cycle/story: a needle between early stage, growth and maturity/overheat.'],
+    [RT('Источник','Source'),'значка у строки: ✋ ручная правка · ✨ AI (web_search) · ƒ авто-derive · • дефолт-сид.','per-row badge: ✋ manual · ✨ AI (web_search) · ƒ auto-derived · • default seed.'],
+  ])+infoNote('Цвет строки: 🟢 порог не достигнут / тезис цел · 🟡 близко к порогу или структурный риск · 🔴 порог достигнут. AI-вызов платный (admin). '+INFO_DISCLAIM[0],'Row colour: 🟢 threshold not hit / thesis intact · 🟡 near threshold or structural risk · 🔴 threshold hit. The AI call is paid (admin). '+INFO_DISCLAIM[1])},
   baro:{t:['🌡 Барометр перегретости рынков','🌡 Market overheat barometer'],b:()=>infoP('Композитный индекс 0–100 из живых данных ведущих индексов. 0 — страх/перепроданность, 100 — эйфория/перегрев. Считается в браузере из уже загруженных котировок, обновляется вместе с рынками.','A 0–100 composite from live data of leading indices. 0 = fear/oversold, 100 = euphoria/overheated. Computed in the browser from already-loaded quotes, refreshed with the markets.')+infoRows([
     ['VIX','индекс страха: низкий VIX → самоуспокоенность (перегрев), высокий → страх. Вес 30%.','fear gauge: low VIX → complacency (overheat), high → fear. Weight 30%.'],
     [RT('Выше SMA200','Above SMA200'),'доля ведущих индексов выше своей SMA200 — широта бычьего тренда. Вес 25%.','share of leading indices above their SMA200 — bull-trend breadth. Weight 25%.'],
@@ -6783,10 +6783,13 @@ const CYCLE_MONITORS={
     legend:['Зелёный = тезис цел / цикл ещё на подъёме. Жёлтый = ранний варн-сигнал. Память исторически отдаёт 40–60% за 6 мес после пика цен — конфигурация для частичного трима, не полного выхода. Первым мигнёт DXI.','Green = thesis intact / cycle still rising. Amber = early warning. Memory historically gives back 40–60% within 6 months after a price peak — a setup for a partial trim, not a full exit. DXI blinks first.'],
   },
 };
-// Живые правки по тикеру: { TK:{ ai:{at,cost,phasePos,summary,sources,rows:{id:{v,k}}}, manual:{phasePos,rows:{id:{v,k}}} } }
+// Живые данные по тикеру: { TK:{ ai:{at,cost,title,phasePos,phaseLabels,summary,sources,tiers:[…]}, manual:{phasePos,rows:{id:{v,k}}} } }
+// ai.tiers — ПОЛНАЯ структура, сгенерированная AI под конкретную бумагу (свои метрики/пороги).
 let CYCLE_OVR={};
 let _cycEdit=null;   // тикер в режиме ручной правки (admin)
+let _cycBusy=null;   // тикер, по которому идёт AI-прогон
 const cycKey=tk=>String(tk||'').trim().toUpperCase();
+const cycSlug=s=>String(s||'').toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'_').replace(/^_+|_+$/g,'').slice(0,40);
 // ƒ Авто-derive из уже загруженного фундаментала: текущая маржа MU (тренд по 2 кв
 // price-API не даёт — поэтому только справочный уровень, статус не перебиваем).
 function cycleDerive(tk){
@@ -6800,56 +6803,75 @@ function cycleDerive(tk){
   }
   return out;
 }
-// Слияние значения строки: ручная → AI → derive → дефолт. Возвращает {v,k,src}.
-function cycleRow(ovr,der,def){
-  const m=ovr&&ovr.manual&&ovr.manual.rows&&ovr.manual.rows[def.id];
-  if(m&&(m.v!=null||m.k))return{v:m.v!=null?m.v:RT(def.v[0],def.v[1]),k:m.k||def.k,src:'manual'};
-  const a=ovr&&ovr.ai&&ovr.ai.rows&&ovr.ai.rows[def.id];
-  if(a&&(a.v!=null||a.k))return{v:a.v!=null?a.v:RT(def.v[0],def.v[1]),k:a.k||def.k,src:'ai'};
-  const d=der&&der.rows&&der.rows[def.id];
-  if(d&&d.v!=null)return{v:d.v,k:def.k,src:'derived'};
-  return{v:RT(def.v[0],def.v[1]),k:def.k,src:'def'};
-}
 const CYC_SRC_MARK={manual:'✋',ai:'✨',derived:'ƒ',def:''};
+// Нормализованная модель монитора по приоритету источника: AI-структура → статичный
+// сид (CYCLE_MONITORS) → null. Возвращает {src,title,phasePos,phaseLabels,tiers[{title,badge,badgeKind,rows[{id,label,value,status}]}],…}.
+function cycMonModel(tk){
+  const TK=cycKey(tk),ovr=CYCLE_OVR[TK]||{},ai=ovr.ai;
+  if(ai&&Array.isArray(ai.tiers)&&ai.tiers.length){
+    const pl=(Array.isArray(ai.phaseLabels)&&ai.phaseLabels.length>=2)?ai.phaseLabels:[['ранняя стадия','early'],['развитие','growth'],['зрелость/перегрев','maturity/overheat']];
+    return {src:'ai',at:ai.at,cost:ai.cost,sources:ai.sources||'',summary:ai.summary||'',
+      title:ai.title||RT('🧭 Сигналы по тезису','🧭 Thesis signals'),
+      phasePos:(typeof ai.phasePos==='number')?ai.phasePos:50,phaseLabels:pl,tiers:ai.tiers};
+  }
+  const m=CYCLE_MONITORS[TK];
+  if(m)return {src:'static',asOf:m.asOf,sources:m.sources,legend:m.legend,summary:'',
+    title:m.title||RT('🧭 Сигналы разворота цикла памяти','🧭 Memory-cycle turn signals'),
+    phasePos:m.phasePos,phaseLabels:m.phaseLabels,
+    tiers:[...m.tiers,...(m.risk?[{title:m.risk.title,badge:null,badgeKind:null,rows:m.risk.rows}]:[])]
+      .map(t=>({title:t.title,badge:t.badge,badgeKind:t.badgeKind,rows:t.rows.map(r=>({id:r.id,label:r.l,value:r.v,status:r.k}))}))};
+  return null;
+}
+// Значение строки по приоритету: ручная правка → ƒ derive → база (AI/сид). {v,k,src}.
+function cycResolve(model,ovr,der,row){
+  const man=ovr.manual&&ovr.manual.rows&&ovr.manual.rows[row.id];
+  if(man&&(man.v!=null||man.k))return{v:man.v!=null?man.v:row.value,k:man.k||row.status,src:'manual'};
+  const d=der&&der.rows&&der.rows[row.id];
+  if(d&&d.v!=null)return{v:d.v,k:row.status,src:'derived'};
+  return{v:row.value,k:row.status,src:model.src==='ai'?'ai':'def'};
+}
 function cycleMonitorHTML(tk){
-  const m=CYCLE_MONITORS[cycKey(tk)];if(!m)return'';
-  const TK=cycKey(tk),ovr=CYCLE_OVR[TK]||{},der=cycleDerive(tk),edit=(_cycEdit===TK)&&isAdmin();
-  const rt=p=>Array.isArray(p)?RT(p[0],p[1]):String(p);
+  const TK=cycKey(tk),ovr=CYCLE_OVR[TK]||{},model=cycMonModel(tk),der=cycleDerive(tk),edit=(_cycEdit===TK)&&isAdmin(),busy=_cycBusy===TK;
+  const rt=p=>Array.isArray(p)?RT(p[0],p[1]):String(p==null?'':p);
+  // Нет ни AI, ни сида: для админа — кнопка «сгенерировать тезис-монитор», иначе скрыто.
+  if(!model){
+    if(!isAdmin())return'';
+    return`<section class="pf3-panel cyc"><div class="pf3-panel-hd"><span>🧭 ${RT('Тезис-монитор','Thesis monitor')} ${infoBtn('cycle')}</span></div>
+      <p class="pf3-asof">${RT('AI соберёт специфичные для этой бумаги сигнальные метрики (Tier 1/2 + структурный риск) со свежими данными из web_search и порогами.','AI will assemble stock-specific signal metrics (Tier 1/2 + structural risk) with fresh web_search data and thresholds.')}</p>
+      <button class="pf3-btn pf3-btn-sm" onclick="cycleMonAiRun('${TK}')"${busy?' disabled':''}>${busy?'⏳ '+RT('Собираю','Building')+'…':'✨ '+RT('Сгенерировать (AI)','Generate (AI)')}</button></section>`;
+  }
   const KOPT=[['ok','🟢'],['warn','🟡'],['alert','🔴']];
-  const rowHTML=def=>{
-    const c=cycleRow(ovr,der,def);
+  const rowHTML=row=>{
+    const c=cycResolve(model,ovr,der,row);
     if(edit){
       const sel=KOPT.map(([k,e])=>`<option value="${k}"${k===c.k?' selected':''}>${e}</option>`).join('');
-      return`<tr><td class="cyc-l">${rt(def.l)}</td><td class="cyc-v"><select class="cyc-edit-k" onchange="cycManualSet('${TK}','${def.id}','k',this.value)">${sel}</select> <input class="cyc-edit-v" value="${String(c.v).replace(/"/g,'&quot;')}" onchange="cycManualSet('${TK}','${def.id}','v',this.value)"></td></tr>`;
+      return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v"><select class="cyc-edit-k" onchange="cycManualSet('${TK}','${row.id}','k',this.value)">${sel}</select> <input class="cyc-edit-v" value="${String(rt(c.v)).replace(/"/g,'&quot;')}" onchange="cycManualSet('${TK}','${row.id}','v',this.value)"></td></tr>`;
     }
     const mark=CYC_SRC_MARK[c.src]?`<span class="cyc-src" title="${RT('источник','source')}: ${c.src}">${CYC_SRC_MARK[c.src]}</span>`:'';
-    return`<tr><td class="cyc-l">${rt(def.l)}</td><td class="cyc-v">${mark}<span class="cyc-s cyc-s-${c.k}">${rt(c.v)}</span></td></tr>`;
+    return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v">${mark}<span class="cyc-s cyc-s-${c.k}">${rt(c.v)}</span></td></tr>`;
   };
-  const card=(title,badge,badgeKind,rows)=>`<div class="cyc-card"><div class="cyc-card-hd"><span class="cyc-card-t">${rt(title)}</span>${badge?`<span class="cyc-badge cyc-b-${badgeKind}">${rt(badge)}</span>`:''}</div><table class="cyc-tbl">${rows.map(rowHTML).join('')}</table></div>`;
-  const pos=(ovr.manual&&typeof ovr.manual.phasePos==='number')?ovr.manual.phasePos:(ovr.ai&&typeof ovr.ai.phasePos==='number'?ovr.ai.phasePos:m.phasePos);
-  const phase=`<div class="cyc-phase"><div class="cyc-phase-l">${RT('Где мы в цикле сейчас','Where we are in the cycle now')}${edit?` <input type="number" min="0" max="100" class="cyc-edit-pos" value="${pos}" onchange="cycManualSet('${TK}','','phasePos',this.value)">`:''}</div>
-    <div class="cyc-gauge"><div class="cyc-needle" style="left:${Math.max(0,Math.min(100,pos))}%"></div></div>
-    <div class="cyc-scale">${m.phaseLabels.map((x,i)=>`<span${i===m.phaseLabels.length-1?' class="cyc-now"':''}>${rt(x)}</span>`).join('')}</div></div>`;
-  const tiers=m.tiers.map(t=>card(t.title,t.badge,t.badgeKind,t.rows)).join('');
-  const risk=m.risk?card(m.risk.title,null,null,m.risk.rows):'';
-  // Заголовок-время: ✨ AI обновление, иначе дефолтная дата среза.
-  const asof=ovr.ai&&ovr.ai.at?`✨ ${RT('обновлено','updated')} ${pf3DtRu(ovr.ai.at)}${ovr.ai.cost?' · '+costLine(ovr.ai.cost):''}`:`${RT('данные на','data as of')} ${rt(m.asOf)}`;
-  const busy=_cycBusy===TK;
+  const card=t=>`<div class="cyc-card"><div class="cyc-card-hd"><span class="cyc-card-t">${rt(t.title)}</span>${t.badge?`<span class="cyc-badge cyc-b-${t.badgeKind||'warn'}">${rt(t.badge)}</span>`:''}</div><table class="cyc-tbl">${(t.rows||[]).map(rowHTML).join('')}</table></div>`;
+  const pos=Math.max(0,Math.min(100,(ovr.manual&&typeof ovr.manual.phasePos==='number')?ovr.manual.phasePos:model.phasePos));
+  const phase=`<div class="cyc-phase"><div class="cyc-phase-l">${RT('Где бумага в своём цикле','Where the stock is in its cycle')}${edit?` <input type="number" min="0" max="100" class="cyc-edit-pos" value="${pos}" onchange="cycManualSet('${TK}','','phasePos',this.value)">`:''}</div>
+    <div class="cyc-gauge"><div class="cyc-needle" style="left:${pos}%"></div></div>
+    <div class="cyc-scale">${model.phaseLabels.map((x,i)=>`<span${i===model.phaseLabels.length-1?' class="cyc-now"':''}>${rt(x)}</span>`).join('')}</div></div>`;
+  const tiers=model.tiers.map(card).join('');
+  const asof=model.src==='ai'?`✨ ${RT('обновлено','updated')} ${pf3DtRu(model.at)}${model.cost?' · '+costLine(model.cost):''}`:`${RT('данные на','data as of')} ${rt(model.asOf)}`;
   const actions=isAdmin()?`<span class="cyc-actions">
-    <button class="pf3-btn pf3-btn-sm" onclick="cycleMonAiRun('${TK}')"${busy?' disabled':''}>${busy?'⏳ '+RT('Обновляю','Updating')+'…':(ovr.ai?'🔄 '+RT('Обновить (AI)','Refresh (AI)'):'✨ '+RT('Обновить (AI)','Update (AI)'))}</button>
+    <button class="pf3-btn pf3-btn-sm" onclick="cycleMonAiRun('${TK}')"${busy?' disabled':''}>${busy?'⏳ '+RT('Обновляю','Updating')+'…':(model.src==='ai'?'🔄 '+RT('Обновить (AI)','Refresh (AI)'):'✨ '+RT('Обновить (AI)','Update (AI)'))}</button>
     <button class="pf3-btn pf3-btn-sm" onclick="cycEditToggle('${TK}')">${edit?'✓ '+RT('Готово','Done'):'✏️ '+RT('Правка','Edit')}</button>
-    ${(ovr.ai||ovr.manual)?`<button class="pf3-btn pf3-btn-sm" onclick="cycReset('${TK}')" title="${RT('Сбросить к дефолтам','Reset to defaults')}">↺</button>`:''}
+    ${(ovr.ai||ovr.manual)?`<button class="pf3-btn pf3-btn-sm" onclick="cycReset('${TK}')" title="${RT('Сбросить','Reset')}">↺</button>`:''}
   </span>`:'';
+  const note=model.legend?rt(model.legend):RT('🟢 порог не достигнут / тезис цел · 🟡 близко к порогу или структурный риск · 🔴 порог достигнут — действовать.','🟢 threshold not hit / thesis intact · 🟡 near threshold or structural risk · 🔴 threshold hit — act.');
   return`<section class="pf3-panel cyc">
-    <div class="pf3-panel-hd"><span>🧭 ${RT('Сигналы разворота цикла памяти','Memory-cycle turn signals')} ${infoBtn('cycle')}</span><span class="pf3-asof">${asof}</span></div>
+    <div class="pf3-panel-hd"><span>${rt(model.title)} ${infoBtn('cycle')}</span><span class="pf3-asof">${asof}</span></div>
     ${actions}
     ${phase}
-    ${(ovr.ai&&ovr.ai.summary)?`<div class="cyc-summary">${pf3Md(ovr.ai.summary)}</div>`:''}
-    <div class="cyc-cards">${tiers}${risk}</div>
-    <p class="pf3-asof cyc-note">${rt(m.legend)}<br>${RT('Источники','Sources')}: ${(ovr.ai&&ovr.ai.sources)||m.sources}. ${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])} ${edit?'<br>✏️ '+RT('режим правки: меняйте цвет и текст; «Готово» — сохранить.','edit mode: change colour & text; «Done» to save.'):''}</p>
+    ${model.summary?`<div class="cyc-summary">${pf3Md(model.summary)}</div>`:''}
+    <div class="cyc-cards">${tiers}</div>
+    <p class="pf3-asof cyc-note">${note}<br>${model.sources?RT('Источники','Sources')+': '+model.sources+'. ':''}${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}${edit?'<br>✏️ '+RT('режим правки: меняйте цвет и текст; «Готово» — сохранить.','edit mode: change colour & text; «Done» to save.'):''}</p>
   </section>`;
 }
-let _cycBusy=null;
 // Ручная правка строки/фазы → CYCLE_OVR[tk].manual (sync). Не перерисовываем на каждый
 // keystroke (select/blur), чтобы не сбивать фокус; только сохраняем.
 function cycManualSet(tk,id,field,val){
@@ -6861,26 +6883,37 @@ function cycManualSet(tk,id,field,val){
 function cycEditToggle(tk){const TK=cycKey(tk);_cycEdit=(_cycEdit===TK)?null:TK;renderPF3();}
 function cycReset(tk){
   const TK=cycKey(tk);
-  if(!confirm(RT('Сбросить сигналы цикла к дефолтам (удалить AI и ручные правки)?','Reset cycle signals to defaults (drop AI & manual edits)?')))return;
+  if(!confirm(RT('Сбросить тезис-монитор (удалить AI и ручные правки)?','Reset the thesis monitor (drop AI & manual edits)?')))return;
   delete CYCLE_OVR[TK];_cycEdit=null;scheduleSave();renderPF3();
 }
-// ✨ AI + web_search: свежие DXI/запасы/capex/контракты → статусы строк (worker ?action=cyclemon).
+// ✨ AI + web_search: построить/обновить тезис-монитор бумаги (worker ?action=cyclemon).
+// Для бумаги без сида AI сам подбирает специфичные метрики и пороги по сектору/тезису.
 async function cycleMonAiRun(tk){
-  const TK=cycKey(tk),m=CYCLE_MONITORS[TK];if(!m||_cycBusy)return;
+  const TK=cycKey(tk);if(_cycBusy)return;
   _cycBusy=TK;renderPF3();
   try{
-    const metrics=[...m.tiers.flatMap(t=>t.rows),...(m.risk?m.risk.rows:[])].map(r=>({id:r.id,label:r.l[0]}));
-    const der=cycleDerive(tk);
-    const body={ticker:TK,name:(CYCLE_MONITORS[TK]&&'Micron')||TK,metrics,derived:der.rows};
+    const d=DATA[v3Key];let row=null;
+    if(d&&Array.isArray(d.rows))row=d.rows.find(r=>cycKey(r[2])===TK);
+    const F=pf3FundData();
+    const fundamentals=F?{pe:F.pe,ps:F.ps,revenueYoY:F.revenueYoY,netMarginPct:(typeof F.netIncome==='number'&&F.revenue>0)?Math.round(F.netIncome/F.revenue*100):null,debtToEquity:F.debtToEquity}:null;
+    const stat=CYCLE_MONITORS[TK];
+    const metricsHint=stat?[...stat.tiers.flatMap(t=>t.rows),...(stat.risk?stat.risk.rows:[])].map(r=>r.l[0]):null;
+    const body={mode:'thesis',ticker:TK,name:row?String(row[1]||TK):TK,sector:row?String(row[4]||''):'',type:row?String(row[5]||''):'',price:row?parseFloat(row[7])||null:null,ccy:row?String(row[8]||'USD'):'USD',fundamentals,metricsHint};
     const r=await fetch(PRICE_PROXY+'?action=cyclemon',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(body)});
     const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
     if(j&&j.cyclemon){
-      aiSpendAdd(j.cost);
-      const cm=j.cyclemon,rows={};
-      (Array.isArray(cm.rows)?cm.rows:[]).forEach(x=>{if(x&&x.id)rows[x.id]={v:x.value!=null?String(x.value):null,k:['ok','warn','alert'].includes(x.status)?x.status:undefined};});
-      const o=CYCLE_OVR[TK]||(CYCLE_OVR[TK]={});
-      o.ai={at:new Date().toISOString(),cost:j.cost||null,phasePos:(typeof cm.phasePos==='number')?cm.phasePos:undefined,summary:cm.summary||'',sources:cm.sources||'',rows};
-      scheduleSave();
+      const cm=j.cyclemon;
+      const tiers=(Array.isArray(cm.tiers)?cm.tiers:[]).map(t=>({title:String(t.title||''),badge:t.badge?String(t.badge):null,badgeKind:['alert','warn','info'].includes(t.badgeKind)?t.badgeKind:null,
+        rows:(Array.isArray(t.rows)?t.rows:[]).map((x,i)=>({id:cycSlug(x.label)||('r'+i),label:String(x.label||''),value:x.value!=null?String(x.value):'',status:['ok','warn','alert'].includes(x.status)?x.status:'warn'})).filter(x=>x.label)})).filter(t=>t.rows.length);
+      if(tiers.length){
+        aiSpendAdd(j.cost);
+        const o=CYCLE_OVR[TK]||(CYCLE_OVR[TK]={});
+        o.ai={at:new Date().toISOString(),cost:j.cost||null,title:cm.title?String(cm.title):null,
+          phasePos:(typeof cm.phasePos==='number')?cm.phasePos:50,
+          phaseLabels:Array.isArray(cm.phaseLabels)?cm.phaseLabels.map(String).slice(0,3):null,
+          summary:cm.summary?String(cm.summary):'',sources:cm.sources?String(cm.sources):'',tiers};
+        scheduleSave();
+      }else toast('AI (cycle): '+RT('пустой ответ','empty response'),true);
     }else{const msg=(j&&j.error)||(bodyText?bodyText.slice(0,200):('HTTP '+r.status));toast('AI (cycle): '+msg,true);}
   }catch(e){toast('AI: '+(e&&e.message||RT('сеть/worker недоступен','network/worker unreachable')),true);}
   _cycBusy=null;if(isV3())renderPF3();

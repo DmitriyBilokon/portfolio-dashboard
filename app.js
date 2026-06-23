@@ -258,11 +258,31 @@ async function startApp(){
   await pullState();
   subscribeRealtime();
   refreshFX();   // override synced rates with live USD/EUR/NOK→SEK (non-blocking)
+  maybeOnboard();   // приветствие при первом входе (один раз, флаг в localStorage)
+}
+// 👋 Онбординг новичка: одноразовое приветствие с картой возможностей. Флаг dash_onboarded.
+function onbDone(){try{localStorage.setItem('dash_onboarded','1')}catch(e){}document.getElementById('onbOverlay')?.classList.add('hidden');}
+function onbShow(){const ov=document.getElementById('onbOverlay');if(!ov)return;const c=document.getElementById('onbCard');if(c)c.innerHTML=onbHTML();ov.classList.remove('hidden');}
+function maybeOnboard(){let seen;try{seen=localStorage.getItem('dash_onboarded')}catch(e){}if(!seen)onbShow();}
+function onbHTML(){
+  const row=(ic,ru,en)=>`<div class="onb-row"><span class="onb-ic">${ic}</span><span>${RT(ru,en)}</span></div>`;
+  return `<button class="faq-close" onclick="onbDone()" aria-label="${RT('Закрыть','Close')}">✕</button>
+    <h2>👋 ${RT('Добро пожаловать','Welcome')}</h2>
+    <div class="faq-sub">${RT('Это аналитический дашборд портфеля: индексы, ваши портфели и AI-разбор бумаг.','An analytical portfolio dashboard: indices, your portfolios and AI stock analysis.')}</div>
+    <div class="onb-list">
+      ${row('🗂','Вкладки сверху — индексы (Nasdaq, OMXS30…) и ваши портфели. 🏠 Home — сводка рынка и барометр.','Tabs on top — indices (Nasdaq, OMXS30…) and your portfolios. 🏠 Home — market overview & barometer.')}
+      ${row('📋','Клик по строке/бумаге открывает карточку: цена, уровни, фундаментал, тезис-монитор.','Click a row/stock to open its card: price, levels, fundamentals, thesis monitor.')}
+      ${row('🤖','В карточке — AI-анализ и AI-рекомендация (Claude + веб-поиск свежих новостей).','In the card — AI analysis & AI recommendation (Claude + web search of fresh news).')}
+      ${row('🔄','«Цены» подтягивают живые котировки и технические уровни (Yahoo).','“Prices” pulls live quotes and technical levels (Yahoo).')}
+      ${row('❓','Кнопка «?» в шапке и значки «!» рядом с разделами объясняют все обозначения.','The “?” button in the header and “!” icons next to sections explain every label.')}
+    </div>
+    <div class="onb-note">${RT('Справочная аналитика, не индивидуальная инвестиционная рекомендация.','Reference analytics, not individual investment advice.')}</div>
+    <button class="primary onb-ok" onclick="onbDone()">${RT('Понятно, начать','Got it, start')}</button>`;
 }
 async function boot(){
   initTheme();
   init();                         // paint with bundled data first
-  if(!SYNC_ENABLED){ refreshFX(); return; }
+  if(!SYNC_ENABLED){ refreshFX(); maybeOnboard(); return; }
   const { data:{ session } } = await sb.auth.getSession();
   if(session){ currentUser=session.user; await startApp(); }
   else { document.getElementById('authOverlay').classList.remove('hidden'); }
@@ -1495,6 +1515,14 @@ function renderTable(){
   ord.forEach((ci,vi)=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const th=document.createElement('th');th.textContent=h[ci];th.draggable=true;th.dataset.vi=vi;if(ci===sortCol)th.className=sortDir===1?'sorted-asc':'sorted-desc';th.onclick=()=>toggleSort(ci);th.addEventListener('dragstart',()=>{dragSrc=vi;th.classList.add('dragging')});th.addEventListener('dragend',()=>{th.classList.remove('dragging');document.querySelectorAll('thead th').forEach(t=>t.classList.remove('drag-over'))});th.addEventListener('dragover',e=>{e.preventDefault();th.classList.add('drag-over')});th.addEventListener('dragleave',()=>th.classList.remove('drag-over'));th.addEventListener('drop',e=>{e.preventDefault();th.classList.remove('drag-over');const tgt=parseInt(th.dataset.vi);if(dragSrc!==tgt){const o=getOrd();const it=o.splice(dragSrc,1)[0];o.splice(tgt,0,it);renderAll();scheduleSave()}});tr.appendChild(th)});
   thead.appendChild(tr);
   const tbody=document.getElementById('tbody');tbody.innerHTML='';
+  if(!rows.length){   // понятное пустое состояние вместо немой пустой таблицы
+    const vis=ord.filter(ci=>!(hiddenCols[curIdx]||[]).includes(ci)).length+1;
+    const msg=searchTerm
+      ? RT(`Ничего не найдено по запросу «${searchTerm}». Очистите поиск (↕ Сброс).`,`Nothing matches “${searchTerm}”. Clear the search (↕ Reset).`)
+      : RT('На этой вкладке пока нет бумаг. Добавьте тикеры или нажмите «🔄 Цены», чтобы подтянуть данные.','No stocks on this tab yet. Add tickers or press “🔄 Prices” to load data.');
+    tbody.innerHTML=`<tr><td colspan="${vis}" style="padding:28px 16px;text-align:center;color:var(--text2);font-size:12px">${msg}</td></tr>`;
+    return;
+  }
   rows.forEach(row=>{const oi=row._idx,tr=document.createElement('tr');if(selected.has(oi))tr.className='selected';const tdD=document.createElement('td');tdD.style.cssText='padding:3px;text-align:center';const isPlanned=parseInt(row.data[6])===0;if(isPlanned){tr.style.background='rgba(234,179,8,0.06)';tr.style.borderLeft='3px solid var(--gold)'}const btn=document.createElement('button');btn.className='del-btn';btn.textContent='✕';btn.onclick=e=>{e.stopPropagation();if(selected.has(oi))selected.delete(oi);else selected.add(oi);updateDelBtn();tr.className=selected.has(oi)?'selected':''};tdD.appendChild(btn);tr.appendChild(tdD);const price=priceC>=0?parseFloat(row.data[priceC]):0;
   ord.forEach(ci=>{if((hiddenCols[curIdx]||[]).includes(ci))return;const val=row.data[ci],td=document.createElement('td');
   if(ci===tfC){td.style.textAlign='center';const tk=String(row.data[2]||'');const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';const mk=(m,l)=>`<button class="tf-btn${mode===m?' tf-on':''}" onclick="setSmaTF(${oi},'${m}')">${l}</button>`;td.innerHTML=`<span class="tf-wrap">${mk('1Y','1Г')}${mk('3Y','3Г')}</span>`;tr.appendChild(td);return}
@@ -1793,7 +1821,7 @@ function a11yInit(){
   });
   // Фокус на открытии модалки и возврат на элемент-открыватель при закрытии.
   let _retFocus=null;
-  ['faqOverlay','setOverlay','grpOverlay','prmOverlay','authOverlay'].forEach(id=>{
+  ['faqOverlay','setOverlay','grpOverlay','prmOverlay','authOverlay','onbOverlay'].forEach(id=>{
     const ov=document.getElementById(id);if(!ov)return;
     try{new MutationObserver(()=>{
       const open=!ov.classList.contains('hidden');

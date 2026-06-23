@@ -269,6 +269,7 @@ async function boot(){
 }
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴',};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52,CAD:7.0,GBP:12.6,AUD:6.2};
+let _fxAt=0;   // когда курсы FX последний раз обновлены живьём в этой сессии (0 = дефолт/из снапшота, свежесть не подтверждена)
 // Бумажный (тестовый) портфель: [{tab,tk,name,ccy,qty,buy,date}] — у каждой
 // v3-вкладки свои тестовые покупки (tab), синхронизируется с остальным состоянием.
 let SIM=[];
@@ -510,9 +511,17 @@ async function refreshFX(){
   const live=await fetchRatesSEK();
   if(!live)return;                                  // network/source down → keep existing rates
   FX={...FX,SEK:1,...live};                          // override USD/EUR/NOK, preserve any other keys
+  _fxAt=Date.now();                                  // отметка живого обновления — для честной подписи о свежести
   if(DATA[PF3_KEY])recalcAllPF(PF3_KEY);
   if(isV3())renderPF3();
   scheduleSave();                                    // persist live rates so the cloud + Telegram worker see them
+}
+// Свежесть FX для подписи к курсам. Пусто, если в этой сессии живого обновления ещё не было
+// (курсы из снапшота/дефолта) — чтобы не утверждать «живые», когда это не подтверждено.
+function fxFreshLbl(){
+  if(!_fxAt)return '';
+  const min=Math.round((Date.now()-_fxAt)/60000);
+  return min<1?RT(' · обновлено только что',' · updated just now'):` · ${RT('обновлено','updated')} ${min} ${RT('мин назад','min ago')}`;
 }
 const SEC_COLORS={'tech':['#dbeafe','#1e40af'],'software':['#c7d2fe','#3730a3'],'ai':['#c7d2fe','#3730a3'],'gpu':['#c7d2fe','#3730a3'],'semis':['#e0e7ff','#4338ca'],'information':['#dbeafe','#1e40af'],'health':['#dcfce7','#166534'],'pharma':['#dcfce7','#166534'],'biotech':['#d1fae5','#065f46'],'med':['#dcfce7','#166534'],'financ':['#fef3c7','#92400e'],'bank':['#fef3c7','#92400e'],'insurance':['#fef9c3','#854d0e'],'pe fund':['#fef3c7','#92400e'],'energy':['#ffedd5','#9a3412'],'oil':['#ffedd5','#9a3412'],'utilit':['#ecfccb','#3f6212'],'consumer':['#fce7f3','#9d174d'],'food':['#fce7f3','#9d174d'],'luxury':['#fdf2f8','#831843'],'industrial':['#e0f2fe','#075985'],'construction':['#e0f2fe','#075985'],'defense':['#fee2e2','#991b1b'],'naval':['#fee2e2','#991b1b'],'security':['#fee2e2','#991b1b'],'telecom':['#f3e8ff','#6b21a8'],'media':['#f3e8ff','#6b21a8'],'material':['#ccfbf1','#134e4a'],'gaming':['#ede9fe','#5b21b6'],'salmon':['#cffafe','#155e75'],'auto':['#f1f5f9','#334155'],'ship':['#e0f2fe','#075985']};
 function getSC(s){s=(s||'').toLowerCase();for(const[k,[b,f]] of Object.entries(SEC_COLORS)){if(s.includes(k))return[b,f]}return['#f1f5f9','#475569']}
@@ -685,7 +694,7 @@ function can(perm){
 const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',backtest:'ai_proto',aim:'ai_proto'};
 // «Структура» (alloc) объединяет Сектора+Тип+Диверсификацию — видна при любом из трёх прав.
 const canTab=k=>k==='alloc'?(can('view.sectors')||can('view.type')||can('view.diversification')):can('view.'+(PFTAB_PERM[k]||k));
-function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
+function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}try{document.documentElement.lang=LANG}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
 const I18N_EN={
 'Портфель':'Portfolio','Nasdaq 100':'Nasdaq 100',
@@ -3827,7 +3836,7 @@ function pf3Summary(){
   }
   return`<section class="pf3-summary" data-edit-row="cards">${eapply('cards',cards).map(c=>c.html).join('')}</section>
   <div id="pfSumPP" class="pf3-pp pfsum-pp">${pfSumPPInner(pf3D())}</div>
-  <div class="pf3-fx"><span class="pf3-fx-l">${T('💱 Курсы')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')}<span class="pf3-fx-note">${T('живые курсы ECB · база SEK')}</span></div>`;
+  <div class="pf3-fx"><span class="pf3-fx-l">${T('💱 Курсы')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')}<span class="pf3-fx-note">${RT('курсы ECB · база SEK','ECB rates · SEK base')}${fxFreshLbl()}</span></div>`;
 }
 function pf3SetNum(key,v){const n=parseFloat(v);pf3D()[key]=(isNaN(n)||n<0)?0:n;scheduleSave();renderPF3()}
 

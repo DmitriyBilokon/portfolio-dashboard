@@ -21,7 +21,7 @@
 <div class="edit-bar hidden" id="editBar"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
-<div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены через Finnhub">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
+<div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены и технические уровни (Yahoo) / Refresh prices & levels (Yahoo)" aria-label="Обновить цены">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
 <div class="stats" id="statsBar"></div>
 <div id="contentArea"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
 <div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard"></div></div>
@@ -40,6 +40,6 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="data.js?v=20260618o"></script>
-<script src="app.js?v=20260623g"></script>
+<script src="app.js?v=20260623h"></script>
 </body>
 </html>

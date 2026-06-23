@@ -682,7 +682,8 @@ function can(perm){
   return rbacResolve(ACCESS.roleId,ACCESS.overrides,perm);
 }
 const PFTAB_PERM={list:'portfolio',sec:'sectors',typ:'type',div:'diversification',fcast:'forecast',plan:'plan',trades:'trades',cal:'dividends',health:'health',ai:'ai_proto',prop:'suggestion',analysis:'ai_proto',backtest:'ai_proto',aim:'ai_proto'};
-const canTab=k=>can('view.'+(PFTAB_PERM[k]||k));
+// «Структура» (alloc) объединяет Сектора+Тип+Диверсификацию — видна при любом из трёх прав.
+const canTab=k=>k==='alloc'?(can('view.sectors')||can('view.type')||can('view.diversification')):can('view.'+(PFTAB_PERM[k]||k));
 function initLang(){try{LANG=localStorage.getItem('dash_lang')==='en'?'en':'ru'}catch(e){}const b=document.getElementById('langBtn');if(b)b.textContent=LANG==='ru'?'EN':'RU'}
 function toggleLang(){LANG=LANG==='ru'?'en':'ru';try{localStorage.setItem('dash_lang',LANG)}catch(e){}initLang();init()}
 const I18N_EN={
@@ -723,6 +724,12 @@ function getOrd(){const n=DATA[curIdx].headers.length;if(!colOrders[curIdx])colO
 function pfTotalRealizedSEK(tabKey){
   if(tabKey===AIP_KEY)return Math.round(((AI_PORT&&AI_PORT.trades)||[]).reduce((a,t)=>a+(typeof t.plSEK==='number'?t.plSEK:0),0));
   return Math.round((PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===tabKey).reduce((a,t)=>a+(t.plNative!=null?t.plNative*(FX[t.ccy]||1):0),0));
+}
+// Себестоимость реализованных (проданных) лотов в SEK — база для % за всё время.
+// cost = выручка − P/L: PF продажи (price·qty − plNative − fee)×FX; AI продажи price·qty×FX − plSEK.
+function pfTotalRealizedCostSEK(tabKey){
+  if(tabKey===AIP_KEY)return Math.round(((AI_PORT&&AI_PORT.trades)||[]).filter(t=>t.action==='sell'&&typeof t.plSEK==='number').reduce((a,t)=>a+((+t.price||0)*(+t.qty||0)*(FX[t.ccy||'SEK']||1)-(t.plSEK||0)),0));
+  return Math.round((PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===tabKey&&t.act==='sell').reduce((a,t)=>a+(((+t.price||0)*(+t.qty||0)-(t.plNative||0)-(t.feeNative||0))*(FX[t.ccy]||1)),0));
 }
 function recalcPF(i,idx){const k=idx||curIdx,d=DATA[k],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0;}
 function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
@@ -1427,21 +1434,22 @@ function renderAll(){
     }
     if(curIdx===AIP_KEY)aipSyncTab();   // 🤖: материализовать позиции AI как вкладку
     if(v3Key!==curIdx){   // switched between Портфель 3.0 and Nasdaq 100 — rebind the v3 UI
-      v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel=null;pf3XMenuOpen=false;
+      v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel={};pf3XMenuOpen=false;
       pf3Sort=pf3IsPort(curIdx)?{key:'val',dir:-1}:{key:'day',dir:-1};   // index default: top movers first
     }
     ['smaBanner','toolbarEl','statsBar','tableArea','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});
     document.getElementById('smaBanner').innerHTML='';
     const isPort=pf3MyPort(v3Key),isAip=v3Key===AIP_KEY;
-    if(isAip&&!['list','sec','typ','div','fcast','trades','health','backtest','aim'].includes(pf3Tab))pf3Tab='list';
-    else if(isPort&&!['list','stats','sec','typ','div','fcast','trades','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
-    else if(!isPort&&!isAip&&!['list','cal','sec','typ','ai'].includes(pf3Tab))pf3Tab='list';
+    if(['sec','typ','div'].includes(pf3Tab))pf3Tab='alloc';   // объединённая вкладка «Структура» (бывш. Сектора/Тип/Диверсификация)
+    if(isAip&&!['list','alloc','fcast','trades','health','backtest','aim'].includes(pf3Tab))pf3Tab='list';
+    else if(isPort&&!['list','stats','alloc','fcast','trades','plan','cal','health','ai','prop','analysis','backtest'].includes(pf3Tab))pf3Tab='list';
+    else if(!isPort&&!isAip&&!['list','cal','alloc','ai'].includes(pf3Tab))pf3Tab='list';
     if(!canTab(pf3Tab))pf3Tab='list';   // RBAC: ушли с закрытой под-вкладки на «Портфель»
     const _subs=(isAip
-      ?[[T('📊 Портфель'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🧪 '+RT('Бэктест','Backtest'),'backtest'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
+      ?[[T('📊 Портфель'),'list'],['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['📜 '+RT('Сделки','Trades'),'trades'],[T('🩺 Состояние портфеля'),'health'],['🧪 '+RT('Бэктест','Backtest'),'backtest'],['🤖 '+RT('Управление AI','AI controls'),'aim']]
       :isPort
-      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🧭 '+RT('Диверсификация','Diversification'),'div'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
-      :[[T('📊 Акции'),'list'],[T('🏭 Сектора'),'sec'],[T('🏷 Тип'),'typ'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
+      ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
+      :[[T('📊 Акции'),'list'],['🏭 '+RT('Структура','Breakdown'),'alloc'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
     st.dataset.editRow='sub:'+curIdx;
     eapply('sub:'+curIdx,_subs.map(([l,k])=>({id:k,l,k}))).forEach(({l,k})=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.dataset.eid=k;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
@@ -3785,6 +3793,8 @@ function pf3Summary(){
   const totalValB=pf3Cv(d,totalVal),totalProfitB=pf3Cv(d,totalProfit);
   const realizedSEK=pfTotalRealizedSEK(v3Key);                  // реализованный P/L по журналу продаж (SEK)
   const allTimeSEK=totalProfit+realizedSEK,allTimeB=pf3Cv(d,allTimeSEK),realizedB=pf3Cv(d,realizedSEK);
+  const allTimeCost=cost+pfTotalRealizedCostSEK(v3Key);         // себестоимость текущих + проданных лотов
+  const allTimePct=allTimeCost>0?allTimeSEK/allTimeCost*100:0;  // P/L за всё время в % от всех вложений
   const equity=totalValB+free;   // чистый капитал в базовой валюте: акции + свободный кэш
   const withLev=equity+lev;      // покупательная способность с кредитным плечом
   const num=(key,val,cls)=>`<input class="pf3-cash-input${cls?' '+cls:''}" type="number" step="any" min="0" value="${val}" onchange="pf3SetNum('${key}',this.value)" title="Нажмите, чтобы изменить">`;
@@ -3793,7 +3803,7 @@ function pf3Summary(){
     {id:'equity',html:`<div class="pf3-card pf3-sum-hero" data-eid="equity"><div class="pf3-card-l">${T('Чистый капитал')}</div><div class="pf3-card-v">${pf3Fmt(equity)} ${unit}</div><div class="pf3-card-s">${T('акции + свободный кэш')}</div></div>`},
     {id:'stocks',html:`<div class="pf3-card" data-eid="stocks"><div class="pf3-card-l">${T('Акции')}</div><div class="pf3-card-v">${pf3Fmt(totalValB)} ${unit}</div><div class="pf3-card-s">${d.rows.length} ${T('позиций')} · ${equity>0?(totalValB/equity*100).toFixed(1):'—'}%</div></div>`},
     {id:'profit',html:`<div class="pf3-card" data-eid="profit"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${totalProfit>=0?'pf3-up':'pf3-down'}">${totalProfit>0?'+':''}${pf3Fmt(totalProfitB)} ${unit}</div><div class="pf3-card-s ${pct>=0?'pf3-up':'pf3-down'}">${pct>0?'+':''}${pct.toFixed(1)}% ${T('от вложений')}</div></div>`},
-    {id:'alltime',html:`<div class="pf3-card" data-eid="alltime"><div class="pf3-card-l">${RT('P/L всё время','All-time P/L')}</div><div class="pf3-card-v ${allTimeSEK>=0?'pf3-up':'pf3-down'}">${allTimeSEK>0?'+':''}${pf3Fmt(allTimeB)} ${unit}</div><div class="pf3-card-s">${RT('нереализ. + реализ. по продажам','unrealized + realized on sales')}${realizedSEK?` · ${realizedSEK>0?'+':''}${pf3Fmt(realizedB)} ${RT('реализ.','realized')}`:''}</div></div>`},
+    {id:'alltime',html:`<div class="pf3-card" data-eid="alltime"><div class="pf3-card-l">${RT('P/L всё время','All-time P/L')}</div><div class="pf3-card-v ${allTimeSEK>=0?'pf3-up':'pf3-down'}">${allTimeSEK>0?'+':''}${pf3Fmt(allTimeB)} ${unit}</div><div class="pf3-card-s ${allTimePct>=0?'pf3-up':'pf3-down'}">${allTimePct>0?'+':''}${allTimePct.toFixed(1)}% ${RT('от всех вложений','on all invested')}${realizedSEK?` · ${realizedSEK>0?'+':''}${pf3Fmt(realizedB)} ${RT('реализ.','realized')}`:''}</div></div>`},
     {id:'cash',html:`<div class="pf3-card" data-eid="cash"><div class="pf3-card-l">${T('Свободный кэш')}</div><div class="pf3-card-v">${num('cashFree',free)} <small>${unit}</small></div><div class="pf3-card-s">${equity>0&&free>0?(free/equity*100).toFixed(1)+'% '+T('% капитала · доступно для покупок').replace('% of equity','of equity').replace('% капитала','капитала'):T('нажмите, чтобы изменить')}</div></div>`},
   ];
   if(isDima){
@@ -3883,8 +3893,8 @@ function pf3CalNav(k){pf3CalOff+=k;renderPF3()}
 const pf3SelIdx=()=>{const d=pf3D(),i=d.rows.findIndex(r=>String(r[2]||'')===pf3Sel);return i>=0?i:0};
 function pf3Select(tk){
   pf3Sel=(pf3Sel===tk?null:tk);
-  // Clicking a stock inside «Сектора»/«Тип» opens its card in the list view.
-  if(pf3Sel&&(pf3Tab==='sec'||pf3Tab==='typ')){pf3Tab='list';renderAll();return}
+  // Clicking a stock inside «Структура» (Сектора/Тип) opens its card in the list view.
+  if(pf3Sel&&pf3Tab==='alloc'){pf3Tab='list';renderAll();return}
   renderPF3();
 }
 
@@ -4470,12 +4480,12 @@ function pf3ListHTML(){
   return items.map(it=>pf3RowHTML(d,it,port,xc)).join('');
 }
 
-// «Сектора» / «Тип» sub-tabs: a sidebar with the category list on the left;
-// clicking a category shows its stocks on the right (the largest one is
-// selected by default). pf3TypeSel is shared — an unknown name after switching
-// sub-tabs simply falls back to the first group.
-let pf3TypeSel=null;
-function pf3TypeSelect(g){pf3TypeSel=g;renderPF3()}
+// «Сектора» / «Тип» блоки вкладки «Структура»: слева список категорий, клик
+// показывает её бумаги справа (по умолчанию крупнейшая). Выбор хранится отдельно
+// по ключу ('sec'/'typ'), чтобы оба блока на одной странице не конфликтовали;
+// неизвестное имя после переключения вкладок откатывается к первой группе.
+let pf3TypeSel={};
+function pf3TypeSelect(key,g){pf3TypeSel[key]=g;renderPF3()}
 // Nasdaq stores ~70 granular sectors (one stock each) — the «Сектора» view
 // would be a wall of single-stock groups. Roll them up into 12 macro sectors
 // by keyword; ORDER MATTERS (e.g. «AI Networking» must hit Полупроводники
@@ -4572,8 +4582,8 @@ function pf3GroupedHTML(key){
   const {d,port,totalVal,list}=pf3Groups(key);
   if(!list.length)return '<section class="pf3-panel"><div class="pf3-empty">Нет данных</div></section>';
   const ico=g=>key==='sec'?secIcon(g):(PF3_TYPE_META[g]?PF3_TYPE_META[g][0]:'🏷');
-  const sel=list.find(x=>x.g===pf3TypeSel)||list[0];
-  const nav=list.map(x=>`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${x.g.replace(/'/g,"\\'")}')">
+  const sel=list.find(x=>x.g===pf3TypeSel[key])||list[0];
+  const nav=list.map(x=>`<div class="pf3-typenav-it${x.g===sel.g?' active':''}" onclick="pf3TypeSelect('${key}','${x.g.replace(/'/g,"\\'")}')">
       <span class="pf3-typenav-ico">${ico(x.g)}</span>
       <span class="pf3-typenav-name">${T(x.g)}<small>${port?pf3Money(d,x.val)+' · '+(totalVal>0?(x.val/totalVal*100).toFixed(1):'0')+'%':x.arr.length+' '+T('акц.')}</small></span>
       <span class="pf3-typenav-cnt">${x.arr.length}</span>
@@ -4670,8 +4680,12 @@ function renderPF3(){
   if(curIdx!==v3Key)return;
   if(pf3IsPort(v3Key))pfSumPPStart(v3Key);else pfSumPPStop();   // лайв изм. баланса по пре/пост-рынку
   editScheduleWire();   // перевесить drag на карточки сводки после перерисовки pf3
-  if(pf3Tab==='sec'||pf3Tab==='typ'){
-    el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}${pf3GroupedHTML(pf3Tab)}</div>`;
+  if(pf3Tab==='alloc'){   // объединённая вкладка: Сектора + Тип + Диверсификация (каждый блок — по своему праву)
+    const port=pf3IsPort(v3Key);
+    const secB=can('view.sectors')?pf3GroupedHTML('sec'):'';
+    const typB=can('view.type')?pf3GroupedHTML('typ'):'';
+    const divB=(port&&can('view.diversification'))?pf3DiversHTML():'';
+    el.innerHTML=`<div class="pf3-wrap">${port?pf3Summary():""}${secB}${typB}${divB}</div>`;
     return;
   }
   if(pf3Tab==='sim'){
@@ -4699,10 +4713,6 @@ function renderPF3(){
   if(pf3Tab==='health'){
     el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3HealthTab()}</div>`;
     pf3LoadRisk();   // Шарп/CAGR/волатильность — догружаются и подставляются в pf3RiskBox
-    return;
-  }
-  if(pf3Tab==='div'){
-    el.innerHTML=`<div class="pf3-wrap">${pf3Summary()}${pf3DiversHTML()}</div>`;
     return;
   }
   if(pf3Tab==='ai'){

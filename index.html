@@ -6,6 +6,12 @@
 <title>Index Portfolio Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg?v=4b9a0545">
 <meta name="theme-color" content="#0e0e15">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="favicon.svg">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Index Dash">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="preconnect" href="https://telegram-notify-abc.dmitriy-bilokon.workers.dev">
 <link rel="preconnect" href="https://fvrebkwczqmeorytujbn.supabase.co">
@@ -47,5 +53,6 @@
 <script src="app-3.js?v=0ee8b1f2"></script>
 <script src="app-4.js?v=2f7999c5"></script>
 <script src="app-5.js?v=cbe9058c"></script>
+<script>if('serviceWorker' in navigator)addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});</script>
 </body>
 </html>

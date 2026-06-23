@@ -13,4 +13,20 @@ if echo "$changed" | grep -qE '^(app\.js|telegram-notify\.js|tests/)'; then
   fi
   echo "✅ Тесты зелёные"
 fi
+
+# Авто-версионирование ассетов: ?v=<hash8> по содержимому каждого локального файла,
+# на который ссылается index.html (app*.js, styles.css, data.js…). Убирает ручной бамп
+# ?v= и устаревший кэш у пользователей. Идемпотентно: при неизменном содержимом — no-op.
+if [ -f index.html ]; then
+  changedidx=0
+  for asset in $(grep -oE '[A-Za-z0-9_./-]+\?v=[0-9a-z]+' index.html | sed 's/?v=.*//' | sort -u); do
+    [ -f "$asset" ] || continue
+    h=$(shasum -a1 "$asset" | cut -c1-8)
+    A="$asset" H="$h" perl -0pi -e 's/(\Q$ENV{A}\E\?v=)[0-9a-z]+/$1$ENV{H}/g' index.html && changedidx=1
+  done
+  if [ "$changedidx" = 1 ] && ! git diff --quiet -- index.html; then
+    git add index.html
+    echo "🔖 Версии ассетов обновлены по хэшу (index.html перештампован)"
+  fi
+fi
 exit 0

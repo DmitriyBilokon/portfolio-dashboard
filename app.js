@@ -1748,6 +1748,13 @@ function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
 function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
 const INFO_DISCLAIM=['Справочные данные, не индивидуальная инвестиционная рекомендация.','Reference data, not individual investment advice.'];
 const SEC_INFO={
+  cycle:{t:['🧭 Сигналы разворота цикла памяти','🧭 Memory-cycle turn signals'],b:()=>infoP('Модуль-мониторинг тезиса по бумаге цикличного сектора (память/DRAM). Набор опережающих сигналов вместо одного: старый сигнал пика (слабость mobile/PC) сломан — HBM каннибализирует мощности обычного DDR5 ~3:1 и держит пол под ценами. Данные качественные, обновляются вручную (см. дату среза).','A thesis-monitoring module for a cyclical (memory/DRAM) holding. A SET of leading signals rather than one: the old peak signal (mobile/PC weakness) is broken — HBM cannibalises plain DDR5 capacity ~3:1 and props up the price floor. Data is qualitative, updated manually (see the as-of date).')+infoRows([
+    ['Tier 1 · Exit','жёсткие триггеры выхода — действовать в течение квартала. Spot DRAM (DXI, ежедневно TrendForce) разворачивается за 3–6 мес до пика — самый ранний будильник.','hard exit triggers — act within a quarter. Spot DRAM (DXI, daily TrendForce) turns 3–6 months before a peak — the earliest alarm.'],
+    ['Tier 2 · Trim','смягчённые триггеры — снизить позицию на 20–30%. HBM кв/кв, валовая маржа MU, контрактный DDR5 два месяца подряд вниз.','softer triggers — trim 20–30%. HBM QoQ, MU gross margin, DDR5 contract down two months in a row.'],
+    [RT('Запасы','Inventory'),'недели запасов в цепочке: порог тревоги > 8 нед; > 15 нед исторически предшествовало всем донышкам за 6 мес.','channel inventory weeks: alarm > 8 wk; > 15 wk historically preceded every bottom within 6 months.'],
+    [RT('Структурный риск','Structural risk'),'контекст, не сигнал: capex на пике → oversupply через 2–3 года (срок постройки fab).','context, not a signal: capex at the peak → oversupply in 2–3 years (fab build time).'],
+    [RT('Фаза','Phase'),'где в цикле сейчас: стрелка между дном, разгоном и пиковой фазой.','where in the cycle now: a needle between bottom, ramp-up and peak phase.'],
+  ])+infoNote('Цвет строки: 🟢 тезис цел / цикл на подъёме · 🟡 ранний варн-сигнал. '+INFO_DISCLAIM[0],'Row colour: 🟢 thesis intact / cycle rising · 🟡 early warning. '+INFO_DISCLAIM[1])},
   baro:{t:['🌡 Барометр перегретости рынков','🌡 Market overheat barometer'],b:()=>infoP('Композитный индекс 0–100 из живых данных ведущих индексов. 0 — страх/перепроданность, 100 — эйфория/перегрев. Считается в браузере из уже загруженных котировок, обновляется вместе с рынками.','A 0–100 composite from live data of leading indices. 0 = fear/oversold, 100 = euphoria/overheated. Computed in the browser from already-loaded quotes, refreshed with the markets.')+infoRows([
     ['VIX','индекс страха: низкий VIX → самоуспокоенность (перегрев), высокий → страх. Вес 30%.','fear gauge: low VIX → complacency (overheat), high → fear. Weight 30%.'],
     [RT('Выше SMA200','Above SMA200'),'доля ведущих индексов выше своей SMA200 — широта бычьего тренда. Вес 25%.','share of leading indices above their SMA200 — bull-trend breadth. Weight 25%.'],
@@ -6745,6 +6752,53 @@ function homeHTML(){
   return head+erow('home',items,'edit-rows-v');
 }
 
+// 🧭 Сигналы разворота цикла памяти — модуль-мониторинг тезиса по бумаге.
+// Данные качественные/ручные (TrendForce DXI, недели запасов, capex гиперскейлеров,
+// контрактные DDR5/HBM) — их нельзя тянуть из price-API, поэтому это курируемый
+// конфиг с датой среза (asOf). Ключ — тикер; показывается в карточке этой бумаги.
+// Статусы строк: 'ok' (зелёный — тезис цел), 'warn' (жёлтый — ранний варн), 'alert' (красный).
+const CYCLE_MONITORS={
+  MU:{
+    asOf:['~июнь 2026','~Jun 2026'],
+    sources:'TrendForce · Micron Q1 FY26 · Luminix/24-7WallSt',
+    phase:{pos:88,labels:[['дно','bottom'],['разгон','ramp-up'],['пиковая фаза ▲','peak phase ▲']]},
+    tiers:[
+      {title:['Tier 1 · Exit-триггеры','Tier 1 · Exit triggers'],badge:['действовать за 1 квартал','act within 1 quarter'],badgeKind:'alert',rows:[
+        {l:['Spot DRAM (DXI) флэт/вниз 2+ недели','Spot DRAM (DXI) flat/down 2+ weeks'],v:['растёт ↑','rising ↑'],k:'ok'},
+        {l:['Запасы в цепочке > 8 нед (порог тревоги)','Channel inventory > 8 wk (alarm threshold)'],v:['2–4 нед ↑','2–4 wk ↑'],k:'ok'},
+        {l:['Hyperscaler режет/ухудшает capex-гайденс','Hyperscaler cuts/worsens capex guidance'],v:['+60% г/г ↑','+60% YoY ↑'],k:'ok'},
+      ]},
+      {title:['Tier 2 · Trim-триггеры','Tier 2 · Trim triggers'],badge:['снизить 20–30%','trim 20–30%'],badgeKind:'warn',rows:[
+        {l:['HBM-контракты падают кв/кв (торг по 2027)','HBM contracts falling QoQ (booked into 2027)'],v:['sold out ↑','sold out ↑'],k:'ok'},
+        {l:['Валовая маржа MU вниз 2 кв подряд','MU gross margin down 2 quarters in a row'],v:['~56% ↑','~56% ↑'],k:'ok'},
+        {l:['DDR5 contract вниз 2 мес подряд','DDR5 contract down 2 months in a row'],v:['растёт ↑','rising ↑'],k:'ok'},
+      ]},
+    ],
+    risk:{title:['Структурный риск (не сигнал, но контекст)','Structural risk (not a signal, but context)'],rows:[
+      {l:['Capex MU FY26','MU capex FY26'],v:['$20B ↑ · риск 2027–28','$20B ↑ · risk 2027–28'],k:'warn'},
+      {l:['Consumer (mobile/PC) shipments','Consumer (mobile/PC) shipments'],v:['−2…−9% ↓','−2…−9% ↓'],k:'warn'},
+    ]},
+    legend:['Зелёный = тезис цел / цикл ещё на подъёме. Жёлтый = ранний варн-сигнал. Память исторически отдаёт 40–60% за 6 мес после пика цен — конфигурация для частичного трима, не полного выхода. Первым мигнёт DXI.','Green = thesis intact / cycle still rising. Amber = early warning. Memory historically gives back 40–60% within 6 months after a price peak — a setup for a partial trim, not a full exit. DXI blinks first.'],
+  },
+};
+function cycleMonitorHTML(tk){
+  const m=CYCLE_MONITORS[String(tk||'').trim().toUpperCase()];if(!m)return'';
+  const rt=p=>RT(p[0],p[1]);
+  const rowsHTML=rows=>rows.map(x=>`<tr><td class="cyc-l">${rt(x.l)}</td><td class="cyc-v"><span class="cyc-s cyc-s-${x.k}">${rt(x.v)}</span></td></tr>`).join('');
+  const card=(title,badge,badgeKind,rows)=>`<div class="cyc-card"><div class="cyc-card-hd"><span class="cyc-card-t">${rt(title)}</span>${badge?`<span class="cyc-badge cyc-b-${badgeKind}">${rt(badge)}</span>`:''}</div><table class="cyc-tbl">${rowsHTML(rows)}</table></div>`;
+  const phase=`<div class="cyc-phase"><div class="cyc-phase-l">${RT('Где мы в цикле сейчас','Where we are in the cycle now')}</div>
+    <div class="cyc-gauge"><div class="cyc-needle" style="left:${m.phase.pos}%"></div></div>
+    <div class="cyc-scale">${m.phase.labels.map((x,i)=>`<span${i===m.phase.labels.length-1?' class="cyc-now"':''}>${rt(x)}</span>`).join('')}</div></div>`;
+  const tiers=m.tiers.map(t=>card(t.title,t.badge,t.badgeKind,t.rows)).join('');
+  const risk=m.risk?card(m.risk.title,null,null,m.risk.rows):'';
+  return`<section class="pf3-panel cyc">
+    <div class="pf3-panel-hd"><span>🧭 ${RT('Сигналы разворота цикла памяти','Memory-cycle turn signals')} ${infoBtn('cycle')}</span><span class="pf3-asof">${RT('данные на','data as of')} ${rt(m.asOf)}</span></div>
+    ${phase}
+    <div class="cyc-cards">${tiers}${risk}</div>
+    <p class="pf3-asof cyc-note">${rt(m.legend)}<br>${RT('Источники','Sources')}: ${m.sources}. ${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}</p>
+  </section>`;
+}
+
 function pf3DetailHTML(){
   const d=pf3D(),ri=pf3SelIdx();
   recalcPF(ri,v3Key);
@@ -6801,6 +6855,7 @@ function pf3DetailHTML(){
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
     ${pf3RecoHTML(d,r)}
+    ${cycleMonitorHTML(tk)}
     ${stockReportHTML(d,r)}
     ${can('view.ai_reco')?aiRecoHTML(d,r):''}
     ${pf3ScenarioHTML(d,r)}

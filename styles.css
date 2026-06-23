@@ -1431,6 +1431,32 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .baro-chip b{color:var(--text1);font-weight:600}
 .baro-chip i{font-style:normal;color:var(--accent);font-weight:700;margin-left:2px}
 .baro-note{margin-top:9px;line-height:1.35}
+/* 🧭 Сигналы разворота цикла памяти (карточка бумаги) */
+.cyc-phase{margin-bottom:14px}
+.cyc-phase-l{font-size:11px;color:var(--text2);margin-bottom:6px}
+.cyc-gauge{position:relative;height:10px;border-radius:6px;background:linear-gradient(90deg,#5DCAA5 0%,#EF9F27 60%,#E24B4A 100%)}
+.cyc-needle{position:absolute;top:-4px;width:4px;height:18px;border-radius:2px;background:var(--text1);box-shadow:0 0 0 2px var(--bg2);transform:translateX(-50%)}
+.cyc-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-top:5px}
+.cyc-scale .cyc-now{font-weight:600;color:var(--text1)}
+.cyc-cards{display:flex;flex-direction:column;gap:10px}
+.cyc-card{background:var(--bg);border:0.5px solid var(--border);border-radius:12px;padding:13px 15px}
+.cyc-card-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+.cyc-card-t{font-weight:600;font-size:14px;color:var(--text1)}
+.cyc-badge{font-size:11px;padding:3px 10px;border-radius:8px;font-weight:600;white-space:nowrap}
+.cyc-b-alert{background:var(--red-bg);color:var(--red-t)}
+.cyc-b-warn{background:#FAEEDA;color:#854F0B}
+.cyc-tbl{width:100%;font-size:13px;border-collapse:collapse}
+.cyc-tbl tr{border-bottom:0.5px solid var(--border)}
+.cyc-tbl tr:last-child{border-bottom:none}
+.cyc-l{padding:8px 0;color:var(--text2);line-height:1.3}
+.cyc-v{padding:8px 0;text-align:right;white-space:nowrap;vertical-align:top}
+.cyc-s{font-size:11px;padding:3px 9px;border-radius:8px;font-weight:600;display:inline-block}
+.cyc-s-ok{background:var(--green-bg);color:var(--green-t)}
+.cyc-s-warn{background:#FAEEDA;color:#854F0B}
+.cyc-s-alert{background:var(--red-bg);color:var(--red-t)}
+.cyc-note{margin-top:11px;line-height:1.4}
+[data-theme="dark"] .cyc-b-warn,[data-theme="dark"] .cyc-s-warn{background:#3a2c12;color:#f5b945}
+@media(max-width:560px){.cyc-l{font-size:12px}}
 /* 🏠 HOME — шапка, единый рейтинг (балл-бар), сворачиваемые горизонты */
 .home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .home-head-l{display:flex;flex-direction:column;gap:2px;min-width:0}

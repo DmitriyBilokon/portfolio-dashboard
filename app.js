@@ -1748,6 +1748,13 @@ function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
 function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
 const INFO_DISCLAIM=['Справочные данные, не индивидуальная инвестиционная рекомендация.','Reference data, not individual investment advice.'];
 const SEC_INFO={
+  baro:{t:['🌡 Барометр перегретости рынков','🌡 Market overheat barometer'],b:()=>infoP('Композитный индекс 0–100 из живых данных ведущих индексов. 0 — страх/перепроданность, 100 — эйфория/перегрев. Считается в браузере из уже загруженных котировок, обновляется вместе с рынками.','A 0–100 composite from live data of leading indices. 0 = fear/oversold, 100 = euphoria/overheated. Computed in the browser from already-loaded quotes, refreshed with the markets.')+infoRows([
+    ['VIX','индекс страха: низкий VIX → самоуспокоенность (перегрев), высокий → страх. Вес 30%.','fear gauge: low VIX → complacency (overheat), high → fear. Weight 30%.'],
+    [RT('Выше SMA200','Above SMA200'),'доля ведущих индексов выше своей SMA200 — широта бычьего тренда. Вес 25%.','share of leading indices above their SMA200 — bull-trend breadth. Weight 25%.'],
+    [RT('Выше SMA50','Above SMA50'),'то же по SMA50 — краткосрочная широта. Вес 20%.','same over SMA50 — short-term breadth. Weight 20%.'],
+    [RT('Растяжение SMA50','SMA50 stretch'),'среднее отклонение цены над SMA50: чем дальше вверх, тем перегретее. Вес 25%.','average price deviation above SMA50: the further up, the more overheated. Weight 25%.'],
+    [RT('Зоны','Zones'),'🧊 0–20 страх · ❄️ 20–40 прохладно · 😐 40–60 нейтрально · 🔥 60–80 жарко · 🌋 80–100 перегрев.','🧊 0–20 fear · ❄️ 20–40 cool · 😐 40–60 neutral · 🔥 60–80 hot · 🌋 80–100 overheated.'],
+  ])+infoNote('Веса нормируются по доступным компонентам (если уровни ещё грузятся — по тому, что есть). '+INFO_DISCLAIM[0],'Weights are renormalised over available components (if levels are still loading — over what is present). '+INFO_DISCLAIM[1])},
   markets:{t:['📈 Рынки и уровни индексов','📈 Markets & index levels'],b:()=>infoP('Живые цены индексов/фьючерсов и их ключевые уровни. Цена обновляется ~20 c, уровни — раз в 5 мин.','Live index/futures prices and their key levels. Price refreshes ~20 s, levels every 5 min.')+infoRows([
     ['● LIVE','фьючерсы торгуются ~23 ч → барометр риска; спот-индексы (^…) — в часы своей биржи.','futures trade ~23 h → a risk barometer; spot indices (^…) trade in their exchange hours.'],
     ['▲/▼ %','изменение за день (авторитетное regularMarketChangePercent от Yahoo).','daily change (authoritative regularMarketChangePercent from Yahoo).'],
@@ -6464,7 +6471,7 @@ async function homeLoadFutures(){
   try{
     const syms=HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0]).join(',');
     const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
-    if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();}
+    if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();const be=document.getElementById('homeBaroWrap');if(be&&curIdx===HOME_KEY)be.innerHTML=homeBaroInner();}
   }catch(e){}
   _homeFutLoading=false;
 }
@@ -6475,7 +6482,7 @@ async function homeLoadLevels(){
   try{
     const syms=HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0]).join(',');
     const j=await fetch(PRICE_PROXY+'?levels='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
-    if(j&&typeof j==='object'){HOME_LVL=j;const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();}
+    if(j&&typeof j==='object'){HOME_LVL=j;const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();const be=document.getElementById('homeBaroWrap');if(be&&curIdx===HOME_KEY)be.innerHTML=homeBaroInner();}
   }catch(e){}
   _homeLvlLoading=false;
 }
@@ -6607,6 +6614,56 @@ function homeMktInner(){
     +sec('🌍 '+RT('Мировые индексы','World indices'),HOME_MKT_IDX,RT('спот · в часы торгов биржи · S/R: pivots + свинги','spot · market hours · S/R: pivots + swings'));
 }
 function homeFuturesHTML(){return`<div id="homeFutWrap">${homeMktInner()}</div>`;}
+// 🌡 Барометр перегретости рынков. Композитный индекс 0–100 из УЖЕ загруженных
+// живых данных (HOME_FUT — цена/VIX, HOME_LVL — SMA50/200): 0 = страх/перепроданность,
+// 100 = эйфория/перегрев. Считается клиентски, без отдельных запросов.
+const BARO_EQ=['ES=F','NQ=F','YM=F','RTY=F','^OMX','^GDAXI','^STOXX50E','^FCHI','^FTSE','^N225'];   // только индексы акций (без золота/нефти/VIX)
+function homeBarometer(){
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const comps=[];   // {label,score,w,detail}
+  // 1) VIX — самоуспокоенность vs страх: низкий VIX → перегрев. 12→100, 30→0.
+  const vix=HOME_FUT['^VIX'];
+  if(vix&&typeof vix.price==='number'&&vix.price>0)
+    comps.push({label:'VIX',score:clamp((30-vix.price)/(30-12)*100,0,100),w:0.30,detail:vix.price.toFixed(1)});
+  // Ширина рынка и растяжение по ведущим индексам (цена из HOME_FUT, SMA — из HOME_LVL).
+  const px=s=>{const q=HOME_FUT[s],l=HOME_LVL[s];return (q&&q.price>0)?q.price:(l&&l.price>0?l.price:null);};
+  const sma=(s,k)=>{const l=HOME_LVL[s],q=HOME_FUT[s];return (l&&l[k]>0)?l[k]:((q&&q[k]>0)?q[k]:null);};
+  let n200=0,a200=0,n50=0,a50=0,extSum=0,extN=0;
+  BARO_EQ.forEach(s=>{const p=px(s),s50=sma(s,'sma50'),s200=sma(s,'sma200');
+    if(p&&s200>0){n200++;if(p>s200)a200++;}
+    if(p&&s50>0){n50++;if(p>s50)a50++;extSum+=(p/s50-1)*100;extN++;}});
+  // 2) Доля индексов выше SMA200 (широта тренда).
+  if(n200>=3)comps.push({label:RT('Выше SMA200','Above SMA200'),score:a200/n200*100,w:0.25,detail:`${a200}/${n200}`});
+  // 3) Доля выше SMA50.
+  if(n50>=3)comps.push({label:RT('Выше SMA50','Above SMA50'),score:a50/n50*100,w:0.20,detail:`${a50}/${n50}`});
+  // 4) Среднее растяжение над SMA50: +6% → 100, −6% → 0.
+  if(extN>=3){const ext=extSum/extN;comps.push({label:RT('Растяжение SMA50','SMA50 stretch'),score:clamp(50+ext/6*50,0,100),w:0.25,detail:`${ext>=0?'+':''}${ext.toFixed(1)}%`});}
+  if(!comps.length)return null;
+  const wSum=comps.reduce((a,c)=>a+c.w,0);
+  return {score:Math.round(comps.reduce((a,c)=>a+c.score*c.w,0)/wSum),comps};
+}
+function baroZone(s){
+  if(s>=80)return['🌋',RT('Перегрев · эйфория','Overheated · euphoria'),'baro-z4'];
+  if(s>=60)return['🔥',RT('Жарко · повышенный риск','Hot · elevated risk'),'baro-z3'];
+  if(s>=40)return['😐',RT('Нейтрально','Neutral'),'baro-z2'];
+  if(s>=20)return['❄️',RT('Прохладно','Cool'),'baro-z1'];
+  return['🧊',RT('Страх · перепроданность','Fear · oversold'),'baro-z0'];
+}
+function homeBaroHTML(){return`<div id="homeBaroWrap">${homeBaroInner()}</div>`;}
+function homeBaroInner(){
+  const hd=`<div class="pf3-panel-hd"><span>🌡 ${RT('Барометр перегретости рынков','Market overheat barometer')} ${infoBtn('baro')}</span><span class="pf3-asof">${homeFutAtLbl()}</span></div>`;
+  const b=homeBarometer();
+  if(!b)return`<section class="pf3-panel">${hd}<div class="pf3-empty">⏳ ${RT('Ждём котировки индексов…','Waiting for index quotes…')}</div></section>`;
+  const [ico,zlbl,zcls]=baroZone(b.score);
+  const chips=b.comps.map(c=>`<span class="baro-chip"><b>${c.label}</b> ${c.detail} <i>${Math.round(c.score)}</i></span>`).join('');
+  return`<section class="pf3-panel baro ${zcls}">${hd}
+    <div class="baro-main"><div class="baro-score"><span class="baro-num">${b.score}</span><span class="baro-max">/100</span></div><div class="baro-zone">${ico} ${zlbl}</div></div>
+    <div class="baro-gauge"><div class="baro-needle" style="left:${b.score}%"></div></div>
+    <div class="baro-scale"><span>🧊 ${RT('страх','fear')}</span><span>${RT('норма','neutral')}</span><span>${RT('перегрев','overheat')} 🌋</span></div>
+    <div class="baro-chips">${chips}</div>
+    <div class="pf3-asof baro-note">${RT('Композит из VIX, ширины рынка (выше SMA50/200) и растяжения над SMA50 по ведущим индексам. Справочно, не рекомендация.','Composite of VIX, breadth (above SMA50/200) and stretch over SMA50 across leading indices. Reference only.')}</div>
+  </section>`;
+}
 // 🔮 HOME-прогноз: топ-10 акций по ОЖИДАЕМОЙ доходности на 3 горизонта.
 // Та же детерминированная модель, что во вкладке «Прогноз» (pf3Fcast12): путь к
 // консенсус-таргету (или фундаменталу ƒ). Считается по живым данным → обновляется
@@ -6679,6 +6736,7 @@ function homeHTML(){
   // Шапка ВНЕ перетаскиваемой раскладки — всегда сверху и видима (не зависит от сохранённого порядка секций).
   const items=[
     {id:'futures',html:homeFuturesHTML()},
+    {id:'baro',html:homeBaroHTML()},
     {id:'best',html:homeBestBoardHTML()},
     {id:'horizons',html:`<details class="home-details"><summary>🏅 ${RT('Разбивка по горизонтам (1–3 · 3–6 · 6–12 мес)','By horizon (1–3 · 3–6 · 6–12 m)')}</summary><div class="home-details-body">${homeBestHTML()}</div></details>`},
     {id:'forecast',html:homeForecastHTML()},

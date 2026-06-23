@@ -1412,6 +1412,25 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .idx-trend{font-size:10.5px;font-weight:600}
 .idx-trend.up{color:#10b981}.idx-trend.down{color:#ef4444}.idx-trend.mid{color:var(--text3)}
 @media(max-width:560px){.idx-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.idx-lvl.res:first-child,.idx-lvl.sup:last-child{display:none}}
+/* 🌡 Барометр перегретости рынков */
+.baro .baro-main{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.baro-score{display:flex;align-items:baseline;gap:2px}
+.baro-num{font:800 38px 'JetBrains Mono',monospace;letter-spacing:-1px;line-height:1}
+.baro-max{font:600 13px 'JetBrains Mono',monospace;color:var(--text3)}
+.baro-zone{font-size:14px;font-weight:700}
+.baro-z0 .baro-num,.baro-z0 .baro-zone{color:#3b82f6}
+.baro-z1 .baro-num,.baro-z1 .baro-zone{color:#22d3ee}
+.baro-z2 .baro-num,.baro-z2 .baro-zone{color:#10b981}
+.baro-z3 .baro-num,.baro-z3 .baro-zone{color:#f59e0b}
+.baro-z4 .baro-num,.baro-z4 .baro-zone{color:#ef4444}
+.baro-gauge{position:relative;height:12px;border-radius:7px;margin:14px 0 5px;background:linear-gradient(90deg,#3b82f6 0%,#22d3ee 22%,#10b981 45%,#f59e0b 72%,#ef4444 100%)}
+.baro-needle{position:absolute;top:-4px;width:4px;height:20px;border-radius:3px;background:var(--text1);box-shadow:0 0 0 2px var(--bg2);transform:translateX(-50%);transition:left .4s ease}
+.baro-scale{display:flex;justify-content:space-between;font-size:9.5px;color:var(--text3);font-family:'JetBrains Mono',monospace}
+.baro-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+.baro-chip{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:10.5px;color:var(--text2);font-family:'JetBrains Mono',monospace}
+.baro-chip b{color:var(--text1);font-weight:600}
+.baro-chip i{font-style:normal;color:var(--accent);font-weight:700;margin-left:2px}
+.baro-note{margin-top:9px;line-height:1.35}
 /* 🏠 HOME — шапка, единый рейтинг (балл-бар), сворачиваемые горизонты */
 .home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .home-head-l{display:flex;flex-direction:column;gap:2px;min-width:0}

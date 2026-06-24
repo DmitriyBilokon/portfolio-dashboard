@@ -1996,6 +1996,14 @@ const SEC_INFO={
     ['Beta','чувствительность к индексу: 1 — как рынок, >1 — резче.','sensitivity to the index: 1 = like the market, >1 = sharper.'],
     ['Alpha','доходность сверх индекса с поправкой на риск.','return above the index, risk-adjusted.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
+  betyg:{t:['🏅 Фундаментальный рейтинг','🏅 Fundamental rating'],b:()=>infoP('Единый «betyg» 0–100 (буква A+…F) из 5 столпов фундаментала. Считается из отчётности (FMP/Yahoo) и оценки — справочно, по данным последнего отчёта.','A single 0–100 «betyg» (letter A+…F) from 5 fundamental pillars. Computed from filings (FMP/Yahoo) and valuation — reference, as of the latest report.')+infoRows([
+    [RT('💎 Прибыльность','💎 Profitability'),'чистая маржа (или FCF-маржа) — прибыль с каждого доллара выручки. Вес 25%.','net margin (or FCF margin) — profit per dollar of revenue. Weight 25%.'],
+    [RT('📈 Рост','📈 Growth'),'CAGR выручки + год к году. Вес 20%.','revenue CAGR + YoY. Weight 20%.'],
+    [RT('🏦 Баланс','🏦 Balance'),'долг/капитал и ликвидность (current ratio). Вес 20%.','debt/equity and current ratio. Weight 20%.'],
+    [RT('💵 Денежный поток','💵 Cash flow'),'стабильность и маржа свободного денежного потока. Вес 20%.','free-cash-flow stability and margin. Weight 20%.'],
+    [RT('🏷 Оценка','🏷 Valuation'),'P/E·P/S vs медиана сектора (из 📐 Оценки) или типового ориентира: дешевле → выше. Вес 15%.','P/E·P/S vs sector median (from 📐 Valuation) or a typical benchmark: cheaper → higher. Weight 15%.'],
+    [RT('Буква','Grade'),'A+ ≥85 · A ≥75 · B ≥65 · C ≥50 · D ≥35 · F ниже.','A+ ≥85 · A ≥75 · B ≥65 · C ≥50 · D ≥35 · F below.'],
+  ])+infoNote('Дешёвая оценка ≠ всегда хорошо (бывает на пике цикла); смотрите вместе с тезисом и техникой. '+INFO_DISCLAIM[0],'Cheap valuation ≠ always good (can be a cycle peak); read with the thesis and technicals. '+INFO_DISCLAIM[1])},
   health:{t:['💪 Здоровье бизнеса','💪 Business health'],b:()=>infoP('Качество фундамента компании в простых баллах.','Company fundamental quality in simple scores.')+infoRows([
     ['Баланс','долговая нагрузка (Debt/Equity) — ниже лучше.','leverage (Debt/Equity) — lower is better.'],
     ['Кэш','генерация денег (FCF-маржа).','cash generation (FCF margin).'],
@@ -2314,6 +2322,50 @@ function pf3Scores(F){
   const balance=avg([deS,crS]),growth=avg([cagrS,cagrS,yoyS]);   // CAGR weighs double vs YoY
   return {balance,cash:cfS,growth,total:avg([balance,cfS,growth])};
 }
+// ── 🏅 Фундаментальный «betyg»: 5 столпов → балл 0–100 и буква A+…F ──
+// Прибыльность (маржа) + Рост + Баланс + Кэш + Оценка (vs медиана сектора/ориентир).
+// Прибыльность и оценка — новые; рост/баланс/кэш берём из pf3Scores. Веса 25/20/20/20/15.
+function pf3Profit(F){
+  if(!F||!(F.revenue>0))return null;
+  const nm=(typeof F.netIncome==='number')?F.netIncome/F.revenue*100:null;   // чистая маржа (FMP)
+  const fm=(typeof F.freeCashFlow==='number')?F.freeCashFlow/F.revenue*100:null;   // FCF-маржа (фолбэк, Yahoo)
+  const m=nm!=null?nm:fm;
+  if(m==null)return null;
+  return m<0?0:m>=25?10:m>=15?9:m>=10?8:m>=6?6:m>=3?5:m>0?4:1;
+}
+function pf3ValScore(F,tk,sector){
+  const vv=(typeof VAL!=='undefined'&&VAL[tk])||{};
+  const one=kind=>{
+    const vvN=kind==='pe'?vv.pe:vv.ps, fN=F?(kind==='pe'?(F.fwdPe||F.pe):F.ps):null;
+    const v=(vvN>0)?vvN:(fN>0?fN:null);
+    if(!(v>0))return null;
+    let med=null; try{ med=vv.sector?(((typeof _valSecCache!=='undefined'&&_valSecCache)||valSectorMedians())[vv.sector]):null; }catch(e){}
+    const lm=med?(kind==='pe'?med.pe:med.ps):null;
+    const avg=(lm>0&&med.n>=2)?lm:((PF3_VAL_AVG[pf3MacroSector(String(vv.sector||sector||''))]||[22,3])[kind==='pe'?0:1]);
+    const diff=(v/avg-1)*100;            // <0 = дешевле сектора
+    return Math.max(0,Math.min(10,5-diff/10));   // −50% → 10, ±0 → 5, +50% → 0
+  };
+  const a=[one('pe'),one('ps')].filter(x=>x!=null);
+  return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+}
+function pf3Betyg(F,tk,sector){
+  if(!F)return null;
+  const S=pf3Scores(F);
+  const pillars=[
+    {key:'profit', icon:'💎', label:['Прибыльность','Profitability'], score:pf3Profit(F)},
+    {key:'growth', icon:'📈', label:['Рост','Growth'],               score:S.growth},
+    {key:'balance',icon:'🏦', label:['Баланс','Balance'],            score:S.balance},
+    {key:'cash',   icon:'💵', label:['Денежный поток','Cash flow'],  score:S.cash},
+    {key:'val',    icon:'🏷', label:['Оценка','Valuation'],          score:pf3ValScore(F,tk,sector)},
+  ];
+  const W={profit:0.25,growth:0.2,balance:0.2,cash:0.2,val:0.15};
+  let sw=0,wsum=0;
+  pillars.forEach(p=>{if(p.score!=null){sw+=p.score*W[p.key];wsum+=W[p.key];}});
+  const total=wsum?sw/wsum:null;
+  return {total,score100:total!=null?Math.round(total*10):null,pillars};
+}
+const PF3_GRADE=[[8.5,'A+','exc'],[7.5,'A','exc'],[6.5,'B','good'],[5,'C','mid'],[3.5,'D','weak']];
+function pf3Grade(s){ if(s==null)return{g:'—',c:''}; for(const[t,g,c]of PF3_GRADE)if(s>=t)return{g,c}; return{g:'F',c:'crit'}; }
 
 // Earnings calendar (next report date + consensus) via the worker's ?earnings= endpoint.
 // Cached in memory for the session; re-fetched at most every 6h.
@@ -2401,28 +2453,48 @@ function pf3Health(){
   const c=pf3Fund.cache[pf3Fund.period],F=c&&c.sym===pf3Sym()?c.data:null;
   if(!F)return`<div class="pf3-empty">${pf3Fund.loading?T('Загружаю отчётность…'):(c&&c.sym===pf3Sym()&&c.failed)?'Нет данных по этой бумаге (проверены FMP и Yahoo; убедитесь, что worker обновлён)':'Загрузка…'}</div>`;
   const q=F.period==='quarter';
-  const S=pf3Scores(F);
+  const r=(pf3D().rows[pf3SelIdx()])||[];
+  const tk=String(r[2]||'').trim().toUpperCase(),sector=String(r[4]||'');
+  const B=pf3Betyg(F,tk,sector),g=pf3Grade(B&&B.total);
+  const rt=p=>RT(p[0],p[1]);
+  const de=F.debtToEquity,cr=F.currentRatio,fcf=F.freeCashFlow,ocf=F.operatingCashFlow,cagr=F.revenueCagr,yoy=F.revenueYoY;
+  const cfLbl=(q||F.source==='yahoo')?T('за 12 мес (TTM)'):T('за фин. год');   // Yahoo's cash-flow figures are always TTM
+  const nm=(typeof F.netIncome==='number'&&F.revenue>0)?F.netIncome/F.revenue*100:null;
+  const fm=(typeof F.freeCashFlow==='number'&&F.revenue>0)?F.freeCashFlow/F.revenue*100:null;
+  const margin=(nm!=null?`${T('Чистая маржа')} <b>${nm.toFixed(1)}%</b>`:'')+((nm!=null&&fm!=null)?' · ':'')+(fm!=null?`${T('FCF-маржа')} <b>${fm.toFixed(1)}%</b>`:'');
+  const pe=F.fwdPe||F.pe;
+  const detail={
+    profit: margin||'—',
+    growth: `${T('Выручка CAGR')} ${F.revenueYears||'—'} ${T('лет')} <b>${cagr!=null?(cagr>0?'+':'')+cagr.toFixed(1)+'%':'—'}</b> · ${q?T('Квартал г/г'):T('Год к году')} <b>${yoy!=null?(yoy>0?'+':'')+yoy.toFixed(1)+'%':'—'}</b> · ${T('Выручка')}${q?' TTM':''} <b>${pf3Bn(F.revenue,F.ccy)}</b>`,
+    balance: `${T('Долг/капитал')} <b>${de!=null?de.toFixed(2):'—'}</b> · ${T('Ликвидность')} <b>${cr!=null?cr.toFixed(1):'—'}</b> · ${T('Кэш')} <b>${pf3Bn(F.cash,F.ccy)}</b>${q?' · '+T('на конец квартала'):''}`,
+    cash: `${T('Свободный CF')} <b>${pf3Bn(fcf,F.ccy)}</b> · ${T('Операционный CF')} <b>${pf3Bn(ocf,F.ccy)}</b> ${cfLbl}`,
+    val: `P/E${F.fwdPe?' (fwd)':''} <b>${pe>0?pe.toFixed(1):'—'}</b> · P/S <b>${F.ps>0?F.ps.toFixed(1):'—'}</b> · <span class="pf3-asof">${RT('vs медиана сектора','vs sector median')}</span>`,
+  };
   const card=(icon,title,score,metrics)=>{
     const lv=pf3Lv(score);
     const verdict=lv==null?'—':`${PF3_LV[lv].e} ${T(PF3_LV[lv].l)} · ${score.toFixed(1)}`;
     return`<div class="pf3-hcard ${lv==null?'':PF3_LV[lv].c}"><div class="pf3-hcard-top"><span class="pf3-hcard-t">${icon} ${title}</span><span class="pf3-verdict ${lv==null?'':PF3_LV[lv].c}">${verdict}</span></div><div class="pf3-hmetrics">${metrics}</div></div>`;
   };
-  const de=F.debtToEquity,cr=F.currentRatio,fcf=F.freeCashFlow,ocf=F.operatingCashFlow,cagr=F.revenueCagr,yoy=F.revenueYoY;
-  const tl=pf3Lv(S.total);
-  const OVERALL=['Критическое','Слабое','Среднее','Хорошее','Отличное'];
-  const overall=tl==null?'':`<div class="pf3-overall">
-    <div class="pf3-overall-l"><span class="pf3-overall-badge ${PF3_LV[tl].c}">${PF3_LV[tl].e} ${T('Состояние компании:')} ${T(OVERALL[tl])}</span><span class="pf3-overall-score">${S.total.toFixed(1)} / 10</span></div>
-    <div class="pf3-scale"><div class="pf3-scale-marker" style="left:${Math.min(100,Math.max(0,S.total*10))}%"></div></div>
-    <div class="pf3-scale-labels"><span>${T('Критично')}</span><span>${T('Слабо')}</span><span>${T('Средне')}</span><span>${T('Хорошо')}</span><span>${T('Отлично')}</span></div>
-  </div>`;
-  const cfLbl=(q||F.source==='yahoo')?T('за 12 мес (TTM)'):T('за фин. год');   // Yahoo's cash-flow figures are always TTM
-  return overall
-    +card('🏦',T('Устойчивый баланс'),S.balance,
-      `${T('Долг/капитал')} <b>${de!=null?de.toFixed(2):'—'}</b> · ${T('Ликвидность')} <b>${cr!=null?cr.toFixed(1):'—'}</b> · ${T('Кэш')} <b>${pf3Bn(F.cash,F.ccy)}</b>${q?' · '+T('на конец квартала'):''}`)
-    +card('💵',T('Положительный денежный поток'),S.cash,
-      `${T('Свободный CF')} <b>${pf3Bn(fcf,F.ccy)}</b> · ${T('Операционный CF')} <b>${pf3Bn(ocf,F.ccy)}</b> ${cfLbl}`)
-    +card('📈',T('Долгосрочный рост'),S.growth,
-      `${T('Выручка CAGR')} ${F.revenueYears||'—'} ${T('лет')} <b>${cagr!=null?(cagr>0?'+':'')+cagr.toFixed(1)+'%':'—'}</b> · ${q?T('Квартал г/г'):T('Год к году')} <b>${yoy!=null?(yoy>0?'+':'')+yoy.toFixed(1)+'%':'—'}</b> · ${T('Выручка')}${q?' TTM':''} <b>${pf3Bn(F.revenue,F.ccy)}</b>`);
+  const betyg=(B&&B.total!=null)?`<div class="pf3-betyg">
+    <div class="pf3-betyg-grade ${g.c}">${g.g}</div>
+    <div class="pf3-betyg-body">
+      <div class="pf3-betyg-l"><span>${T('Фундаментальный рейтинг')} ${infoBtn('betyg')}</span><b>${B.score100}/100</b></div>
+      <div class="pf3-scale"><div class="pf3-scale-marker" style="left:${Math.min(100,Math.max(0,B.total*10))}%"></div></div>
+      <div class="pf3-scale-labels"><span>F</span><span>D</span><span>C</span><span>B</span><span>A</span></div>
+    </div></div>`:'';
+  const cards=(B?B.pillars:[]).map(p=>card(p.icon,rt(p.label),p.score,detail[p.key])).join('');
+  return betyg+cards+`<div id="pf3FundHist" class="pf3-fundhist">${pf3FundHistHTML(F)}</div>`;
+}
+// История отчётности (мини-спарклайн выручки по периодам) — заполняется, когда
+// воркер вернёт F.revSeries (см. ?fundamentals=). Без ряда — пусто.
+function pf3FundHistHTML(F){
+  const s=F&&Array.isArray(F.revSeries)?F.revSeries.filter(x=>x&&typeof x.v==='number'):[];
+  if(s.length<2)return'';
+  const vals=s.map(x=>x.v),mx=Math.max(...vals),mn=Math.min(0,...vals),rng=(mx-mn)||1;
+  const bars=s.map(x=>{const h=Math.round(((x.v-mn)/rng)*100);const yo=x.yoy;return`<span class="fh-bar" title="${x.d||''}: ${pf3Bn(x.v,F.ccy)}${yo!=null?' · '+(yo>0?'+':'')+yo.toFixed(0)+'% г/г':''}" style="height:${Math.max(6,h)}%"></span>`;}).join('');
+  const last=s[s.length-1],first=s[0];
+  const tot=(first.v>0)?Math.round((last.v/first.v-1)*100):null;
+  return `<div class="fh-l">${RT('Выручка по отчётам','Revenue by report')}${tot!=null?` · <b class="${tot>=0?'pf3-up':'pf3-down'}">${tot>0?'+':''}${tot}%</b> ${RT('за период','over span')}`:''}</div><div class="fh-bars">${bars}</div>`;
 }
 
 // ===== «AI Proto» sub-tab: Claude-powered portfolio analysis =====

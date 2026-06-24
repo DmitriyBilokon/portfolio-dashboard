@@ -535,3 +535,17 @@ grp('tax lots', function(){
   ];
   __eq('avg gain with fees 185', pfTaxLots(tr2,'avg')[0].gain, 185);   // proceeds 1195, cost 1010
 });
+
+// 🏅 Фундаментальный betyg: сильная компания > слабой, 5 столпов, буква
+grp('fund betyg', function(){
+  if(typeof VAL==='undefined'){ globalThis.VAL={}; } else { VAL={}; }   // нет медиан → оценка по ориентиру
+  var strong={revenue:1000,netIncome:250,freeCashFlow:200,operatingCashFlow:300,debtToEquity:0.2,currentRatio:3,revenueCagr:20,revenueYoY:18,fwdPe:15,ps:4,ccy:'USD',revenueYears:5};
+  var weak={revenue:1000,netIncome:-50,freeCashFlow:-30,operatingCashFlow:-10,debtToEquity:2.5,currentRatio:0.7,revenueCagr:-8,revenueYoY:-15,pe:80,ps:20,ccy:'USD',revenueYears:5};
+  var bs=pf3Betyg(strong,'ZZZ',''), bw=pf3Betyg(weak,'ZZZ','');
+  __ok('betyg strong > weak', bs.total > bw.total);
+  __ok('betyg strong high (>=7)', bs.total >= 7);
+  __ok('betyg weak low (<=4)', bw.total <= 4);
+  __eq('betyg 5 pillars', bs.pillars.length, 5);
+  __ok('grade strong A/B', /A|B/.test(pf3Grade(bs.total).g));
+  __ok('grade weak D/F', /D|F/.test(pf3Grade(bw.total).g));
+});

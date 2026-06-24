@@ -290,6 +290,29 @@ body.v3 .sub-tabs{display:none}
 .pf3-scale{position:relative;height:10px;border-radius:5px;background:linear-gradient(90deg,#ef4444,#f97316,#eab308,#84cc16,#16a34a)}
 .pf3-scale-marker{position:absolute;top:-4px;width:4px;height:18px;border-radius:2px;background:var(--text1);box-shadow:0 0 0 2px var(--bg2);transform:translateX(-50%)}
 .pf3-scale-labels{display:flex;justify-content:space-between;font:600 11px 'JetBrains Mono',monospace;color:var(--text3);margin-top:6px}
+/* 🏅 Фундаментальный betyg */
+.pf3-betyg{grid-column:1/-1;display:flex;align-items:center;gap:14px;border:1px solid var(--border);border-radius:14px;padding:12px 16px;background:var(--bg)}
+.pf3-betyg-grade{flex:none;width:52px;height:52px;border-radius:13px;display:flex;align-items:center;justify-content:center;font:800 22px 'Space Grotesk','DM Sans',sans-serif;border:1px solid var(--border)}
+.pf3-betyg-grade.exc{background:rgba(22,163,74,.14);color:#15803d}
+.pf3-betyg-grade.good{background:rgba(132,204,22,.16);color:#65a30d}
+.pf3-betyg-grade.mid{background:rgba(234,179,8,.16);color:#b45309}
+.pf3-betyg-grade.weak{background:rgba(249,115,22,.15);color:#ea580c}
+.pf3-betyg-grade.crit{background:rgba(239,68,68,.14);color:#dc2626}
+[data-theme="dark"] .pf3-betyg-grade.exc{color:#4ade80}
+[data-theme="dark"] .pf3-betyg-grade.good{color:#a3e635}
+[data-theme="dark"] .pf3-betyg-grade.mid{color:#fcd34d}
+[data-theme="dark"] .pf3-betyg-grade.weak{color:#fb923c}
+[data-theme="dark"] .pf3-betyg-grade.crit{color:#fca5a5}
+.pf3-betyg-body{flex:1;min-width:0}
+.pf3-betyg-l{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-bottom:7px}
+.pf3-betyg-l b{color:var(--text1);font-size:14px}
+/* 📊 История отчётности (спарклайн выручки) */
+.pf3-fundhist{grid-column:1/-1;border:1px solid var(--border);border-radius:14px;padding:12px 16px;background:var(--bg)}
+.pf3-fundhist:empty{display:none}
+.fh-l{font-size:12px;color:var(--text2);margin-bottom:8px}
+.fh-bars{display:flex;align-items:flex-end;gap:4px;height:46px}
+.fh-bar{flex:1;min-width:0;background:var(--accent);opacity:.5;border-radius:3px 3px 0 0;cursor:help}
+.fh-bar:last-child{opacity:1}
 .pf3-hmetrics{font-size:11.5px;color:var(--text2);line-height:1.7}
 .pf3-hmetrics b{color:var(--text1);font-family:'JetBrains Mono',monospace}
 .pf3-asof{font:600 11px 'JetBrains Mono',monospace;color:var(--text3)}

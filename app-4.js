@@ -228,7 +228,7 @@ async function homeFcastAiRun(){
   try{
     const picks=homeForecastPicks(),tks=new Set(picks.map(p=>p.tk)),num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
     const positions=[],added=new Set();
-    v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tks.has(tk)||added.has(tk))return;added.add(tk);const m=pf3TypeMetrics(d,r);positions.push({ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,phase:pf3Criterion(d,r).label})})});
+    v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tks.has(tk)||added.has(tk))return;added.add(tk);const m=pf3TypeMetrics(d,r);const b=(typeof pf3RowBetyg==='function')?pf3RowBetyg({roe:m.roe,revg:m.revg,pe:m.pe,ps:m.ps,sec:r[4],r}):null;positions.push({ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,betyg:b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null,phase:pf3Criterion(d,r).label})})});
     const snap={portfolioName:'HOME · топ-10',baseCurrency:'SEK',horizons:['3 мес','6-9 мес','12+ мес'],positions,playbook:aiPlaybookEnsure()};
     const r=await fetch(PRICE_PROXY+'?action=forecast',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}

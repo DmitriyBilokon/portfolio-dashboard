@@ -2524,6 +2524,16 @@ function pf3AiSnapshot(key){
   key=key||v3Key;
   const d=DATA[key],h=d.headers,{s50,s100,s200}=smaIdx(d);
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление'),tgC=h.findIndex(x=>/аналит/i.test(x));
+  // 🏅 Лёгкий фундамент-рейтинг «betyg» по строке (ROE/рост/оценка) → буква A–F.
+  // Тот же скор, что в сортируемой колонке «Рейтинг»; даёт AI быстрый срез
+  // качества по каждой бумаге без подгрузки полного фундаментала по всем позициям.
+  const roeC=h.indexOf('ROE'),revgC=h.indexOf('Рост выручки'),peC=h.indexOf('P/E'),psC=h.indexOf('P/S');
+  const numC=(r,i)=>{const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
+  const rowBetyg=r=>{try{
+    if(typeof pf3RowBetyg!=='function')return null;
+    const b=pf3RowBetyg({roe:numC(r,roeC),revg:numC(r,revgC),pe:numC(r,peC),ps:numC(r,psC),sec:r[4],r});
+    return b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null;
+  }catch(e){return null}};
   // Индексные вкладки: watchlist-снапшот — все акции с уровнями, фазой и
   // сигналом; AI выделяет самые актуальные и рекомендует действия.
   // Любой портфель (мой, Anna, AIP) идёт в портфельную ветку ниже.
@@ -2539,6 +2549,7 @@ function pf3AiSnapshot(key){
           sma50:s50>=0?nm(r[s50]):null,sma100:s100>=0?nm(r[s100]):null,sma200:s200>=0?nm(r[s200]):null,
           support:supC>=0?nm(r[supC]):null,resistance:resC>=0?nm(r[resC]):null,
           analystTarget:tgC>=0?nm(r[tgC]):null,pe:peC>=0?nm(r[peC]):null,ps:psC>=0?nm(r[psC]):null,
+          betyg:rowBetyg(r),
           phase:c.label,signal:sig.type!=='none'?`${sig.type}${sig.n?' '+sig.n:''}${typeof sig.dist==='number'?' '+sig.dist.toFixed(1)+'%':''}`:null};
       }),
       investorRules:[],   // 🤖 автономия: личные правила отменены
@@ -2558,6 +2569,7 @@ function pf3AiSnapshot(key){
     sma50:s50>=0?num(r[s50]):null,sma100:s100>=0?num(r[s100]):null,sma200:s200>=0?num(r[s200]):null,
     support:supC>=0?num(r[supC]):null,resistance:resC>=0?num(r[resC]):null,
     analystTarget:tgC>=0?num(r[tgC]):null,
+    betyg:rowBetyg(r),   // 🏅 фундамент-рейтинг бумаги (буква A–F + 0–100)
   }));
   // Allocation summary — the same numbers the «Состояние портфеля» tab shows.
   const group=key=>{const m={};positions.forEach(p=>{const k=p[key]||'—';m[k]=(m[k]||0)+(p.valueSEK||0)});return Object.entries(m).map(([k,v])=>({name:k,pct:totalVal>0?Math.round(v/totalVal*1000)/10:0})).sort((a,b)=>b.pct-a.pct)};
@@ -2712,6 +2724,27 @@ function stockAiSnapshot(d,r){
   const prior=(STOCK_AI_LOG||[]).filter(e=>String(e.ticker||'').toUpperCase()===tk).slice(0,4)
     .map(e=>({at:e.ts,priceThen:e.price,verdict:(e.data||{}).verdict||null,targetThen:(e.data||{}).targetPrice||null,priceNow:price}));
   const tf=pf3TypeFull(d,r),F=pf3FundData();
+  // 🏅 Фундаментальный рейтинг «betyg» (0–100 + буква A–F + 5 столпов) — тот же,
+  // что инвестор видит в карточке «💪 Здоровье бизнеса». Даёт AI единую оценку
+  // качества бизнеса (прибыльность/рост/баланс/денежный поток/оценка).
+  let betyg=null;
+  try{
+    const B=(typeof pf3Betyg==='function'&&F)?pf3Betyg(F,tk,r[4]):null;
+    if(B&&B.score100!=null)betyg={score100:B.score100,grade:(pf3Grade(B.total)||{}).g||null,
+      pillars:(B.pillars||[]).map(p=>({key:p.key,label:p.label&&p.label[0],score:p.score!=null?Math.round(p.score*10)/10:null}))};
+  }catch(e){}
+  // 📊 Режим объёма торгов (лайв из карточки): ×N к среднему дневному за 3 мес +
+  // подтверждает ли объём дневное движение цены (важно для горизонта «сейчас»).
+  let volume=null;
+  try{
+    const cv=(typeof CARD_VOL!=='undefined')&&CARD_VOL[tk];
+    if(cv&&cv.vol>0){
+      volume={vol:cv.vol,avgVol:cv.avgVol||null};
+      if(cv.avgVol>0){const m=cv.vol/cv.avgVol;volume.relToAvg=Math.round(m*10)/10;
+        volume.regime=m>=2?'frenzy':m>=1.5?'elevated':m>=0.7?'normal':'low';
+        if(typeof cv.day==='number'&&Math.abs(cv.day)>=1.5)volume.confirmsMove=m>=1.5?true:(m<0.7?false:null);}
+    }
+  }catch(e){}
   return{
     ticker:tk,name:r[1],sector:r[4],type:(tf&&tf.primary)||r[5],ccy:r[8]||'USD',
     price,dayPct:num(10),
@@ -2719,7 +2752,10 @@ function stockAiSnapshot(d,r){
     support:g('Поддержка'),resistance:g('Сопротивление'),analystTarget:g('Аналит. таргет'),
     pe:g('P/E'),ps:g('P/S'),roe:g('ROE'),de:g('D/E'),revGrowthPct:g('Рост выручки'),
     revenueTTM:g('Выручка TTM'),marketCap:g('Кап-я'),dividendPct:g('Дивид. %'),
-    fundamentals:F?{revenue:F.revenue,revenueYoY:F.revenueYoY,revenueCagr:F.revenueCagr,fcf:F.freeCashFlow,debtToEquity:F.debtToEquity,netIncome:F.netIncome,pe:F.pe,fwdPe:F.fwdPe,ps:F.ps}:null,
+    // revSeries — история отчётности (выручка по годам/кварталам с ростом г/г),
+    // тот же ряд, что рисует спарклайн в карточке; AI видит траекторию роста.
+    fundamentals:F?{revenue:F.revenue,revenueYoY:F.revenueYoY,revenueCagr:F.revenueCagr,fcf:F.freeCashFlow,debtToEquity:F.debtToEquity,netIncome:F.netIncome,pe:F.pe,fwdPe:F.fwdPe,ps:F.ps,revSeries:Array.isArray(F.revSeries)?F.revSeries:null}:null,
+    betyg,volume,
     recoVerdict:(()=>{try{return pf3Reco(d,r).v}catch(e){return null}})(),
     portfolio:port,priorAnalyses:prior,
   };

@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-24notify-actions';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-24aiport-persist';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -1566,24 +1566,37 @@ async function aiPortfolioRun(env, force){
   ap.trades = ((ap.trades || []).concat(trades)).slice(-400);
   ap.lastRunAt = now;
   ap.lastNote = String(parsed.note || '').slice(0, 600);
-  // Запись: перечитываем строку, настройки берём из свежей копии (клиент мог
-  // их поменять, пока шёл цикл), торговое состояние — из нашего расчёта.
-  const fresh = await loadRow(env);
-  if(fresh){
-    const fap = (fresh.snap && fresh.snap.aiPort) || {};
+  // ── Запись СНАЧАЛА durable, Telegram — только после подтверждения ──
+  // Сверка на сброс: клиент мог обнулить портфель, пока шёл цикл.
+  const freshPre = await loadRow(env);
+  if(freshPre){
+    const fap = (freshPre.snap && freshPre.snap.aiPort) || {};
     if((fap.startedAt || 0) > (ap.startedAt || 0)){
       return 'Портфель обнулён во время цикла — результаты отброшены, следующий цикл стартует с чистого счёта';
     }
-    ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'].forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
-    fresh.snap.aiPort = ap;
-    fresh.snap.aiPortBak = JSON.parse(JSON.stringify(ap));   // быстрый резерв в той же строке
-    await writeRow(env, fresh.userId, fresh.snap);
-    await saveBak(env, fresh.userId, ap);                    // несгораемый резерв в ai_state
+    mergeAiPortSettings(ap, fap, AIPORT_RUN_SETTINGS);   // клиентские настройки из свежей копии
   }
-  for(const t of trades){
-    try{
-      await sendTelegram(env, `🤖 <b>AI ПОРТФЕЛЬ — ${t.action === 'buy' ? '🟢 ПОКУПКА' : '🔴 ПРОДАЖА'}</b>\n<b>${esc(t.name || t.ticker)}</b> (${esc(t.ticker)}): ${t.qty} × ${t.price} ${t.ccy} ≈ <b>${t.amountSEK} kr</b>${t.plSEK != null ? `\nP&amp;L сделки: <b>${t.plSEK >= 0 ? '+' : ''}${t.plSEK} kr</b>` : ''}${t.trigger ? `\n⚡ ${esc(t.trigger)}` : ''}${t.reco && t.reco !== 'buy' ? `\n📋 вердикт скоринга: ${t.reco}` : ''}\n${esc(t.reason)}`);
-    }catch(e){}
+  // 1) Несгораемый якорь в ai_state (без guard → надёжный коммит) — источник правды.
+  const bakOk = await saveBak(env, row.userId, ap);
+  // 2) Ledger (с детектом коммита + повтором), чтобы сайт показал сделки без вкладки 🤖.
+  const ledgerOk = await writeAiPortChecked(env, snap => {
+    const fap = (snap && snap.aiPort) || {};
+    mergeAiPortSettings(ap, fap, AIPORT_RUN_SETTINGS);   // настройки могли смениться между повторами
+    snap.aiPort = ap;
+    snap.aiPortBak = JSON.parse(JSON.stringify(ap));     // быстрый резерв в той же строке
+  });
+  // 3) Telegram — ТОЛЬКО если состояние durable-сохранено (ai_state или ledger).
+  // Иначе придерживаем уведомления (никаких фантомных сделок) — сделки подтянутся
+  // примирением (aiPortAuthoritative) на следующем цикле/вкладке.
+  const durable = bakOk || ledgerOk;
+  if(durable){
+    for(const t of trades){
+      try{
+        await sendTelegram(env, `🤖 <b>AI ПОРТФЕЛЬ — ${t.action === 'buy' ? '🟢 ПОКУПКА' : '🔴 ПРОДАЖА'}</b>\n<b>${esc(t.name || t.ticker)}</b> (${esc(t.ticker)}): ${t.qty} × ${t.price} ${t.ccy} ≈ <b>${t.amountSEK} kr</b>${t.plSEK != null ? `\nP&amp;L сделки: <b>${t.plSEK >= 0 ? '+' : ''}${t.plSEK} kr</b>` : ''}${t.trigger ? `\n⚡ ${esc(t.trigger)}` : ''}${t.reco && t.reco !== 'buy' ? `\n📋 вердикт скоринга: ${t.reco}` : ''}\n${esc(t.reason)}`);
+      }catch(e){}
+    }
+  }else if(trades.length){
+    try{ await sendTelegram(env, `⚠️ <b>AI ПОРТФЕЛЬ</b>: цикл посчитал ${trades.length} сделок, но НЕ удалось сохранить состояние (Supabase). Уведомления придержаны — сделки применятся примирением на следующем цикле.`); }catch(e){}
   }
   return `AI портфель: сделок ${trades.length} · equity ${eq2} kr · кэш ${Math.round(ap.cashSEK)} kr` +
     (skipped.length ? `\nОтклонено: ${skipped.join('; ')}` : '') +
@@ -2437,15 +2450,20 @@ async function loadBak(env, userId){
     return (rows && rows[0] && rows[0].port) || null;
   }catch(e){ return null; }
 }
+// 💾 Durable-якорь в ai_state (отдельная таблица, без optimistic-concurrency
+// guard → коммитится надёжно). Возвращает true, только если запись подтверждена
+// (используется как сигнал «состояние сохранено» перед Telegram). false, если
+// таблицы нет / сеть упала — тогда резерв в snap.aiPortBak продолжает работать.
 async function saveBak(env, userId, ap){
   try{
-    await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state`, {
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state`, {
       method: 'POST',
       headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
         'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({ user_id: userId, port: ap, updated_at: new Date().toISOString() }),
     });
-  }catch(e){ /* таблицы ещё нет — резерв в snap.aiPortBak продолжает работать */ }
+    return !!(r && r.ok);
+  }catch(e){ return false; }
 }
 async function loadRow(env){
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&order=updated_at.desc&limit=1`,
@@ -2454,16 +2472,60 @@ async function loadRow(env){
   const row = (await r.json())?.[0];
   return row ? { userId: row.user_id, snap: row.data } : null;
 }
+// rev, который запишет writeRow поверх данного снапшота (на 1 больше текущего).
+function nextRev(snap){ return (Number(snap && snap.rev) || 0) + 1; }
+// Детект коммита по вернувшейся (return=representation) строке: БД-триггер при
+// rev-конфликте делает `return OLD` и PATCH отдаёт 204/строку со СТАРЫМ rev.
+// Коммит прошёл ⇔ rev вернувшейся строки равен тому, что мы записали.
+function writeCommitted(rows, expectedRev){
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  const rev = row && row.data && Number(row.data.rev);
+  return rev === expectedRev;
+}
+// Слить клиентские (редактируемые на сайте) настройки aiPort из свежего снапшота
+// в наше торговое состояние. Применяется при каждом повторе RMW — настройки
+// могли поменяться, торговое состояние остаётся нашим.
+function mergeAiPortSettings(ap, fap, keys){
+  fap = fap || {};
+  keys.forEach(k => { if(fap[k] !== undefined) ap[k] = fap[k]; });
+  return ap;
+}
+// Клиентские настройки aiPort, которые торговый цикл НЕ трогает (берёт из ledger).
+const AIPORT_RUN_SETTINGS = ['strategy', 'intervalMin', 'commissionPct', 'minTradeSEK', 'enabled', 'startCapital', 'startedAt', 'myStartEquity', 'myStartLive'];
+// PATCH ledger_state с детектом коммита. Возвращает true ⇔ запись реально
+// закоммичена (rev вырос), false ⇔ rev-конфликт/откат триггером или ошибка сети.
+// Все существующие вызовы игнорируют результат — обратная совместимость сохранена.
 async function writeRow(env, userId, snap){
   const KEY = env.SUPABASE_SERVICE_KEY;
   // Инкрементим rev — иначе БД-триггер optimistic-concurrency отклонит запись
   // воркера (rev не вырос). Так серверные изменения (AI-портфель/алерты) проходят.
-  const data = { ...snap, rev: (Number(snap && snap.rev) || 0) + 1 };
-  await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?user_id=eq.${userId}`, {
-    method: 'PATCH',
-    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ data, updated_at: new Date().toISOString() }),
-  });
+  const expectedRev = nextRev(snap);
+  const data = { ...snap, rev: expectedRev };
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?user_id=eq.${userId}&select=data`, {
+      method: 'PATCH',
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ data, updated_at: new Date().toISOString() }),
+    });
+    if(!r || !r.ok) return false;
+    const rows = await r.json();
+    return writeCommitted(rows, expectedRev);
+  }catch(e){ return false; }
+}
+// Read-modify-write для aiPort с повтором при rev-конфликте. applyFn(snap)
+// накладывает наше состояние на СВЕЖИЙ снапшот (клиент перенимает серверный
+// aiPort — конфликты идут от записи клиентом ДРУГИХ частей, повторное наложение
+// безопасно). Возвращает true ⇔ ledger закоммичен.
+async function writeAiPortChecked(env, applyFn, opts){
+  const tries = (opts && opts.tries) || 3;
+  for(let i = 0; i < tries; i++){
+    const fresh = await loadRow(env);
+    if(!fresh) return false;
+    applyFn(fresh.snap);
+    if(await writeRow(env, fresh.userId, fresh.snap)) return true;
+    await sleep(150 * (i + 1));
+  }
+  return false;
 }
 // 🤝 Примирение состояния AI-портфеля: «настоящее» = более СВЕЖЕЕ из ledger_state.aiPort
 // и резерва ai_state (по поколению startedAt → затем lastRunAt → затем объёму журнала).

@@ -120,3 +120,41 @@ grp('aggTargets', function(){
   __eq('ratings strongBuy', a.ratings.strongBuy, 10);
   __ok('пусто → null', aggTargets(null, [], null, now) === null);
 });
+
+// 8) 💾 aiport-persist: nextRev / writeCommitted / mergeAiPortSettings (чистые)
+grp('nextRev', function(){
+  __eq('rev undefined → 1', nextRev(undefined), 1);
+  __eq('rev {} → 1', nextRev({}), 1);
+  __eq('rev 5 → 6', nextRev({rev:5}), 6);
+  __eq('rev "7" → 8', nextRev({rev:'7'}), 8);
+});
+
+grp('writeCommitted', function(){
+  // return=representation вернул строку с нашим rev → коммит прошёл
+  __ok('rev совпал (массив) → true', writeCommitted([{data:{rev:6}}], 6));
+  __ok('rev совпал (объект) → true', writeCommitted({data:{rev:6}}, 6));
+  // триггер откатил: вернулся СТАРЫЙ rev → конфликт
+  __ok('старый rev → false', !writeCommitted([{data:{rev:5}}], 6));
+  __ok('нет строки → false', !writeCommitted([], 6));
+  __ok('null → false', !writeCommitted(null, 6));
+  __ok('нет data → false', !writeCommitted([{}], 6));
+});
+
+grp('mergeAiPortSettings', function(){
+  var ap = { strategy:'mine', cashSEK:1000, positions:[1,2], startedAt:100 };
+  var fap = { strategy:'client', intervalMin:30, enabled:false, startedAt:100, foo:'x' };
+  mergeAiPortSettings(ap, fap, AIPORT_RUN_SETTINGS);
+  __eq('клиентская strategy перенята', ap.strategy, 'client');
+  __eq('intervalMin из клиента', ap.intervalMin, 30);
+  __eq('enabled из клиента', ap.enabled, false);
+  __eq('торговый cashSEK не тронут', ap.cashSEK, 1000);
+  __eq('positions не тронуты', ap.positions.length, 2);
+  __ok('foo вне списка — не скопирован', ap.foo === undefined);
+  // null fap — безопасно, ap не меняется
+  var ap2 = { strategy:'mine' };
+  mergeAiPortSettings(ap2, null, AIPORT_RUN_SETTINGS);
+  __eq('null fap → без изменений', ap2.strategy, 'mine');
+  // undefined-значение в fap не затирает существующее
+  mergeAiPortSettings(ap2, { strategy: undefined }, AIPORT_RUN_SETTINGS);
+  __eq('undefined не затирает', ap2.strategy, 'mine');
+});

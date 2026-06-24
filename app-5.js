@@ -587,6 +587,7 @@ async function pf3RefreshCardPrice(d,r){
     r[7]=q.price;
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
     const tk=String(r[2]||''),mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
+    CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,at:Date.now()};   // объём торгов (лайв)
     SMA_TF[tk]={mode,d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
     const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
@@ -595,6 +596,7 @@ async function pf3RefreshCardPrice(d,r){
     if(q.support!=null)r[supI]=q.support;
     if(q.resistance!=null)r[resI]=q.resistance;
     recalcPF(i,v3Key);scheduleSave();
+    {const ve=document.getElementById('pf3Vol');if(ve&&isV3()&&pf3Sel===tk)ve.innerHTML=cardVolInner(tk);}   // объём — обновляем in-place (на случай, если перерисовку пропустим из-за фокуса в input)
     // Перерисовать только если карточка той же бумаги ещё открыта и пользователь не печатает.
     const ae=document.activeElement;
     if(isV3()&&pf3Sel===tk&&!(ae&&ae.tagName==='INPUT'))renderPF3();
@@ -604,6 +606,7 @@ async function pf3RefreshCardPrice(d,r){
 // ── 🌅/🌙 Pre/post-market в карточке акции (лайв) ──
 // Опрос ?prepost= каждые 20с, пока карточка этой бумаги открыта; блок обновляется
 // in-place. Сам останавливается, когда карточка закрыта/сменилась.
+let CARD_VOL={};   // объём торгов по тикеру (лайв): {tk:{vol,avgVol,at}}
 let CARD_PP={},_cardPPTimer=null,_cardPPTk=null,_cardPPSym=null,_cardPPLoading=false;
 function cardPPStop(){if(_cardPPTimer){clearInterval(_cardPPTimer);_cardPPTimer=null;}_cardPPTk=null;_cardPPSym=null;}
 function cardPPStart(tk,sym){
@@ -637,6 +640,15 @@ function cardPPInner(sym){
   else if(st.indexOf('POST')>=0)body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours');
   else if(st==='CLOSED')body=seg(d.post,'🌙 Пост-маркет','🌙 After-hours')||seg(d.pre,'🌅 Пре-маркет','🌅 Pre-market');
   return body?`<span class="pf3-pp-live">●</span> ${body}`:'';
+}
+// 📊 Объём торгов в карточке (лайв). Компактный формат (12.3M) + «×N к среднему»
+// (avgVol = средний дневной за 3 мес): >1.5× — повышенная активность (акцент).
+const fmtVol=n=>{n=+n;if(!isFinite(n)||n<=0)return'—';const a=Math.abs(n);return a>=1e9?(n/1e9).toFixed(2)+'B':a>=1e6?(n/1e6).toFixed(1)+'M':a>=1e3?Math.round(n/1e3)+'K':String(Math.round(n));};
+function cardVolInner(tk){
+  const v=CARD_VOL[tk];if(!v||!(v.vol>0))return'';
+  let rel='';
+  if(v.avgVol>0){const m=v.vol/v.avgVol;rel=` · <span class="pf3-vol-rel${m>=1.5?' hi':m<=0.6?' lo':''}">×${m.toFixed(1)} ${RT('к среднему','vs avg')}</span>`;}
+  return `<span class="pf3-pp-l">📊 ${RT('Объём','Volume')}</span> <span class="pf3-vol-v">${fmtVol(v.vol)}</span>${rel}`;
 }
 
 // ── 🌅/🌙 Изменение баланса портфеля по пре/пост-рынку (лайв, в сводке) ──

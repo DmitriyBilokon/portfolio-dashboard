@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-23cyclemon2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-24volume1';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -231,7 +231,7 @@ async function yahoo(sym){
     const closes = rawC.filter(v => typeof v === 'number' && v > 0);
     const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
     const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
-    let price = m.regularMarketPrice, pct = null;
+    let price = m.regularMarketPrice, pct = null, vol = null, avgVol = null;
     // День%: АВТОРИТЕТНЫЙ regularMarketChangePercent из quote-меты Yahoo (как на
     // finance.yahoo.com). Chart-расчёт ненадёжен при пропусках/null в дневном ряду
     // (^OMX пропускает день; US-акции дают null на сегодняшнюю свечу) — давал «2-дневный» %.
@@ -240,8 +240,11 @@ async function yahoo(sym){
       if(p){
         const rp = yRaw(p.regularMarketPrice); if(typeof rp === 'number' && rp > 0) price = rp;
         const cp = yRaw(p.regularMarketChangePercent); if(typeof cp === 'number') pct = round2(cp * 100);
+        vol = yRaw(p.regularMarketVolume);                                          // объём за день (лайв)
+        avgVol = yRaw(p.averageDailyVolume3Month) || yRaw(p.averageDailyVolume10Day); // средний дневной — для «×ср.»
       }
     }catch(e){}
+    if(vol == null && typeof m.regularMarketVolume === 'number') vol = m.regularMarketVolume;   // fallback из chart-меты
     if(pct == null){   // fallback: последнее дневное закрытие строго ДО сегодня из 1y-ряда
       const todayUTC = new Date().toISOString().slice(0, 10);
       let prev = null;
@@ -254,7 +257,7 @@ async function yahoo(sym){
       pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     }
     return {
-      price, pct,
+      price, pct, vol, avgVol,
       sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
       support: lows.length ? round2(Math.min(...lows)) : null,
       resistance: highs.length ? round2(Math.max(...highs)) : null,

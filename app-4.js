@@ -493,6 +493,7 @@ function pf3DetailHTML(){
         <div class="pf3-price${isFinite(day)?(day>=0?' pf3-up':' pf3-down'):''}">${price>0?pf3Fmt(price,2):'—'} <small>${ccy}</small></div>
         ${isFinite(day)?`<div class="pf3-day ${day>=0?'pf3-up-bg':'pf3-down-bg'}">${day>0?'+':''}${day.toFixed(2)}% ${T('за день')}</div>`:''}
         <div id="pf3PrePost" class="pf3-pp">${cardPPInner(exSymbol(tk,ccy))}</div>
+        <div id="pf3Vol" class="pf3-vol">${cardVolInner(tk)}</div>
         ${can('action.refresh_data')?`<button class="pf3-btn" id="pf3RefreshBtn" onclick="pf3Refresh()">${T('🔄 Обновить цену')}</button>`:''}
       </div>
     </section>

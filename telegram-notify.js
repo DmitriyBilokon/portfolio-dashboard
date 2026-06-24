@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-24volume2';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-24fundhist';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -708,9 +708,14 @@ async function yahooFundamentals(sym, period){
     const prev = ann[ann.length - 2];
     if(prev.v > 0) revenueYoY = round2((last.v - prev.v) / prev.v * 100);
   }
+  // История отчётности: ряд выручки (oldest→newest) для спарклайна в карточке.
+  const serSrc = (qtrMode ? qtr : ann) || [];
+  const revSeries = serSrc.slice(-(qtrMode ? 8 : 6)).map(x => ({ d: String(x.date || '').slice(0, qtrMode ? 7 : 4), v: x.v }));
+  revSeries.forEach((x, i) => { const p = revSeries[i - (qtrMode ? 4 : 1)]; x.yoy = (p && p.v > 0) ? round2((x.v / p.v - 1) * 100) : null; });
   return {
     period: qtrMode ? 'quarter' : 'annual',
     source: 'yahoo',
+    revSeries,
     ccy: fd?.financialCurrency || null,
     asOf: (qtrMode ? qtr[qtr.length - 1]?.date : last?.date) || null,
     totalDebt: yRaw(fd?.totalDebt),
@@ -799,7 +804,7 @@ async function fundamentals(sym, env, period){
   const [bs, cf, inc, incA] = await Promise.all([
     get(`balance-sheet-statement?symbol=${s}&limit=1${per}`),
     get(`cash-flow-statement?symbol=${s}&limit=${qtr ? 4 : 1}${per}`),
-    get(`income-statement?symbol=${s}&limit=${qtr ? 5 : 6}${per}`),   // annual: up to 5y history · quarter: q0..q4 for YoY
+    get(`income-statement?symbol=${s}&limit=${qtr ? 8 : 6}${per}`),   // annual: до 6 лет · quarter: q0..q7 (YoY + спарклайн истории)
     qtr ? get(`income-statement?symbol=${s}&limit=6`) : null,         // CAGR is always computed on annual data
   ]);
   const b = (bs && bs[0]) || null;
@@ -830,9 +835,16 @@ async function fundamentals(sym, env, period){
     const y = await yahooFundamentals(sym, period);
     if(y) return y;
   }
+  // История отчётности: ряд выручки (oldest→newest) для спарклайна в карточке.
+  const histSrc = (qtr ? qs : ann) || [];
+  const revSeries = histSrc.slice(0, qtr ? 8 : 6).reverse()
+    .map(x => ({ d: String(x.date || x.calendarYear || '').slice(0, qtr ? 7 : 4), v: (typeof x.revenue === 'number' ? x.revenue : null) }))
+    .filter(x => x.v != null);
+  revSeries.forEach((x, i) => { const p = revSeries[i - (qtr ? 4 : 1)]; x.yoy = (p && p.v > 0) ? round2((x.v / p.v - 1) * 100) : null; });
   return {
     period: qtr ? 'quarter' : 'annual',
     source: 'fmp',
+    revSeries,
     ccy: b?.reportedCurrency || cfRows[0]?.reportedCurrency || ann[0]?.reportedCurrency || 'USD',
     asOf: b?.date || cfRows[0]?.date || null,
     totalDebt: b?.totalDebt ?? null,

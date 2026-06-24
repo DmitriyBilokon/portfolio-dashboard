@@ -28,7 +28,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-24volume1';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-24volume2';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -236,13 +236,16 @@ async function yahoo(sym){
     // finance.yahoo.com). Chart-расчёт ненадёжен при пропусках/null в дневном ряду
     // (^OMX пропускает день; US-акции дают null на сегодняшнюю свечу) — давал «2-дневный» %.
     try{
-      const p = (await yQuoteSummary(sym, 'price'))?.price;
+      const qs = await yQuoteSummary(sym, 'price,summaryDetail');
+      const p = qs && qs.price, sd = qs && qs.summaryDetail;
       if(p){
         const rp = yRaw(p.regularMarketPrice); if(typeof rp === 'number' && rp > 0) price = rp;
         const cp = yRaw(p.regularMarketChangePercent); if(typeof cp === 'number') pct = round2(cp * 100);
         vol = yRaw(p.regularMarketVolume);                                          // объём за день (лайв)
-        avgVol = yRaw(p.averageDailyVolume3Month) || yRaw(p.averageDailyVolume10Day); // средний дневной — для «×ср.»
       }
+      // Средний дневной объём (для «×ср.») живёт в summaryDetail, НЕ в price.
+      avgVol = (sd && (yRaw(sd.averageDailyVolume3Month) || yRaw(sd.averageVolume) || yRaw(sd.averageDailyVolume10Day) || yRaw(sd.averageVolume10days)))
+            || (p && (yRaw(p.averageDailyVolume3Month) || yRaw(p.averageDailyVolume10Day))) || null;
     }catch(e){}
     if(vol == null && typeof m.regularMarketVolume === 'number') vol = m.regularMarketVolume;   // fallback из chart-меты
     if(pct == null){   // fallback: последнее дневное закрытие строго ДО сегодня из 1y-ряда

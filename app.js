@@ -2364,36 +2364,48 @@ function pf3Profit(F){
   if(m==null)return null;
   return m<0?0:m>=25?10:m>=15?9:m>=10?8:m>=6?6:m>=3?5:m>0?4:1;
 }
-function pf3ValScore(F,tk,sector){
+// Банк/финансы/страхование: у них OCF/FCF, D/E и current ratio НЕ информативны, а P/S
+// не применяют — общая модель betyg даёт ложную F. Распознаём по сектору и считаем иначе.
+const pf3FinSec=s=>/финанс|банк|страх|bank|financ|insur/i.test(String(s||''));
+function pf3ValScore(F,tk,sector,fin){
   const vv=(typeof VAL!=='undefined'&&VAL[tk])||{};
   const one=kind=>{
     const vvN=kind==='pe'?vv.pe:vv.ps, fN=F?(kind==='pe'?(F.fwdPe||F.pe):F.ps):null;
     const v=(vvN>0)?vvN:(fN>0?fN:null);
     if(!(v>0))return null;
+    // Sanity-guard на битые данные: P/S>25 почти всегда мусор; у финансов P/E>80 — тоже.
+    if(kind==='ps'&&v>25)return null;
+    if(kind==='pe'&&fin&&v>80)return null;
     let med=null; try{ med=vv.sector?(((typeof _valSecCache!=='undefined'&&_valSecCache)||valSectorMedians())[vv.sector]):null; }catch(e){}
     const lm=med?(kind==='pe'?med.pe:med.ps):null;
     const avg=(lm>0&&med.n>=2)?lm:((PF3_VAL_AVG[pf3MacroSector(String(vv.sector||sector||''))]||[22,3])[kind==='pe'?0:1]);
     const diff=(v/avg-1)*100;            // <0 = дешевле сектора
     return Math.max(0,Math.min(10,5-diff/10));   // −50% → 10, ±0 → 5, +50% → 0
   };
-  const a=[one('pe'),one('ps')].filter(x=>x!=null);
+  const kinds=fin?['pe']:['pe','ps'];   // банки/финансы оценивают по P/E (и P/B), НЕ по P/S
+  const a=kinds.map(one).filter(x=>x!=null);
   return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
 }
 function pf3Betyg(F,tk,sector){
   if(!F)return null;
+  const fin=pf3FinSec(sector);
   const S=pf3Scores(F);
   const pillars=[
     {key:'profit', icon:'💎', label:['Прибыльность','Profitability'], score:pf3Profit(F)},
     {key:'growth', icon:'📈', label:['Рост','Growth'],               score:S.growth},
-    {key:'balance',icon:'🏦', label:['Баланс','Balance'],            score:S.balance},
-    {key:'cash',   icon:'💵', label:['Денежный поток','Cash flow'],  score:S.cash},
-    {key:'val',    icon:'🏷', label:['Оценка','Valuation'],          score:pf3ValScore(F,tk,sector)},
+    // Банкам D/E и «ликвидность» не применимы; OCF/FCF у них не показатель → столпы н/д.
+    {key:'balance',icon:'🏦', label:['Баланс','Balance'],            score:fin?null:S.balance, na:fin},
+    {key:'cash',   icon:'💵', label:['Денежный поток','Cash flow'],  score:fin?null:S.cash,    na:fin},
+    {key:'val',    icon:'🏷', label:['Оценка','Valuation'],          score:pf3ValScore(F,tk,sector,fin)},
   ];
   const W={profit:0.25,growth:0.2,balance:0.2,cash:0.2,val:0.15};
-  let sw=0,wsum=0;
-  pillars.forEach(p=>{if(p.score!=null){sw+=p.score*W[p.key];wsum+=W[p.key];}});
-  const total=wsum?sw/wsum:null;
-  return {total,score100:total!=null?Math.round(total*10):null,pillars};
+  let sw=0,wsum=0,n=0;
+  pillars.forEach(p=>{if(p.score!=null){sw+=p.score*W[p.key];wsum+=W[p.key];n++;}});
+  // Недостаточно валидных столпов (типично у банков/финансов с неприменимыми метриками
+  // или при битых данных) → НЕ выставляем вводящую в заблуждение букву.
+  if(n<2||wsum<0.4)return {total:null,score100:null,pillars,fin,insufficient:true};
+  const total=sw/wsum;
+  return {total,score100:Math.round(total*10),pillars,fin};
 }
 const PF3_GRADE=[[8.5,'A+','exc'],[7.5,'A','exc'],[6.5,'B','good'],[5,'C','mid'],[3.5,'D','weak']];
 function pf3Grade(s){ if(s==null)return{g:'—',c:''}; for(const[t,g,c]of PF3_GRADE)if(s>=t)return{g,c}; return{g:'F',c:'crit'}; }
@@ -2501,6 +2513,13 @@ function pf3Health(){
     cash: `${T('Свободный CF')} <b>${pf3Bn(fcf,F.ccy)}</b> · ${T('Операционный CF')} <b>${pf3Bn(ocf,F.ccy)}</b> ${cfLbl}`,
     val: `P/E${F.fwdPe?' (fwd)':''} <b>${pe>0?pe.toFixed(1):'—'}</b> · P/S <b>${F.ps>0?F.ps.toFixed(1):'—'}</b> · <span class="pf3-asof">${RT('vs медиана сектора','vs sector median')}</span>`,
   };
+  // Банки/финансы: денежный поток (OCF/FCF) и баланс (D/E, ликвидность) не применимы —
+  // показываем это явно вместо вводящих в заблуждение «Критично 0.0»/«—».
+  if(B&&B.fin){
+    detail.balance=RT('н/д для банков — структура баланса иная (D/E и ликвидность не применимы)','n/a for banks — different balance structure (D/E, liquidity do not apply)');
+    detail.cash=RT('н/д для банков — операционный CF не показателен (зависит от депозитов/кредитов)','n/a for banks — operating CF is not meaningful (driven by deposits/loans)');
+    if(pf3ValScore(F,tk,sector,true)==null)detail.val=RT('нет надёжной оценки (P/S к банкам не применяют; P/E — данные неполные/битые)','no reliable valuation (P/S not used for banks; P/E data missing/bad)');
+  }
   const card=(icon,title,score,metrics)=>{
     const lv=pf3Lv(score);
     const verdict=lv==null?'—':`${PF3_LV[lv].e} ${T(PF3_LV[lv].l)} · ${score.toFixed(1)}`;
@@ -2512,7 +2531,13 @@ function pf3Health(){
       <div class="pf3-betyg-l"><span>${T('Фундаментальный рейтинг')} ${infoBtn('betyg')}</span><b>${B.score100}/100</b></div>
       <div class="pf3-scale"><div class="pf3-scale-marker" style="left:${Math.min(100,Math.max(0,B.total*10))}%"></div></div>
       <div class="pf3-scale-labels"><span>F</span><span>D</span><span>C</span><span>B</span><span>A</span></div>
-    </div></div>`:'';
+    </div></div>`
+    :(B&&B.insufficient)?`<div class="pf3-betyg">
+      <div class="pf3-betyg-grade">—</div>
+      <div class="pf3-betyg-body">
+        <div class="pf3-betyg-l"><span>${T('Фундаментальный рейтинг')} ${infoBtn('betyg')}</span><b>${RT('недостаточно данных','insufficient data')}</b></div>
+        <div class="pf3-card-s">${B.fin?RT('Для банков/финансов часть метрик (денежный поток, баланс, P/S) не применима — единый рейтинг не выставляется во избежание ложной оценки.','For banks/financials several metrics (cash flow, balance, P/S) do not apply — no single rating is shown to avoid a false score.'):RT('Слишком мало валидных метрик для надёжного рейтинга.','Too few valid metrics for a reliable rating.')}</div>
+      </div></div>`:'';
   const cards=(B?B.pillars:[]).map(p=>card(p.icon,rt(p.label),p.score,detail[p.key])).join('');
   return betyg+cards+`<div id="pf3FundHist" class="pf3-fundhist">${pf3FundHistHTML(F)}</div>`;
 }
@@ -2563,7 +2588,12 @@ function pf3AiSnapshot(key){
   const rowBetyg=r=>{try{
     // Сначала ПОЛНЫЙ betyg из кэша PF_FUND (как в карточке) — согласованность.
     const full=pf3BetygRow(r,r[4]);if(full)return{score100:full.score100,grade:full.grade};
-    if(typeof pf3RowBetyg!=='function')return null;   // фолбэк — lite по ROE/росту/оценке
+    // Фундаментал загружен, но единый рейтинг невозможен (банки/финансы, битые/неполные
+    // данные → в карточке «недостаточно данных»): НЕ подменяем lite-оценкой, чтобы AI не
+    // противоречил карточке и не выносил вердикт по ложному рейтингу.
+    const sym=exSymbol(String(r[2]||'').trim(),r[8]||'USD');
+    if(typeof pf3FundFor==='function'&&pf3FundFor(sym))return null;
+    if(typeof pf3RowBetyg!=='function')return null;   // фундаментал не загружен → lite по ROE/росту/оценке
     const b=pf3RowBetyg({roe:numC(r,roeC),revg:numC(r,revgC),pe:numC(r,peC),ps:numC(r,psC),sec:r[4],r});
     return b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null,lite:true}:null;
   }catch(e){return null}};

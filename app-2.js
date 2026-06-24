@@ -659,7 +659,7 @@ const PF3_XDEF=[
 function pf3RowBetyg(o){
   const prof=o.roe>0?(o.roe>=20?10:o.roe>=15?9:o.roe>=10?7:o.roe>=5?5:4):(o.roe<0?1:null);
   const grow=(typeof o.revg==='number'&&o.revg!==0)?(o.revg>=20?10:o.revg>=10?8:o.revg>=4?6:o.revg>0?5:o.revg>-10?3:1):null;
-  const val=(typeof pf3ValScore==='function')?pf3ValScore({pe:o.pe,ps:o.ps},String((o.r&&o.r[2])||'').toUpperCase(),o.sec):null;
+  const val=(typeof pf3ValScore==='function')?pf3ValScore({pe:o.pe,ps:o.ps},String((o.r&&o.r[2])||'').toUpperCase(),o.sec,(typeof pf3FinSec==='function'&&pf3FinSec(o.sec))):null;
   const W={prof:0.4,grow:0.3,val:0.3};let sw=0,wsum=0;
   [['prof',prof],['grow',grow],['val',val]].forEach(([k,v])=>{if(v!=null){sw+=v*W[k];wsum+=W[k];}});
   return wsum?sw/wsum:null;

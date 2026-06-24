@@ -548,4 +548,11 @@ grp('fund betyg', function(){
   __eq('betyg 5 pillars', bs.pillars.length, 5);
   __ok('grade strong A/B', /A|B/.test(pf3Grade(bs.total).g));
   __ok('grade weak D/F', /D|F/.test(pf3Grade(bw.total).g));
+  // Банк/финансы (Nordea-like): OCF/баланс не применимы, P/S и P/E битые →
+  // НЕ выставляем ложную F, а помечаем «недостаточно данных».
+  var bank={revenue:11700,operatingCashFlow:-21200,fwdPe:131.5,ps:52.8,revenueCagr:6.6,revenueYoY:-2.7,ccy:'EUR',revenueYears:3};
+  var bb=pf3Betyg(bank,'NDA','Финансы и недвижимость');
+  __ok('bank betyg insufficient (не F)', bb.insufficient===true && bb.score100==null);
+  __ok('bank betyg fin-flag', bb.fin===true);
+  __ok('bank P/S отброшен (val null)', pf3ValScore(bank,'NDA','Финансы и недвижимость',true)==null);
 });

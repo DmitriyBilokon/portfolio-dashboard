@@ -2290,6 +2290,37 @@ async function pf3LoadFundamentals(){
   pf3Fund.loading=false;
   if(isV3())pf3UpdateHealth();   // update only the health section — no full re-render
 }
+// ── Фундаментал по ВСЕМ позициям портфеля → betyg, СОГЛАСОВАННЫЙ с карточкой ──
+// pf3Fund.cache держит только открытую бумагу. Для рейтинга всех позиций (снапшот
+// AI-Proto, колонка «Рейтинг», прогноз) грузим годовой фундаментал каждой бумаги в
+// общий кэш PF_FUND и считаем по нему ПОЛНЫЙ 5-столповый pf3Betyg — иначе betyg
+// расходился с карточкой (lite по ROE/росту давал, напр., F у EQT при карточном A).
+let PF_FUND={};   // sym → {data, at}; TTL 6ч (в т.ч. кэш «нет данных» → не долбим)
+const pf3FundFor=sym=>{const c=PF_FUND[sym];return (c&&Date.now()-c.at<6*3600*1000)?c.data:null};
+async function pf3FundFetch(syms){   // догрузить фундаментал для списка бирж. символов в PF_FUND
+  const todo=[],seen=new Set();
+  (syms||[]).forEach(sym=>{if(!sym||seen.has(sym))return;seen.add(sym);
+    const c=PF_FUND[sym];if(!(c&&Date.now()-c.at<6*3600*1000))todo.push(sym);});
+  for(let i=0;i<todo.length;i+=4){   // чанк по 4 — щадим воркер/лимиты
+    await Promise.all(todo.slice(i,i+4).map(async sym=>{
+      let data=null;
+      try{const j=await(await fetch(PRICE_PROXY+'?fundamentals='+encodeURIComponent(sym))).json();
+        if(j&&typeof j==='object'&&!j.error&&(j.asOf||j.revenue!=null||j.totalDebt!=null))data=j;}catch(e){}
+      PF_FUND[sym]={data,at:Date.now()};   // кэшируем и «нет данных» → не долбим
+    }));
+  }
+}
+async function pf3LoadAllFundamentals(key){
+  const d=DATA[key||v3Key];if(!d||!Array.isArray(d.rows))return;
+  await pf3FundFetch(d.rows.map(r=>{const tk=String(r[2]||'').trim();return tk?exSymbol(tk,r[8]||'USD'):null}).filter(Boolean));
+}
+// Полный betyg по строке через кэш PF_FUND (как в карточке); null — фундамента нет.
+function pf3BetygRow(r,sector){
+  const sym=exSymbol(String(r[2]||'').trim(),r[8]||'USD'),tk=String(r[2]||'').trim().toUpperCase();
+  const F=pf3FundFor(sym);if(!F)return null;
+  const B=pf3Betyg(F,tk,sector!=null?sector:r[4]);
+  return (B&&B.score100!=null)?{score100:B.score100,grade:(pf3Grade(B.total)||{}).g||null,total:B.total}:null;
+}
 // Repaint just the «Здоровье бизнеса» section (cards, toggle state, report date).
 function pf3UpdateHealth(){
   const g=document.getElementById('pf3HealthGrid');if(g)g.innerHTML=pf3Health();
@@ -2530,9 +2561,11 @@ function pf3AiSnapshot(key){
   const roeC=h.indexOf('ROE'),revgC=h.indexOf('Рост выручки'),peC=h.indexOf('P/E'),psC=h.indexOf('P/S');
   const numC=(r,i)=>{const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
   const rowBetyg=r=>{try{
-    if(typeof pf3RowBetyg!=='function')return null;
+    // Сначала ПОЛНЫЙ betyg из кэша PF_FUND (как в карточке) — согласованность.
+    const full=pf3BetygRow(r,r[4]);if(full)return{score100:full.score100,grade:full.grade};
+    if(typeof pf3RowBetyg!=='function')return null;   // фолбэк — lite по ROE/росту/оценке
     const b=pf3RowBetyg({roe:numC(r,roeC),revg:numC(r,revgC),pe:numC(r,peC),ps:numC(r,psC),sec:r[4],r});
-    return b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null;
+    return b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null,lite:true}:null;
   }catch(e){return null}};
   // Индексные вкладки: watchlist-снапшот — все акции с уровнями, фазой и
   // сигналом; AI выделяет самые актуальные и рекомендует действия.
@@ -2657,6 +2690,7 @@ async function pf3AiRun(){
     await pf3Refresh(true);
     await aiLoadIdxHist().catch(()=>{});   // история индексов → альфа в трек-рекорде
     await pf3PullHoldingsNews(key).catch(()=>{});   // 📰 свежие новости по позициям → анализ актуален
+    await pf3LoadAllFundamentals(key).catch(()=>{});   // 🏅 фундаментал всех позиций → betyg как в карточке
     const snap=pf3AiSnapshot(key);
     const ln=pf3LiveNewsForAi(key); if(ln)snap.liveNews=ln;   // живые заголовки + тональность по позициям
     // Вариант B: детерминированные вердикты скоринга сайта по всем тикерам —

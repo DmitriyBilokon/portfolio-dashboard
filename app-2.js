@@ -596,8 +596,9 @@ async function pf3FcastAiRun(){
   const key=v3Key;pf3Fcast.loading=true;renderPF3();
   try{
     await pf3Refresh(true);
+    await pf3LoadAllFundamentals(key).catch(()=>{});   // 🏅 фундаментал всех позиций → betyg как в карточке
     const d=DATA[key],num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
-    const positions=d.rows.filter(r=>(parseFloat(r[6])||0)>0).map(r=>{const m=pf3TypeMetrics(d,r);const b=(typeof pf3RowBetyg==='function')?pf3RowBetyg({roe:m.roe,revg:m.revg,pe:m.pe,ps:m.ps,sec:r[4],r}):null;return{ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',qty:num(r[6]),price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,betyg:b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null,phase:pf3Criterion(d,r).label}});
+    const positions=d.rows.filter(r=>(parseFloat(r[6])||0)>0).map(r=>{const m=pf3TypeMetrics(d,r);const full=(typeof pf3BetygRow==='function')?pf3BetygRow(r,r[4]):null;const b=(!full&&typeof pf3RowBetyg==='function')?pf3RowBetyg({roe:m.roe,revg:m.revg,pe:m.pe,ps:m.ps,sec:r[4],r}):null;return{ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',qty:num(r[6]),price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,betyg:full?{score100:full.score100,grade:full.grade}:(b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null),phase:pf3Criterion(d,r).label}});
     const snap={portfolioName:TAB_LABEL(key),baseCurrency:pf3Base(d),horizons:['3 мес','6-9 мес','12+ мес'],positions,playbook:aiPlaybookEnsure()};
     const r=await fetch(PRICE_PROXY+'?action=forecast',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
@@ -730,7 +731,7 @@ function pf3XCell(it,k){
     const M={buy:['🟢',RT('Купить','Buy'),'buy'],sell:['🔴',RT('Сократить','Trim'),'sell'],wait:['🟡',RT('Ждать','Wait'),'wait'],avoid:['⛔',RT('Опасно','Avoid'),'avoid']}[vv];
     return`<span class="pf3-sig xr-${M[2]}" title="${String(note||'').replace(/"/g,'&quot;')}">${M[0]} ${M[1]}</span>`;
   }
-  if(k==='betyg'){const b=it.betyg;if(b==null)return'—';const g=pf3Grade(b);return`<span class="pf3-betyg-cell ${g.c}" title="${RT('Лёгкий фунд. рейтинг (ROE/рост/оценка). Полный 5-столповый — в карточке.','Light fundamental rating (ROE/growth/valuation). Full 5-pillar one is in the card.')}">${g.g}</span>`}
+  if(k==='betyg'){const b=it.betyg;if(b==null)return'—';const g=pf3Grade(b);const ttl=it.betygFull?RT('Фунд. рейтинг (5 столпов) — как в карточке «Здоровье бизнеса».','Fundamental rating (5 pillars) — same as the «Business health» card.'):RT('Лёгкий фунд. рейтинг (ROE/рост/оценка). Полный 5-столповый подгружается…','Light fundamental rating (ROE/growth/valuation). Full 5-pillar one is loading…');return`<span class="pf3-betyg-cell ${g.c}" title="${ttl}">${g.g}</span>`}
   if(k==='upside'){const v=pf3EffUpside(pf3D(),it.r);return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
   if(k==='tgr'){const v=it.tgr;if(!(v>0)||!(p>0))return'—';const u=(v/p-1)*100;return`<b>${pf3Fmt(v,0)}</b><small class="${u>=0?'pf3-up':'pf3-down'}">${u>=0?'+':''}${u.toFixed(1)}%</small>`}
   const v=it[k];
@@ -760,7 +761,10 @@ function pf3Items(){
       sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
       pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),revg:num(r,revgC),upside:pf3EffUpside(d,r)||0,tgr:num(r,tgrC),
       ...(()=>{const rc=pf3Reco(d,r);return{reco:({buy:3,wait:2,sell:1,avoid:0})[rc.v]*100+rc.total,recoV:rc.v,recoHint:rc.hint.replace(/"/g,'&quot;')}})()};
-    it.betyg=pf3RowBetyg(it);   // лёгкий фунд. рейтинг строки (для колонки/сортировки)
+    // Рейтинг строки: ПОЛНЫЙ betyg из кэша PF_FUND (как в карточке), иначе lite по ROE/росту/оценке.
+    const fb=(typeof pf3BetygRow==='function')?pf3BetygRow(r,it.sec):null;
+    it.betyg=fb?fb.total:pf3RowBetyg(it);
+    it.betygFull=!!fb;
     return it;
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
@@ -804,9 +808,16 @@ function pf3RowHTML(d,it,port,xc){
   </div>`;
 }
 
+let _betygColLoad='';   // защита от петли: грузим фундаментал колонки «Рейтинг» один раз на вкладку
 function pf3ListHTML(){
   const d=pf3D(),port=pf3IsPort(v3Key);
   const xc=pf3XActive(d);
+  // Колонка «Рейтинг» активна → в фоне догружаем фундаментал всех позиций (полный
+  // betyg как в карточке), затем один перерендер. Lite-буква показывается до загрузки.
+  if(xc.includes('betyg')&&_betygColLoad!==v3Key&&typeof pf3LoadAllFundamentals==='function'){
+    _betygColLoad=v3Key;
+    pf3LoadAllFundamentals(v3Key).then(()=>{if(isV3())renderPF3()}).catch(()=>{});
+  }
   const {items}=pf3Items();
   const k=pf3Sort.key,dir=pf3Sort.dir;
   items.sort((a,b)=>{const x=a[k],y=b[k];return(typeof x==='string'?x.localeCompare(y,'ru'):x-y)*dir});

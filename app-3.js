@@ -918,6 +918,7 @@ async function aiDashRun(onlyKey){
       const k=tabs[i];
       _aiDashProg=`${i+1}/${tabs.length} · ${TAB_LABEL(k)}`;
       const btn=document.getElementById('aiDashBtn');if(btn){btn.disabled=true;btn.textContent='⏳ '+RT('Генерирую','Generating')+' '+_aiDashProg+'…';}
+      await pf3LoadAllFundamentals(k).catch(()=>{});   // 🏅 фундаментал всех позиций → betyg как в карточке
       const snap=pf3AiSnapshot(k);   // портфель k + investorRules + marketContext
       snap.portfolioName=TAB_LABEL(k);
       snap.recoLegend='{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%toTarget, %отSMA50, %отSMA200, P/E, вЭтомПортфеле(1|0)]} — детерминированный скоринг сайта (та же логика, что вердикт «Рекомендация» в карточке)';

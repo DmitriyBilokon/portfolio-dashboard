@@ -650,8 +650,19 @@ const PF3_XDEF=[
   ['sma50','SMA 50'],['sma100','SMA 100'],['sma200','SMA 200'],
   ['sup','Поддержка'],['res','Сопротивление'],
   ['upside','Потенциал %'],['tgr','Таргет 3м'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
-  ['reco','Рекомендация'],
+  ['betyg','Рейтинг'],['reco','Рекомендация'],
 ];
+// Лёгкий фундаментальный рейтинг для СТРОКИ списка (по доступным колонкам:
+// ROE / рост выручки / P/E·P/S). Полный 5-столповый betyg — в карточке (pf3Betyg).
+// Возвращает 0–10 или null (нет данных). Используется как сортируемая колонка → скринер.
+function pf3RowBetyg(o){
+  const prof=o.roe>0?(o.roe>=20?10:o.roe>=15?9:o.roe>=10?7:o.roe>=5?5:4):(o.roe<0?1:null);
+  const grow=(typeof o.revg==='number'&&o.revg!==0)?(o.revg>=20?10:o.revg>=10?8:o.revg>=4?6:o.revg>0?5:o.revg>-10?3:1):null;
+  const val=(typeof pf3ValScore==='function')?pf3ValScore({pe:o.pe,ps:o.ps},String((o.r&&o.r[2])||'').toUpperCase(),o.sec):null;
+  const W={prof:0.4,grow:0.3,val:0.3};let sw=0,wsum=0;
+  [['prof',prof],['grow',grow],['val',val]].forEach(([k,v])=>{if(v!=null){sw+=v*W[k];wsum+=W[k];}});
+  return wsum?sw/wsum:null;
+}
 let pf3XMenuOpen=false;
 // Переименование вкладки: меняется только отображаемое имя (d.title) —
 // ключ данных остаётся прежним, чтобы не ломать синк, worker и группы.
@@ -719,6 +730,7 @@ function pf3XCell(it,k){
     const M={buy:['🟢',RT('Купить','Buy'),'buy'],sell:['🔴',RT('Сократить','Trim'),'sell'],wait:['🟡',RT('Ждать','Wait'),'wait'],avoid:['⛔',RT('Опасно','Avoid'),'avoid']}[vv];
     return`<span class="pf3-sig xr-${M[2]}" title="${String(note||'').replace(/"/g,'&quot;')}">${M[0]} ${M[1]}</span>`;
   }
+  if(k==='betyg'){const b=it.betyg;if(b==null)return'—';const g=pf3Grade(b);return`<span class="pf3-betyg-cell ${g.c}" title="${RT('Лёгкий фунд. рейтинг (ROE/рост/оценка). Полный 5-столповый — в карточке.','Light fundamental rating (ROE/growth/valuation). Full 5-pillar one is in the card.')}">${g.g}</span>`}
   if(k==='upside'){const v=pf3EffUpside(pf3D(),it.r);return v==null?'—':`<span class="${v>=0?'pf3-up':'pf3-down'}">${v>0?'+':''}${v.toFixed(1)}%</span>`}
   if(k==='tgr'){const v=it.tgr;if(!(v>0)||!(p>0))return'—';const u=(v/p-1)*100;return`<b>${pf3Fmt(v,0)}</b><small class="${u>=0?'pf3-up':'pf3-down'}">${u>=0?'+':''}${u.toFixed(1)}%</small>`}
   const v=it[k];
@@ -737,17 +749,19 @@ function pf3Items(){
   const tgC=h.findIndex(x=>/аналит/i.test(x));
   const {s50,s100,s200}=smaIdx(d);
   const supC=h.indexOf('Поддержка'),resC=h.indexOf('Сопротивление');
-  const peC=h.indexOf('P/E'),psC=h.indexOf('P/S'),dyC=h.indexOf('Дивид. %');
+  const peC=h.indexOf('P/E'),psC=h.indexOf('P/S'),dyC=h.indexOf('Дивид. %'),revgC=h.indexOf('Рост выручки');
   const tgrC=h.findIndex(x=>/таргет 3м/i.test(x));
   const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
   const items=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
     const c=pf3Criterion(d,r);
     const tg=tgC>=0?(parseFloat(r[tgC])||0):0,price=parseFloat(r[7])||0;
-    return{r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
+    const it={r,name:String(r[1]||r[2]||''),sec:String(r[4]||''),typ:String(r[5]||''),qty:parseFloat(r[6])||0,buy:parseFloat(r[9])||0,price,val:parseFloat(r[13])||0,tg,day:parseFloat(r[10])||0,crit:c.rank,critHtml:c.html,
       sma50:num(r,s50),sma100:num(r,s100),sma200:num(r,s200),sup:num(r,supC),res:num(r,resC),
-      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),upside:pf3EffUpside(d,r)||0,tgr:num(r,tgrC),
+      pe:num(r,peC),ps:num(r,psC),divy:num(r,dyC),beta:num(r,h.indexOf('Beta')),roe:num(r,h.indexOf('ROE')),revg:num(r,revgC),upside:pf3EffUpside(d,r)||0,tgr:num(r,tgrC),
       ...(()=>{const rc=pf3Reco(d,r);return{reco:({buy:3,wait:2,sell:1,avoid:0})[rc.v]*100+rc.total,recoV:rc.v,recoHint:rc.hint.replace(/"/g,'&quot;')}})()};
+    it.betyg=pf3RowBetyg(it);   // лёгкий фунд. рейтинг строки (для колонки/сортировки)
+    return it;
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
   items.forEach(x=>x.share=totalVal>0?x.val/totalVal*100:0);

@@ -1150,9 +1150,14 @@ html.ui2 .pf3-reco-dim{border-radius:12px}
 .pf3-vol{font:600 11px 'JetBrains Mono',monospace;color:var(--text2);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
 .pf3-vol:empty{display:none}
 .pf3-vol-v{color:var(--text1);font-weight:700}
-.pf3-vol-rel{color:var(--text3)}
+.pf3-vol-rel{color:var(--text2);cursor:help}
 .pf3-vol-rel.hi{color:var(--accent);font-weight:700}
+.pf3-vol-rel.xhi{color:var(--accent);font-weight:700}
+.pf3-vol-rel.mid{color:var(--text2)}
 .pf3-vol-rel.lo{color:var(--text3)}
+.pf3-vol-conv{font-weight:700}
+.pf3-vol-conv.ok{color:var(--green-t)}
+.pf3-vol-conv.warn{color:var(--gold)}
 
 /* Сайдбар вкладок — чуть светлее фона (видно отличие) */
 @media(min-width:901px){

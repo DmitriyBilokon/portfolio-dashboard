@@ -587,7 +587,7 @@ async function pf3RefreshCardPrice(d,r){
     r[7]=q.price;
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
     const tk=String(r[2]||''),mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
-    CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,at:Date.now()};   // объём торгов (лайв)
+    CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,day:typeof q.pct==='number'?q.pct:null,at:Date.now()};   // объём торгов + дневное движение (лайв)
     SMA_TF[tk]={mode,d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
     const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
@@ -646,9 +646,19 @@ function cardPPInner(sym){
 const fmtVol=n=>{n=+n;if(!isFinite(n)||n<=0)return'—';const a=Math.abs(n);return a>=1e9?(n/1e9).toFixed(2)+'B':a>=1e6?(n/1e6).toFixed(1)+'M':a>=1e3?Math.round(n/1e3)+'K':String(Math.round(n));};
 function cardVolInner(tk){
   const v=CARD_VOL[tk];if(!v||!(v.vol>0))return'';
-  let rel='';
-  if(v.avgVol>0){const m=v.vol/v.avgVol;rel=` · <span class="pf3-vol-rel${m>=1.5?' hi':m<=0.6?' lo':''}">×${m.toFixed(1)} ${RT('к среднему','vs avg')}</span>`;}
-  return `<span class="pf3-pp-l">📊 ${RT('Объём','Volume')}</span> <span class="pf3-vol-v">${fmtVol(v.vol)}</span>${rel}`;
+  let rel='',conv='';
+  if(v.avgVol>0){
+    const m=v.vol/v.avgVol;
+    // Режим объёма vs средний дневной за 3 мес: ажиотаж / повышенный / норма / низкий.
+    const reg=m>=2?['🔥',RT('ажиотаж','frenzy'),'xhi']:m>=1.5?['🔼',RT('повышенный','elevated'),'hi']:m>=0.7?['•',RT('норма','normal'),'mid']:['🔽',RT('низкий','low'),'lo'];
+    rel=` · <span class="pf3-vol-rel ${reg[2]}" title="${RT('×N к среднему дневному объёму за 3 мес. Высокий объём подтверждает движение цены; низкий — движение слабое/ненадёжное.','×N of the 3-month average daily volume. High volume confirms the price move; low volume = weak/unreliable move.')}">×${m.toFixed(1)} ${reg[0]} ${reg[1]}</span>`;
+    // Привязка к движению цены: есть заметное дневное движение → подтверждено объёмом или слабое.
+    if(typeof v.day==='number'&&Math.abs(v.day)>=1.5){
+      if(m>=1.5)conv=` <span class="pf3-vol-conv ok">${RT('движение на объёме','move on volume')} ✓</span>`;
+      else if(m<0.7)conv=` <span class="pf3-vol-conv warn">${RT('слабый объём','thin volume')} ⚠</span>`;
+    }
+  }
+  return `<span class="pf3-pp-l">📊 ${RT('Объём','Volume')}</span> <span class="pf3-vol-v">${fmtVol(v.vol)}</span>${rel}${conv}`;
 }
 
 // ── 🌅/🌙 Изменение баланса портфеля по пре/пост-рынку (лайв, в сводке) ──

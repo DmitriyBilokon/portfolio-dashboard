@@ -2981,8 +2981,7 @@ async function insiderUpdateAll(){
             if(v.cluster){
               const sig=v.cluster.fromDate+'_'+v.cluster.toDate+'_'+v.cluster.uniqueBuyers;
               if(prev.notified!==sig){
-                clusters++;INSIDER[tk].notified=sig;
-                try{await fetch(PRICE_PROXY+'?action=insidernotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:names[tk]||tk,uniqueBuyers:v.cluster.uniqueBuyers,sumUSD:v.cluster.sumUSD,windowDays:v.cluster.windowDays,fromDate:v.cluster.fromDate,toDate:v.cluster.toDate,cross:valContextLine(tk)})});}catch(e){}
+                clusters++;INSIDER[tk].notified=sig;   // Telegram-алерт убран — кластеры смотрим на сайте
               }
             }
           }

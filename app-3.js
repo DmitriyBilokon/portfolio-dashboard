@@ -299,8 +299,7 @@ async function valUpdateAll(){
       if(c&&c.bothCount>=2){
         const sig='cheap_'+c.bothCount;
         if(v.notified!==sig){
-          cheap++;VAL[tk].notified=sig;
-          try{await fetch(PRICE_PROXY+'?action=valnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name:v.name||tk,detail:c.detail,cross:insiderContextLine(tk)})});}catch(e){}
+          cheap++;VAL[tk].notified=sig;   // Telegram-алерт недооценки убран — смотрим на сайте
         }
       }else if(v.notified){VAL[tk].notified=null;}
     }
@@ -632,10 +631,8 @@ function scnAlertEvents(prev,now){
   }
   return ev;
 }
-function scnNotifyTelegram(tk,name,text){
-  if(!isAdmin())return;   // Telegram-рассылка — только от админа
-  sbToken().then(tok=>{fetch(PRICE_PROXY+'?action=scnnotify',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({ticker:tk,name,text})}).catch(()=>{});}).catch(()=>{});
-}
+// Сценарный Telegram-алерт (scnNotifyTelegram) убран 2026-06-24 — сценарные
+// сигналы остаются как in-app тост + planNotify, в Telegram не уходят.
 // Проверка сценарных триггеров по позициям текущей вкладки (вызывается после обновления цен).
 function scnAlertCheck(){
   if(!isV3())return; const d=pf3D(); if(!d||!Array.isArray(d.rows))return;
@@ -659,7 +656,6 @@ function scnAlertCheck(){
     ev.forEach(e=>{
       const msg=`📊 ${tk}: ${e.text} · ${pf3Fmt(price,2)} ${ccy}`;
       toast(msg); if(typeof planNotify==='function')planNotify('📊 '+RT('Сценарный сигнал','Scenario signal'),msg);
-      scnNotifyTelegram(tk,String(r[1]||tk),e.text+` · ${pf3Fmt(price,2)} ${ccy}`);
     });
   });
   if(changed)scheduleSave();

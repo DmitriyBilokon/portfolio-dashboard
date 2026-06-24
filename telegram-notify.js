@@ -1,14 +1,13 @@
 // Cloudflare Worker — scheduled Telegram alerts for the Index Portfolio Dashboard.
 //
 // What it does (on a cron, even when the site is closed):
-//   targeted per-stock alerts, near-realtime. Each run reads the portfolio
-//   from Supabase, fetches live prices + levels from Yahoo and sends ONE
-//   Telegram message PER STOCK when:
-//     🟢 price is within ±1.5% of a buy level (SMA 50/100/200 / support)
-//     🔴 price is within ±1.5% of resistance (take-profit zone)
-//     📡 price is approaching a level (1.5–4% away)
-//   A 24h cooldown per stock+signal (stored in the Supabase row) keeps a
-//   frequent cron from spamming. Recommended cron: */10 6-22 * * 1-5.
+//   Telegram теперь получает ТОЛЬКО действия AI-портфеля и авто-анализ:
+//     🤖 AI ПОРТФЕЛЬ — 🟢 ПОКУПКА / 🔴 ПРОДАЖА (каждая сделка вирт. портфеля)
+//     📈 Анализ портфеля — рекомендации по реальным портфелям (PF3, Anna)
+//   Точечные алерты по уровням акций (🟢/🔴/📡 у SMA/поддержки/сопротивления)
+//   и сигналы 🕵 cluster-buy / 📐 недооценка / 📊 сценарий УДАЛЕНЫ 2026-06-24:
+//   состояние акций смотрим на сайте, не в Telegram (хватит спама).
+//   Рекомендуемый cron: */10 6-22 * * 1-5.
 //
 // ── Setup (≈10 min, free) ───────────────────────────────────────────────
 //  Bot:   message @BotFather → /newbot → copy the token.
@@ -28,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-24betyg-full';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-24notify-actions';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2548,75 +2547,20 @@ async function updateTargets(env){
 }
 
 
-// ── Точечные алерты по акциям портфеля (заменяют старый дайджест) ──────────
-// Одно сообщение на акцию и сигнал; кулдаун в snap.tgAlerts (клиент дашборда
-// прокидывает это поле через свои сохранения, так что оно переживает sync).
-const ALERT_NEAR = 1.5;       // ±% — «у уровня»
-const ALERT_APPROACH = 4;     // % — «приближается к уровню»
-const ALERT_COOLDOWN_H = 24;  // часов тишины по одному и тому же сигналу
-async function runAlerts(env){
-  const row = await loadRow(env);
-  const snap = row && row.snap;
-  const pf = snap && snap.data && (snap.data[PF3_KEY] || snap.data[PF_KEY]);
-  if(!pf) return 'Портфель не найден';
-  const tga = snap.tgAlerts = snap.tgAlerts || {};
-  const now = Date.now();
-  Object.keys(tga).forEach(k => { if(now - tga[k] > 7 * 86400e3) delete tga[k]; });
-  const quotes = await Promise.all(pf.rows.map(r => yahoo(exSymbol(r[2], r[8]))));
-  const sent = [];
-  for(let i = 0; i < pf.rows.length; i++){
-    const r = pf.rows[i], q = quotes[i];
-    if(!q || !(q.price > 0)) continue;
-    const name = esc(String(r[1] || r[2])), tk = esc(String(r[2] || '')), ccy = r[8] || '';
-    const sym = exSymbol(r[2], r[8]);
-    const qty = parseFloat(r[6]) || 0;
-    const buys = [['SMA 50', q.sma50], ['SMA 100', q.sma100], ['SMA 200', q.sma200], ['Поддержка', q.support]].filter(([, v]) => v > 0);
-    let best = null;
-    for(const [n, v] of buys){ const d = (q.price - v) / v * 100; if(!best || Math.abs(d) < Math.abs(best.d)) best = { n, v, d }; }
-    const resD = q.resistance > 0 ? (q.price - q.resistance) / q.resistance * 100 : null;
-    let kind = null, msg = '';
-    if(resD != null && Math.abs(resD) <= ALERT_NEAR){
-      kind = 'sell';
-      msg = `🔴 <b>ПРОДАЖА — ${name}</b> (${tk})\nЦена <b>${q.price} ${ccy}</b> у сопротивления <code>${q.resistance}</code> (${resD >= 0 ? '+' : ''}${resD.toFixed(1)}%) — зона фиксации прибыли`;
-    }else if(best && Math.abs(best.d) <= ALERT_NEAR){
-      kind = 'buy:' + best.n;
-      msg = `🟢 <b>${qty > 0 ? 'ДОКУПКА' : 'ПОКУПКА'} — ${name}</b> (${tk})\nЦена <b>${q.price} ${ccy}</b> у уровня ${best.n} <code>${best.v}</code> (${best.d >= 0 ? '+' : ''}${best.d.toFixed(1)}%)`;
-    }else if(resD != null && resD < 0 && -resD > ALERT_NEAR && -resD <= ALERT_APPROACH){
-      kind = 'near:res';
-      msg = `📡 <b>ПРИБЛИЖЕНИЕ — ${name}</b> (${tk})\nДо сопротивления <code>${q.resistance}</code> осталось <b>${(-resD).toFixed(1)}%</b> (цена ${q.price} ${ccy}) — готовьтесь фиксировать`;
-    }else if(best && best.d > ALERT_NEAR && best.d <= ALERT_APPROACH){
-      kind = 'near:' + best.n;
-      msg = `📡 <b>ПРИБЛИЖЕНИЕ — ${name}</b> (${tk})\nДо уровня ${best.n} <code>${best.v}</code> осталось <b>${best.d.toFixed(1)}%</b> (цена ${q.price} ${ccy}) — следите за входом`;
-    }
-    if(!kind) continue;
-    const key = sym + ':' + kind;
-    if(tga[key] && now - tga[key] < ALERT_COOLDOWN_H * 3600e3) continue;
-    await sendTelegram(env, msg);
-    tga[key] = now;
-    sent.push(String(r[2]) + ' → ' + kind);
-  }
-  if(sent.length){
-    // Перечитываем строку перед записью: пока шёл прогон (десятки секунд на
-    // котировки), клиент мог сохранить свежие данные — пишем кулдауны в НИХ,
-    // а не возвращаем в облако снапшот, загруженный в начале прогона.
-    const fresh = await loadRow(env);
-    if(fresh){ fresh.snap.tgAlerts = Object.assign({}, fresh.snap.tgAlerts, tga); await writeRow(env, fresh.userId, fresh.snap); }
-  }
-  return sent.length ? 'Отправлено:\n' + sent.join('\n') : 'Сигналов нет (или все на кулдауне)';
-}
+// Точечные алерты по уровням акций (🟢/🔴/📡 у SMA/поддержки/сопротивления) —
+// УДАЛЕНЫ намеренно (2026-06-24): в Telegram теперь летят ТОЛЬКО действия
+// AI-портфеля (🤖 покупка/продажа) и авто-анализ реальных портфелей (📈).
+// Состояние акций смотрим на сайте, не в Telegram.
 export default {
-  // Cron — only the targeted per-stock alerts (digest/chart/targets removed:
-  // the dashboard refreshes targets itself once a day).
+  // Cron — только действия AI-портфеля + авто-анализ реальных портфелей.
+  // Точечные алерты по уровням акций убраны (спам о состоянии акций).
+  // Цикл AI-портфеля и авто-анализ — ПОСЛЕДОВАТЕЛЬНО: оба делают
+  // read-modify-write ledger_state.data, параллельно затёрли бы.
   async scheduled(event, env, ctx){
-    ctx.waitUntil(Promise.all([
-      runAlerts(env).catch(() => {}),
-      // Цикл AI-портфеля и авто-анализ реальных портфелей — ПОСЛЕДОВАТЕЛЬНО:
-      // оба делают read-modify-write ledger_state.data, параллельно затёрли бы.
-      (async () => {
-        await aiPortfolioRun(env, false).catch(() => {});       // гейт intervalMin внутри
-        await runPortfolioAnalyses(env, false).catch(() => {}); // гейт pfAnalysisAt внутри
-      })(),
-    ]));
+    ctx.waitUntil((async () => {
+      await aiPortfolioRun(env, false).catch(() => {});       // гейт intervalMin внутри
+      await runPortfolioAnalyses(env, false).catch(() => {}); // гейт pfAnalysisAt внутри
+    })());
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
   // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
@@ -2702,18 +2646,9 @@ export default {
         return json(out);
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
-    if(url.searchParams.get('action') === 'insidernotify'){
-      // POST {ticker,name,uniqueBuyers,sumUSD,windowDays,fromDate,toDate}: Telegram-алерт о кластере.
-      const adm = await requireAdmin(request, env);
-      if(!adm.ok) return json({ error: adm.error }, 403);
-      try{
-        const b = await request.json();
-        const sum = b.sumUSD ? ` · объём ≈ $${Number(b.sumUSD).toLocaleString('en-US')}` : '';
-        const cross = b.cross ? `\n${esc(String(b.cross))}` : '';   // 3.2: контекст оценки в алерте инсайдеров
-        await sendTelegram(env, `🕵 <b>CLUSTER BUY — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${b.uniqueBuyers} инсайдер${b.uniqueBuyers >= 5 ? 'ов' : (b.uniqueBuyers >= 2 ? 'а' : '')} купили в окне ${b.windowDays || 10} дн.${sum}${cross}\n📅 ${b.fromDate || ''} — ${b.toDate || ''}`);
-        return json({ ok: true });
-      }catch(e){ return json({ error: String(e.message || e) }, 500); }
-    }
+    // insidernotify / valnotify / scnnotify (🕵 cluster buy / 📐 недооценка /
+    // 📊 сценарий) удалены 2026-06-24 — это «сигналы о состоянии акций», смотрим
+    // их на сайте. В Telegram остаются только действия AI-портфеля.
     if(url.searchParams.get('action') === 'valuation'){
       // POST {symbols:[биржевые символы]}: батч мультипликаторов + историческая медиана.
       if(request.method !== 'POST') return json({ error: 'POST required' }, 405);
@@ -2752,27 +2687,6 @@ export default {
           if(i + 5 < syms.length) await sleep(250);
         }
         return json(out);
-      }catch(e){ return json({ error: String(e.message || e) }, 500); }
-    }
-    if(url.searchParams.get('action') === 'valnotify'){
-      // POST {ticker,name,detail}: Telegram-алерт о сильной недооценке (дёшево по обоим измерениям).
-      const adm = await requireAdmin(request, env);
-      if(!adm.ok) return json({ error: adm.error }, 403);
-      try{
-        const b = await request.json();
-        const cross = b.cross ? `\n${esc(String(b.cross))}` : '';   // 3.2: контекст инсайдеров в алерте оценки
-        await sendTelegram(env, `📐 <b>НЕДООЦЕНКА — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.detail || 'дёшево относительно сектора и собственной истории'))}${cross}\n<i>Статистическое наблюдение, не сигнал к покупке.</i>`);
-        return json({ ok: true });
-      }catch(e){ return json({ error: String(e.message || e) }, 500); }
-    }
-    if(url.searchParams.get('action') === 'scnnotify'){
-      // POST {ticker,name,text}: Блок D — сценарный алерт (касание bull/bear-триггера, смена знака R/R, выход RSI).
-      const adm = await requireAdmin(request, env);
-      if(!adm.ok) return json({ error: adm.error }, 403);
-      try{
-        const b = await request.json();
-        await sendTelegram(env, `📊 <b>СЦЕНАРИЙ — ${esc(String(b.name || b.ticker))}</b> (${esc(String(b.ticker || ''))})\n${esc(String(b.text || ''))}\n<i>Справочный сигнал, не рекомендация.</i>`);
-        return json({ ok: true });
       }catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'stockai'){
@@ -3037,10 +2951,7 @@ export default {
       }));
       return json(out);
     }
-    try{
-      return txt(await runAlerts(env));   // ручной прогон точечных алертов
-    }catch(e){
-      return txt('Error: ' + e.message, 500);
-    }
+    // Точечные алерты по уровням удалены — ручного прогона больше нет.
+    return txt(`worker-build ${WORKER_BUILD}\nTelegram: только действия AI-портфеля + авто-анализ портфелей.\nИспользуй ?action=version для статуса.`);
   },
 };

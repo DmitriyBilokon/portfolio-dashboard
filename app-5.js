@@ -33,6 +33,59 @@ function pfTrade(act){
   recalcPF(ri,v3Key);scheduleSave();renderPF3();
   toast((act==='sell'?'🔴 '+RT('Продано','Sold'):'🟢 '+RT('Куплено','Bought'))+` ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(feeNative?` · ${RT('комиссия','fee')} ${pf3Fmt(feeNative,2)} ${ccy}`:'')+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*fx)}`:''));
 }
+// ── 🛒 Покупка с карточки в ВЫБРАННЫЙ портфель (любая акция, в т.ч. из индексных вкладок) ──
+// Чистая функция средней (genomsnittsmetoden, без учёта комиссии — паритет с pfTrade): покрыта тестом.
+function pfApplyBuy(cur, qty, price){
+  const curQty=parseFloat(cur&&cur.qty)||0, avg=parseFloat(cur&&cur.avg)||0;
+  const nq=curQty+qty;
+  return {qty:Math.round(nq*1e6)/1e6, avg:nq>0?Math.round((avg*curQty+price*qty)/nq*100)/100:0};
+}
+// Список целевых портфелей (мои/семейные, без AI) для выпадашки.
+function pfBuyTargets(){return Object.keys(DATA).filter(k=>pf3MyPort(k)).map(k=>({key:k,label:TAB_LABEL(k)||k}));}
+// Живое превью: сумма + комиссия + итого; эквивалент в базовой валюте портфеля и предупреждение по кэшу.
+function pfCardBuyPreview(ccy){
+  const el=document.getElementById('pfBuyPreview');if(!el)return;
+  const g=id=>document.getElementById(id);
+  const d=DATA[(g('pfBuyPort')||{}).value];
+  let qty=parseFloat((g('pfBuyQty')||{}).value),price=parseFloat((g('pfBuyPrice')||{}).value);
+  const amt=parseFloat((g('pfBuyAmt')||{}).value);
+  if(!(price>0)&&amt>0&&qty>0)price=amt/qty;
+  if(!(qty>0)||!(price>0)){el.textContent='';return;}
+  const fee=tradeFeeNative(ccy,qty*price,true).total,total=qty*price+fee,fx=FX[ccy]||1;
+  let s=`${RT('Сумма','Amount')}: <b>${pf3Fmt(qty*price,2)} ${ccy}</b> · ${RT('комиссия','fee')} ~${pf3Fmt(fee,2)} ${ccy} → ${RT('итого','total')} <b>${pf3Fmt(total,2)} ${ccy}</b>`;
+  if(d){const cash=parseFloat(d.cashFree);if(isFinite(cash)){const after=cash-pf3Cv(d,total*fx);s+=` · ${RT('кэш после','cash after')} ${pf3Fmt(after,0)} ${pf3Base(d)}`+(after<0?` <span class="pf3-down">⚠️ ${RT('в минус','negative')}</span>`:'');}}
+  el.innerHTML=s;
+}
+// Исполнение: найти/создать позицию в выбранном портфеле, обновить кэш, записать сделку.
+function pfCardBuy(){
+  if(!can('action.add_position'))return;
+  const g=id=>document.getElementById(id);
+  const key=(g('pfBuyPort')||{}).value,d=DATA[key];
+  if(!d||!pf3MyPort(key)){toast(RT('Выберите портфель','Select a portfolio'),true);return;}
+  const cr=pf3D().rows[pf3SelIdx()];if(!cr)return;
+  const tk=String(cr[2]||'').trim().toUpperCase();if(!tk)return;
+  let qty=parseFloat((g('pfBuyQty')||{}).value),price=parseFloat((g('pfBuyPrice')||{}).value);
+  const amt=parseFloat((g('pfBuyAmt')||{}).value);
+  if(!(price>0)&&amt>0&&qty>0)price=Math.round(amt/qty*1e6)/1e6;
+  if(!(qty>0)||!(price>0)){toast(RT('Укажите количество и цену (или сумму)','Enter quantity and price (or amount)'),true);return;}
+  const date=(g('pfBuyDate')||{}).value||new Date().toISOString().slice(0,10);
+  let ri=(d.rows||[]).findIndex(r=>String(r[2]||'').trim().toUpperCase()===tk);
+  const ccy=(ri>=0?(d.rows[ri][8]||cr[8]):cr[8])||'USD';
+  if(ri<0){   // создать новую позицию (паттерн pf3-строки; метрики дозаполнятся при обновлении цен)
+    const row=new Array(d.headers.length).fill('');
+    row[0]=d.rows.length+1;row[1]=String(cr[1]||tk);row[2]=tk;row[3]=cr[3]||'';row[4]=cr[4]||'';row[5]=cr[5]||'';
+    row[6]=0;row[7]=parseFloat(cr[7])||price;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;
+    d.rows.push(row);d.count=d.rows.length;ri=d.rows.length-1;
+  }
+  const r=d.rows[ri],fee=tradeFeeNative(ccy,qty*price,true).total,fx=FX[ccy]||1;
+  const res=pfApplyBuy({qty:parseFloat(r[6])||0,avg:parseFloat(r[9])||0},qty,price);
+  r[9]=res.avg;r[6]=res.qty;
+  if(!(parseFloat(r[7])>0))r[7]=price;   // дать цену, пока не обновили живую
+  if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,(qty*price+fee)*fx))*100)/100;   // сумма + комиссия с кэша
+  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:key,tk,name:String(r[1]||tk),ccy,act:'buy',qty,price,plNative:null,feeNative:fee,date});
+  recalcPF(ri,key);scheduleSave();renderPF3();
+  toast('🟢 '+RT('Куплено','Bought')+` ${pf3Fmt(qty)} × ${pf3Fmt(price,2)} ${ccy} → ${TAB_LABEL(key)}`+(fee?` · ${RT('комиссия','fee')} ${pf3Fmt(fee,2)} ${ccy}`:''));
+}
 function pfTradeDel(id){
   const i=PF_TRADES.findIndex(t=>t.id===id);if(i<0)return;
   if(!confirm(RT('Удалить запись о сделке? (позиция и кэш НЕ изменятся)','Delete this trade record? (position & cash stay)')))return;

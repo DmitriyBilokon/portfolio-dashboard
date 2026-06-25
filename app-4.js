@@ -507,6 +507,19 @@ function pf3DetailHTML(){
       <div class="pf3-card" id="pf3PeCard">${pf3ValCard('pe')}</div>
       <div class="pf3-card" id="pf3PsCard">${pf3ValCard('ps')}</div>
     </section>
+    ${(can('action.add_position')&&tk&&pfBuyTargets().length)?`
+    <section class="pf3-panel">
+      <div class="pf3-panel-hd"><span>🛒 ${RT('Купить в портфель','Buy into portfolio')}</span><span class="pf3-asof">${RT('добавит позицию · обновит кэш · запишет сделку','adds position · updates cash · logs trade')}</span></div>
+      <form class="sim-form" onsubmit="event.preventDefault();return false">
+        <label>${RT('Портфель','Portfolio')} <select id="pfBuyPort" onchange="pfCardBuyPreview('${ccy}')">${pfBuyTargets().map(o=>`<option value="${o.key}"${(pf3MyPort(v3Key)?o.key===v3Key:o.key===PF3_KEY)?' selected':''}>${o.label}</option>`).join('')}</select></label>
+        <label>${RT('Кол-во','Qty')} <input id="pfBuyQty" type="number" step="any" min="0" placeholder="10" oninput="pfCardBuyPreview('${ccy}')"></label>
+        <label>${RT('Цена','Price')} (${ccy}) <input id="pfBuyPrice" type="number" step="any" min="0" value="${price>0?price:''}" oninput="pfCardBuyPreview('${ccy}')"></label>
+        <label>${RT('Сумма','Amount')} (${ccy}) <input id="pfBuyAmt" type="number" step="any" min="0" placeholder="${RT('или сумма','or amount')}" oninput="pfCardBuyPreview('${ccy}')"></label>
+        <label>${RT('Дата','Date')} <input id="pfBuyDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+        <button type="button" class="pf3-btn tr-buy" onclick="pfCardBuy()">🟢 ${RT('Купить','Buy')}</button>
+      </form>
+      <div id="pfBuyPreview" class="pf3-reco-note"></div>
+    </section>`:''}
     ${pf3RecoHTML(d,r)}
     ${cycleMonitorHTML(tk)}
     ${stockReportHTML(d,r)}

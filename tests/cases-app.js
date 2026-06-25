@@ -556,3 +556,22 @@ grp('fund betyg', function(){
   __ok('bank betyg fin-flag', bb.fin===true);
   __ok('bank P/S отброшен (val null)', pf3ValScore(bank,'NDA','Финансы и недвижимость',true)==null);
 });
+
+// 🛒 Покупка с карточки в портфель — чистая средняя (genomsnittsmetoden, без комиссии)
+grp('pfApplyBuy', function(){
+  // новая позиция с нуля: средняя = цена покупки
+  var a=pfApplyBuy({qty:0,avg:0}, 10, 100);
+  __eq('new pos qty', a.qty, 10);
+  __eq('new pos avg', a.avg, 100);
+  // докупка: средневзвешенная цена
+  var b=pfApplyBuy({qty:10,avg:100}, 10, 200);
+  __eq('add qty', b.qty, 20);
+  __eq('add avg (150)', b.avg, 150);
+  // докупка дробным: 5 @ 90 к 10 @ 120 → (1200+450)/15 = 110
+  var c=pfApplyBuy({qty:10,avg:120}, 5, 90);
+  __eq('add frac qty', c.qty, 15);
+  __eq('add frac avg (110)', c.avg, 110);
+  // строковые входы (из инпутов) не ломают
+  var e=pfApplyBuy({qty:'2',avg:'50'}, 2, 150);
+  __eq('string inputs avg (100)', e.avg, 100);
+});

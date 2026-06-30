@@ -158,3 +158,16 @@ grp('mergeAiPortSettings', function(){
   mergeAiPortSettings(ap2, { strategy: undefined }, AIPORT_RUN_SETTINGS);
   __eq('undefined не затирает', ap2.strategy, 'mine');
 });
+
+// 9) ⏱ pickCronTask — одна задача за тик крона (free=50 подзапросов/вызов)
+grp('pickCronTask', function(){
+  __eq('00 → цикл', pickCronTask(0), 'cycle');
+  __eq('10 → цикл', pickCronTask(10), 'cycle');
+  __eq('20 → PF3', pickCronTask(20), 'pf3');
+  __eq('30 → PF3', pickCronTask(30), 'pf3');
+  __eq('40 → Anna', pickCronTask(40), 'anna');
+  __eq('50 → Anna', pickCronTask(50), 'anna');
+  __eq('границы 19/39', pickCronTask(19), 'cycle');
+  __eq('граница 39', pickCronTask(39), 'pf3');
+  __eq('нормализация >59', pickCronTask(65), 'cycle');   // 65%60=5
+});

@@ -27,7 +27,7 @@
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
 //        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
 
-const WORKER_BUILD = '2026-06-25aiproto-bottom-turnaround';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-06-30subreq-split';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -260,6 +260,39 @@ async function yahoo(sym){
     }
     return {
       price, pct, vol, avgVol,
+      sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
+      support: lows.length ? round2(Math.min(...lows)) : null,
+      resistance: highs.length ? round2(Math.max(...highs)) : null,
+    };
+  }catch(e){ return null; }
+}
+
+// Облегчённая котировка: ТОЛЬКО yChart (1 подзапрос, без quoteSummary) — для
+// массовых путей (снапшоты портфелей, liveMarkets), где экономия подзапросов
+// важнее точного день%. Лимит Cloudflare free = 50 подзапросов на вызов воркера.
+// Тот же формат, что yahoo(); день% — из chart-фолбэка, объём — из chart-меты.
+async function yahooLite(sym){
+  try{
+    const res = await yChart(sym, '1d', '1y');
+    const m = res?.meta;
+    if(!m || typeof m.regularMarketPrice !== 'number') return null;
+    const q = res?.indicators?.quote?.[0] || {};
+    const rawC = q.close || [], ts = res.timestamp || [];
+    const closes = rawC.filter(v => typeof v === 'number' && v > 0);
+    const lows = (q.low || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
+    const highs = (q.high || []).filter(v => typeof v === 'number' && v > 0).slice(-SR_WINDOW);
+    const price = m.regularMarketPrice;
+    const todayUTC = new Date().toISOString().slice(0, 10);
+    let prev = null;
+    for(let i = rawC.length - 1; i >= 0; i--){
+      const c = rawC[i]; if(!(typeof c === 'number' && c > 0)) continue;
+      const dstr = ts[i] ? new Date(ts[i] * 1000).toISOString().slice(0, 10) : '';
+      if(dstr && dstr < todayUTC){ prev = c; break; }
+    }
+    if(prev == null) prev = closes.length >= 2 ? closes[closes.length - 2] : (m.chartPreviousClose || m.previousClose);
+    const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
+    return {
+      price, pct, vol: (typeof m.regularMarketVolume === 'number' ? m.regularMarketVolume : null), avgVol: null,
       sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
       support: lows.length ? round2(Math.min(...lows)) : null,
       resistance: highs.length ? round2(Math.max(...highs)) : null,
@@ -508,7 +541,7 @@ const AI_MARKETS = [
 async function liveMarkets(){
   const out = [];
   await Promise.all(AI_MARKETS.map(async ([sym, name]) => {
-    try{ const q = await yahoo(sym); if(q && typeof q.price === 'number') out.push({ name, price: round2(q.price), dayPct: typeof q.pct === 'number' ? round2(q.pct) : null }); }catch(e){}
+    try{ const q = await yahooLite(sym); if(q && typeof q.price === 'number') out.push({ name, price: round2(q.price), dayPct: typeof q.pct === 'number' ? round2(q.pct) : null }); }catch(e){}
   }));
   return out;
 }
@@ -1440,7 +1473,7 @@ async function aiPortfolioRun(env, force){
   const positions = ap.positions = Array.isArray(ap.positions) ? ap.positions : [];
   // Живые котировки позиций — для P&L, триггеров и исполнения продаж.
   const quotes = {};
-  await Promise.all(positions.map(async p => { quotes[p.ticker] = await yahoo(exSymbol(p.ticker, p.ccy)); }));
+  await Promise.all(positions.map(async p => { quotes[p.ticker] = await yahooLite(exSymbol(p.ticker, p.ccy)); }));
   const pView = positions.map(p => {
     const q = quotes[p.ticker];
     const price = (q && q.price > 0) ? q.price : (p.lastPrice || p.avgBuy);
@@ -1518,7 +1551,7 @@ async function aiPortfolioRun(env, force){
       if(!p){ skipped.push(`sell ${tk}: нет позиции`); continue; }
       if(!marketsOpen[String(p.ccy).toUpperCase()]){ skipped.push(`sell ${tk}: рынок ${p.ccy} закрыт`); continue; }
       // 🤖 автономия: вердикт скоринга — справочный, не блокирует сделку
-      const q = quotes[p.ticker] || await yahoo(exSymbol(p.ticker, p.ccy));
+      const q = quotes[p.ticker] || await yahooLite(exSymbol(p.ticker, p.ccy));
       if(!(q && q.price > 0)){ skipped.push(`sell ${tk}: нет котировки`); continue; }
       const sellQty = Math.min(qty, p.qty), f = fx[p.ccy] || 1;
       const gross = sellQty * q.price * f;
@@ -1535,7 +1568,7 @@ async function aiPortfolioRun(env, force){
       if(!ccy){ skipped.push(`buy ${tk}: вне вселенной`); continue; }
       if(!marketsOpen[String(ccy).toUpperCase()]){ skipped.push(`buy ${tk}: рынок ${ccy} закрыт`); continue; }
       // 🤖 автономия: вердикт скоринга — справочный, не блокирует сделку
-      const q = await yahoo(exSymbol(tk, ccy));
+      const q = await yahooLite(exSymbol(tk, ccy));
       if(!(q && q.price > 0)){ skipped.push(`buy ${tk}: нет котировки`); continue; }
       const f = fx[ccy] || 1;
       const gross = qty * q.price * f;
@@ -1692,7 +1725,7 @@ async function buildPortfolioSnapshot(env, key, snap){
   const quotes = {};
   await Promise.all(d.rows.map(async r => {
     const tk = String(r[2] || '').trim(); if(!tk) return;
-    quotes[tk] = await yahoo(exSymbol(tk, r[8] || 'USD')).catch(() => null);
+    quotes[tk] = await yahooLite(exSymbol(tk, r[8] || 'USD')).catch(() => null);
   }));
   const positions = [], recoVerdicts = {};
   let totalVal = 0;
@@ -1774,46 +1807,50 @@ async function portfolioAnalyze(env, key, snap){
   if(!parsed || !Array.isArray(parsed.actions)) throw new Error('Пустой/некорректный ответ анализа');
   return { summary: String(parsed.summary || ''), report: String(parsed.report || ''), actions: parsed.actions, cost: aiCost(j), at: new Date().toISOString() };
 }
-// Прогон авто-анализа по всем реальным портфелям. Гейт по pfAnalysisAt (cron —
-// не чаще раза в час); force=true (кнопка) считает сейчас. Пишет в data[key].analysis.
-async function runPortfolioAnalyses(env, force){
+// Анализ ОДНОГО реального портфеля (отдельный вызов воркера — экономим бюджет
+// подзапросов Cloudflare free=50). Гейт per-portfolio по data[key].pfAnalysisAt
+// (cron — не чаще раза в час); force=true (ручной запуск) считает сейчас.
+async function analyzeOnePortfolio(env, key, force){
   if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
   const row = await loadRow(env);
   const snap = row && row.snap;
-  if(!snap || !snap.data) return 'Нет данных портфелей';
+  if(!snap || !snap.data || !snap.data[key]) return `Нет данных портфеля ${key}`;
   const now = Date.now();
-  if(!force && snap.pfAnalysisAt && now - snap.pfAnalysisAt < PFANALYSIS_INTERVAL_MS){
-    return `Рано: авто-анализ портфелей через ${Math.ceil((snap.pfAnalysisAt + PFANALYSIS_INTERVAL_MS - now) / 60e3)} мин`;
+  const lastAt = snap.data[key].pfAnalysisAt || 0;
+  if(!force && lastAt && now - lastAt < PFANALYSIS_INTERVAL_MS){
+    return `Рано: анализ ${key} через ${Math.ceil((lastAt + PFANALYSIS_INTERVAL_MS - now) / 60e3)} мин`;
   }
-  const results = {};
-  for(const key of ANALYZE_PORTFOLIOS){
-    if(!snap.data[key]) continue;
-    try{ const a = await portfolioAnalyze(env, key, snap); if(a) results[key] = a; }
-    catch(e){ results[key] = { error: String((e && e.message) || e) }; }
+  let a = null;
+  try{ a = await portfolioAnalyze(env, key, snap); }
+  catch(e){
+    const msg = String((e && e.message) || e);
+    try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(msg)}`); }catch(_){}
+    return `Анализ ${key}: ошибка — ${msg}`;
   }
-  if(!Object.keys(results).length) return 'Портфели для анализа не найдены';
+  if(!a) return `Анализ ${key}: пусто`;
   // Перечитываем свежую строку и пишем анализ, не затирая параллельные изменения.
   const fresh = await loadRow(env);
-  if(fresh && fresh.snap && fresh.snap.data){
-    for(const [key, a] of Object.entries(results)){
-      if(a.error || !fresh.snap.data[key]) continue;
-      const d = fresh.snap.data[key];
-      const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
-      d.analysis = entry;
-      d.analysisHistory = [entry, ...(d.analysisHistory || [])].slice(0, 5);
-    }
-    fresh.snap.pfAnalysisAt = now;
+  if(fresh && fresh.snap && fresh.snap.data && fresh.snap.data[key]){
+    const d = fresh.snap.data[key];
+    const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
+    d.analysis = entry;
+    d.analysisHistory = [entry, ...(d.analysisHistory || [])].slice(0, 5);
+    d.pfAnalysisAt = now;   // per-portfolio гейт — чтобы анализы разных портфелей не блокировали друг друга
     await writeRow(env, fresh.userId, fresh.snap);
   }
-  // Telegram-сводка по каждому портфелю.
-  for(const [key, a] of Object.entries(results)){
-    if(a.error){ try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(a.error)}`); }catch(e){} continue; }
-    const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
-      .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
-    try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
-  }
-  const parts = Object.entries(results).map(([k, a]) => `${k}: ${a.error ? 'ошибка' : (a.actions || []).length + ' реком.'}`);
-  return 'Авто-анализ портфелей: ' + parts.join(' · ');
+  const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
+    .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
+  try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
+  return `Анализ ${key}: ${(a.actions || []).length} реком.`;
+}
+// Выбор задачи cron по минуте — одна задача за тик (отдельный вызов = свой бюджет
+// подзапросов). 0–19 → цикл AI-портфеля, 20–39 → анализ PF3, 40–59 → анализ Anna.
+// Чистая функция (покрыта тестом). Гейты внутри задач ограничивают частоту ~раз/час.
+function pickCronTask(minute){
+  const m = ((Number(minute) % 60) + 60) % 60;
+  if(m < 20) return 'cycle';
+  if(m < 40) return 'pf3';
+  return 'anna';
 }
 
 // ── 🕵 Инсайдерские сделки (Finnhub): сбор, агрегация, кластерные покупки ───
@@ -2629,14 +2666,15 @@ async function updateTargets(env){
 // AI-портфеля (🤖 покупка/продажа) и авто-анализ реальных портфелей (📈).
 // Состояние акций смотрим на сайте, не в Telegram.
 export default {
-  // Cron — только действия AI-портфеля + авто-анализ реальных портфелей.
-  // Точечные алерты по уровням акций убраны (спам о состоянии акций).
-  // Цикл AI-портфеля и авто-анализ — ПОСЛЕДОВАТЕЛЬНО: оба делают
-  // read-modify-write ledger_state.data, параллельно затёрли бы.
+  // Cron — ОДНА задача за тик (отдельный вызов воркера = свой бюджет подзапросов,
+  // free=50). Распределение по минуте: цикл AI-портфеля / анализ PF3 / анализ Anna.
+  // Гейты внутри задач (intervalMin / pfAnalysisAt) ограничивают реальную частоту ~раз/час.
   async scheduled(event, env, ctx){
     ctx.waitUntil((async () => {
-      await aiPortfolioRun(env, false).catch(() => {});       // гейт intervalMin внутри
-      await runPortfolioAnalyses(env, false).catch(() => {}); // гейт pfAnalysisAt внутри
+      const slot = pickCronTask(new Date().getUTCMinutes());
+      if(slot === 'cycle') await aiPortfolioRun(env, false).catch(() => {});
+      else if(slot === 'pf3') await analyzeOnePortfolio(env, ANALYZE_PORTFOLIOS[0], false).catch(() => {});
+      else await analyzeOnePortfolio(env, ANALYZE_PORTFOLIOS[1], false).catch(() => {});
     })());
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
@@ -2834,18 +2872,27 @@ export default {
     }
     if(url.searchParams.get('action') === 'aiport'){
       // Принудительный цикл AI-портфеля (кнопка «▶» на вкладке 🤖, только админ).
-      // + авто-анализ реальных портфелей (Dima/Anna) → data[key].analysis.
-      // Последовательно: оба пишут ledger_state.data.
+      // ТОЛЬКО цикл: на free-плане Cloudflare (50 подзапросов/вызов) цикл + анализы
+      // в одном вызове превышают лимит. Анализы реальных портфелей идут на cron
+      // (по одному за тик) либо вручную через ?action=pfanalyze&key=<вкладка>.
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      // streamJson: цикл + 2 анализа Opus могут занять >100с — синхронный ответ
-      // упёрся бы в таймаут Cloudflare (524), и запись анализа не успевала бы.
-      // Сбой одного шага не должен ронять другой — оба независимы.
       return streamJson(async () => {
-        let cycle = '', analysis = '';
+        let cycle = '';
         try{ cycle = await aiPortfolioRun(env, true); }catch(e){ cycle = 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e); }
-        try{ analysis = await runPortfolioAnalyses(env, true); }catch(e){ analysis = 'анализ портфелей: ошибка — ' + String((e && e.message) || e); }
-        return { result: cycle + '\n' + analysis };
+        return { result: cycle };
+      });
+    }
+    if(url.searchParams.get('action') === 'pfanalyze'){
+      // Ручной анализ ОДНОГО реального портфеля (отдельный вызов = свой бюджет
+      // подзапросов). ?key=<вкладка>; по умолчанию — портфель Dima (PF3).
+      if(!env.ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY не задан' }, 500);
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      const key = url.searchParams.get('key') || ANALYZE_PORTFOLIOS[0];
+      return streamJson(async () => {
+        try{ return { result: await analyzeOnePortfolio(env, key, true) }; }
+        catch(e){ return { error: String((e && e.message) || e) }; }
       });
     }
     if(url.searchParams.get('action') === 'aiportstate'){

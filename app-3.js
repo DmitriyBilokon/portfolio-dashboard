@@ -1,7 +1,7 @@
 // ── 🤖 AI Портфель: отображение виртуального счёта (торгует worker) ─────────
 // Позиции материализуются в производную вкладку DATA[AIP_KEY] и идут через
 // штатный v3-конвейер (список/сектора/тип/состояние) — вид 1:1 как у портфеля.
-const AIP_FLAGS={USD:'🇺🇸',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰',EUR:'🇪🇺'};
+const AIP_FLAGS={USD:'🇺🇸',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰',EUR:'🇪🇺',GBP:'🇬🇧'};
 function aipFindSrcRow(tk){
   const U=String(tk).toUpperCase();
   for(const key of v3Tabs()){

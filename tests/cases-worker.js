@@ -430,6 +430,49 @@ grp('bookcheck', function(){
 grp('exSymbol worker', function(){
   __eq('ASML: USD — Nasdaq, иначе Амстердам (как на клиенте)', [exSymbol('ASML','USD'), exSymbol('ASML','EUR'), exSymbol('ASML')], ['ASML','ASML.AS','ASML.AS']);
   __eq('SEK с классом акции и простая подмена', [exSymbol('INVE B','SEK'), exSymbol('RHM','EUR')], ['INVE-B.ST','RHM.DE']);
+  __eq('GBP → Лондон .L, полный символ не трогаем', [exSymbol('ANTO','GBP'), exSymbol('anto','gbp'), exSymbol('ANTO.L','GBP')], ['ANTO.L','ANTO.L','ANTO.L']);
+  __eq('FX_DEFAULT знает GBP', FX_DEFAULT.GBP, 12.6);
+});
+
+// LSE: пенсы Yahoo (GBp) → фунты в точках входа yChart/yQuoteSummary (plans/lse-pence.md).
+grp('LSE pence', function(){
+  function ch(ccy){
+    return { meta: { currency: ccy, regularMarketPrice: 3771, chartPreviousClose: 3998, previousClose: 3998, regularMarketDayHigh: 3900, regularMarketDayLow: 3700, fiftyTwoWeekHigh: 4228, fiftyTwoWeekLow: 1700, regularMarketVolume: 1128885 },
+      timestamp: [1, 2, 3], indicators: { quote: [{ open: [3700, null, 3750], high: [3800, null, 3810], low: [3650, null, 3700], close: [3760, null, 3771], volume: [1000, null, 2000] }], adjclose: [{ adjclose: [3760, null, 3771] }] } };
+  }
+  var r = yChartNorm(ch('GBp')), m = r.meta, q = r.indicators.quote[0];
+  __eq('chart: цены меты /100', [m.regularMarketPrice, m.chartPreviousClose, m.previousClose, m.regularMarketDayHigh, m.regularMarketDayLow, m.fiftyTwoWeekHigh, m.fiftyTwoWeekLow], [37.71, 39.98, 39.98, 39, 37, 42.28, 17]);
+  __eq('chart: ряды OHLC /100, null остаётся', [q.open, q.high, q.low, q.close, r.indicators.adjclose[0].adjclose], [[37, null, 37.5], [38, null, 38.1], [36.5, null, 37], [37.6, null, 37.71], [37.6, null, 37.71]]);
+  __eq('chart: объём цел', [q.volume, m.regularMarketVolume], [[1000, null, 2000], 1128885]);
+  __eq('chart: валюта GBP + метка pence', [m.currency, m.pence], ['GBP', true]);
+  yChartNorm(r);
+  __eq('chart: идемпотентна', [r.meta.regularMarketPrice, r.indicators.quote[0].close[2]], [37.71, 37.71]);
+  __eq('chart: GBX тоже пенсы', yChartNorm(ch('GBX')).meta.regularMarketPrice, 37.71);
+  __eq('chart: USD и GBP не трогает', [yChartNorm(ch('USD')).meta.regularMarketPrice, yChartNorm(ch('GBP')).meta.regularMarketPrice, yChartNorm(ch('GBP')).meta.pence], [3771, 3771, undefined]);
+  __eq('chart: null/без меты — как есть', [yChartNorm(null), JSON.stringify(yChartNorm({}))], [null, '{}']);
+
+  function qs(){
+    return {
+      price: { currency: 'GBp', regularMarketPrice: { raw: 3771, fmt: '3,771.00' }, regularMarketChange: { raw: -227, fmt: '-227' }, regularMarketChangePercent: { raw: -0.0568 }, marketCap: { raw: 37176655872 }, preMarketPrice: {} },
+      summaryDetail: { currency: 'GBp', previousClose: { raw: 3998 }, fiftyDayAverage: { raw: 3798 }, bid: { raw: 3770 }, ask: { raw: 3772 }, trailingPE: { raw: 30.4 }, dividendRate: { raw: 0.58 }, dividendYield: { raw: 0.0145 } },
+      financialData: { currentPrice: { raw: 3771 }, targetMeanPrice: { raw: 3819, fmt: '3,819.08' }, targetHighPrice: { raw: 4500 }, targetLowPrice: { raw: 2800 }, targetMedianPrice: { raw: 3850 }, returnOnEquity: { raw: 0.1785 }, totalRevenue: { raw: 9299900416 }, financialCurrency: 'USD' },
+    };
+  }
+  var s = yQsNorm('ANTO.L', qs());
+  __eq('qs: price по белому списку, {raw,fmt} → {raw}', [s.price.regularMarketPrice, s.price.regularMarketChange], [{ raw: 37.71 }, { raw: -2.27 }]);
+  __eq('qs: проценты и капитализация не тронуты', [s.price.regularMarketChangePercent.raw, s.price.marketCap.raw], [-0.0568, 37176655872]);
+  __eq('qs: summaryDetail — цены /100, P/E и дивиденды нет', [s.summaryDetail.previousClose.raw, s.summaryDetail.fiftyDayAverage.raw, s.summaryDetail.bid.raw, s.summaryDetail.trailingPE.raw, s.summaryDetail.dividendRate.raw, s.summaryDetail.dividendYield.raw], [39.98, 37.98, 37.7, 30.4, 0.58, 0.0145]);
+  __eq('qs: таргеты /100, ROE и выручка нет', [s.financialData.targetMeanPrice.raw, s.financialData.targetHighPrice.raw, s.financialData.targetLowPrice.raw, s.financialData.targetMedianPrice.raw, s.financialData.currentPrice.raw, s.financialData.returnOnEquity.raw, s.financialData.totalRevenue.raw], [38.19, 45, 28, 38.5, 37.71, 0.1785, 9299900416]);
+  __eq('qs: пустой объект (нет пре-рынка) остаётся', s.price.preMarketPrice, {});
+  __eq('qs: валюта GBP, financialCurrency не тронут', [s.price.currency, s.summaryDetail.currency, s.financialData.financialCurrency], ['GBP', 'GBP', 'USD']);
+  yQsNorm('ANTO.L', s);
+  __eq('qs: идемпотентна', s.price.regularMarketPrice.raw, 37.71);
+  var usdL = qs(); usdL.price.currency = 'USD'; usdL.summaryDetail.currency = 'USD';
+  __eq('qs: валюта из ответа важнее суффикса (.L в USD)', yQsNorm('SGLN.L', usdL).financialData.targetMeanPrice.raw, 3819);
+  __eq('qs: .L без модуля с валютой → пенсы', yQsNorm('ANTO.L', { financialData: { targetMeanPrice: { raw: 3819 } } }).financialData.targetMeanPrice.raw, 38.19);
+  __eq('qs: не-.L без валюты → не трогать', yQsNorm('MU', { financialData: { targetMeanPrice: { raw: 150 } } }).financialData.targetMeanPrice.raw, 150);
+  __eq('qs: GBp у не-.L символа → по валюте', yQsNorm('X', { price: { currency: 'GBp', regularMarketPrice: { raw: 500 } } }).price.regularMarketPrice.raw, 5);
+  __eq('qs: null — как есть', yQsNorm('ANTO.L', null), null);
 });
 
 // Блок A (worker#4): надёжность AI-вызовов — чистые решения о повторе/усечении/разборе.

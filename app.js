@@ -580,7 +580,7 @@ const SMA_TF_COL='Период SMA';
 // Base currency is SEK; FX[ccy] = how many SEK per 1 unit of ccy.
 // Sources return "1 SEK = rates[ccy] ccy", so SEK-per-ccy = 1/rates[ccy].
 // Tried in order; on total failure we keep whatever rates are already loaded.
-const FX_CCYS=['USD','EUR','NOK','DKK'];
+const FX_CCYS=['USD','EUR','NOK','DKK','GBP'];
 async function fetchRatesSEK(){
   const sources=[
     // ECB official reference rates. Старый адрес api.frankfurter.app отвечает 301 без CORS — браузер его блокировал
@@ -1776,6 +1776,7 @@ function exSymbol(ticker, ccy){
     case 'NOK': return t + '.OL';
     case 'DKK': return t + '.CO';
     case 'EUR': return t + '.DE';
+    case 'GBP': return t + '.L';   // Лондон: воркер приводит пенсы Yahoo (GBp) к фунтам
     default:    return t;
   }
 }

@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10a-ai-retry';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10b-lse-pence';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -53,7 +53,7 @@ const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback o
 const ANALYZE_PORTFOLIOS = [PF3_KEY, 'Portfolio (Anna)'];
 const PFANALYSIS_INTERVAL_MS = 60 * 60e3;   // на cron — не чаще раза в час
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
-const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
+const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52, GBP:12.6 };   // GBP — как дефолт FX клиента
 // Как SYMBOL_OVERRIDES в app.js: строка или {валюта: символ, _: по умолчанию} — ASML с USD = Nasdaq, иначе Амстердам.
 const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':{ USD:'ASML', _:'ASML.AS' }, 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 
@@ -61,7 +61,7 @@ function exSymbol(ticker, ccy){
   const t = String(ticker || '').trim().toUpperCase().replace(/\s+/g, '-'), o = OVERRIDES[t];
   if(o) return typeof o === 'string' ? o : (o[String(ccy || '').toUpperCase()] || o._);
   if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
-  return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE' })[String(ccy||'').toUpperCase()] || t;
+  return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE', GBP:t+'.L' })[String(ccy||'').toUpperCase()] || t;
 }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const round2 = n => Math.round(n * 100) / 100;
@@ -323,6 +323,52 @@ async function memo(key, ttlMs, fn){
   _memoP.set(key, p);
   return p;
 }
+// ── Лондон (.L): Yahoo котирует в пенсах (currency 'GBp'/'GBX'), приложение и Avanza — в фунтах ──
+// Нормализуем в двух точках входа (yChart, yQuoteSummary) ДО кэша — все потребители
+// (котировки, SMA, уровни, история, таргеты, снапшоты AI, bookcheck) получают фунты без правок.
+// Чистые функции, покрыты тестом. ZAc/ILA (тоже «копеечные») не трогаем — таких бумаг нет.
+const PENCE_CCY = { GBp: 'GBP', GBX: 'GBP' };
+const PENCE_META = ['regularMarketPrice', 'chartPreviousClose', 'previousClose', 'regularMarketDayHigh', 'regularMarketDayLow', 'fiftyTwoWeekHigh', 'fiftyTwoWeekLow'];
+const penceDiv = v => (typeof v === 'number' && isFinite(v)) ? v / 100 : v;   // null/пропуски в рядах — как есть
+// chart.result[0]: цены меты + open/high/low/close + adjclose → /100; объём не трогаем.
+// Идемпотентна по meta.pence (повторный вызов на том же объекте ничего не делит).
+function yChartNorm(res){
+  const m = res && res.meta;
+  if(!m || m.pence || !PENCE_CCY[m.currency]) return res;
+  PENCE_META.forEach(k => { if(k in m) m[k] = penceDiv(m[k]); });
+  const q = res.indicators && res.indicators.quote && res.indicators.quote[0];
+  if(q) ['open', 'high', 'low', 'close'].forEach(k => { if(Array.isArray(q[k])) q[k] = q[k].map(penceDiv); });
+  const ac = res.indicators && res.indicators.adjclose && res.indicators.adjclose[0];
+  if(ac && Array.isArray(ac.adjclose)) ac.adjclose = ac.adjclose.map(penceDiv);
+  m.currency = PENCE_CCY[m.currency]; m.pence = true;
+  return res;
+}
+// quoteSummary: БЕЛЫЙ СПИСОК ценовых полей. Проценты, мультипликаторы, капитализация,
+// выручка/EPS (financialCurrency) и дивиденды (Yahoo отдаёт их для LSE уже в фунтах —
+// проверено вживую 2026-09-10: ANTO.L divRate 0.58 при цене 37.7) — не трогаем.
+const QS_PENCE = {
+  price: ['regularMarketPrice', 'regularMarketOpen', 'regularMarketDayHigh', 'regularMarketDayLow', 'regularMarketPreviousClose', 'regularMarketChange', 'preMarketPrice', 'preMarketChange', 'postMarketPrice', 'postMarketChange'],
+  summaryDetail: ['previousClose', 'open', 'dayLow', 'dayHigh', 'regularMarketPreviousClose', 'regularMarketOpen', 'regularMarketDayLow', 'regularMarketDayHigh', 'fiftyTwoWeekLow', 'fiftyTwoWeekHigh', 'fiftyDayAverage', 'twoHundredDayAverage', 'bid', 'ask'],
+  financialData: ['currentPrice', 'targetHighPrice', 'targetLowPrice', 'targetMeanPrice', 'targetMedianPrice'],
+};
+// Признак пенсов: валюта из ответа (price.currency / summaryDetail.currency); если модуля
+// с валютой нет (например, только financialData) — по суффиксу .L. Риск: часть .L-инструментов
+// (ETF) торгуется в USD/GBP — когда валюта есть в ответе, решает она; без неё такой ETF
+// поделился бы на 100 (таргетов у ETF, как правило, нет). Идемпотентна по _pence.
+function yQsNorm(sym, res){
+  if(!res || typeof res !== 'object' || res._pence) return res;
+  const cur = (res.price && res.price.currency) || (res.summaryDetail && res.summaryDetail.currency) || null;
+  if(!(cur ? PENCE_CCY[cur] : /\.L$/i.test(String(sym || '').trim()))) return res;
+  const d = v => (v && typeof v === 'object') ? (typeof v.raw === 'number' ? { raw: v.raw / 100 } : v) : penceDiv(v);   // {raw, fmt} → {raw/100}: fmt устарел
+  for(const mod in QS_PENCE){
+    const o = res[mod];
+    if(!o || typeof o !== 'object') continue;
+    QS_PENCE[mod].forEach(k => { if(k in o) o[k] = d(o[k]); });
+    if(PENCE_CCY[o.currency]) o.currency = PENCE_CCY[o.currency];
+  }
+  res._pence = true;
+  return res;
+}
 // TTL chart-ответов по умолчанию: дневные свечи несут живую цену (meta) — 20 с;
 // недельные (weeklySMA) меняются раз в неделю — 6 ч.
 const YCHART_TTL = { '1d': 20e3, '1wk': 6 * 3600e3, '1mo': 6 * 3600e3 };
@@ -339,7 +385,7 @@ async function yChart(sym, interval, range, ttlMs){
     try{
       const r = await fetch(url, { headers: YH_HEADERS });
       if(!r.ok) return null;
-      return (await r.json())?.chart?.result?.[0] || null;
+      return yChartNorm((await r.json())?.chart?.result?.[0] || null);   // пенсы LSE → фунты до кэша
     }catch(e){ return null; }
   });
 }
@@ -841,7 +887,7 @@ async function yQuoteSummary(sym, modules){
           { headers: { ...Y_UA, Cookie: a.cookie } });
         if(r.status === 401 || r.status === 403){ yAuthDrop(a); continue; }
         if(!r.ok) return null;
-        return (await r.json())?.quoteSummary?.result?.[0] || null;
+        return yQsNorm(sym, (await r.json())?.quoteSummary?.result?.[0] || null);   // пенсы LSE → фунты до кэша
       }catch(e){ return null; }
     }
     return null;

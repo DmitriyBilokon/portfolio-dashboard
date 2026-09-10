@@ -210,6 +210,41 @@ const decisions = d => JSON.stringify({ decisions: d, note: 'n' });
     eq('статусы задачи: running → done', w.jobs, ['running', 'done']);
   });
 
+  await grp('LSE: пенсы → фунты сквозь роуты', async () => {
+    // Yahoo для .L: chart с currency GBp, quoteSummary financialData без модуля валюты (решает суффикс).
+    const gbpChart = () => {
+      const j = chart(3771); const r0 = j.chart.result[0];
+      r0.meta.currency = 'GBp'; r0.meta.chartPreviousClose = 3998;
+      return j;
+    };
+    const yf = [];
+    ctx.__fetch = async (url) => {
+      url = String(url); yf.push(url);
+      if(url.includes('/v8/finance/chart/ANTO.L')) return new Response(JSON.stringify(gbpChart()), { status: 200 });
+      if(url.includes('/v8/finance/chart/')) return new Response(JSON.stringify(chart(100)), { status: 200 });
+      if(url.startsWith('https://fc.yahoo.com/')) return new Response('', { status: 200, headers: { 'set-cookie': 'A3=x; Path=/' } });
+      if(url.includes('/v1/test/getcrumb')) return new Response('crumb1', { status: 200 });
+      if(url.includes('/v10/finance/quoteSummary/ANTO.L')) return new Response(JSON.stringify({ quoteSummary: { result: [{
+        financialData: { targetMeanPrice: { raw: 3819, fmt: '3,819.00' }, numberOfAnalystOpinions: { raw: 21 }, returnOnEquity: { raw: 0.1785 } },
+        summaryDetail: { currency: 'GBp', trailingPE: { raw: 30.4 }, dividendYield: { raw: 0.0145 } },
+        price: { currency: 'GBp', regularMarketPrice: { raw: 3771 }, marketCap: { raw: 37176655872 } } }] } }), { status: 200 });
+      return httpErr(404);
+    };
+    const get = async q => JSON.parse(await (await W.mod.fetch(new Request('https://w.test/?' + q), ENV, { waitUntil: () => {} })).text());
+    const lite = (await get('symbols=ANTO.L,MU&lite=1'));
+    const a = lite['ANTO.L'];
+    eq('lite: цена в фунтах', a.price, 37.71);
+    ok('lite: SMA и уровни в фунтах (десятки, не тысячи)', [a.sma50, a.sma200, a.support, a.resistance].every(v => v > 20 && v < 50), JSON.stringify(a));
+    ok('lite: ATR в фунтах', a.atr > 0 && a.atr < 30, String(a.atr));
+    eq('lite: US-бумага как раньше', lite.MU.price, 100);
+    const h = await get('history=ANTO.L&range=1mo');
+    ok('history: закрытия в фунтах', h.c.length > 0 && h.c.every(v => v > 20 && v < 50), JSON.stringify(h.c.slice(-3)));
+    ok('history: объём не делится', h.v.every(v => v === 1e6));
+    const t = (await get('targets=ANTO.L'))['ANTO.L'];
+    eq('targets: таргет Yahoo в фунтах, P/E и капа — как есть', [t.avg, t.src, t.pe, t.cap], [38.19, 'yahoo', 30.4, 37176655872]);
+    ok('Yahoo дёрнут с символом .L', yf.some(u => u.includes('quoteSummary/ANTO.L')));
+  });
+
   const fail = res.filter(r => !r.p);
   let out = 'WORKER-ASYNC TESTS: ' + (res.length - fail.length) + '/' + res.length + ' passed' + (fail.length ? ' — ' + fail.length + ' FAILED' : '') + '\n';
   res.forEach(r => { out += (r.p ? '  ok    ' : '  FAIL  ') + r.n + (r.p ? '' : '  — ' + r.i) + '\n'; });

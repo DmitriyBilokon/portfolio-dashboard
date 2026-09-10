@@ -874,7 +874,12 @@ grp('signals core', function(){
   __eq('barsFromHist old {t,c}: o=h=l=c', [Bo[1].o,Bo[1].h,Bo[1].l,Bo[1].v], [6,6,6,0]);
   __eq('barsFromHist garbage → []', SIG.barsFromHist(null), []);
   __eq('snapshot < minBars → null', SIG.snapshot(sigFixBars('MU').slice(-SIG.CFG.minBars+1),{}), null);
-  __eq('thresholds (plan §10#5)', [SIG.CFG.rrMin,SIG.CFG.rrWeak,SIG.CFG.rrGood,SIG.CFG.nearPct,SIG.CFG.minStopAtr,SIG.CFG.maxStopAtr], [2,1.2,2,2,1,3]);
+  __eq('thresholds (plan §10#5 + калибровка §5)', [SIG.CFG.rrMin,SIG.CFG.rrWeak,SIG.CFG.rrGood,SIG.CFG.nearPct,SIG.CFG.minStopAtr,SIG.CFG.atrMult,SIG.CFG.targetAtr,SIG.CFG.wideAtr,SIG.CFG.corridorAtr,SIG.CFG.staleTgPct,'maxStopAtr' in SIG.CFG], [2,1.2,2,2,1,1.5,2,2,2.5,50,false]);
+  __ok('rules version for shadow log', /^\d{4}-\d{2}-\d{2}-c\d+$/.test(SIG.VER));
+  // Граница R/R: допуск 1e-9 — 2.0 − 1e-12 проходит порог, 1.99 нет.
+  __eq('rrOk boundary', [SIG.rrOk(2-1e-12,2),SIG.rrOk(2,2),SIG.rrOk(2-1e-6,2),SIG.rrOk(null,2)], [true,true,false,false]);
+  // Пробой ≠ откат: уровень у цены только из максимумов под ценой (минимумов над ценой) — пробой; с SMA/S* — нет.
+  __eq('isBreakout', [SIG.isBreakout({v:99.9,src:'R2+R20'},100),SIG.isBreakout({v:99.9,src:'H52w+R60'},100),SIG.isBreakout({v:99.9,src:'SMA50+R20'},100),SIG.isBreakout({v:99.9,src:'S20'},100),SIG.isBreakout({v:100.1,src:'S1+S20'},100),SIG.isBreakout({v:100.1,src:'R20'},100),SIG.isBreakout({v:99.9,src:'S1'},100),SIG.isBreakout(null,100)], [true,true,false,false,true,false,false,false]);
 });
 
 // phase() — порт pf3Criterion 1:1: те же входы строки → тот же ключ и rank (20 строк по всем веткам).
@@ -925,15 +930,35 @@ grp('tradePlan', function(){
   var S=SIG.tradePlan('short',lv,2,{riskKr:3000,fx:10});
   __eq('short mirrored: target sup, stop res + buffer', [S.target,S.stop,S.rr,S.qty], [98,104,0.5,75]);
   var M=SIG.tradePlan('long',{price:100,res:[],sup:[{v:99.5,src:'S20',kind:'swing'}]},2,{riskKr:1000,fx:1});
-  __eq('stop clamped to min 1·ATR + fallback target 1.5·ATR', [M.stop,M.target,M.rr], [98,103,1.5]);
+  __eq('stop clamped to min 1·ATR + fallback target 2·ATR (atr-target)', [M.stop,M.target,M.rr,M.targetSrc,M.flags], [98,104,2,'+2·ATR',['atr-target']]);
   __ok('min clamp noted in stopSrc', /мин\. 1·ATR/.test(M.stopSrc));
+  __eq('structural target → no atr-target', L.flags, []);
+  __eq('short fallback target −2·ATR', (function(x){return [x.target,x.targetSrc,x.flags];})(SIG.tradePlan('short',{price:100,res:[{v:100.5,src:'R20',kind:'swing'}],sup:[]},2,{})), [96,'−2·ATR',['atr-target']]);
   var W=SIG.tradePlan('long',{price:100,res:[],sup:[{v:95,src:'S60',kind:'sr'}]},2,{riskKr:1000,fx:1});
-  __eq('stop at 3·ATR cap → wide', [W.stop,W.flags], [94,['wide']]);
+  __eq('stop 3·ATR (no cap) → wide', [W.stop,W.flags], [94,['atr-target','wide']]);
+  __eq('wide: exactly 2·ATR — no, 2.05·ATR — yes', [SIG.tradePlan('long',{price:100,res:[{v:104,src:'R60',kind:'sr'}],sup:[{v:97,src:'S60',kind:'sr'}]},2,{}).flags,SIG.tradePlan('long',{price:100,res:[{v:104,src:'R60',kind:'sr'}],sup:[{v:96.9,src:'S60',kind:'sr'}]},2,{}).flags], [[],['wide']]);
   var H=SIG.tradePlan('long',lv,2,{riskKr:3000,fx:10,half:true});
   __eq('half risk halves qty', [H.qty,H.flags], [50,['half']]);
   var E=SIG.tradePlan('long',lv,2,{riskKr:3000,fx:10,entry:99});
   __eq('limit entry: mode + Δentry', [E.mode,Math.round(E.dEntry*100)/100], ['limit',-1]);
   __eq('no support in corridor → fallback stop 1.5·ATR', SIG.tradePlan('long',{price:100,res:[],sup:[{v:90,src:'S60',kind:'sr'}]},2,{}).stop, 97);
+});
+
+// sidePlan: граница R/R на плавающей точке и условный лимит строго по ту сторону цены.
+grp('sidePlan', function(){
+  // стоп 1·ATR (клэмп), цель 2·ATR: 2.6/1.3 даёт 1.9999999999999996 — у уровня это рынок, а не «лимит под 2.0».
+  var lvFP={price:10,res:[],sup:[{v:9.74,src:'S20',kind:'swing'}]},T=SIG.tradePlan('long',lvFP,1.3,{});
+  __ok('FP: R/R 2·ATR/1·ATR just below 2', T.rr<2 && T.rr>2-1e-9);
+  __eq('FP: at level → market, not limit', SIG.sidePlan('long',lvFP,1.3,true,{}).mode, 'market');
+  // Не у уровня: ближайший уровень у самой цены (пробитый максимум) пропускается — лимит выше рынка бессмыслен.
+  var lvB={price:100,res:[],sup:[{v:99.9,src:'R2+R20',kind:'swing'},{v:96,src:'SMA50',kind:'ma'}]};
+  var C=SIG.sidePlan('long',lvB,2,false,{});
+  __eq('conditional limit skips level at price', [C.mode,C.levelSrc,C.entry], ['limit','SMA50',96.5]);
+  __eq('short: conditional limit above price', (function(x){return [x.mode,x.levelSrc,x.entry];})(SIG.sidePlan('short',{price:100,res:[{v:103,src:'SMA50',kind:'ma'}],sup:[]},2,false,{})), ['limit','SMA50',102.5]);
+  __eq('no own level → market plan', SIG.sidePlan('long',{price:100,res:[],sup:[]},2,false,{}).mode, 'market');
+  // Лимит под R/R 2 на широком рыночном стопе: wide пересчитывается по риску от лимит-цены.
+  var lvW={price:100,res:[{v:105,src:'R60',kind:'sr'}],sup:[{v:96.9,src:'S60',kind:'sr'}]},mW=SIG.tradePlan('long',lvW,2,{}),pW=SIG.sidePlan('long',lvW,2,true,{});
+  __eq('limit under rrGood: wide by limit risk', [mW.flags,pW.mode,Math.round(pW.risk*100)/100,pW.flags], [['wide'],'limit',3.03,[]]);
 });
 
 // Эталонные снимки на реальных свечах (фикстура 260 баров, Yahoo 2026-09-09).
@@ -949,9 +974,14 @@ grp('snapshot MU/AZN/AAPL', function(){
   var apT=SIG.snapshot(sigFixBars('AAPL'),{upTg:-8});
   __eq('heat by target only (below +30% SMA200)', [apT.phase.key,apT.verdict,/перегрев: цена выше таргета аналитиков на 8% —/.test(apT.why[0])], ['heat','trim',true]);
   var az=SIG.snapshot(sigFixBars('AZN.ST'),{riskKr:5000,fx:1});
-  __eq('AZN: даунтренд → шорт-сторона, ждать', [az.phase.key,az.verdict,az.side,az.trendUp,az.score], ['down','wait','short',false,79]);
+  __eq('AZN: даунтренд → шорт-сторона, ждать', [az.phase.key,az.verdict,az.side,az.trendUp,az.score], ['down','wait','short',false,86]);
   __eq('AZN: short plan — условный лимит у R20+SMA50', [az.plan.mode,az.plan.levelSrc,az.plan.qty], ['limit','R20+SMA50',133]);
-  __approx('AZN short R/R (фолбэк цели 1.5·ATR на стопе 1·ATR)', az.plan.rr, 1.5, 1e-9);
+  __approx('AZN short R/R (цель-фолбэк 2·ATR на стопе 1·ATR)', az.plan.rr, 2, 1e-9);
+  __ok('AZN: atr-target flag + «≈» in why', az.flags.indexOf('atr-target')>=0 && /R\/R ≈2\.0/.test(az.why.join('\n')));
+  // Q7: цена выше таргета, но под SMA50 → не перегрев: фаза по тренду, таргет — причина.
+  var azT=SIG.snapshot(sigFixBars('AZN.ST'),{upTg:-10});
+  __eq('heat by target below SMA50 → trend phase', [azT.phase.key,azT.verdict], ['down','wait']);
+  __ok('target overshoot kept as reason', azT.why.some(function(w){return /выше таргета аналитиков на 10% — под SMA50 это не перегрев/.test(w);}));
   __ok('AZN: no-short без ручного флага', az.flags.indexOf('no-short')>=0);
   __ok('AZN: shortOk снимает предупреждение', SIG.snapshot(sigFixBars('AZN.ST'),{shortOk:true}).flags.indexOf('no-short')<0);
   __ok('AZN: stale-target флаг', SIG.snapshot(sigFixBars('AZN.ST'),{staleTarget:true}).flags.indexOf('stale-target')>=0);
@@ -964,14 +994,37 @@ grp('snapshot MU/AZN/AAPL', function(){
   var _rr=SIG.CFG.rrMin; SIG.CFG.rrMin=1.8;
   var ap2=SIG.snapshot(sigFixBars('AAPL'),{});
   __eq('rrMin 1.8 → buy по рынку', [ap2.verdict,ap2.plan.mode], ['buy','market']);
+  // Граница: rrMin чуть выше рыночного R/R (−1e-12) — «купить»; на 1e-6 выше — «ждать» с лимитом.
+  var r0=SIG.tradePlan('long',ap.levels,ap.atr,{}).rr;
+  SIG.CFG.rrMin=r0+1e-12;
+  __eq('R/R = rrMin − 1e-12 → buy', [SIG.snapshot(sigFixBars('AAPL'),{}).verdict], ['buy']);
+  SIG.CFG.rrMin=r0+1e-6;
+  __eq('R/R = rrMin − 1e-6 → wait (limit)', (function(x){return [x.verdict,x.plan.mode];})(SIG.snapshot(sigFixBars('AAPL'),{})), ['wait','limit']);
+  // Лимит под rrGood выше рынка (rrGood < R/R по рынку < rrMin) — честный текст, не «цель слишком близко».
+  var _g=SIG.CFG.rrGood; SIG.CFG.rrMin=2; SIG.CFG.rrGood=1.5;
+  var apN=SIG.snapshot(sigFixBars('AAPL'),{});
+  __eq('limit does not fit → wait market + reason', [apN.verdict,apN.plan.mode,apN.plan.noLimit,/лимит под R\/R 1\.5 не помещается/.test(apN.why[0]),/цель слишком близко/.test(apN.why[0])], ['wait','market',true,true,false]);
+  SIG.CFG.rrGood=_g; SIG.CFG.rrMin=1.8;
   // …а отчёт через 2 дня блокирует вход.
   var ap3=SIG.snapshot(sigFixBars('AAPL'),{earningsDays:2});
   __eq('earnings ≤3 дн → wait + флаг', [ap3.verdict,ap3.flags.indexOf('earnings')>=0], ['wait',true]);
   __eq('earnings через 10 дн не блокирует', SIG.snapshot(sigFixBars('AAPL'),{earningsDays:10}).verdict, 'buy');
   SIG.CFG.rrMin=_rr;
   __ok('markers are computed', mu.markers.length>0 && mu.markers[0].kind==='buy');
+  // Q8: недооценка над SMA200 без сетапа → держать с условным лимитом (как аптренд), не «нет сетапа».
+  var un=SIG.snapshot(sigFixBars('AAPL').slice(0,258),{upTg:30});
+  __eq('undr above SMA200, no setup → hold + limit', [un.phase.key,un.price>un.s200,un.setup,un.verdict,un.plan.mode,un.why[0]], ['undr',true,null,'hold','limit','недооценка без сетапа — лимит на откат']);
   var arr=[{verdict:'wait',plan:{rr:3},score:90},{verdict:'trim',plan:{rr:1},score:10},{verdict:'buy',plan:{rr:2.1},score:40},{verdict:'short',plan:{rr:2.5},score:30},{verdict:'hold',plan:{rr:null},score:99}];
   __eq('SIG.cmp: group → R/R → score', arr.slice().sort(SIG.cmp).map(function(x){return x.verdict;}), ['short','buy','trim','wait','hold']);
+});
+
+// Q5: нож по пробою — закрытие ниже 60-дн минимума по вчера (сегодняшний low в S60 не входит), день > −3 %.
+grp('knife by prior S60', function(){
+  function bars(lastC){var B=[];for(var i=0;i<219;i++){var c=200-0.3*i;B.push({d:'',o:c+0.1,h:c+0.5,l:c-0.5,c:c,v:1000});}B.push({d:'',o:134.6,h:134.8,l:lastC-0.2,c:lastC,v:1000});return B;}
+  var k=SIG.snapshot(bars(133.5),{});   // прошлый 60-дн минимум 134.1 → закрытие 133.5 ниже
+  __eq('close under prior 60-day low → knife', [k.phase.key,k.verdict,k.flags.indexOf('knife')>=0,k.day>-3], ['knife','wait',true,true]);
+  var n=SIG.snapshot(bars(134.5),{});   // проколол минимум внутри дня, закрылся выше
+  __eq('intraday pierce, close above → down', n.phase.key, 'down');
 });
 
 grp('signals shadow adapter', function(){
@@ -979,11 +1032,13 @@ grp('signals shadow adapter', function(){
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м'];
   var d={headers:h,rows:[]};
   var r=[1,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',0,1527.5,'SEK',0,-0.8,1614,1650,1717,1500,1600,1900,2600];
-  // stale-target: 1900 vs 2600 = 37% > 30%; shortOk по символу; отчёт через 3 дня
+  // stale-target (Q6): только если свежий таргет НИЖЕ основного > 50 % — 2600 выше 1900 → нет; shortOk по символу; отчёт через 3 дня
   pf3Cal={data:{'AZN.ST':{earnings:'2026-09-13'}},loaded:1,loading:false,failed:false};
   DESK={riskPct:1,riskCapPct:6,shortOk:{'AZN.ST':true}};
   var o=sigOpts(d,r,4000,Date.parse('2026-09-10T12:00:00Z'));
-  __eq('sigOpts: risk, fx SEK, stale, earnings, shortOk', [o.riskKr,o.fx,o.staleTarget,o.earningsDays,o.shortOk], [4000,1,true,3,true]);
+  __eq('sigOpts: risk, fx SEK, stale, earnings, shortOk', [o.riskKr,o.fx,o.staleTarget,o.earningsDays,o.shortOk], [4000,1,false,3,true]);
+  var rs=function(rec){var x=r.slice();x[17]=rec;return sigOpts(d,x,4000,Date.parse('2026-09-10T12:00:00Z')).staleTarget;};
+  __eq('stale-target: fresh below main > 50 % only', [rs(900),rs(1000),rs(1300),rs(3000)], [true,false,false,false]);
   __eq('sigEarnDays past → null', sigEarnDays('AZN.ST',Date.parse('2026-09-20T00:00:00Z')), null);
   __eq('no bars → null snapshot', (_histCache={},SIGNALS={},sigSnapRow(d,r,4000)), null);
   var F=SIG_FIX['AZN.ST'],j={t:F.map(function(b){return Date.parse(b[0]+'T00:00:00Z')/1000;}),o:F.map(function(b){return b[1];}),h:F.map(function(b){return b[2];}),l:F.map(function(b){return b[3];}),c:F.map(function(b){return b[4];}),v:F.map(function(b){return b[5];})};
@@ -993,30 +1048,35 @@ grp('signals shadow adapter', function(){
   var s=sigSnapRow(d,r,4000,now);
   __eq('adapter snapshot = SIG.snapshot on same bars', [s.verdict,s.side,s.phase.key], ['wait','short','down']);
   __ok('adapter strips heavy arrays, marks ohlc', s.ind===null && s.markers===null && s.ohlc===true);
-  __ok('flags from row: earnings + stale-target, no no-short', s.flags.indexOf('earnings')>=0 && s.flags.indexOf('stale-target')>=0 && s.flags.indexOf('no-short')<0);
+  __ok('flags from row: earnings, no stale-target, no no-short', s.flags.indexOf('earnings')>=0 && s.flags.indexOf('stale-target')<0 && s.flags.indexOf('no-short')<0);
   __ok('memo: same inputs → same object', sigSnapRow(d,r,4000,now)===s);
   _histCache['AZN.ST:2y'].t=2000;
   __ok('memo: fresh candles → recompute', sigSnapRow(d,r,4000,now)!==s);
   var e=SIG_SHADOW.days['2026-09-10']['AZN.ST'];
-  __eq('shadow log entry', [e.tk,e.n,e.sd,e.pn,e.po,e.m], ['AZN','wait','short','down',pf3Criterion(d,r).cls,'limit']);
+  __eq('shadow log entry', [e.tk,e.n,e.sd,e.pn,e.po,e.m,e.cv], ['AZN','wait','short','down',pf3Criterion(d,r).cls,'limit',SIG.VER]);
   __ok('shadow log keeps old verdicts', ['buy','wait','sell','avoid'].indexOf(e.o)>=0 && ['buy','wait','sell','avoid'].indexOf(e.oh)>=0);
   __eq('sigAgree coarse classes', [sigAgree('buy','buy'),sigAgree('sell','trim'),sigAgree('sell','short'),sigAgree('wait','hold'),sigAgree('avoid','wait'),sigAgree('avoid','buy'),sigAgree('buy','wait'),sigAgree(null,'wait')], [true,true,true,true,true,false,false,null]);
   __ok('sigSortVal orders like SIG.cmp', sigSortVal({verdict:'buy',plan:{rr:2.1},score:40})>sigSortVal({verdict:'trim',plan:{rr:5},score:99}) && sigSortVal({verdict:'trim',plan:{rr:1},score:0})>sigSortVal({verdict:'wait',plan:{rr:9},score:99}) && sigSortVal(null)<0);
   var pill=sigPillHTML({verdict:'buy',side:'long',why:['a "b"'],flags:[],plan:{rr:2.4,mode:'market',entry:10,stop:9,target:12.4,stopSrc:'S',targetSrc:'R',qty:5}},false,'sell');
   __ok('pill: glyph+word, ≠ on disagreement, escaped title', /▲/.test(pill) && /sig2-ne/.test(pill) && /&quot;b&quot;/.test(pill) && !/title="[^"]*"b"/.test(pill));
+  __ok('pill: «≈» before R/R for atr-target', /R\/R ≈2\.0/.test(sigPillHTML({verdict:'buy',side:'long',why:[],flags:['atr-target'],plan:{rr:2,mode:'market',entry:10,stop:9,target:12,stopSrc:'S',targetSrc:'+2·ATR',qty:5,flags:['atr-target']}},false,null)) && !/≈/.test(pill));
   __ok('pill: trim outside book = «Перегрев»', /Перегрев/.test(sigPillHTML({verdict:'trim',side:'long',why:[],flags:[],plan:null},false,null)));
   // Отчёт: 3 бумаги, 2 дня; одна расходится
   var L={v:1,days:{'2026-09-09':{'A':{tk:'A',o:'buy',n:'wait',sd:'long',pn:'up',po:'up',rr:1.5,m:'limit',f:[],st:false,ohlc:true,w:''}},
     '2026-09-10':{'A':{tk:'A',o:'buy',n:'buy',sd:'long',pn:'up',po:'up',rr:2.2,m:'market',f:[],st:true,ohlc:true,w:''},
       'B':{tk:'B',o:'buy',oh:'wait',n:'short',sd:'short',pn:'down',po:'corr',rr:2.1,m:'market',f:['no-short'],st:true,ohlc:true,w:'даунтренд'},
-      'C':{tk:'C',o:'wait',n:'hold',sd:'long',pn:'up',po:'up',rr:1.5,m:'limit',f:['wide'],st:false,ohlc:false,w:''}}}};
+      'C':{tk:'C',o:'wait',n:'hold',sd:'long',pn:'up',po:'up',rr:2,m:'limit',f:['wide','atr-target'],st:false,ohlc:false,w:''}}}};
   var md=sigShadowReport(L);
   __ok('report: header + counts', /2026-09-09 … 2026-09-10/.test(md) && /Бумаг: \*\*3\*\*, наблюдений: 4, дней: 2/.test(md));
   __ok('report: agreement 2/3 and phase 2/3', /\*\*67 %\*\* \(2\/3\)/.test(md) && /«Критерий»: \*\*67 %\*\*/.test(md));
   __ok('report: phase pair corr → down', /- corr → down: 1/.test(md));
   __ok('report: disagreement row for B', /\| B \| 2026-09-10 \| buy \| wait \| short \(шорт\) \| 2\.10 \|/.test(md));
   __ok('report: stability — A flipped in v2', /v2 1 · старый 0 из 3/.test(md));
-  __ok('report: fallback R/R 1.5 counted', /ровно 1\.5 \(обе цели\/стопа — фолбэк ATR\): 1/.test(md));
+  __ok('report: atr-target counted', /цель без уровня \(atr-target, R\/R ≈\): 1/.test(md));
+  __ok('report: rules versions (no cv = до калибровки)', /Версии правил v2 \(последний снимок\): до калибровки 3/.test(md));
+  // Смена вердикта из-за смены правил — не нестабильность.
+  var Lc=JSON.parse(JSON.stringify(L));Lc.days['2026-09-10'].A.cv='2026-09-10-c1';
+  __ok('report: flip across rule versions not counted', /v2 0 · старый 0 из 3/.test(sigShadowReport(Lc)));
   __ok('report: old-format bars counted', /Без OHLC \(старый формат воркера\): 1/.test(md));
   __ok('empty log → hint', /Журнал пуст/.test(sigShadowReport({v:1,days:{}})));
   var P={v:1,days:{'2026-08-01':{},'2026-09-01':{}}};

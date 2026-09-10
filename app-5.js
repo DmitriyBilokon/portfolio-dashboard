@@ -805,12 +805,12 @@ function sigRiskKr(tab){
   let k=0;try{k=bookRiskState(pf3MyPort(tab)?tab:PF3_KEY).riskKr;}catch(e){}
   return k>0?k:5000;
 }
-// Входы snapshot() из строки вкладки. stale-target — «Аналит. таргет» и свежий «Таргет 3м» расходятся
-// > CFG.staleTgPct (порог плана §4, строже TG_STALE_PCT=10 %, по которому pf3EffTarget берёт свежий).
+// Входы snapshot() из строки вкладки. stale-target — свежий «Таргет 3м» НИЖЕ «Аналит. таргета» более чем на
+// CFG.staleTgPct (калибровка Q6; строже TG_STALE_PCT=10 %, по которому pf3EffTarget берёт свежий).
 function sigOpts(d,r,riskKr,now){
   const ccy=String(r[8]||'USD').trim().toUpperCase(),sym=exSymbol(r[2],ccy),t=pf3EffTarget(d,r),so=(DESK&&DESK.shortOk)||{};
   return {riskKr:riskKr>0?riskKr:5000,fx:FX[ccy]||1,upTg:pf3EffUpside(d,r),
-    staleTarget:!!(t.main>0&&t.recent>0&&Math.abs(t.recent-t.main)/t.main*100>SIG.CFG.staleTgPct),
+    staleTarget:!!(t.main>0&&t.recent>0&&t.recent<t.main&&(t.main-t.recent)/t.main*100>SIG.CFG.staleTgPct),
     earningsDays:sigEarnDays(sym,now),shortOk:!!(so[sym]||so[posTk(r[2])])};
 }
 // Снимок v2 для строки или null (свечей ещё нет). Мемо по (время загрузки свечей + входы): повторные
@@ -877,11 +877,12 @@ function sigAgree(oldV,newV){
   return a===b||(a==='avoid'&&b!=='in');
 }
 // Пилюля вердикта v2: глиф + слово (не только цвет). trim вне книги — «Перегрев» (сокращать нечего).
+// «≈» перед R/R — цель расчётная (±2·ATR, флаг atr-target), структурного уровня в коридоре нет.
 function sigPillHTML(s,held,oldV){
   if(!s)return'<span class="pf3-sig pf3-sig-none">—</span>';
   const V={buy:['▲',RT('Купить','Buy')],short:['▼',RT('Шорт','Short')],trim:['◆',held?RT('Сократить','Trim'):RT('Перегрев','Overheated')],hold:['●',RT('Держать','Hold')],wait:['○',RT('Ждать','Wait')]}[s.verdict]||['○',s.verdict];
   const p=s.plan,f=x=>pf3Fmt(x,x>=500?0:2),agree=oldV?sigAgree(oldV,s.verdict):null;
-  const sub=p&&p.rr!=null?`R/R ${p.rr.toFixed(1)}${p.mode==='limit'?' · '+RT('лим.','lim.')+' '+f(p.entry):''}`:'';
+  const sub=p&&p.rr!=null?`R/R ${(p.flags||[]).includes('atr-target')?'≈':''}${p.rr.toFixed(1)}${p.mode==='limit'?' · '+RT('лим.','lim.')+' '+f(p.entry):''}`:'';
   const tip=[s.why.join('\n'),p?`${s.side==='short'?RT('Шорт','Short'):RT('Лонг','Long')}: ${RT('вход','entry')} ${f(p.entry)} · ${RT('стоп','stop')} ${f(p.stop)} (${p.stopSrc}) · ${RT('цель','target')} ${f(p.target)} (${p.targetSrc}) · ${p.qty} ${RT('шт','sh')}`:'',
     s.flags.length?RT('Флаги: ','Flags: ')+s.flags.join(', '):'',agree===false?RT('≠ расходится со старой «Рекомендацией»','≠ differs from the old «Recommendation»'):''].filter(Boolean).join('\n');
   return`<span class="sig2 sig2-${s.verdict}" title="${tip.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}"><b>${V[0]} ${V[1]}${agree===false?' <i class="sig2-ne">≠</i>':''}</b>${sub?`<small>${sub}</small>`:''}</span>`;
@@ -909,7 +910,7 @@ function sigShadowRecord(d,r,sym,s,now){
   try{po=pf3Criterion(d,r).cls;}catch(e){}
   const L=sigShadowLoad(),day=new Date(now||Date.now()).toISOString().slice(0,10),p=s.plan||{},agree=sigAgree(o,s.verdict);
   (L.days[day]=L.days[day]||{})[sym]={tk:posTk(r[2]),o,oh,po,n:s.verdict,sd:s.side,pn:s.phase.key,st:!!s.setup,
-    rr:p.rr!=null?Math.round(p.rr*100)/100:null,m:p.mode||null,f:s.flags.slice(),sc:s.score,px:s.price,bd:s.d||'',ohlc:s.ohlc!==false,
+    rr:p.rr!=null?Math.round(p.rr*100)/100:null,m:p.mode||null,f:s.flags.slice(),sc:s.score,px:s.price,bd:s.d||'',ohlc:s.ohlc!==false,cv:SIG.VER||'',
     w:agree===false||po!==s.phase.key?String(s.why[0]||'').slice(0,90):''};
   clearTimeout(_sigShadowT);_sigShadowT=setTimeout(sigShadowSave,1500);
 }
@@ -938,13 +939,16 @@ function sigShadowReport(L){
   const fl={};E.forEach(e=>(e.f||[]).forEach(f=>{fl[f]=(fl[f]||0)+1;}));
   const rrs=E.filter(e=>e.rr!=null);
   out.push('','## Пороги (для калибровки)','',
-    `- R/R плана: < ${SIG.CFG.rrWeak}: ${cnt(rrs,e=>e.rr<SIG.CFG.rrWeak)} · ${SIG.CFG.rrWeak}–${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrWeak&&e.rr<SIG.CFG.rrMin)} · ≥ ${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrMin)}; ровно 1.5 (обе цели/стопа — фолбэк ATR): ${cnt(rrs,e=>Math.abs(e.rr-1.5)<0.005)}`,
+    `- R/R плана: < ${SIG.CFG.rrWeak}: ${cnt(rrs,e=>e.rr<SIG.CFG.rrWeak)} · ${SIG.CFG.rrWeak}–${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrWeak&&e.rr<SIG.CFG.rrMin)} · ≥ ${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrMin)}; цель без уровня (atr-target, R/R ≈): ${cnt(E,e=>(e.f||[]).includes('atr-target'))}`,
     `- Режим входа: по рынку ${cnt(E,e=>e.m==='market')} · лимит ${cnt(E,e=>e.m==='limit')}; сетап «у уровня ≤ ${SIG.CFG.nearPct} %»: ${cnt(E,e=>e.st)}`,
     `- Вердикты v2: `+NV.map(v=>`${v} ${cnt(E,e=>e.n===v)}`).join(' · ')+`; сторона шорт: ${cnt(E,e=>e.sd==='short')}`,
     `- Флаги: `+(Object.keys(fl).length?Object.entries(fl).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${v}`).join(' · '):'нет'),
     `- Без OHLC (старый формат воркера): ${cnt(E,e=>!e.ohlc)}`);
-  const flips=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.n)).size>1).length,flipsO=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.o)).size>1).length;
-  out.push(`- Стабильность (бумаг со сменой вердикта за период): v2 ${flips} · старый ${flipsO} из ${Object.keys(hist).length}`);
+  // Смена вердикта из-за смены правил (калибровка) — не нестабильность: v2 сравнивается в пределах версии правил.
+  const cvs={};E.forEach(e=>{const k=e.cv||'до калибровки';cvs[k]=(cvs[k]||0)+1;});
+  const flips=Object.entries(hist).filter(([sym,h])=>new Set(h.filter(e=>(e.cv||'')===(last[sym].cv||'')).map(e=>e.n)).size>1).length,flipsO=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.o)).size>1).length;
+  out.push(`- Версии правил v2 (последний снимок): `+Object.entries(cvs).map(([k,v])=>`${k} ${v}`).join(' · '),
+    `- Стабильность (бумаг со сменой вердикта за период; v2 — в пределах версии правил): v2 ${flips} · старый ${flipsO} из ${Object.keys(hist).length}`);
   const diff=E.filter(e=>sigAgree(e.o,e.n)===false).sort((a,b)=>(NV.indexOf(a.n)-NV.indexOf(b.n))||String(a.tk).localeCompare(String(b.tk)));
   out.push('','## Расхождения вердикта (последний снимок)','');
   if(!diff.length)out.push('Нет.');

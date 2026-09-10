@@ -2,14 +2,29 @@
 // Чистые функции: без DOM и глобалов приложения; вход — дневные свечи [{d,o,h,l,c,v}] по возрастанию даты.
 // Порт порогов старых движков: pf3SignalInfo (≤2 % к уровню), pf3Criterion (фазы → phase, паритет в тестах),
 // scenarioShort (коридор 2.5·ATR, фолбэк 1.5·ATR), indexLevels воркера (пивоты + свинги, схлопывание 0.3 %),
-// SR_WINDOW=60. Новое: ATR по True Range (Wilder 14), стоп за структурным уровнем с клэмпом [1, 3]·ATR,
+// SR_WINDOW=60. Новое: ATR по True Range (Wilder 14), стоп за структурным уровнем (мин. 1·ATR),
 // вход у уровня (лимит) и лимит-цена под R/R = rrGood, размер от риска в kr («½ риска» при
-// неподтверждённом тренде), зеркальный шорт, флаги wide/half/squeeze/knife/stale-target/earnings/no-short.
+// неподтверждённом тренде), зеркальный шорт, флаги wide/half/squeeze/knife/stale-target/earnings/no-short/atr-target.
 // S4 — теневой режим: UI старых движков не меняется, вердикт v2 показывается рядом (колонка «Вердикт v2»).
+// Калибровка 2026-09-10 (plans/signals-calibration.md §5, VER): цель-фолбэк 2·ATR, wide > 2·ATR, нож по
+// вчерашнему S60, перегрев по таргету только над SMA50, недооценка над SMA200 → hold, пробой ≠ откат.
 // Грузится до app.js; глобал SIG (в node — module.exports).
 (function (root) {
-  const CFG = { corridorAtr: 2.5, atrMult: 1.5, stopBufAtr: 0.5, minTargetAtr: 1.0, minStopAtr: 1.0, maxStopAtr: 3.0, limitOffAtr: 0.25, rrMin: 2.0, rrWeak: 1.2, rrGood: 2.0, nearPct: 2, clusterPct: 0.3, srWindow: 60, swingWindow: 20, rsiHot: 70, rsiCold: 30, squeezeDay: 4, squeezeVol: 2, staleTgPct: 30, earnDays: 3, minBars: 60 };
+  // atrMult — стоп-фолбэк без уровня; targetAtr — цель-фолбэк без уровня (флаг atr-target); wideAtr — порог
+  // флага wide (подсказка «½ риска», не блокер). Потолка стопа нет: коридор + буфер дают максимум 3·ATR.
+  const CFG = { corridorAtr: 2.5, atrMult: 1.5, targetAtr: 2.0, stopBufAtr: 0.5, minTargetAtr: 1.0, minStopAtr: 1.0, wideAtr: 2.0, limitOffAtr: 0.25, rrMin: 2.0, rrWeak: 1.2, rrGood: 2.0, nearPct: 2, clusterPct: 0.3, srWindow: 60, swingWindow: 20, rsiHot: 70, rsiCold: 30, squeezeDay: 4, squeezeVol: 2, staleTgPct: 50, earnDays: 3, minBars: 60 };
+  const VER = '2026-09-10-c1';   // версия правил — пишется в журнал тени, чтобы отделять наблюдения до/после калибровки
   const struct = x => x.kind !== 'pivot';
+  // R/R ≥ порога с допуском на плавающую точку: цель и стоп, кратные ATR, дают то 2.0, то 1.9999999.
+  const EPS = 1e-9, rrOk = (rr, thr) => rr != null && rr >= thr - EPS;
+  // Пробой, а не откат/отбой: уровень у цены собран только из экстремумов «чужой» стороны — максимумы
+  // (R60/R20/H52w) под ценой = цена у свежего максимума; минимумы (S60/S20/L52w) над ценой = у свежего минимума.
+  const HIGHS = ['R60', 'R20', 'H52w'], LOWS = ['S60', 'S20', 'L52w'], PIVOTS = ['P', 'R1', 'S1', 'R2', 'S2'];
+  function isBreakout(x, price) {
+    if (!x) return false;
+    const parts = x.src.split('+').filter(p => !PIVOTS.includes(p)), foreign = x.v <= price ? HIGHS : LOWS;
+    return parts.length > 0 && parts.every(p => foreign.includes(p));
+  }
 
   function sma(cl, n) { const o = new Array(cl.length).fill(null); let s = 0; for (let i = 0; i < cl.length; i++) { s += cl[i]; if (i >= n) s -= cl[i - n]; if (i >= n - 1) o[i] = s / n; } return o; }
   function atrWilder(bars, n = 14) {
@@ -79,23 +94,22 @@
   function limitForRR(target, stop, rr) { return (target + rr * stop) / (1 + rr); }
   // План сделки. side: 'long' | 'short'. opts: riskKr — риск в kr, fx — курс валюты бумаги к SEK,
   // entry — лимит-цена (иначе по рынку), half — «½ риска». Стоп: ближайший структурный уровень за входом
-  // с буфером 0.5·ATR, клэмп дистанции [1, 3]·ATR (wide при 3); цель: ближайший структурный уровень ≥ 1·ATR
-  // в коридоре 2.5·ATR (иначе ±1.5·ATR). Размер = floor(riskKr / (риск на акцию × fx)) — как qtyByRisk.
+  // в коридоре 2.5·ATR с буфером 0.5·ATR (иначе ∓1.5·ATR), дистанция не меньше 1·ATR (wide при > 2·ATR);
+  // цель: ближайший структурный уровень ≥ 1·ATR в коридоре 2.5·ATR (иначе ±2·ATR, флаг atr-target).
+  // Размер = floor(riskKr / (риск на акцию × fx)) — как qtyByRisk.
   function tradePlan(side, lv, atr, opts) {
     const o = Object.assign({ riskKr: 5000, fx: 1, entry: null, half: false }, opts || {}), corr = CFG.corridorAtr * atr;
-    const entry = o.entry > 0 ? o.entry : lv.price, minT = CFG.minTargetAtr * atr, minS = CFG.minStopAtr * atr, maxS = CFG.maxStopAtr * atr;
+    const entry = o.entry > 0 ? o.entry : lv.price, minT = CFG.minTargetAtr * atr, minS = CFG.minStopAtr * atr;
     const sgn = side === 'long' ? 1 : -1, flags = [];
     let target, stop, targetSrc, stopSrc;
     const tCands = (side === 'long' ? lv.res : lv.sup).filter(struct).filter(x => sgn * (x.v - entry) >= minT && sgn * (x.v - entry) <= corr);
-    const t = tCands[0]; target = t ? t.v : entry + sgn * CFG.atrMult * atr; targetSrc = t ? t.src : `${sgn > 0 ? '+' : '−'}${CFG.atrMult}·ATR`;
+    const t = tCands[0]; target = t ? t.v : entry + sgn * CFG.targetAtr * atr; targetSrc = t ? t.src : `${sgn > 0 ? '+' : '−'}${CFG.targetAtr}·ATR`;
+    if (!t) flags.push('atr-target');
     const sCands = (side === 'long' ? lv.sup : lv.res).filter(struct).filter(x => sgn * (entry - x.v) > 0 && sgn * (entry - x.v) <= corr);
     const s = sCands[0]; stop = s ? s.v - sgn * CFG.stopBufAtr * atr : entry - sgn * CFG.atrMult * atr; stopSrc = s ? `${s.src} ${sgn > 0 ? '−' : '+'} ${CFG.stopBufAtr}·ATR` : `${sgn > 0 ? '−' : '+'}${CFG.atrMult}·ATR`;
     let dist = sgn * (entry - stop);
     if (dist < minS) { stop = entry - sgn * minS; stopSrc += ` → мин. ${CFG.minStopAtr}·ATR`; dist = minS; }
-    if (dist > maxS) { stop = entry - sgn * maxS; stopSrc += ` → макс. ${CFG.maxStopAtr}·ATR`; dist = maxS; }
-    // wide — стоп упёрся в потолок 3·ATR. Коридор 2.5·ATR + буфер 0.5·ATR дают ровно 3·ATR, поэтому
-    // строгое «> maxS» прототипа не срабатывало никогда; сравнение с допуском на плавающую точку.
-    if (dist >= maxS * (1 - 1e-9)) flags.push('wide');
+    if (dist > CFG.wideAtr * atr * (1 + EPS)) flags.push('wide');
     const reward = sgn * (target - entry), risk = dist, rr = risk > 0 ? reward / risk : null;
     const perShareKr = risk * o.fx; let qty = perShareKr > 0 ? Math.floor(o.riskKr / perShareKr) : 0;
     if (o.half) { qty = Math.floor(qty / 2); flags.push('half'); }
@@ -106,9 +120,31 @@
     let best = null; lv.all.filter(struct).forEach(x => { const dist = (lv.price - x.v) / x.v * 100; if (!best || Math.abs(dist) < Math.abs(best.dist)) best = { ...x, dist }; });
     return best && Math.abs(best.dist) <= CFG.nearPct ? best : null;
   }
+  // План на сторону для snapshot. atLevel — цена у своего уровня (не пробой): по рынку, если R/R ≥ rrMin;
+  // при rrWeak ≤ R/R < rrMin — лимит-цена под R/R rrGood на стопе и цели рыночного плана (noLimit, если она
+  // не помещается между стопом и ценой). Иначе — условный лимит у ближайшего своего уровня, строго по ту
+  // сторону цены (уровень у самой цены, напр. пробитый максимум, пропускается — лимит выше рынка бессмыслен).
+  function sidePlan(side, lv, atr, atLevel, opts) {
+    const base = Object.assign({ riskKr: 5000, fx: 1, half: false }, opts || {}), sgn = side === 'long' ? 1 : -1;
+    const mkt = tradePlan(side, lv, atr, base);
+    if (atLevel) {
+      if (rrOk(mkt.rr, CFG.rrMin)) return mkt;
+      if (rrOk(mkt.rr, CFG.rrWeak)) {
+        // Лимит-цена под R/R = rrGood на СТОПЕ и ЦЕЛИ рыночного плана (R/R гарантирован по построению).
+        const e = limitForRR(mkt.target, mkt.stop, CFG.rrGood), ok = sgn * (lv.price - e) > 0 && sgn * (e - mkt.stop) > 0;
+        if (!ok) return Object.assign({}, mkt, { noLimit: true });
+        const risk = sgn * (e - mkt.stop), reward = sgn * (mkt.target - e), per = risk * base.fx; let qty = per > 0 ? Math.floor(base.riskKr / per) : 0; if (base.half) qty = Math.floor(qty / 2);
+        return { ...mkt, entry: e, mode: 'limit', dEntry: (e / lv.price - 1) * 100, risk, reward, rr: reward / risk, riskPct: risk / e * 100, rewardPct: reward / e * 100, qty, notionalKr: qty * e * base.fx, riskKr: qty * risk * base.fx, levelSrc: 'лимит под R/R ' + CFG.rrGood, flags: mkt.flags.filter(f => f !== 'wide').concat(risk > CFG.wideAtr * atr * (1 + EPS) ? ['wide'] : []) };
+      }
+      return mkt;
+    }
+    const off = CFG.limitOffAtr * atr, L = (side === 'long' ? lv.sup : lv.res).filter(struct).find(x => sgn * (lv.price - (x.v + sgn * off)) > 0);
+    if (!L) return mkt;
+    const p = tradePlan(side, lv, atr, { ...base, entry: L.v + sgn * off }); p.levelSrc = L.src; return p;
+  }
   // Ретро-маркеры сигналов по истории (слой «маркеры» на графике и бэктест правил).
   // ⚠ Правила маркеров (пересечения SMA50 / отскок от S60) пока НЕ совпадают с условиями вердикта —
-  // калибровка после теневого режима (plans/signals-calibration.md).
+  // решение Q4 (plans/signals-calibration.md §5): переписать как реплей snapshot по барам в S5.
   function markers(bars, ind) {
     const M = []; let pos = 0, lastIdx = -99;
     for (let i = 201; i < bars.length; i++) {
@@ -150,37 +186,25 @@
     const o = Object.assign({ riskKr: 5000, fx: 1, upTg: null, staleTarget: false, earningsDays: null, shortOk: false }, opts || {});
     const ind = indicators(bars), i = bars.length - 1, b = bars[i], pb = bars[i - 1];
     const lv = levelsAt(bars, i, ind), atr = ind.atr[i], day = (b.c / pb.c - 1) * 100;
-    const s60 = lv.sup.find(x => x.src.split('+').includes('S60'));
-    const ph = phase(b.c, day, ind.s50[i], ind.s100[i], ind.s200[i], s60 ? s60.v : 0, o.upTg);
-    const near = nearLevel(lv), nearSup = !!(near && near.v <= lv.price), nearRes = !!(near && near.v > lv.price);
+    // Нож по пробою: S60 по барам до вчера включительно — сегодняшний low ≤ close, с ним пробоя не бывает (Q5).
+    const s60prev = i >= CFG.srWindow ? Math.min(...bars.slice(i - CFG.srWindow, i).map(x => x.l)) : 0;
+    let ph = phase(b.c, day, ind.s50[i], ind.s100[i], ind.s200[i], s60prev, o.upTg);
+    // Перегрев по таргету — только над SMA50 (Q7); ниже — фаза по тренду, таргет — причина. Перегрев по
+    // SMA200 требует цены над всеми SMA, поэтому здесь heat может быть только таргетным.
+    const tgOver = ph.key === 'heat' && !(b.c > ind.s50[i]);
+    if (tgOver) ph = phase(b.c, day, ind.s50[i], ind.s100[i], ind.s200[i], s60prev, null);
+    const near = nearLevel(lv), nearSup = !!(near && near.v <= lv.price), nearRes = !!(near && near.v > lv.price), brk = isBreakout(near, lv.price);
     const trendUp = ind.s50[i] > ind.s200[i], rsiNow = ind.rsi[i], vol = b.v, avgVol = bars.slice(-20).reduce((s, x) => s + x.v, 0) / 20, volX = avgVol ? vol / avgVol : null;
-    const rr = x => x != null ? x.toFixed(1) : '—', fst = arr => arr.filter(struct)[0];
-    // План на сторону: по рынку у уровня, лимит-цена под R/R rrGood, иначе условный лимит у ближайшего уровня.
-    function planFor(sideX, half) {
-      const base = { riskKr: o.riskKr, fx: o.fx, half };
-      const mkt = tradePlan(sideX, lv, atr, base), atLevel = sideX === 'long' ? nearSup : nearRes;
-      if (atLevel) {
-        if (mkt.rr != null && mkt.rr >= CFG.rrMin) return mkt;
-        if (mkt.rr != null && mkt.rr >= CFG.rrWeak) {
-          // Лимит-цена под R/R = rrGood на СТОПЕ и ЦЕЛИ рыночного плана (R/R гарантирован по построению).
-          const e = limitForRR(mkt.target, mkt.stop, CFG.rrGood), sgn = sideX === 'long' ? 1 : -1, ok = sideX === 'long' ? (e < lv.price && e > mkt.stop) : (e > lv.price && e < mkt.stop);
-          if (ok) {
-            const risk = sgn * (e - mkt.stop), reward = sgn * (mkt.target - e), per = risk * base.fx; let qty = per > 0 ? Math.floor(base.riskKr / per) : 0; if (half) qty = Math.floor(qty / 2);
-            return { ...mkt, entry: e, mode: 'limit', dEntry: (e / lv.price - 1) * 100, risk, reward, rr: reward / risk, riskPct: risk / e * 100, rewardPct: reward / e * 100, qty, notionalKr: qty * e * base.fx, riskKr: qty * risk * base.fx, levelSrc: 'лимит под R/R ' + CFG.rrGood, flags: mkt.flags.slice() };
-          }
-        }
-        return mkt;
-      }
-      const L = fst(sideX === 'long' ? lv.sup : lv.res); if (!L) return mkt;
-      const e = L.v + (sideX === 'long' ? 1 : -1) * CFG.limitOffAtr * atr;
-      const p = tradePlan(sideX, lv, atr, { ...base, entry: e }); p.levelSrc = L.src; return p;
-    }
+    const rr = x => x != null ? x.toFixed(1) : '—', rrP = p => (p.flags.includes('atr-target') ? '≈' : '') + rr(p.rr);
     let side = 'long', verdict = 'wait', setup = null;
     const why = [], flags = [];
+    // Держать без сетапа: аптренд, импульс и недооценка над SMA200 (Q8) — с условным лимитом на откат.
+    const holdPh = ph.key === 'up' || ph.key === 'imp' || (ph.key === 'undr' && lv.price > ind.s200[i]);
     if (ph.key === 'knife') { verdict = 'wait'; why.push('падающий нож — ждать стабилизации у поддержки'); flags.push('knife'); }
     else if (ph.key === 'down' && !trendUp) {
       side = 'short';
-      if (nearRes) { setup = 'отбой от сопротивления'; why.push(`даунтренд, цена под сопротивлением ${near.src} (${near.dist.toFixed(1)}%)`); }
+      if (nearRes && !brk) { setup = 'отбой от сопротивления'; why.push(`даунтренд, цена под сопротивлением ${near.src} (${near.dist.toFixed(1)}%)`); }
+      else if (nearRes) { why.push(`даунтренд, цена у свежего минимума ${near.src} — пробой вниз, не отбой; ждать ретеста`); }
       else if (nearSup) { why.push(`даунтренд, но цена у поддержки ${near.src} — шорт только после пробоя`); }
       else { why.push('даунтренд: SMA50 < SMA200 — шорт на подходе к сопротивлению'); }
     }
@@ -191,23 +215,27 @@
       if (over >= 30 || !parts.length) parts.push(`+${over.toFixed(0)}% над SMA200`);
       verdict = 'trim'; why.push(`перегрев: ${parts.join(', ')} — фиксировать часть, новых покупок нет`);
     }
-    else if ((ph.key === 'up' || ph.key === 'rev' || ph.key === 'corr' || ph.key === 'undr') && nearSup) { setup = 'откат к поддержке'; why.push(`откат к поддержке ${near.src} (${near.dist.toFixed(1)}%)`); }
+    else if ((ph.key === 'up' || ph.key === 'rev' || ph.key === 'corr' || ph.key === 'undr') && nearSup && !brk) { setup = 'откат к поддержке'; why.push(`откат к поддержке ${near.src} (${near.dist.toFixed(1)}%)`); }
     else if ((ph.key === 'up' || ph.key === 'imp') && nearRes) { verdict = 'hold'; why.push(`${ph.label.toLowerCase()}, цена под сопротивлением ${near.src} — не догонять`); }
-    else if (ph.key === 'up' || ph.key === 'imp') { verdict = 'hold'; why.push(`${ph.label.toLowerCase()} без сетапа — лимит на откат`); }
+    else if (nearSup && brk && ph.key !== 'down') { verdict = holdPh ? 'hold' : 'wait'; why.push(`${ph.label.toLowerCase()}, цена у свежего максимума ${near.src} — пробой, не откат; ждать ретеста`); }
+    else if (holdPh) { verdict = 'hold'; why.push(`${ph.label.toLowerCase()} без сетапа — лимит на откат`); }
     else if (ph.key === 'corr' || ph.key === 'rev') { verdict = 'wait'; why.push(`${ph.label.toLowerCase()} — ждать касания поддержки`); }
     else if (ph.key === 'down' && trendUp) { verdict = 'wait'; why.push(`цена ниже всех SMA при SMA50 > SMA200 — глубокий откат, ждать возврата над SMA200 (${((ind.s200[i] / lv.price - 1) * 100).toFixed(1)}%)`); }
     else { verdict = 'wait'; why.push(`${ph.label.toLowerCase()} — нет сетапа`); }
-    const half = side === 'long' && !!setup && !trendUp;
-    const plans = { long: planFor('long', half), short: planFor('short', false) };
+    const half = side === 'long' && !!setup && !trendUp, base = { riskKr: o.riskKr, fx: o.fx };
+    const plans = { long: sidePlan('long', lv, atr, nearSup && !brk, { ...base, half }), short: sidePlan('short', lv, atr, nearRes && !brk, base) };
     const plan = plans[side];
     if (setup) {
-      if (plan.mode === 'market' && plan.rr >= CFG.rrMin) { verdict = side === 'short' ? 'short' : 'buy'; why[why.length - 1] += ` · R/R ${rr(plan.rr)}`; }
-      else if (plan.mode === 'limit') { verdict = 'wait'; why[why.length - 1] += ` · по рынку R/R ${rr(tradePlan(side, lv, atr, { riskKr: o.riskKr, fx: o.fx }).rr)} — лимит ${plan.entry.toFixed(plan.entry >= 500 ? 0 : 2)} даёт ${rr(plan.rr)}`; }
-      else { verdict = 'wait'; why[why.length - 1] += ` · R/R ${rr(plan.rr)} < ${CFG.rrWeak} — цель слишком близко`; }
+      if (plan.mode === 'market' && rrOk(plan.rr, CFG.rrMin)) { verdict = side === 'short' ? 'short' : 'buy'; why[why.length - 1] += ` · R/R ${rrP(plan)}`; }
+      else if (plan.mode === 'limit') { verdict = 'wait'; why[why.length - 1] += ` · по рынку R/R ${rrP(tradePlan(side, lv, atr, base))} — лимит ${plan.entry.toFixed(plan.entry >= 500 ? 0 : 2)} даёт ${rrP(plan)}`; }
+      else if (plan.noLimit) { verdict = 'wait'; why[why.length - 1] += ` · R/R ${rrP(plan)} < ${CFG.rrMin} — лимит под R/R ${CFG.rrGood} не помещается между стопом и ценой`; }
+      else { verdict = 'wait'; why[why.length - 1] += ` · R/R ${rrP(plan)} < ${CFG.rrWeak} — цель слишком близко`; }
       if (half) { why.push('тренд не подтверждён (SMA50 < SMA200) — ранний вход, ½ риска'); }
     } else if (plan.mode === 'limit' && (verdict === 'hold' || verdict === 'wait') && ph.key !== 'knife') {
-      why.push(`условный план: лимит у ${plan.levelSrc} (${plan.dEntry.toFixed(1)}%) · R/R ${rr(plan.rr)}`);
+      why.push(`условный план: лимит у ${plan.levelSrc} (${plan.dEntry.toFixed(1)}%) · R/R ${rrP(plan)}`);
     }
+    if (tgOver) why.push(`цена выше таргета аналитиков на ${(-o.upTg).toFixed(0)}% — под SMA50 это не перегрев, фаза по тренду`);
+    if (plan.flags.includes('wide')) why.push(`широкий стоп: ${(plan.risk / atr).toFixed(1)}·ATR > ${CFG.wideAtr}·ATR — рассмотрите ½ риска`);
     if (side === 'short' && (day >= CFG.squeezeDay || (volX != null && volX >= CFG.squeezeVol && b.c > b.o))) { flags.push('squeeze'); why.push('риск сквиза: резкий рост/объём — шорт не открывать сегодня'); if (verdict === 'short') verdict = 'wait'; }
     if (o.earningsDays != null && o.earningsDays >= 0 && o.earningsDays <= CFG.earnDays) {
       flags.push('earnings'); why.push(`отчёт через ${o.earningsDays} дн — новых входов нет`);
@@ -239,6 +267,6 @@
     if (ra !== rb) return rb - ra;
     return (b.score || 0) - (a.score || 0);
   }
-  const API = { CFG, sma, atrWilder, rsiWilder, barsFromHist, collapse, levelsAt, indicators, phase, limitForRR, tradePlan, nearLevel, markers, backtestPlans, snapshot, cmp, GROUP };
+  const API = { CFG, VER, rrOk, isBreakout, sidePlan, sma, atrWilder, rsiWilder, barsFromHist, collapse, levelsAt, indicators, phase, limitForRR, tradePlan, nearLevel, markers, backtestPlans, snapshot, cmp, GROUP };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.SIG = API;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -583,7 +583,9 @@ const SMA_TF_COL='Период SMA';
 const FX_CCYS=['USD','EUR','NOK','DKK'];
 async function fetchRatesSEK(){
   const sources=[
-    async()=>(await(await fetch('https://api.frankfurter.app/latest?from=SEK&to='+FX_CCYS.join(','))).json()).rates,            // ECB official reference rates
+    // ECB official reference rates. Старый адрес api.frankfurter.app отвечает 301 без CORS — браузер его блокировал
+    // (ошибка в консоли, курсы шли только из резервного источника); новый — api.frankfurter.dev/v1 (base/symbols).
+    async()=>(await(await fetch('https://api.frankfurter.dev/v1/latest?base=SEK&symbols='+FX_CCYS.join(','))).json()).rates,
     async()=>{const j=await(await fetch('https://open.er-api.com/v6/latest/SEK')).json();return j&&j.result==='success'?j.rates:null;} // fallback
   ];
   for(const src of sources){

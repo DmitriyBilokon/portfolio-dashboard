@@ -1010,12 +1010,88 @@ grp('snapshot MU/AZN/AAPL', function(){
   __eq('earnings ≤3 дн → wait + флаг', [ap3.verdict,ap3.flags.indexOf('earnings')>=0], ['wait',true]);
   __eq('earnings через 10 дн не блокирует', SIG.snapshot(sigFixBars('AAPL'),{earningsDays:10}).verdict, 'buy');
   SIG.CFG.rrMin=_rr;
-  __ok('markers are computed', mu.markers.length>0 && mu.markers[0].kind==='buy');
+  __ok('snapshot: ind for chart, no markers (history → SIG.replay)', mu.ind && mu.ind.atr.length===260 && !('markers' in mu));
   // Q8: недооценка над SMA200 без сетапа → держать с условным лимитом (как аптренд), не «нет сетапа».
   var un=SIG.snapshot(sigFixBars('AAPL').slice(0,258),{upTg:30});
   __eq('undr above SMA200, no setup → hold + limit', [un.phase.key,un.price>un.s200,un.setup,un.verdict,un.plan.mode,un.why[0]], ['undr',true,null,'hold','limit','недооценка без сетапа — лимит на откат']);
   var arr=[{verdict:'wait',plan:{rr:3},score:90},{verdict:'trim',plan:{rr:1},score:10},{verdict:'buy',plan:{rr:2.1},score:40},{verdict:'short',plan:{rr:2.5},score:30},{verdict:'hold',plan:{rr:null},score:99}];
   __eq('SIG.cmp: group → R/R → score', arr.slice().sort(SIG.cmp).map(function(x){return x.verdict;}), ['short','buy','trim','wait','hold']);
+});
+
+// evalAt причинен: вердикт на баре k по полной истории = снимок по свечам 0..k (реплей не заглядывает вперёд).
+grp('evalAt causal', function(){
+  var B=sigFixBars('MU'),ind=SIG.indicators(B),bad=[];
+  [205,222,240,259].forEach(function(k){
+    var a=SIG.evalAt(B,ind,k,{}),b=SIG.snapshot(B.slice(0,k+1),{});
+    if(a.verdict!==b.verdict||a.side!==b.side||a.phase.key!==b.phase.key||Math.abs(a.plan.entry-b.plan.entry)>1e-9||Math.abs(a.plan.stop-b.plan.stop)>1e-9||a.why.join('|')!==b.why.join('|'))bad.push(k);
+  });
+  __eq('evalAt(full, k) ≡ snapshot(0..k)', bad, []);
+});
+
+// simTrade: лестница выхода на ручных свечах (ATR = 2; вход по закрытию бара 0 = 100, стоп 98, цель 104).
+grp('simTrade exit ladder', function(){
+  var ind={atr:[2,2,2,2,2,2]},P={stop:98,target:104,rr:2},b=function(o,h,l,c){return {d:'',o:o,h:h,l:l,c:c,v:0};},B0=b(100,100.5,99.5,100);
+  var t=SIG.simTrade([B0,b(99,99.5,97.5,98.2)],ind,0,'long',P);
+  __eq('stop hit → −1R', [t.exits.length,t.exits[0].px,t.exits[0].why,t.R,t.open], [1,98,'стоп',-1,false]);
+  t=SIG.simTrade([B0,b(96,96.5,95,96)],ind,0,'long',P);
+  __eq('gap under stop → exit at open (−2R)', [t.exits[0].px,t.R], [96,-2]);
+  t=SIG.simTrade([B0,b(100.5,102.5,99,102),b(100.5,101,99.5,100.2)],ind,0,'long',P);
+  __eq('+1R → stop to breakeven → 0R', [t.exits[0].px,t.exits[0].why,t.R], [100,'безубыток',0]);
+  t=SIG.simTrade([B0,b(101,104.5,100.8,104),b(102,102.5,100,100.4)],ind,0,'long',P);
+  __eq('½ at target, then +2R → chandelier 2·ATR', t.exits.map(function(x){return [x.px,x.part,x.why];}), [[104,0.5,'цель ½'],[100.5,0.5,'трейлинг 2·ATR']]);
+  __approx('R = ½·2R + ½·0.25R', t.R, 1.125, 1e-9);
+  t=SIG.simTrade([B0,b(100.5,101.5,99.2,101)],ind,0,'long',P);
+  __eq('no exit → open, marked to last close', [t.open,t.exits.length,t.R,t.out], [true,0,0.5,null]);
+  t=SIG.simTrade([B0,b(99,99.5,95.5,96),b(97,99,96.5,98.5)],ind,0,'short',{stop:102,target:96,rr:2});
+  __eq('short mirrored: ½ at target, breakeven… trail', [t.exits[0].why,t.exits[0].px,t.side], ['цель ½',96,'short']);
+  __eq('same bar stop+target → stop first', SIG.simTrade([B0,b(100,104.5,97.5,101)],ind,0,'long',P).exits[0].why, 'стоп');
+  __eq('zero risk → null', SIG.simTrade([B0,b(100,101,99,100)],ind,0,'long',{stop:100,target:104}), null);
+});
+
+// replay: вход — бар, где вердикт впервые стал buy/short; позиции не перекрываются; итоги окна.
+grp('replay', function(){
+  var B=sigFixBars('AZN.ST'),ind=SIG.indicators(B),r=SIG.replay(B,{ind:ind}),bad=[];
+  __ok('AZN: trades + markers', r.trades.length>0 && r.markers.length>=r.trades.length);
+  r.trades.forEach(function(t,k){
+    var v=SIG.evalAt(B,ind,t.i,{shortOk:true}).verdict,pv=SIG.evalAt(B,ind,t.i-1,{shortOk:true}).verdict;
+    if(!(v==='buy'||v==='short')||v===pv||(t.side==='short')!==(v==='short'))bad.push('entry '+t.d);
+    var nx=r.trades[k+1];if(nx&&(t.open||nx.i<=t.out))bad.push('overlap '+t.d);
+    if(Math.abs(t.entry-B[t.i].c)>1e-9)bad.push('entry≠close '+t.d);
+  });
+  __eq('entries = verdict turned buy/short, no overlap, entry at close', bad, []);
+  __ok('markers: entry kinds + exits with reasons', r.markers.every(function(m){return ['buy','short','part','exit'].indexOf(m.kind)>=0&&m.d;}) && r.markers.some(function(m){return m.kind==='exit';}));
+  __eq('< minBars → empty', SIG.replay(B.slice(0,50)).trades, []);
+  var T=[{i:5,R:2,open:false},{i:9,R:-1,open:false},{i:12,R:0.5,open:true},{i:1,R:-1,open:false}];
+  __eq('replayStats from bar 5', (function(x){return [x.n,x.win,x.avgR,x.pf,x.open];})(SIG.replayStats(T,5)), [2,1,0.5,2,1]);
+  __eq('replayStats: no losses → PF ∞, none → nulls', [SIG.replayStats([{i:0,R:1,open:false}]).pf,SIG.replayStats([]).avgR,SIG.replayStats([]).pf], [Infinity,null,null]);
+});
+
+// chartModel (chart.js) — чистая модель графика: окно, зоны, линии плана по стороне/позиции, маркеры.
+grp('chartModel', function(){
+  var B=sigFixBars('MU'),snap=SIG.snapshot(B,{}),rep=SIG.replay(B,{ind:snap.ind});
+  var m=chartModel(B,snap,rep,{bars:120});
+  __eq('window: last 120 bars', [m.show,m.off,m.candles.length,m.candles[119].time,m.candles[0].close], [120,140,120,B[259].d,B[140].c]);
+  __eq('SMA/RSI series: window minus warm-up (SMA200 from bar 199)', [m.sma.s50.length,m.sma.s200.length,m.rsi.length,m.sma.s200[0].time], [120,61,120,B[199].d]);
+  __ok('zones: ≤ 2 sup + ≤ 2 res, structural, ±0.3·ATR', m.zones.length<=4 && m.zones.every(function(z){return !/^(S|R) · (P|R1|S1|R2|S2)$/.test(z.label)&&Math.abs((z.hi-z.lo)-0.6*snap.atr)<1e-9;}));
+  __eq('lines = plan of verdict side', m.lines.map(function(l){return l.kind;}), ['entry','stop','target']);
+  __eq('line prices = snapshot plan', [m.lines[1].price,m.lines[2].price], [snap.plans[snap.side].stop,snap.plans[snap.side].target]);
+  var ms=chartModel(B,snap,rep,{bars:120,side:'short'});
+  __eq('side short → short plan', [ms.side,ms.lines[1].price], ['short',snap.plans.short.stop]);
+  var mp=chartModel(B,snap,rep,{side:'short',plan:{entry:300,stop:280,target:null,mode:'position'}});
+  __eq('position plan overrides side (avg + stop only)', mp.lines.map(function(l){return [l.kind,l.price,l.title];}), [['entry',300,'Средняя'],['stop',280,'Стоп']]);
+  __ok('atr-target → «≈ Цель»', chartModel(B,snap,rep,{plan:{entry:1,stop:0.9,target:1.2,flags:['atr-target']}}).lines[2].title==='≈ Цель');
+  __ok('replay markers only inside window, sorted', m.markers.every(function(x){return x.time>=B[140].d;}) && m.markers.every(function(x,k,a){return !k||a[k-1].time<=x.time;}));
+  var lastE=rep.markers.filter(function(x){return x.kind==='buy'||x.kind==='short';}).pop();
+  __ok('labels only on the last replay trade, all keep label for tooltip', lastE && m.markers.every(function(x){return x.label && (x.time>=lastE.d ? x.text===x.label : x.text==='');}));
+  __eq('stats = replayStats of window', m.stats, SIG.replayStats(rep.trades,140));
+  var d0=B[200].d,ins=[{code:'P',date:d0},{code:'P',date:d0},{code:'S',date:B[210].d},{code:'A',date:d0},{code:'P',date:'2020-01-01'}];
+  var mi=chartModel(B,snap,{trades:[],markers:[]},{bars:120,insider:ins,trades:[{date:B[230].d,act:'sell',short:true},{date:B[250].d,act:'buy',short:false}]});
+  __eq('insider aggregated, out-of-window and non-P/S dropped; my trades labelled', mi.markers.map(function(x){return [x.kind,x.text];}), [['ins-buy','инс×2'],['ins-sell','инс'],['me','я: шорт'],['me','я: купил']]);
+  var Bo=B.map(function(b){return {d:b.d,o:b.c,h:b.c,l:b.c,c:b.c,v:0};});
+  __eq('old {t,c} bars → no volume pane', chartModel(Bo,SIG.snapshot(Bo,{}),{trades:[],markers:[]},{}).hasVol, false);
+  var V=[{d:'2026-09-07'},{d:'2026-09-08'},{d:'2026-09-11'}];
+  __eq('chartBarAt: exact / gap → next bar / ≤5 d before → 0 / older / after', [chartBarAt(V,'2026-09-08'),chartBarAt(V,'2026-09-09'),chartBarAt(V,'2026-09-03'),chartBarAt(V,'2026-08-20'),chartBarAt(V,'2026-09-12')], [1,2,0,-1,-1]);
+  __ok('stats text', /3 сделок · 67 % в плюсе · средний \+0\.50R · PF 2\.00 · открыта 1/.test(chartStatsText({n:3,win:2,avgR:0.5,pf:2,open:1})) && /входов не было/.test(chartStatsText({n:0,open:0})));
 });
 
 // Q5: нож по пробою — закрытие ниже 60-дн минимума по вчера (сегодняшний low в S60 не входит), день > −3 %.
@@ -1047,7 +1123,7 @@ grp('signals shadow adapter', function(){
   var now=Date.parse('2026-09-10T12:00:00Z');
   var s=sigSnapRow(d,r,4000,now);
   __eq('adapter snapshot = SIG.snapshot on same bars', [s.verdict,s.side,s.phase.key], ['wait','short','down']);
-  __ok('adapter strips heavy arrays, marks ohlc', s.ind===null && s.markers===null && s.ohlc===true);
+  __ok('adapter strips heavy arrays, marks ohlc', s.ind===null && !('markers' in s) && s.ohlc===true);
   __ok('flags from row: earnings, no stale-target, no no-short', s.flags.indexOf('earnings')>=0 && s.flags.indexOf('stale-target')<0 && s.flags.indexOf('no-short')<0);
   __ok('memo: same inputs → same object', sigSnapRow(d,r,4000,now)===s);
   _histCache['AZN.ST:2y'].t=2000;

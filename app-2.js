@@ -1100,6 +1100,7 @@ function renderPF3(){
   }
   if(pf3Sel&&!d.rows.some(r=>String(r[2]||'')===pf3Sel))pf3Sel=null;
   const open=!!pf3Sel;
+  if(pf3State.ch){pf3State.ch.destroy();pf3State.ch=null}   // график старой разметки (ResizeObserver) — освободить до замены DOM
   el.innerHTML=`<div class="pf3-wrap">${pf3IsPort(v3Key)?pf3Summary():""}<div class="pf3-layout${open?' open':''}">
     ${open?`<div class="pf3-detail">${pf3DetailHTML()}</div>`:''}
     <aside class="pf3-list">
@@ -1118,8 +1119,9 @@ function renderPF3(){
   </div></div>`;
   if(open){
     const r=d.rows[pf3SelIdx()];
-    pf3State.row=r;pf3State.ccy=r[8]||'USD';
-    drawChart(pf3State,'pf3ChartBox','pf3Legend');
+    const tk=posTk(r[2]);if(pf3State.tk!==tk||pf3State.tab!==v3Key){pf3State.side=null;pf3State.planPos=false}   // сторона — своя у каждой бумаги
+    pf3State.tab=v3Key;pf3State.tk=tk;pf3State.row=r;pf3State.ccy=r[8]||'USD';
+    stockChartDraw(pf3State,'pf3ChartBox');
     pf3LoadFundamentals();   // no-op when cached; re-renders the health cards when done
     pf3LoadEarnings();       // same for the earnings calendar panel
     pf3RefreshCardPrice(d,r);   // живая цена → актуальный «потенциал роста»
@@ -1424,7 +1426,7 @@ async function pfPerfDraw(){
   if(!box)return;
   try{await loadLWC()}catch(e){return}
   const LWC=window.LightweightCharts;
-  if(!LWC||!LWC.createChart)return;
+  if(!LWC||!LWC.createChart||!LWC.LineSeries)return;
   if(_pfPerfChart){try{_pfPerfChart.remove()}catch(e){}_pfPerfChart=null}
   box.innerHTML='';
   const dark=(document.documentElement.dataset.theme||'light')==='dark';
@@ -1437,9 +1439,9 @@ async function pfPerfDraw(){
   const mk=ser=>{const sl=ser.filter(x=>x.d>=from);if(sl.length<2)return null;const b=sl[0].v;return sl.map(x=>({time:x.d,value:(x.v/b-1)*100}))};
   const fmt={type:'custom',formatter:v=>v.toFixed(1)+'%'};
   // Сводная «Все портфели» — жирной линией поверх остальных.
-  if(pfpOn('__ALL__')){const ser=pfPerf.hist.ports['__ALL__'],dd=ser&&mk(ser);if(dd)chart.addLineSeries({color:pfpCol('__ALL__',PFP_ALL_DEF),lineWidth:3.5,priceFormat:fmt}).setData(dd);}
-  pfpPorts().forEach(p=>{if(!pfpOn(p.key))return;const ser=pfPerf.hist.ports[p.key],dd=ser&&mk(ser);if(dd)chart.addLineSeries({color:pfpCol(p.key,p.def),lineWidth:2,priceFormat:fmt}).setData(dd);});
-  PFP_BENCH.forEach(([sym,,def])=>{if(!pfpOn(sym))return;const ser=pfPerf.hist.bench[sym],dd=ser&&mk(ser);if(dd)chart.addLineSeries({color:pfpCol(sym,def),lineWidth:1.5,priceFormat:fmt,priceLineVisible:false,lastValueVisible:false}).setData(dd);});
+  if(pfpOn('__ALL__')){const ser=pfPerf.hist.ports['__ALL__'],dd=ser&&mk(ser);if(dd)chart.addSeries(LWC.LineSeries,{color:pfpCol('__ALL__',PFP_ALL_DEF),lineWidth:3.5,priceFormat:fmt}).setData(dd);}
+  pfpPorts().forEach(p=>{if(!pfpOn(p.key))return;const ser=pfPerf.hist.ports[p.key],dd=ser&&mk(ser);if(dd)chart.addSeries(LWC.LineSeries,{color:pfpCol(p.key,p.def),lineWidth:2,priceFormat:fmt}).setData(dd);});
+  PFP_BENCH.forEach(([sym,,def])=>{if(!pfpOn(sym))return;const ser=pfPerf.hist.bench[sym],dd=ser&&mk(ser);if(dd)chart.addSeries(LWC.LineSeries,{color:pfpCol(sym,def),lineWidth:1.5,priceFormat:fmt,priceLineVisible:false,lastValueVisible:false}).setData(dd);});
   chart.timeScale().fitContent();
   _pfPerfChart=chart;
 }

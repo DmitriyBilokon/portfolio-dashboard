@@ -539,9 +539,8 @@ function pf3DetailHTML(){
     </section>
     <section class="pf3-grid">
       <div class="pf3-panel">
-        <div class="pf3-panel-hd"><span>${T('📈 График · SMA 50/100/200 · уровни')}</span><span class="pf3-tf"><button class="pf3-tfbtn${pf3State.years===1?' on':''}" onclick="pf3SetYears(1)">1Г</button><button class="pf3-tfbtn${pf3State.years===3?' on':''}" onclick="pf3SetYears(3)">3Г</button></span></div>
+        <div class="pf3-panel-hd"><span>${RT('📈 График · сигналы v2 · план','📈 Chart · signals v2 · plan')}</span><span class="pf3-tf"><button id="pf3csL" class="pf3-tfbtn" onclick="pf3SetSide('long')">${RT('Лонг','Long')}</button><button id="pf3csS" class="pf3-tfbtn" onclick="pf3SetSide('short')">${RT('Шорт','Short')}</button><button id="pf3cs1" class="pf3-tfbtn${pf3State.years===1?' on':''}" onclick="pf3SetYears(1)">1Г</button><button id="pf3cs3" class="pf3-tfbtn${pf3State.years===3?' on':''}" onclick="pf3SetYears(3)">3Г</button></span></div>
         <div id="pf3ChartBox" class="pf3-chart"></div>
-        <div id="pf3Legend" class="chart-legend"></div>
       </div>
       <div class="pf3-panel">
         <div class="pf3-panel-hd"><span>${T('🎯 Технические уровни')}</span></div>

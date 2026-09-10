@@ -142,49 +142,62 @@
     if (!L) return mkt;
     const p = tradePlan(side, lv, atr, { ...base, entry: L.v + sgn * off }); p.levelSrc = L.src; return p;
   }
-  // Ретро-маркеры сигналов по истории (слой «маркеры» на графике и бэктест правил).
-  // ⚠ Правила маркеров (пересечения SMA50 / отскок от S60) пока НЕ совпадают с условиями вердикта —
-  // решение Q4 (plans/signals-calibration.md §5): переписать как реплей snapshot по барам в S5.
-  function markers(bars, ind) {
-    const M = []; let pos = 0, lastIdx = -99;
-    for (let i = 201; i < bars.length; i++) {
-      const b = bars[i], pb = bars[i - 1], s50 = ind.s50[i], ps50 = ind.s50[i - 1], s200 = ind.s200[i], rsi = ind.rsi[i];
-      if (!(s50 > 0) || !(ps50 > 0) || !(s200 > 0)) continue;
-      const lo60 = Math.min(...bars.slice(i - 59, i + 1).map(x => x.l)), hi60 = Math.max(...bars.slice(i - 59, i + 1).map(x => x.h));
-      const upCross = pb.c <= ps50 && b.c > s50, dnCross = pb.c >= ps50 && b.c < s50, trendUp = s50 > s200;
-      const bounce = b.l <= lo60 * 1.02 && b.c > b.o && rsi != null && rsi < 40;
-      if (pos <= 0 && (upCross && trendUp || bounce) && i - lastIdx > 5) { M.push({ i, d: b.d, kind: pos < 0 ? 'cover' : 'buy', price: b.c, why: bounce ? 'отскок от S60, RSI<40' : 'пересёк SMA50 ↑ в аптренде' }); pos = 1; lastIdx = i; continue; }
-      if (pos > 0 && (dnCross || (rsi > CFG.rsiHot && b.c >= hi60 * 0.98)) && i - lastIdx > 5) { M.push({ i, d: b.d, kind: 'sell', price: b.c, why: dnCross ? 'пересёк SMA50 ↓' : 'RSI>70 у R60' }); pos = 0; lastIdx = i; continue; }
-      if (pos === 0 && dnCross && !trendUp && i - lastIdx > 5) { M.push({ i, d: b.d, kind: 'short', price: b.c, why: 'пересёк SMA50 ↓ в даунтренде' }); pos = -1; lastIdx = i; continue; }
-      if (pos < 0 && upCross && i - lastIdx > 5) { M.push({ i, d: b.d, kind: 'cover', price: b.c, why: 'пересёк SMA50 ↑' }); pos = 0; lastIdx = i; }
+  // Сделка по плану с бара входа i (вход по закрытию): лестница выхода плана §4 — стоп (при гэпе за стопом —
+  // по открытию); ½ позиции на цели; после +1R стоп в безубыток, после +2R — chandelier 2·ATR от экстремума.
+  // Внутри бара сначала стоп, потом цель (консервативно). Отчётов в истории нет — сокращения перед отчётом нет.
+  function simTrade(bars, ind, i, side, plan) {
+    const sgn = side === 'long' ? 1 : -1, entry = bars[i].c, stop0 = plan.stop, target = plan.target, risk = sgn * (entry - stop0);
+    const exits = []; let stop = stop0, stage = 'стоп', left = 1, ext = entry, j = i + 1;
+    if (!(risk > 0)) return null;
+    for (; j < bars.length && left > 0; j++) {
+      const b = bars[j];
+      if (sgn > 0 ? b.l <= stop : b.h >= stop) { exits.push({ j, d: b.d, px: sgn > 0 ? Math.min(b.o, stop) : Math.max(b.o, stop), part: left, why: stage }); left = 0; break; }
+      if (left === 1 && (sgn > 0 ? b.h >= target : b.l <= target)) { exits.push({ j, d: b.d, px: sgn > 0 ? Math.max(b.o, target) : Math.min(b.o, target), part: 0.5, why: 'цель ½' }); left = 0.5; }
+      ext = sgn > 0 ? Math.max(ext, b.h) : Math.min(ext, b.l);
+      const gainR = sgn * (ext - entry) / risk;
+      if (gainR >= 1 && sgn * (entry - stop) > 0) { stop = entry; stage = 'безубыток'; }
+      if (gainR >= 2 && ind.atr[j] > 0) { const ch = ext - sgn * 2 * ind.atr[j]; if (sgn * (ch - stop) > 0) { stop = ch; stage = 'трейлинг 2·ATR'; } }
     }
-    return M;
+    const last = bars[bars.length - 1], open = left > 0;
+    const R = exits.reduce((a, x) => a + x.part * sgn * (x.px - entry) / risk, 0) + (open ? left * sgn * (last.c - entry) / risk : 0);
+    return { i, d: bars[i].d, side, entry, stop0, target, rr: plan.rr, exits, open, R, out: open ? null : exits[exits.length - 1].j, stop };
   }
-  // Симуляция плана на каждом ретро-входе: выход по касанию стопа/цели по High/Low, time-stop 15 баров.
-  function backtestPlans(bars, ind, riskKr, fx) {
-    const T = []; const M = markers(bars, ind);
-    M.filter(m => m.kind === 'buy' || m.kind === 'short').forEach(m => {
-      const side = m.kind === 'buy' ? 'long' : 'short', lv = levelsAt(bars, m.i, ind), atr = ind.atr[m.i]; if (!(atr > 0)) return;
-      const p = tradePlan(side, lv, atr, { riskKr, fx }); const sgn = side === 'long' ? 1 : -1;
-      let exit = null, exitWhy = '', j = m.i + 1;
-      for (; j < Math.min(bars.length, m.i + 16); j++) {
-        const b = bars[j];
-        if (sgn > 0 ? b.l <= p.stop : b.h >= p.stop) { exit = p.stop; exitWhy = 'стоп'; break; }
-        if (sgn > 0 ? b.h >= p.target : b.l <= p.target) { exit = p.target; exitWhy = 'цель'; break; }
+  // Реплей вердикта по истории (решение Q4): вход — бар, где evalAt впервые дал buy/short (те же правила и CFG;
+  // таргетов и отчётов в истории нет → upTg/earnings пусты), позиции не перекрываются; выход — simTrade.
+  // → { trades, markers: [{i, d, kind: buy|short|part|exit, price, why}] }. Считать на бар ≥ 199 (нужна SMA200).
+  function replay(bars, opts) {
+    const o = Object.assign({ ind: null }, opts || {}), trades = [], M = [];
+    if (!Array.isArray(bars) || bars.length < CFG.minBars) return { trades, markers: M };
+    const ind = o.ind || indicators(bars);
+    let prev = null, busy = -1;
+    for (let i = Math.max(CFG.minBars - 1, 199); i < bars.length; i++) {
+      const s = evalAt(bars, ind, i, { shortOk: true }), v = s.verdict, entryV = v === 'buy' || v === 'short';
+      if (entryV && v !== prev && i > busy && i < bars.length - 1) {
+        const t = simTrade(bars, ind, i, s.side, s.plan);
+        if (t) {
+          trades.push(Object.assign(t, { why: s.why[0] }));
+          M.push({ i, d: t.d, kind: v, price: t.entry, why: s.why[0] });
+          t.exits.forEach(x => M.push({ i: x.j, d: x.d, kind: x.part < 1 && x.why === 'цель ½' ? 'part' : 'exit', side: t.side, price: x.px, why: x.why }));
+          busy = t.open ? bars.length : t.out;
+        }
       }
-      if (exit == null) { j = Math.min(bars.length - 1, m.i + 15); exit = bars[j].c; exitWhy = j >= bars.length - 1 ? 'открыта' : 'time-stop 15 баров'; }
-      const R = p.risk > 0 ? sgn * (exit - p.entry) / p.risk : 0;
-      T.push({ i: m.i, d: m.d, out: bars[j].d, side, entry: p.entry, stop: p.stop, target: p.target, exit, exitWhy, R, ret: sgn * (exit / p.entry - 1) * 100, days: j - m.i, why: m.why, rr: p.rr });
-    });
-    return T;
+      prev = v;
+    }
+    return { trades, markers: M };
   }
-  // Снимок «сейчас» для одной бумаги; null, если свечей < minBars. opts: riskKr, fx, upTg (апсайд к свежему
-  // таргету, %), staleTarget (bool), earningsDays (дней до отчёта; null — неизвестно), shortOk (ручной флаг
-  // «шорт доступен»; пока не выставлен — предупреждение no-short, не блокер, решение §10#7).
-  function snapshot(bars, opts) {
-    if (!Array.isArray(bars) || bars.length < CFG.minBars) return null;
+  // Итог сделок реплея с входом не раньше бара from: закрытые — n, в плюсе, средний R, PF; открытые — отдельно.
+  function replayStats(trades, from) {
+    const T = (trades || []).filter(t => t.i >= (from || 0)), C = T.filter(t => !t.open);
+    const pos = C.filter(t => t.R > 0).reduce((a, t) => a + t.R, 0), neg = -C.filter(t => t.R < 0).reduce((a, t) => a + t.R, 0);
+    return { n: C.length, win: C.filter(t => t.R > 0).length, avgR: C.length ? C.reduce((a, t) => a + t.R, 0) / C.length : null, pf: neg > 0 ? pos / neg : (pos > 0 ? Infinity : null), open: T.length - C.length };
+  }
+  // Вердикт на баре i по барам 0..i (всё причинно: индикаторы, уровни, пивоты от i−1, объём за 20 баров до i).
+  // opts: riskKr, fx, upTg (апсайд к свежему таргету, %), staleTarget (bool), earningsDays (дней до отчёта;
+  // null — неизвестно), shortOk (ручной флаг «шорт доступен»; пока не выставлен — предупреждение no-short, не
+  // блокер, решение §10#7). Снимок «сейчас» = evalAt на последнем баре (snapshot), история — replay.
+  function evalAt(bars, ind, i, opts) {
     const o = Object.assign({ riskKr: 5000, fx: 1, upTg: null, staleTarget: false, earningsDays: null, shortOk: false }, opts || {});
-    const ind = indicators(bars), i = bars.length - 1, b = bars[i], pb = bars[i - 1];
+    const b = bars[i], pb = bars[i - 1];
     const lv = levelsAt(bars, i, ind), atr = ind.atr[i], day = (b.c / pb.c - 1) * 100;
     // Нож по пробою: S60 по барам до вчера включительно — сегодняшний low ≤ close, с ним пробоя не бывает (Q5).
     const s60prev = i >= CFG.srWindow ? Math.min(...bars.slice(i - CFG.srWindow, i).map(x => x.l)) : 0;
@@ -194,7 +207,7 @@
     const tgOver = ph.key === 'heat' && !(b.c > ind.s50[i]);
     if (tgOver) ph = phase(b.c, day, ind.s50[i], ind.s100[i], ind.s200[i], s60prev, null);
     const near = nearLevel(lv), nearSup = !!(near && near.v <= lv.price), nearRes = !!(near && near.v > lv.price), brk = isBreakout(near, lv.price);
-    const trendUp = ind.s50[i] > ind.s200[i], rsiNow = ind.rsi[i], vol = b.v, avgVol = bars.slice(-20).reduce((s, x) => s + x.v, 0) / 20, volX = avgVol ? vol / avgVol : null;
+    const trendUp = ind.s50[i] > ind.s200[i], rsiNow = ind.rsi[i], vol = b.v, avgVol = bars.slice(Math.max(0, i - 19), i + 1).reduce((s, x) => s + x.v, 0) / 20, volX = avgVol ? vol / avgVol : null;
     const rr = x => x != null ? x.toFixed(1) : '—', rrP = p => (p.flags.includes('atr-target') ? '≈' : '') + rr(p.rr);
     let side = 'long', verdict = 'wait', setup = null;
     const why = [], flags = [];
@@ -256,7 +269,13 @@
     if (rsiNow != null) score += side === 'short' ? (rsiNow > 60 ? 6 : rsiNow < 35 ? -8 : 0) : (rsiNow < 40 ? 6 : rsiNow > 70 ? -8 : 0);
     if (ph.key === 'knife') score -= 20; if (ph.key === 'heat') score -= 12;
     score = Math.round(Math.max(0, Math.min(100, score)));
-    return { d: b.d, price: b.c, day, atr, atrPct: atr / b.c * 100, rsi: rsiNow, s50: ind.s50[i], s100: ind.s100[i], s200: ind.s200[i], trendUp, levels: lv, near, phase: ph, setup, plans, plan, long: plans.long, short: plans.short, side, verdict, why, flags, score, vol, avgVol, volX, ind, markers: markers(bars, ind) };
+    return { d: b.d, price: b.c, day, atr, atrPct: atr / b.c * 100, rsi: rsiNow, s50: ind.s50[i], s100: ind.s100[i], s200: ind.s200[i], trendUp, levels: lv, near, phase: ph, setup, plans, plan, long: plans.long, short: plans.short, side, verdict, why, flags, score, vol, avgVol, volX };
+  }
+  // Снимок «сейчас» для одной бумаги; null, если свечей < minBars. ind — индикаторы (для графика).
+  function snapshot(bars, opts) {
+    if (!Array.isArray(bars) || bars.length < CFG.minBars) return null;
+    const ind = indicators(bars);
+    return Object.assign(evalAt(bars, ind, bars.length - 1, opts), { ind });
   }
   // Сортировка везде одна: группа вердикта (buy/short → trim → hold/wait) → R/R ↓ → балл ↓.
   const GROUP = { buy: 0, short: 0, trim: 1, hold: 2, wait: 2 };
@@ -267,6 +286,6 @@
     if (ra !== rb) return rb - ra;
     return (b.score || 0) - (a.score || 0);
   }
-  const API = { CFG, VER, rrOk, isBreakout, sidePlan, sma, atrWilder, rsiWilder, barsFromHist, collapse, levelsAt, indicators, phase, limitForRR, tradePlan, nearLevel, markers, backtestPlans, snapshot, cmp, GROUP };
+  const API = { CFG, VER, rrOk, isBreakout, sidePlan, sma, atrWilder, rsiWilder, barsFromHist, collapse, levelsAt, indicators, phase, limitForRR, tradePlan, nearLevel, evalAt, snapshot, simTrade, replay, replayStats, cmp, GROUP };
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.SIG = API;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -779,7 +779,7 @@ const I18N_EN={
 '📊 Рынок сейчас':'📊 Market now','рыночные фазы по технике и фундаменталу':'market phases by technicals & fundamentals','🟢 Покупать / докупать сейчас':'🟢 Buy / add now','цена в ±2% от SMA или поддержки':'price within ±2% of an SMA or support','🔴 Продавать — у сопротивления':'🔴 Sell — at resistance','цена в ±2% от сопротивления':'price within ±2% of resistance','🎯 Подходят к уровню покупки':'🎯 Approaching a buy level','до ближайшего уровня ≤ 5%':'≤ 5% to the nearest level','🔪 Падающие ножи':'🔪 Falling knives','не ловить — ждать стабилизации':'do not catch — wait for stabilization','⚡ Движения дня':'⚡ Top movers','самые сильные изменения за сессию':'biggest moves of the session','в портфеле':'in portfolio','акц.':'stk.','портфеля':'of portfolio','ср. за день':'avg day',
 'Сейчас никто не стоит у уровня покупки':'No stock sits at a buy level right now','У сопротивления никого нет':'Nothing at resistance','Никто не приближается к уровням':'Nothing approaching a level','Свободных падений нет — хороший знак':'No free falls — a good sign','Рынок спит':'The market is quiet','Нет данных':'No data',
 '🧪 Симуляция':'🧪 Simulation','тестовый режим — без реальных денег':'test mode — no real money','Цена покупки':'Buy price','🧪 Купить (тест)':'🧪 Buy (test)','🧪 Тестовый портфель':'🧪 Paper portfolio','покупка — в карточке акции, кнопка «Купить (тест)»':'buy from a stock card via “Buy (test)”','Вложено (тест)':'Invested (test)','Стоимость сейчас':'Value now','по живым ценам и курсу':'at live prices and FX','Результат':'Result','позиц.':'pos.','Вложено':'Invested','П/У':'P/L','куплено':'bought',
-'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','🔄 AI-Рекомендация':'🔄 AI recommendation','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','📈 График · SMA 50/100/200 · уровни':'📈 Chart · SMA 50/100/200 · levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
+'💪 Здоровье бизнеса':'💪 Business health','🔬 AI-анализ акции':'🔬 AI stock analysis','🔄 AI-Рекомендация':'🔄 AI recommendation','📐 Оценка — мультипликаторы (Valuation Check)':'📐 Valuation Check — multiples','📅 Ближайший отчёт и ожидания рынка':'📅 Next earnings & market expectations','🎯 Технические уровни':'🎯 Technical levels','🛒 Уровни покупки / докупки':'🛒 Buy / add levels','по техданным · авто-обновление каждые 5 мин':'from technicals · auto-refreshed every 5 min','✏️ Моя позиция':'✏️ My position','Кол-во акций':'Shares','🔄 Обновить цену':'🔄 Refresh price','Годовой отчёт':'Annual report','Посл. квартал':'Last quarter','Стоимость позиции':'Position value','Аналит. таргет':'Analyst target','за день':'today','потенциал':'upside','Удалить':'Remove','Удалить акцию':'Remove stock','Закрыть позицию':'Close position','Закрыть тестовую позицию':'Close test position',
 'Календарь — отчёты и дивиденды':'Calendar — earnings & dividends','Сегодня':'Today','отчёт':'earnings','экс-дата':'ex-div','выплата':'payout','клик по событию открывает карточку':'click an event to open the card','💰 Дивиденды':'💰 Dividends','kr/год по текущим позициям':'kr/yr at current positions','Дивид./год':'Div./yr','Доходность':'Yield','Экс-дата':'Ex-date','Выплата':'Pay date','Мне в год':'My yearly','Дивидендных бумаг в портфеле нет':'No dividend payers here','Дат отчётов пока нет':'No earnings dates yet','Загружаю календарь отчётов и дивидендов…':'Loading the earnings & dividends calendar…',
 '➕ Добавить акцию':'➕ Add stock','Тикер':'Ticker','уже в списке':'is already listed','добавлен':'added',
 '🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы':'🤖 AI Proto — learns, analyzes the portfolio and beats the indices','🔮 Проанализировать портфель':'🔮 Analyze portfolio','⏳ Анализирую… (30–60 сек)':'⏳ Analyzing… (30–60 s)','💬 Чат с AI Proto':'💬 AI Proto chat','видит портфель, цены и ваши правила':'sees your portfolio and prices (autonomous)','очистить':'clear','Отправить':'Send','Ваш вопрос или указание ассистенту…':'Your question or instruction…','🧠 Память AI Proto — правила инвестора':'🧠 AI Proto memory — investor rules','учитываются в чате и в полном анализе':'applied in chat and in the full analysis','Добавить правило вручную…':'Add a rule manually…','➕ Запомнить':'➕ Remember','📜 История запросов':'📜 History','⚖️ Предложение по балансировке портфеля':'⚖️ Portfolio rebalancing proposal',
@@ -1621,6 +1621,7 @@ function applyTheme(t){
   try{ localStorage.setItem('dash_theme', document.documentElement.dataset.theme); }catch(e){}
   const b = document.getElementById('themeToggle');
   if(b) b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️' : '🌙';
+  if(typeof stockChartsRetheme==='function') stockChartsRetheme();
   scheduleSave();
 }
 // FAQ (❓ in the header): legend for every badge / value used on the site.
@@ -2213,104 +2214,84 @@ function lvlPctColor(absPct, ord){
 // Rolling simple moving average series; out[i] is null until enough history.
 function smaSeries(arr,n){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=n)sum-=arr[i-n];if(i>=n-1)out[i]=sum/n}return out}
 let _chartState=null,_lwcPromise=null,_histCache={};   // history cached 10 min per symbol+range (как кэш ?history= воркера) — re-renders redraw instantly
-// Load TradingView Lightweight Charts from CDN once.
+// Lightweight Charts 5.0.8 (jsdelivr, SRI) — один раз; UMD-глобал LightweightCharts (chart.js, pfPerfDraw).
+const LWC_URL='https://cdn.jsdelivr.net/npm/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js',
+  LWC_SRI='sha384-8J8e9bGIwf7e9BLO5rwf4zJwNRKcypGnvuGzORD/t4TrFA1gWbl3Hsi/RvyWwBKl';
 function loadLWC(){
-  if(window.LightweightCharts) return Promise.resolve();
+  if(window.LightweightCharts&&window.LightweightCharts.createSeriesMarkers) return Promise.resolve();
   if(_lwcPromise) return _lwcPromise;
-  _lwcPromise=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';s.onload=res;s.onerror=()=>rej(new Error('не удалось загрузить библиотеку графика'));document.head.appendChild(s)});
+  _lwcPromise=new Promise((res,rej)=>{const s=document.createElement('script');s.src=LWC_URL;s.integrity=LWC_SRI;s.crossOrigin='anonymous';s.onload=res;s.onerror=()=>{_lwcPromise=null;rej(new Error(RT('не удалось загрузить библиотеку графика','chart library failed to load')))};document.head.appendChild(s)});
   return _lwcPromise;
 }
-function closeStockChart(){if(_chartState&&_chartState.chart){try{_chartState.chart.remove()}catch(e){}_chartState.chart=null}const ov=document.getElementById('chartOverlay');if(ov)ov.style.display='none'}
-function setChartYears(y){if(!_chartState)return;_chartState.years=y;['1','3'].forEach(n=>{const b=document.getElementById('cy'+n);if(b)b.classList.toggle('tf-on',+n===y)});drawChart()}
+// История ?history= (кэш _histCache 10 мин, общий с колонкой «Вердикт v2») → свечи; bars/replay мемоизируются
+// на записи кэша (реплей вердикта ~20–50 мс на 2 года — перерисовки карточки его не пересчитывают).
+async function histBars(sym,range){
+  const key=sym+':'+range,hc=_histCache[key];
+  if(!(hc&&Date.now()-hc.t<10*60e3)){
+    const j=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(sym)+'&range='+range).then(r=>r.json());
+    if(!(j&&Array.isArray(j.c)&&j.c.length))throw new Error(RT('нет исторических данных','no history'));
+    _histCache[key]={j,t:Date.now()};
+  }
+  const e=_histCache[key];if(!e.bars)e.bars=SIG.barsFromHist(e.j);
+  return e;
+}
+function closeStockChart(){if(_chartState&&_chartState.ch){_chartState.ch.destroy();_chartState.ch=null}const ov=document.getElementById('chartOverlay');if(ov)ov.style.display='none'}
+function setChartYears(y){if(!_chartState)return;_chartState.years=y;stockChartTools(_chartState,'cy');stockChartDraw(_chartState,'chartBox')}
+function setChartSide(sd){if(!_chartState)return;_chartState.side=sd;stockChartTools(_chartState,'cy');if(_chartState.ch)_chartState.ch.setSide(sd)}
+// Кнопки 1Г/3Г и Лонг/Шорт: подсветка по состоянию (id = pre+'1'/'3'/'L'/'S').
+function stockChartTools(st,pre){
+  [['1',st.years===1],['3',st.years===3],['L',st.side==='long'],['S',st.side==='short']].forEach(([k,on])=>{const b=document.getElementById(pre+k);if(!b)return;b.classList.toggle(pre==='cy'?'tf-on':'on',!!on);if(k==='L'||k==='S')b.hidden=!!st.planPos;});
+}
+// Попап графика из классических таблиц (клик по компании) — тот же renderStockChart, что и в карточке.
 async function openStockChart(ticker){
   const d=DATA[curIdx],row=d.rows.find(r=>String(r[2]||'').toUpperCase()===String(ticker).toUpperCase());
   if(!row){toast('Нет данных по '+ticker,true);return}
-  const ccy=rowCcy(row),name=row[1]||ticker;
-  _chartState={ticker,row,ccy,name,years:1,chart:null};
+  const ccy=rowCcy(row),name=row[1]||ticker,escapeHtml=x=>String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  _chartState={tab:curIdx,ticker,row,ccy,name,years:1,side:null,ch:null};
   let ov=document.getElementById('chartOverlay');
   if(!ov){ov=document.createElement('div');ov.id='chartOverlay';ov.className='chart-overlay';document.body.appendChild(ov);ov.addEventListener('click',e=>{if(e.target===ov)closeStockChart()})}
-  ov.innerHTML=`<div class="chart-card"><div class="chart-hd"><span><b>${name}</b> · ${ticker} ${ccy}</span><span class="chart-tools"><button class="tf-btn tf-on" id="cy1" onclick="setChartYears(1)">1Г</button><button class="tf-btn" id="cy3" onclick="setChartYears(3)">3Г</button><button class="chart-x" onclick="closeStockChart()">✕</button></span></div><div id="chartBox" class="chart-box"></div><div class="chart-legend" id="chartLegend"></div></div>`;
+  ov.innerHTML=`<div class="chart-card"><div class="chart-hd"><span><b>${escapeHtml(name)}</b> · ${escapeHtml(ticker)} ${ccy}</span><span class="chart-tools"><button class="tf-btn" id="cyL" onclick="setChartSide('long')">${RT('Лонг','Long')}</button><button class="tf-btn" id="cyS" onclick="setChartSide('short')">${RT('Шорт','Short')}</button><button class="tf-btn tf-on" id="cy1" onclick="setChartYears(1)">1Г</button><button class="tf-btn" id="cy3" onclick="setChartYears(3)">3Г</button><button class="chart-x" onclick="closeStockChart()">✕</button></span></div><div id="chartBox" class="chart-box"></div></div>`;
   ov.style.display='flex';
-  drawChart();
+  stockChartDraw(_chartState,'chartBox');
 }
-// (Re)draw a price + SMA + support/resistance chart using Lightweight Charts.
-// Defaults render the popup (_chartState into #chartBox); Портфель 3.0 passes its own state/ids.
-async function drawChart(state=_chartState, boxId='chartBox', legendId='chartLegend'){
-  const box=document.getElementById(boxId),legend=document.getElementById(legendId);
+// График акции (S5): свечи 2y (1Г) / 5y (3Г) → SIG.snapshot (входы строки как у колонки v2) + реплей →
+// renderStockChart. state: {tab,row,ccy,years,side,ch}; side=null — сторона вердикта. Открытая позиция
+// со стопом/целью в POS_META рисует свой план (средняя/стоп/цель) вместо плана стороны.
+async function stockChartDraw(state,boxId){
+  let box=document.getElementById(boxId);
   if(!box||!state)return;
-  state._boxId=boxId;
-  const {row,ccy,years}=state;
   if(!PRICE_PROXY){box.textContent='PRICE_PROXY не задан';return}
-  const histKey=exSymbol(row[2],ccy)+':'+(years===3?'5y':'2y');
-  const hc=_histCache[histKey];
-  const fromCache=hc&&Date.now()-hc.t<10*60*1000;
-  if(!fromCache)box.textContent='Загрузка графика…';
-  let j;
+  const {row,ccy,years}=state,tab=state.tab,sym=exSymbol(row[2],ccy),range=years===3?'5y':'2y',tok=state._tok=(state._tok||0)+1;
+  const hc=_histCache[sym+':'+range];
+  if(!(hc&&Date.now()-hc.t<10*60e3))box.textContent=RT('Загрузка графика…','Loading chart…');
+  let e;
+  try{[,e]=await Promise.all([loadLWC(),histBars(sym,range)]);}
+  catch(err){box=document.getElementById(boxId);if(box&&tok===state._tok)box.textContent=RT('Ошибка загрузки: ','Load error: ')+(err.message||err);return}
+  box=document.getElementById(boxId);
+  if(!box||tok!==state._tok)return;   // карточку перерисовали/закрыли, пока грузилось
+  const bars=e.bars,d=DATA[tab]||{headers:[],rows:[]};
+  if(bars.length<SIG.CFG.minBars){box.textContent=RT('Мало истории для графика','Not enough history');return}
+  const snap=SIG.snapshot(bars,sigOpts(d,row,sigRiskKr(tab)));
+  if(!e.rep)e.rep=SIG.replay(bars,{ind:snap.ind});
+  const tk=posTk(row[2]),m=pf3MyPort(tab)&&(parseFloat(row[6])||0)>0?posMetaGet(tab,tk):null;
+  const plan=m&&(m.stop>0||m.target>0)?{entry:parseFloat(row[9])||0,stop:m.stop,target:m.target,mode:'position'}:null;
+  if(!state.side)state.side=plan?m.side:snap.side;
+  const iv=INSIDER[String(row[2]||'').trim().toUpperCase()];
+  const trades=PF_TRADES.filter(t=>t&&posTk(t.tk)===tk).map(t=>({date:t.date,act:t.act,short:!!t.short}));
+  if(state.ch){state.ch.destroy();state.ch=null}
   try{
-    // Библиотека и история грузятся параллельно — два сетевых ожидания не складываются.
-    const hist=fromCache?Promise.resolve(hc.j):fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y')).then(r=>r.json());
-    [,j]=await Promise.all([loadLWC(),hist]);
-    if(!fromCache&&j&&Array.isArray(j.c)&&j.c.length)_histCache[histKey]={j,t:Date.now()};
-  }catch(e){box.textContent='Ошибка загрузки: '+(e.message||e);return}
-  if(!j||!Array.isArray(j.c)||!j.c.length){box.textContent='Нет исторических данных';return}
-  if(state.chart){try{state.chart.remove()}catch(e){}state.chart=null}
-  box.innerHTML='';
-  const LWC=window.LightweightCharts,closes=j.c,ts=j.t||[];
-  const DISP=years===3?756:252,start=Math.max(0,closes.length-DISP);
-  const series=arr=>{const o=[];for(let i=start;i<arr.length;i++){const v=arr[i];if(typeof v==='number'&&isFinite(v))o.push({time:ts[i],value:Math.round(v*100)/100})}return o};
-  const P=series(closes),A=series(smaSeries(closes,50)),B=series(smaSeries(closes,100)),C=series(smaSeries(closes,200));
-  const dark=document.documentElement.dataset.theme==='dark';
-  const txt=dark?'#e8eaed':'#1a1f2e',grd=dark?'#2a2f3a':'#e8ebf0',priceCol=dark?'#e8eaed':'#111827';
-  const chart=LWC.createChart(box,{width:box.clientWidth||820,height:box.clientHeight||380,
-    layout:{background:{type:'solid',color:'transparent'},textColor:txt},
-    grid:{vertLines:{color:grd},horzLines:{color:grd}},
-    rightPriceScale:{borderColor:grd},timeScale:{borderColor:grd},
-    crosshair:{mode:LWC.CrosshairMode.Normal},
-    handleScale:{axisPressedMouseMove:true,mouseWheel:true,pinch:true},
-    localization:{priceFormatter:p=>p.toFixed(2)}});
-  state.chart=chart;
-  const mk=(color,title,lw)=>chart.addLineSeries({color,lineWidth:lw,title,priceLineVisible:false,lastValueVisible:true});
-  const ps=mk(priceCol,'Цена',2),s50=mk('#2563eb','SMA 50',1),s100=mk('#f59e0b','SMA 100',1),s200=mk('#7c3aed','SMA 200',1);
-  ps.setData(P);s50.setData(A);s100.setData(B);s200.setData(C);
-  const supC=DATA[curIdx].headers.indexOf('Поддержка'),resC=DATA[curIdx].headers.indexOf('Сопротивление');
-  const support=supC>=0?parseFloat(row[supC]):NaN,resistance=resC>=0?parseFloat(row[resC]):NaN;
-  if(isFinite(support))ps.createPriceLine({price:support,color:'#16a34a',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Поддержка'});
-  if(isFinite(resistance))ps.createPriceLine({price:resistance,color:'#dc2626',lineWidth:1,lineStyle:LWC.LineStyle.Dashed,axisLabelVisible:true,title:'Сопротивление'});
-  // 1.5 Метки инсайдерских сделок поверх цены (только значимые: P покупка / S продажа),
-  // в контексте SMA и уровней. Каждую сделку привязываем к ближайшему бару графика.
-  let insLegend='';
-  try{
-    const tkU=String(row[2]||'').trim().toUpperCase(), iv=INSIDER[tkU];
-    if(iv&&Array.isArray(iv.tx)&&iv.tx.length&&P.length){
-      const bars=P.map(p=>p.time),t0=bars[0],t1=bars[bars.length-1];
-      const nearest=s=>{let best=bars[0],bd=Infinity;for(const b of bars){const dd=Math.abs(b-s);if(dd<bd){bd=dd;best=b}}return best;};
-      const agg={};
-      iv.tx.forEach(t=>{
-        if(t.code!=='P'&&t.code!=='S'||!t.date)return;
-        const ms=Date.parse(t.date+'T12:00:00Z');if(isNaN(ms))return;
-        const sec=Math.floor(ms/1000);
-        if(sec<t0-3*86400||sec>t1+3*86400)return;   // вне окна графика
-        const bt=nearest(sec),key=bt+'|'+t.code,o=agg[key]||(agg[key]={time:bt,side:t.code,n:0,usd:0});
-        o.n++;o.usd+=t.value||0;
-      });
-      const markers=Object.values(agg).map(m=>m.side==='P'
-        ?{time:m.time,position:'belowBar',color:'#16a34a',shape:'arrowUp',text:'🟢'+(m.n>1?'×'+m.n:'')}
-        :{time:m.time,position:'aboveBar',color:'#dc2626',shape:'arrowDown',text:'🔴'+(m.n>1?'×'+m.n:'')}
-      ).sort((a,b)=>a.time-b.time);
-      if(markers.length&&ps.setMarkers){ps.setMarkers(markers);insLegend=`<span class="cl-item cl-ins">🟢/🔴 ${RT('инсайдеры','insiders')} (${markers.length})</span>`;}
-    }
-  }catch(e){}
-  chart.timeScale().fitContent();
-  // Legend: hovered values when the crosshair moves, last values otherwise.
-  const defs=[['Цена',ps,priceCol],['SMA 50',s50,'#2563eb'],['SMA 100',s100,'#f59e0b'],['SMA 200',s200,'#7c3aed']];
-  const last=[P,A,B,C].map(a=>a.length?a[a.length-1].value:null);
-  const paint=vals=>{legend.innerHTML=defs.map(([l,,c],i)=>`<span class="cl-item"><i style="background:${c}"></i>${l}${vals[i]!=null?` <b>${vals[i].toFixed(2)} ${ccy}</b>`:''}</span>`).join('')+insLegend;};
-  paint(last);
-  chart.subscribeCrosshairMove(param=>{if(!param||!param.time||!param.seriesData){paint(last);return}paint(defs.map(([,s])=>{const dp=param.seriesData.get(s);return dp&&typeof dp.value==='number'?dp.value:null}))});
-  if(!state._resize){state._resize=()=>{const b=document.getElementById(state._boxId);if(state.chart&&b&&b.clientWidth)state.chart.applyOptions({width:b.clientWidth})};window.addEventListener('resize',state._resize)}
+    state.ch=renderStockChart(box,bars,snap,{side:state.side,plan,bars:years===3?756:252,replay:e.rep,ccy,insider:iv&&Array.isArray(iv.tx)?iv.tx:null,trades});
+  }catch(err){box.textContent=RT('Ошибка графика: ','Chart error: ')+(err.message||err);return}
+  state.planPos=!!plan;
+  stockChartTools(state,boxId==='chartBox'?'cy':'pf3cs');
+}
+// Смена темы → перерисовать открытые графики (цвета берутся из CSS-токенов при отрисовке).
+function stockChartsRetheme(){
+  if(_chartState&&_chartState.ch)stockChartDraw(_chartState,'chartBox');
+  if(typeof pf3State!=='undefined'&&pf3State.ch)stockChartDraw(pf3State,'pf3ChartBox');
 }
 /* ===== Портфель 3.0 — single-stock (MU) page with the v3 redesign ===== */
-let pf3State={row:null,ccy:'USD',years:1,chart:null};
+let pf3State={tab:null,row:null,tk:null,ccy:'USD',years:1,side:null,ch:null};
 const pf3Fmt=(n,dec=0)=>{const v=parseFloat(n);return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}):'—'};
 // $12.3B / 9.9B EUR — money formatting for fundamentals in the report currency.
 const pf3Bn=(v,ccy)=>{if(!(typeof v==='number'&&isFinite(v)))return'—';const a=Math.abs(v);const s=a>=1e9?(v/1e9).toFixed(1)+'B':a>=1e6?(v/1e6).toFixed(0)+'M':Math.round(v).toLocaleString();return(!ccy||ccy==='USD')?'$'+s:s+' '+ccy};

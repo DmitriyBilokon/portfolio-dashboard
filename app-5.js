@@ -823,7 +823,7 @@ function sigSnapRow(d,r,riskKr,now){
   if(m&&m.k===k)return m.s;
   if(!hc.bars)hc.bars=SIG.barsFromHist(hc.j);
   const full=SIG.snapshot(hc.bars,o);
-  const s=full?Object.assign({},full,{ind:null,markers:null,ohlc:Array.isArray(hc.j.h)}):null;
+  const s=full?Object.assign({},full,{ind:null,ohlc:Array.isArray(hc.j.h)}):null;
   SIGNALS[sym]={k,s};
   if(s)sigShadowRecord(d,r,sym,s,now);
   return s;
@@ -969,6 +969,7 @@ function sigShadowShow(ev){
   o.classList.remove('hidden');
 }
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
+function pf3SetSide(sd){pf3State.side=sd;stockChartTools(pf3State,'pf3cs');if(pf3State.ch)pf3State.ch.setSide(sd)}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
 // ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —
 // 0 обновлено, без ошибки.

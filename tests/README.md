@@ -19,7 +19,7 @@ bash tests/run.sh
   (пустой вывод, крэш раннера до сводки);
 - в выводе есть `FAILED`, `EVAL <suite>` (исходник не загрузился) или
   `execution error` (крэш JXA);
-- число кейсов `N` (второе число маркера) ниже порога — `MIN_CASES_app=200`,
+- число кейсов `N` (второе число маркера) ниже порога — `MIN_CASES_app=420`,
   `MIN_CASES_worker=70` в начале `run.sh` (защита от случайно урезанного файла
   кейсов; поднимать вместе с ростом кейсов).
 
@@ -35,7 +35,8 @@ bash tests/run.sh
    `localStorage`, `fetch`, `crypto`, `supabase`, `ALL` …);
 2. читают реальный исходник, убирают авто-`boot()` (app) / `export default`
    (worker);
-3. `eval`-ят исходник вместе с кейсами в одном scope — кейсы видят настоящие
+3. `eval`-ят исходник (для app — `signals.js` + `app*.js` в порядке `index.html`,
+   плюс фикстура свечей `fixtures-signals.js`) вместе с кейсами в одном scope — кейсы видят настоящие
    функции и глобалы;
 4. собирают результаты в `__res` и печатают сводку.
 
@@ -55,6 +56,11 @@ bash tests/run.sh
 - **Реко**: `pf3RecoHorizons.now` (валидный вердикт, не падает).
 - **Синк**: `snapshotState` содержит все критичные пользовательские ключи
   (ловит «потерянный ключ» при правке синка — частая причина потери данных).
+- **Слой сигналов v2** (`signals.js`, S4): эталоны ATR/RSI Wilder, SMA, `collapse`,
+  `limitForRR`, `barsFromHist`; паритет `phase` ↔ `pf3Criterion` на 20 строках (все 9 фаз);
+  `tradePlan` лонг/шорт (клэмп стопа, `wide`, `half`, размер = `qtyByRisk`); `snapshot` на
+  реальных свечах MU / AZN.ST / AAPL (`fixtures-signals.js`, 260 баров); теневой адаптер
+  (`sigOpts`, мемо `sigSnapRow`, журнал и отчёт расхождений); `pf3SignalInfo`.
 - **Worker**: `aiCost`, карта `MODELS`/`aiModel`, `round2`.
 
 ## Как добавить тест

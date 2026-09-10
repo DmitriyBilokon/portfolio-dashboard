@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../../.."   # корень репо
 
 files=("$@")
 if [ ${#files[@]} -eq 0 ]; then
-  files=(app.js app-2.js app-3.js app-4.js app-5.js data.js telegram-notify.js)
+  files=(signals.js app.js app-2.js app-3.js app-4.js app-5.js data.js telegram-notify.js)
 fi
 
 tmp="${TMPDIR:-/tmp}/check-syntax.$$.js"

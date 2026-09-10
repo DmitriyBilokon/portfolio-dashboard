@@ -778,6 +778,192 @@ function deskUniverse(now){
   });
   return {list,bySym,tabsN};
 }
+// 📡 Сигналы v2 в тени (S4, слой 3 plans/redesign-integration.md). signals.js (глобал SIG) считает вердикт
+// по дневным свечам ?history=; старые движки (pf3Criterion/pf3Reco/pf3RecoHorizons) не меняются — v2
+// показывается рядом (доп. колонка «Вердикт v2», столбец v2 в «🏆 общем рейтинге» Home), расхождения
+// пишутся в журнал тени для калибровки порогов (plans/signals-calibration.md). Свечи — общий с графиком
+// карточки кэш _histCache (ключ sym:2y, 10 мин): открытая карточка и колонка не качают историю дважды.
+let SIGNALS={};                 // sym → {k: ключ входных данных, s: снимок без ind/markers}
+let _sigFail={},_sigBusy={},_sigCalAt={};   // _sigCalAt: вкладка → последний запрос календаря
+const SIG_TTL=10*60e3,SIG_POOL=4;
+const sigHistKey=sym=>sym+':2y';
+// Фаза v2 по данным строки — мост паритета с pf3Criterion: те же входы (цена, день %, SMA из колонок,
+// «Поддержка», апсайд к эффективному таргету). После теневого режима заменит pf3Criterion (S7).
+function sigRowPhase(d,r){
+  const {s50,s100,s200}=smaIdx(d),g=i=>i>=0?(parseFloat(r[i])||0):0;
+  return SIG.phase(parseFloat(r[7])||0,parseFloat(r[10])||0,g(s50),g(s100),g(s200),g(d.headers.indexOf('Поддержка')),pf3EffUpside(d,r));
+}
+// Дней до ближайшего отчёта из календаря ?calendar= (pf3Cal); null — неизвестно или уже прошёл.
+function sigEarnDays(sym,now){
+  const c=pf3Cal&&pf3Cal.data&&pf3Cal.data[sym],e=c&&c.earnings;if(!e)return null;
+  const t=Date.parse(String(e).slice(0,10)+'T00:00:00Z'),today=Date.parse(new Date(now||Date.now()).toISOString().slice(0,10)+'T00:00:00Z');
+  if(!isFinite(t))return null;
+  const n=Math.round((t-today)/864e5);return n>=0?n:null;
+}
+// Риск на сделку, kr: 1 % капитала этого портфеля; для индексов/чужих вкладок — основного портфеля.
+function sigRiskKr(tab){
+  let k=0;try{k=bookRiskState(pf3MyPort(tab)?tab:PF3_KEY).riskKr;}catch(e){}
+  return k>0?k:5000;
+}
+// Входы snapshot() из строки вкладки. stale-target — «Аналит. таргет» и свежий «Таргет 3м» расходятся
+// > CFG.staleTgPct (порог плана §4, строже TG_STALE_PCT=10 %, по которому pf3EffTarget берёт свежий).
+function sigOpts(d,r,riskKr,now){
+  const ccy=String(r[8]||'USD').trim().toUpperCase(),sym=exSymbol(r[2],ccy),t=pf3EffTarget(d,r),so=(DESK&&DESK.shortOk)||{};
+  return {riskKr:riskKr>0?riskKr:5000,fx:FX[ccy]||1,upTg:pf3EffUpside(d,r),
+    staleTarget:!!(t.main>0&&t.recent>0&&Math.abs(t.recent-t.main)/t.main*100>SIG.CFG.staleTgPct),
+    earningsDays:sigEarnDays(sym,now),shortOk:!!(so[sym]||so[posTk(r[2])])};
+}
+// Снимок v2 для строки или null (свечей ещё нет). Мемо по (время загрузки свечей + входы): повторные
+// рендеры не пересчитывают (solo#3), а смена таргета/календаря/курса — пересчитывает.
+function sigSnapRow(d,r,riskKr,now){
+  if(typeof SIG==='undefined'||!d||!r||!posTk(r[2]))return null;
+  const sym=exSymbol(r[2],r[8]),hc=_histCache[sigHistKey(sym)];
+  if(!hc||!hc.j)return null;
+  const o=sigOpts(d,r,riskKr,now),k=hc.t+'|'+JSON.stringify(o),m=SIGNALS[sym];
+  if(m&&m.k===k)return m.s;
+  if(!hc.bars)hc.bars=SIG.barsFromHist(hc.j);
+  const full=SIG.snapshot(hc.bars,o);
+  const s=full?Object.assign({},full,{ind:null,markers:null,ohlc:Array.isArray(hc.j.h)}):null;
+  SIGNALS[sym]={k,s};
+  if(s)sigShadowRecord(d,r,sym,s,now);
+  return s;
+}
+// Догрузка свечей (2 года, дневные) пулом по SIG_POOL; неудача — повтор не раньше SIG_TTL (без петли
+// перерисовок). Возвращает число загруженных символов.
+async function sigEnsure(syms){
+  if(!PRICE_PROXY||typeof SIG==='undefined')return 0;
+  const now=Date.now(),need=[...new Set(syms||[])].filter(s=>{
+    if(!s||_sigBusy[s]||(_sigFail[s]&&now-_sigFail[s]<SIG_TTL))return false;
+    const hc=_histCache[sigHistKey(s)];return !(hc&&now-hc.t<SIG_TTL);
+  });
+  if(!need.length)return 0;
+  need.forEach(s=>{_sigBusy[s]=1;});
+  let got=0,i=0;
+  const work=async()=>{
+    while(i<need.length){
+      const s=need[i++];
+      try{
+        const j=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(s)+'&range=2y').then(r=>r.json());
+        if(j&&Array.isArray(j.c)&&j.c.length){_histCache[sigHistKey(s)]={j,t:Date.now()};delete _sigFail[s];got++;}
+        else _sigFail[s]=Date.now();
+      }catch(e){_sigFail[s]=Date.now();}
+      delete _sigBusy[s];
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(SIG_POOL,need.length)},work));
+  return got;
+}
+// Колонка «Вердикт v2» включена → свечи всех бумаг вкладки + календарь отчётов (не чаще раза в 10 мин),
+// затем один перерендер, если что-то пришло.
+function sigLoadTab(tab){
+  const d=DATA[tab];if(!d||!Array.isArray(d.rows))return;
+  const calAt=pf3Cal.loaded;let cal=null;
+  if(tab===v3Key&&Date.now()-(_sigCalAt[tab]||0)>SIG_TTL){_sigCalAt[tab]=Date.now();cal=pf3LoadCalendar();}
+  Promise.all([sigEnsure(d.rows.map(r=>exSymbol(r[2],r[8]))),cal]).then(([n])=>{
+    if((n||pf3Cal.loaded!==calAt)&&curIdx===tab&&isV3())renderPF3();
+  }).catch(()=>{});
+}
+// Числовой ключ сортировки колонки (по убыванию = как SIG.cmp): группа вердикта → R/R → балл.
+function sigSortVal(s){
+  if(!s)return -1;
+  const g=({buy:3,short:3,trim:2,hold:1,wait:1})[s.verdict]||0,rr=s.plan&&s.plan.rr!=null?Math.max(0,Math.min(9.99,s.plan.rr)):0;
+  return g*1e4+Math.round(rr*100)*10+(s.score||0)/10;
+}
+// Старый ↔ новый вердикт: грубые классы «вход / выход / вне рынка». avoid старого совпадает с любым
+// «не покупать» v2. null — сравнить нечего.
+const SIG_COARSE_OLD={buy:'in',sell:'out',wait:'flat',avoid:'avoid'},SIG_COARSE_NEW={buy:'in',short:'out',trim:'out',hold:'flat',wait:'flat'};
+function sigAgree(oldV,newV){
+  const a=SIG_COARSE_OLD[oldV],b=SIG_COARSE_NEW[newV];if(!a||!b)return null;
+  return a===b||(a==='avoid'&&b!=='in');
+}
+// Пилюля вердикта v2: глиф + слово (не только цвет). trim вне книги — «Перегрев» (сокращать нечего).
+function sigPillHTML(s,held,oldV){
+  if(!s)return'<span class="pf3-sig pf3-sig-none">—</span>';
+  const V={buy:['▲',RT('Купить','Buy')],short:['▼',RT('Шорт','Short')],trim:['◆',held?RT('Сократить','Trim'):RT('Перегрев','Overheated')],hold:['●',RT('Держать','Hold')],wait:['○',RT('Ждать','Wait')]}[s.verdict]||['○',s.verdict];
+  const p=s.plan,f=x=>pf3Fmt(x,x>=500?0:2),agree=oldV?sigAgree(oldV,s.verdict):null;
+  const sub=p&&p.rr!=null?`R/R ${p.rr.toFixed(1)}${p.mode==='limit'?' · '+RT('лим.','lim.')+' '+f(p.entry):''}`:'';
+  const tip=[s.why.join('\n'),p?`${s.side==='short'?RT('Шорт','Short'):RT('Лонг','Long')}: ${RT('вход','entry')} ${f(p.entry)} · ${RT('стоп','stop')} ${f(p.stop)} (${p.stopSrc}) · ${RT('цель','target')} ${f(p.target)} (${p.targetSrc}) · ${p.qty} ${RT('шт','sh')}`:'',
+    s.flags.length?RT('Флаги: ','Flags: ')+s.flags.join(', '):'',agree===false?RT('≠ расходится со старой «Рекомендацией»','≠ differs from the old «Recommendation»'):''].filter(Boolean).join('\n');
+  return`<span class="sig2 sig2-${s.verdict}" title="${tip.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}"><b>${V[0]} ${V[1]}${agree===false?' <i class="sig2-ne">≠</i>':''}</b>${sub?`<small>${sub}</small>`:''}</span>`;
+}
+
+// 📓 Журнал тени: день → sym → {старые вердикты/фаза, v2}. Только этот браузер (localStorage), 14 дней.
+// Пишется при каждом новом снимке v2 (последний за день перезаписывает). Отчёт — sigShadowReport().
+const SIG_SHADOW_LS='dash_sig_shadow',SIG_SHADOW_DAYS=14;
+let SIG_SHADOW=null,_sigShadowT=0;
+function sigShadowLoad(){
+  if(SIG_SHADOW)return SIG_SHADOW;
+  try{SIG_SHADOW=JSON.parse(localStorage.getItem(SIG_SHADOW_LS)||'null');}catch(e){SIG_SHADOW=null;}
+  if(!SIG_SHADOW||typeof SIG_SHADOW!=='object'||!SIG_SHADOW.days||typeof SIG_SHADOW.days!=='object')SIG_SHADOW={v:1,days:{}};
+  return SIG_SHADOW;
+}
+function sigShadowPrune(L,today){
+  const cut=new Date(Date.parse(today+'T00:00:00Z')-SIG_SHADOW_DAYS*864e5).toISOString().slice(0,10);
+  Object.keys(L.days).forEach(k=>{if(k<cut)delete L.days[k];});
+  return L;
+}
+function sigShadowRecord(d,r,sym,s,now){
+  let o=null,oh=null,po=null;
+  try{o=pf3Reco(d,r).v;}catch(e){}
+  try{oh=pf3RecoHorizons(d,r).now.v;}catch(e){}
+  try{po=pf3Criterion(d,r).cls;}catch(e){}
+  const L=sigShadowLoad(),day=new Date(now||Date.now()).toISOString().slice(0,10),p=s.plan||{},agree=sigAgree(o,s.verdict);
+  (L.days[day]=L.days[day]||{})[sym]={tk:posTk(r[2]),o,oh,po,n:s.verdict,sd:s.side,pn:s.phase.key,st:!!s.setup,
+    rr:p.rr!=null?Math.round(p.rr*100)/100:null,m:p.mode||null,f:s.flags.slice(),sc:s.score,px:s.price,bd:s.d||'',ohlc:s.ohlc!==false,
+    w:agree===false||po!==s.phase.key?String(s.why[0]||'').slice(0,90):''};
+  clearTimeout(_sigShadowT);_sigShadowT=setTimeout(sigShadowSave,1500);
+}
+function sigShadowSave(){
+  const L=sigShadowPrune(sigShadowLoad(),new Date().toISOString().slice(0,10));
+  try{localStorage.setItem(SIG_SHADOW_LS,JSON.stringify(L));}catch(e){}
+}
+// Отчёт расхождений (markdown) по журналу тени — чистая функция: вставляется в plans/signals-calibration.md.
+function sigShadowReport(L){
+  const days=Object.keys((L&&L.days)||{}).sort();
+  if(!days.length)return'# Отчёт тени v2\n\nЖурнал пуст — включите доп. колонку «Вердикт v2» во вкладках.\n';
+  const last={},hist={};let obs=0;
+  days.forEach(dy=>Object.entries(L.days[dy]).forEach(([sym,e])=>{obs++;last[sym]=Object.assign({sym,day:dy},e);(hist[sym]=hist[sym]||[]).push(e);}));
+  const E=Object.values(last),n=E.length,pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
+  const OV=['buy','wait','sell','avoid',null],NV=['buy','short','trim','hold','wait'];
+  const cmpd=E.filter(e=>sigAgree(e.o,e.n)!==null),agr=cmpd.filter(e=>sigAgree(e.o,e.n)),ph=E.filter(e=>e.po&&e.po===e.pn);
+  const cnt=(arr,f)=>arr.filter(f).length;
+  const out=[`# Отчёт тени v2 — ${days[0]} … ${days[days.length-1]}`,'',
+    `Бумаг: **${n}**, наблюдений: ${obs}, дней: ${days.length}. Совпадение с «Рекомендацией» (список, pf3Reco): **${pct(agr.length,cmpd.length)}** (${agr.length}/${cmpd.length}); фаза v2 = «Критерий»: **${pct(ph.length,n)}**.`,'',
+    '## Матрица: старая «Рекомендация» (строки) × вердикт v2 (столбцы), последний снимок бумаги','',
+    '| старый \\ v2 | '+NV.join(' | ')+' |','|---|'+NV.map(()=>'---:').join('|')+'|'];
+  OV.forEach(ov=>{const row=E.filter(e=>(e.o||null)===ov);if(row.length)out.push(`| ${ov||'—'} | `+NV.map(nv=>cnt(row,e=>e.n===nv)||'').join(' | ')+' |');});
+  const pairs={};E.filter(e=>e.po!==e.pn).forEach(e=>{const k=(e.po||'—')+' → '+e.pn;pairs[k]=(pairs[k]||0)+1;});
+  const pl=Object.entries(pairs).sort((a,b)=>b[1]-a[1]);
+  out.push('','## Фаза: «Критерий» (колонки листа) → phase v2 (свечи)','',pl.length?pl.map(([k,v])=>`- ${k}: ${v}`).join('\n'):'- расхождений нет');
+  const fl={};E.forEach(e=>(e.f||[]).forEach(f=>{fl[f]=(fl[f]||0)+1;}));
+  const rrs=E.filter(e=>e.rr!=null);
+  out.push('','## Пороги (для калибровки)','',
+    `- R/R плана: < ${SIG.CFG.rrWeak}: ${cnt(rrs,e=>e.rr<SIG.CFG.rrWeak)} · ${SIG.CFG.rrWeak}–${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrWeak&&e.rr<SIG.CFG.rrMin)} · ≥ ${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrMin)}; ровно 1.5 (обе цели/стопа — фолбэк ATR): ${cnt(rrs,e=>Math.abs(e.rr-1.5)<0.005)}`,
+    `- Режим входа: по рынку ${cnt(E,e=>e.m==='market')} · лимит ${cnt(E,e=>e.m==='limit')}; сетап «у уровня ≤ ${SIG.CFG.nearPct} %»: ${cnt(E,e=>e.st)}`,
+    `- Вердикты v2: `+NV.map(v=>`${v} ${cnt(E,e=>e.n===v)}`).join(' · ')+`; сторона шорт: ${cnt(E,e=>e.sd==='short')}`,
+    `- Флаги: `+(Object.keys(fl).length?Object.entries(fl).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${v}`).join(' · '):'нет'),
+    `- Без OHLC (старый формат воркера): ${cnt(E,e=>!e.ohlc)}`);
+  const flips=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.n)).size>1).length,flipsO=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.o)).size>1).length;
+  out.push(`- Стабильность (бумаг со сменой вердикта за период): v2 ${flips} · старый ${flipsO} из ${Object.keys(hist).length}`);
+  const diff=E.filter(e=>sigAgree(e.o,e.n)===false).sort((a,b)=>(NV.indexOf(a.n)-NV.indexOf(b.n))||String(a.tk).localeCompare(String(b.tk)));
+  out.push('','## Расхождения вердикта (последний снимок)','');
+  if(!diff.length)out.push('Нет.');
+  else{
+    out.push('| тикер | день | старый (список) | старый (карточка «сейчас») | v2 | R/R | вход | фаза старая → v2 | флаги | почему (v2) |','|---|---|---|---|---|---:|---|---|---|---|');
+    diff.slice(0,60).forEach(e=>out.push(`| ${e.tk} | ${e.day} | ${e.o||'—'} | ${e.oh||'—'} | ${e.n}${e.sd==='short'?' (шорт)':''} | ${e.rr!=null?e.rr.toFixed(2):'—'} | ${e.m||'—'} | ${e.po||'—'} → ${e.pn} | ${(e.f||[]).join(', ')} | ${String(e.w||'').replace(/\|/g,'/')} |`));
+    if(diff.length>60)out.push('',`… и ещё ${diff.length-60}.`);
+  }
+  return out.join('\n')+'\n';
+}
+// «📋 Отчёт расхождений v2»: markdown в буфер обмена + окно с текстом (на телефоне — выделить и скопировать).
+function sigShadowShow(ev){
+  if(ev)ev.stopPropagation();
+  const md=sigShadowReport(sigShadowLoad());
+  try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(md).then(()=>toast(RT('Отчёт скопирован ✓','Report copied ✓')),()=>{});}catch(e){}
+  const o=document.getElementById('faqOverlay'),c=document.getElementById('faqCard');if(!o||!c)return;
+  c.innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>📋 ${RT('Отчёт тени: вердикт v2 vs старые движки','Shadow report: verdict v2 vs old engines')}</h2><div class="faq-body"><p class="pf3-asof">${RT('Журнал этого браузера за 14 дней. Вставьте в plans/signals-calibration.md.','This browser’s log, 14 days. Paste into plans/signals-calibration.md.')}</p><textarea class="sig2-report" readonly onclick="this.select()">${md.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>`;
+  o.classList.remove('hidden');
+}
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
 // ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —

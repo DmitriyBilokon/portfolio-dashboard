@@ -1141,7 +1141,7 @@ function homeBestComposite(){
       const undervalued=!!(sig&&sig.items.some(it=>it.d>0&&/недооцен|дешевле|undervalued|cheaper/.test(it.t)));
       const newsSent=(NEWS_LIVE[tk]&&NEWS_LIVE[tk].items&&NEWS_LIVE[tk].items.length)?NEWS_LIVE[tk].sent:null;
       const sc=homeCompositeScore({up,roe,revg,pe,entry,upTrend:d200!=null&&d200>0,phase,reco,sigN:sig?sig.n:0,insBuy,aiV,undervalued,newsSent});
-      out.push({tk,name:String(r[1]||tk),ccy:r[8]||'',price,score:sc.score,up,roe,revg,pe,entry,phase,reco,sigN:sig?sig.n:0,aiV,why:sc.why});
+      out.push({tk,name:String(r[1]||tk),ccy:r[8]||'',price,score:sc.score,up,roe,revg,pe,entry,phase,reco,sigN:sig?sig.n:0,aiV,why:sc.why,tab:k,r});
     });
   });
   return out;
@@ -1166,8 +1166,13 @@ function homeBestBoardInner(){
   const arr=homeBestList().slice(0,12);
   if(!arr.length)return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><div class="pf3-empty">${RT('Нет данных — нажмите «🔄 Обновить всё».','No data — press «🔄 Update all».')}</div>`;
   const max=Math.max(1,...arr.map(x=>x.score));
-  const rows=arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="hb-score"><span class="hb-bar"><span class="hb-bar-f" style="width:${Math.round(x.score/max*100)}%"></span></span><b>${x.score}</b></td><td class="bp-why">${x.why.join(' · ')||'—'}</td></tr>`).join('');
-  return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Балл','Score')}</th><th>${RT('Сигналы','Signals')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // 📡 Теневой вердикт v2 рядом со старым баллом (S4): свечи показанных бумаг догружаются в фоне, затем
+  // одна перерисовка табло; неудачные символы не перезапрашиваются 10 мин (без петли).
+  const sigRisk=sigRiskKr(PF3_KEY);
+  sigEnsure(arr.map(x=>exSymbol(x.tk,x.ccy))).then(n=>{if(n&&curIdx===HOME_KEY){const el=document.getElementById('homeBestBoard');if(el)el.innerHTML=homeBestBoardInner();}}).catch(()=>{});
+  const v2=x=>{const s=sigSnapRow(DATA[x.tab],x.r,sigRisk);return s?sigPillHTML(s,pf3MyPort(x.tab)&&(parseFloat(x.r[6])||0)>0,x.reco):(_sigBusy[exSymbol(x.tk,x.ccy)]?'…':'—');};
+  const rows=arr.map((x,i)=>`<tr onclick="insiderOpenCard('${x.tk}')"><td class="bp-n">${i+1}</td><td class="bp-name"><b>${x.name}</b> <span class="bp-tk">${x.tk}</span></td><td class="bp-px">${pf3Fmt(x.price,2)} <small>${x.ccy}</small></td><td class="hb-score"><span class="hb-bar"><span class="hb-bar-f" style="width:${Math.round(x.score/max*100)}%"></span></span><b>${x.score}</b></td><td class="hb-v2">${v2(x)}</td><td class="bp-why">${x.why.join(' · ')||'—'}</td></tr>`).join('');
+  return`<div class="pf3-hz-seg" style="margin:2px 0 8px">${seg}</div><table class="bp-tbl"><thead><tr><th>#</th><th>${RT('Акция','Stock')}</th><th>${RT('Цена','Price')}</th><th>${RT('Балл','Score')}</th><th class="hb-v2" title="${RT('Вердикт слоя сигналов v2 (теневой режим): по свечам, уровням и R/R. ≠ — расходится со старой «Рекомендацией».','Signal layer v2 verdict (shadow mode): candles, levels and R/R. ≠ — differs from the old «Recommendation».')}">v2</th><th>${RT('Сигналы','Signals')}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function homeBestBoardHTML(){
   return`<section class="pf3-panel"><div class="pf3-panel-hd"><span>🏆 ${RT('Лучшие акции — общий рейтинг','Best stocks — overall rank')} ${infoBtn('bestrank')}</span><span class="pf3-asof">${RT('композит всех сигналов','composite of all signals')}</span></div><div id="homeBestBoard">${homeBestBoardInner()}</div><div class="pf3-ai-note">${RT('Один балл из апсайда, фазы, качества, роста, оценки, точки входа, рекомендации, инсайдеров и AI. Детерминированно по обновлённым данным. Справочно, не рекомендация.','One score from upside, phase, quality, growth, valuation, entry, recommendation, insiders and AI. Deterministic from refreshed data. Reference only.')}</div></section>`;

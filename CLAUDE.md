@@ -3,14 +3,14 @@
 Личный инвестиционный дашборд: vanilla-JS сайт + Cloudflare Worker + Supabase. Язык общения и UI-текстов — русский (UI двуязычный через `RT(ru,en)` / `T(key)`).
 
 ## Архитектура
-- **Без сборки.** `index.html` грузит по порядку: `data.js` → `app.js` → `app-2.js` → `app-3.js` → `app-4.js` → `app-5.js` (классические `<script>`, общая глобальная область; функции + inline `onclick`). Затем — инлайновая регистрация SW.
+- **Без сборки.** `index.html` грузит по порядку: `data.js` → `signals.js` → `app.js` → `app-2.js` → `app-3.js` → `app-4.js` → `app-5.js` (классические `<script>`, общая глобальная область; функции + inline `onclick`). Затем — инлайновая регистрация SW.
 - `data.js` — вынесенный блоб `ALL` (сид данных). `app.js` разбит на 5 частей чисто механически — правь нужную часть, границы по top-level `}`.
 - **Supabase**: одна строка `ledger_state` с JSON-блобом (`data`), `rev` = optimistic concurrency (инкрементить при записи). На клиенте только anon-ключ. Реалтайм-синк.
 - **Cloudflare Worker** `telegram-notify.js`: live-цены/уровни (Yahoo), фундаментал (FMP→Yahoo), все AI-эндпоинты (Claude + web_search), Telegram-алерты, cron (AI-портфель + авто-анализ).
 
 ## Рабочий процесс (ВАЖНО)
 - **Коммиты:** в сессиях Implementation редизайна (`plans/redesign-integration.md`, S1–S8) — один коммит в `main` в конце сессии после зелёных `bash tests/run.sh` (решение пользователя 2026-09-10). В остальных случаях коммитить только по явной просьбе. **Push — всегда только по явной просьбе.** Это solo-проект, коммиты идут в `main`.
-- **Тесты:** `bash tests/run.sh` (osascript/JSC, конкатенирует `app*.js` + кейсы; есть и worker-suite). Pre-commit hook (`.githooks/pre-commit`) сам гоняет тесты и **авто-проставляет `?v=<хэш>`** ассетам в `index.html` — вручную версии не трогать.
+- **Тесты:** `bash tests/run.sh` (osascript/JSC, конкатенирует `signals.js` + `app*.js` + фикстуры + кейсы; есть и worker-suite). Pre-commit hook (`.githooks/pre-commit`) сам гоняет тесты и **авто-проставляет `?v=<хэш>`** ассетам в `index.html` — вручную версии не трогать.
 - Чистые функции покрывать тестами в `tests/cases-app.js` (`__eq`/`__ok`/`grp`).
 - Синтаксис без браузера: per-file `new Function(s)` через JSC (для воркера заменить `export default` перед проверкой).
 
@@ -38,6 +38,7 @@
 - v3-портфель: `renderPF3`/`pf3Summary`/`pf3DetailHTML`/`pf3ListHTML`/`pf3Items`; опц. колонки через `PF3_XDEF`.
 - v2 (Svelte) удалён — v1 единственный продукт.
 - **Позиция и план (S3 редизайна):** qty/средняя — в строке `r[6]/r[9]`; сторона/стоп/цель — в `POS_META[tab][TK]` (`stop0` = стоп входа, R считается от него). Мутаторы `posMetaSet`/`planMarkOpen` не сохраняют — вызывающий зовёт `scheduleSave()`. План v2 (`PLAN_RULES`): поля v1 не меняются, у «исполнено» источник правды `done`, `status` выводится `planRuleNorm`.
+- **Сигналы v2 (S4 редизайна):** `signals.js` — чистый слой (глобал `SIG`, без DOM/глобалов приложения); **все пороги входа/выхода — только в `SIG.CFG`**. Пока идёт теневой режим, старые `pf3Criterion`/`pf3Reco`/`scenario*` не трогать — v2 показывается рядом (колонка «Вердикт v2», адаптер `sigSnapRow` в app-5.js); пороги меняются только по решениям в `plans/signals-calibration.md`. `phase` = порт `pf3Criterion` 1:1 (тест паритета).
 - **Шорт в журнале:** `PF_TRADES` с `short:true` (открытие `sell`, закрытие `buy`); `pfTaxLots` признаёт результат в дату откупа по средней выручке.
 - **Новый ключ снапшота** = `snapshotState` + ветка в `applyRemoteState` + `SNAP_KEYS` в `tests/cases-app.js` (round-trip тест упадёт, если забыть). **Одноразовая миграция** = шаг `if(STATE_V<N)` в `migrateSchema` + `SCHEMA_V=N`; сиды не должны проверять «вкладки нет → создать» без гейта `STATE_V`.
 

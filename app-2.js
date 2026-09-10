@@ -651,7 +651,7 @@ const PF3_XDEF=[
   ['sma50','SMA 50'],['sma100','SMA 100'],['sma200','SMA 200'],
   ['sup','Поддержка'],['res','Сопротивление'],
   ['upside','Потенциал %'],['tgr','Таргет 3м'],['pe','P/E'],['ps','P/S'],['divy','Дивид. %'],['beta','Beta'],['roe','ROE'],
-  ['betyg','Рейтинг'],['reco','Рекомендация'],
+  ['betyg','Рейтинг'],['reco','Рекомендация'],['sig2','Вердикт v2'],
 ];
 // Лёгкий фундаментальный рейтинг для СТРОКИ списка (по доступным колонкам:
 // ROE / рост выручки / P/E·P/S). Полный 5-столповый betyg — в карточке (pf3Betyg).
@@ -708,6 +708,7 @@ function pf3XMenuHTML(d){
     ${isAdmin()?`<button class="pf3-btn" style="margin-bottom:6px" onclick="pf3RenameTab(event)">✏️ ${RT('Переименовать вкладку','Rename tab')}</button>`:''}
     <div class="xcols-t">${T('Доп. колонки списка')}</div>
     ${PF3_XDEF.map(([k,l])=>`<label class="set-tab"><input type="checkbox"${on.includes(k)?' checked':''} onchange="pf3XToggle('${k}',event)"><span>${T(l)}</span></label>`).join('')}
+    ${on.includes('sig2')?`<button class="pf3-btn" style="margin-top:4px" onclick="sigShadowShow(event)">📋 ${RT('Отчёт расхождений v2','Shadow report v2')}</button>`:''}
     <button class="pf3-btn" style="margin-top:4px" onclick="pf3ForceTypes(event)">🔁 ${RT('Обновить типы и метрики сейчас','Refresh types & metrics now')}</button>
     <div class="xcols-note">${T('значения приходят с обновлением акций')}</div>
   </div>`;
@@ -716,13 +717,15 @@ function pf3XMenuHTML(d){
 function pf3GridTpl(port,xc){
   const arr=Array.isArray(xc)?xc:[];
   if(!arr.length)return'';
-  const x=arr.map(k=>k==='reco'?' 84px':' 78px').join('');
+  const x=arr.map(k=>k==='sig2'?' 148px':k==='reco'?' 84px':' 78px').join('');
   return`grid-template-columns:${port
     ?`40px minmax(104px,1.4fr) minmax(64px,0.85fr) 104px 44px 60px 86px 82px 48px${x} 108px minmax(118px,1fr) 50px`
     :`40px minmax(110px,1.5fr) minmax(78px,1fr) 104px 88px 66px 88px${x} 112px minmax(118px,1fr) 50px`}`;
 }
 function pf3XCell(it,k){
   const p=it.price;
+  // 📡 Вердикт v2 (теневой режим S4): слой signals.js по свечам; «≠» — расходится со старой «Рекомендацией».
+  if(k==='sig2'){if(!it.sig)return _sigBusy[exSymbol(it.r[2],it.r[8])]?'<span class="pf3-sig pf3-sig-none">…</span>':'—';return sigPillHTML(it.sig,it.qty>0&&pf3MyPort(v3Key),it.recoV);}
   if(k==='reco'){
     // Вердикт по ВЫБРАННОМУ горизонту (pf3Hz): «Сейчас» / 6–9м / Лонг.
     let vv=it.recoV,note=it.recoHint;
@@ -753,6 +756,7 @@ function pf3Items(){
   const peC=h.indexOf('P/E'),psC=h.indexOf('P/S'),dyC=h.indexOf('Дивид. %'),revgC=h.indexOf('Рост выручки');
   const tgrC=h.findIndex(x=>/таргет 3м/i.test(x));
   const num=(r,i)=>i>=0?(parseFloat(r[i])||0):0;
+  const sigOn=pf3XC(d).includes('sig2'),sigRisk=sigOn?sigRiskKr(v3Key):0;   // вердикт v2 — только при включённой колонке
   const items=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
     const c=pf3Criterion(d,r);
@@ -765,6 +769,7 @@ function pf3Items(){
     const fb=(typeof pf3BetygRow==='function')?pf3BetygRow(r,it.sec):null;
     it.betyg=fb?fb.total:pf3RowBetyg(it);
     it.betygFull=!!fb;
+    it.sig=sigOn?sigSnapRow(d,r,sigRisk):null;it.sig2=sigSortVal(it.sig);
     return it;
   });
   const totalVal=items.reduce((a,x)=>a+x.val,0);
@@ -818,6 +823,7 @@ function pf3ListHTML(){
     _betygColLoad=v3Key;
     pf3LoadAllFundamentals(v3Key).then(()=>{if(isV3())renderPF3()}).catch(()=>{});
   }
+  if(xc.includes('sig2'))sigLoadTab(v3Key);   // свечи бумаг вкладки → один перерендер (свежие пропускаются)
   const {items}=pf3Items();
   const k=pf3Sort.key,dir=pf3Sort.dir;
   items.sort((a,b)=>{const x=a[k],y=b[k];return(typeof x==='string'?x.localeCompare(y,'ru'):x-y)*dir});

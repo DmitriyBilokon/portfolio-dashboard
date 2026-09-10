@@ -22,7 +22,7 @@ Per-file проверка синтаксиса **без браузера** че�
 bash .claude/skills/check-syntax/check-syntax.sh
 ```
 
-- Без аргументов — проверяет все: `app.js app-2.js app-3.js app-4.js app-5.js data.js telegram-notify.js`.
+- Без аргументов — проверяет все: `signals.js app.js app-2.js app-3.js app-4.js app-5.js data.js telegram-notify.js`.
 - С аргументами — только перечисленные файлы:
 
 ```bash

@@ -105,11 +105,12 @@ grp('pfRecentTrades', function(){
   __eq('recentTrades buy plSEK null', t[1].plSEK, null);
 });
 
-// 9) Покрытие ключей синка: snapshotState ⊇ критичные пользовательские данные
+// 9) Покрытие ключей синка: ПОЛНЫЙ список ключей snapshotState (tests-quality#5) —
+// новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
+var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','aiPrefs','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','layout','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
-  ['data','pfTrades','planRules','aiPort','aiPlaybook','aiPlaybookSeedV','layout','aiPrefs','sim','tabOrder','val','aiDash','aiReco','smaTf','hiddenCols','colOrders']
-    .forEach(function(k){ __ok('snapshot has '+k, Object.prototype.hasOwnProperty.call(s,k)); });
+  __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
   __ok('snapshot has no apiKey (Finnhub removed)', !Object.prototype.hasOwnProperty.call(s,'apiKey'));
 });
 
@@ -594,4 +595,259 @@ grp('pfApplyBuy', function(){
   // строковые входы (из инпутов) не ломают
   var e=pfApplyBuy({qty:'2',avg:'50'}, 2, 150);
   __eq('string inputs avg (100)', e.avg, 100);
+});
+
+
+// ── S3: слой данных редизайна ────────────────────────────────────────────────
+// 🔄 Round-trip синка: каждый ключ snapshotState восстанавливается applyRemoteState
+// (ловит забытую ветку — тихая потеря данных на втором устройстве).
+grp('sync round-trip', function(){
+  var _init=init, _save=scheduleSave, saves=0;
+  init=function(){}; scheduleSave=function(){ saves++; };
+  var orig=snapshotState();
+  var mk={};
+  SNAP_KEYS.forEach(function(k){
+    var v=orig[k];
+    if(k==='aiPrefs') mk[k]=[];                          // по дизайну не восстанавливается (правила отменены)
+    else if(k==='theme') mk[k]='dark';
+    else if(k==='desk') mk[k]={riskPct:2,riskCapPct:8,shortOk:{'MU':true}};
+    else if(Array.isArray(v)||k==='tabGroups') mk[k]=['__'+k];   // tabGroups по умолчанию null, но хранится массивом
+    else if(typeof v==='number') mk[k]=7;
+    else if(typeof v==='boolean') mk[k]=!v;
+    else if(typeof v==='string') mk[k]='__'+k;
+    else mk[k]={__m:k};
+  });
+  document.documentElement.dataset.theme='light';
+  applyRemoteState(JSON.parse(JSON.stringify(mk)));
+  var back=snapshotState();
+  SNAP_KEYS.forEach(function(k){
+    var m=mk[k], b=back[k], ok;
+    if(m && typeof m==='object' && !Array.isArray(m) && m.__m) ok = b && b.__m===k;   // layout/aiSpend дополняются дефолтами
+    else ok = JSON.stringify(b)===JSON.stringify(m);
+    __ok('round-trip '+k, ok, 'got '+JSON.stringify(b));
+  });
+  // Снапшот старого клиента (до S3): нет posMeta/desk → локальные не затираются, push назад
+  POS_META={'TP':{'MU':{side:'long',stop:90}}}; DESK=deskNorm({riskPct:2});
+  saves=0;
+  var old=JSON.parse(JSON.stringify(mk)); delete old.posMeta; delete old.desk; delete old.schemaV;
+  applyRemoteState(old);
+  __eq('old-client snapshot keeps local posMeta', POS_META.TP.MU.stop, 90);
+  __eq('old-client snapshot keeps local desk', DESK.riskPct, 2);
+  __eq('old-client snapshot → schemaV 0', STATE_V, 0);
+  __ok('old-client snapshot schedules push-back', saves>0);
+  applyRemoteState(orig);
+  init=_init; scheduleSave=_save;
+});
+
+grp('posMeta', function(){
+  var _pm=POS_META; POS_META={};
+  var n=posMetaNorm({side:'x',stop:'95.5',target:0,opened:'2026-09-01T10:00'});
+  __eq('norm side default long', n.side, 'long');
+  __eq('norm stop0 = first stop', n.stop0, 95.5);
+  __eq('norm target 0 → null', n.target, null);
+  __eq('norm opened day', n.opened, '2026-09-01');
+  posMetaSet('TP','mu',{side:'long',stop:90,target:130});
+  __eq('set upper-case key', POS_META.TP.MU.stop, 90);
+  posMetaSet('TP','MU',{stop:100});   // перенос стопа в безубыток
+  __eq('stop moved', posMetaGet('TP','MU').stop, 100);
+  __eq('stop0 fixed on move', posMetaGet('TP','MU').stop0, 90);
+  __eq('target kept on patch', posMetaGet('TP','MU').target, 130);
+  posMetaSet('TP','MU',{stop0:95});
+  __eq('stop0 explicit change', posMetaGet('TP','MU').stop0, 95);
+  __eq('count', posMetaCount(POS_META), 1);
+  posMetaDel('TP','MU');
+  __ok('del removes empty tab', !POS_META.TP);
+  __eq('get missing → null', posMetaGet('TP','MU'), null);
+  __ok('levels long ok', posLevelsCheck('long',100,90,130).ok);
+  __eq('levels long bad stop', posLevelsCheck('long',100,110,130).errs, ['stop']);
+  __ok('levels short ok', posLevelsCheck('short',100,110,80).ok);
+  __eq('levels short bad both', posLevelsCheck('short',100,90,120).errs, ['stop','target']);
+  POS_META=_pm;
+});
+
+grp('posCalc', function(){
+  // лонг: вход 100, стоп входа 90, цель 130, цена 110, 10 шт, fx 10
+  var L=posCalc({side:'long',qty:10,entry:100,stop0:90,stop:90,target:130},110,10);
+  __approx('long P&L native', L.plNative, 100);
+  __approx('long P&L SEK', L.plSEK, 1000);
+  __approx('long plPct', L.plPct, 10);
+  __approx('long rNow +1R', L.rNow, 1);
+  __approx('long open risk SEK (110-90)*10*10', L.riskSEK, 2000);
+  __approx('long to stop %', L.toStopPct, 18.18, 0.01);
+  __approx('long progress', L.progress, 0.5);
+  __ok('long no hit', !L.stopHit && !L.targetHit);
+  // стоп в безубыток: R не меняется (считается от stop0)
+  var BE=posCalc({side:'long',qty:10,entry:100,stop0:90,stop:100,target:130},110,10);
+  __approx('BE keeps rNow 1R', BE.rNow, 1);
+  __approx('BE open risk to current stop', BE.riskSEK, 1000);
+  __ok('long stop hit at stop', posCalc({side:'long',qty:1,entry:100,stop:90},90,1).stopHit);
+  __ok('long target hit', posCalc({side:'long',qty:1,entry:100,stop:90,target:130},131,1).targetHit);
+  // шорт: вход 50, стоп 55, цель 40, цена 45 → +5·20=100, +1R
+  var S=posCalc({side:'short',qty:20,entry:50,stop:55,target:40},45,8);
+  __approx('short P&L native mirrored', S.plNative, 100);
+  __approx('short plPct', S.plPct, 10);
+  __approx('short rNow', S.rNow, 1);
+  __approx('short open risk (55-45)*20*8', S.riskSEK, 1600);
+  __approx('short to target %', S.toTargetPct, 11.11, 0.01);
+  __ok('short stop hit above', posCalc({side:'short',qty:1,entry:50,stop:55},56,1).stopHit);
+  __ok('short target hit below', posCalc({side:'short',qty:1,entry:50,stop:55,target:40},39,1).targetHit);
+  __approx('short loss', posCalc({side:'short',qty:10,entry:50},60,1).plNative, -100);
+  __eq('no stop → risk null', posCalc({qty:1,entry:10},11,1).riskSEK, null);
+  __eq('no price → null', posCalc({qty:1,entry:10},0,1), null);
+});
+
+grp('qtyByRisk', function(){
+  __eq('5000 kr, 100→90, fx 10 → 50 sh', qtyByRisk(5000,100,90,10), 50);
+  __eq('short side (stop above) same distance', qtyByRisk(5000,100,110,10), 50);
+  __eq('floor', qtyByRisk(1000,100,97,1), 333);
+  __eq('no stop → 0', qtyByRisk(1000,100,0,1), 0);
+  __eq('no risk → 0', qtyByRisk(0,100,90,1), 0);
+});
+
+grp('bookRiskState', function(){
+  var _D=DATA,_pm=POS_META,_desk=DESK,_fx=FX;
+  FX={SEK:1,USD:10};
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  DATA={'BK':{headers:h,v3:'1',port:'1',cashFree:50000,rows:[[1,'Acme','ACME','🇺🇸','Tech','Рост',10,110,'USD',100,0],[2,'Beta','BETA','🇺🇸','Tech','Рост',0,50,'USD',0,0]]}};
+  POS_META={'BK':{'ACME':{side:'long',stop:90,target:130}}}; DESK=deskNorm({riskPct:1,riskCapPct:6});
+  __approx('equity = 10*110*10 + 50000', pfEquitySEK('BK'), 61000);
+  var b=bookPositions('BK');
+  __eq('book: only held rows', b.length, 1);
+  __eq('book entry = avg r[9]', b[0].entry, 100);
+  __ok('book has meta', b[0].hasMeta && b[0].stop===90);
+  var st=bookRiskState('BK');
+  __eq('risk per trade 1%', st.riskKr, 610);
+  __approx('open risk (110-90)*10*10', st.openRiskSEK, 2000);
+  __approx('cap 6%', st.capSEK, 3660);
+  __ok('under cap', !st.overCap);
+  __eq('deskNorm clamps', deskNorm({riskPct:50,riskCapPct:0}).riskPct, 5);
+  __eq('deskNorm default cap', deskNorm({riskCapPct:0}).riskCapPct, 6);
+  DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;
+});
+
+grp('plan v2', function(){
+  var _D=DATA,_pm=POS_META,_pr=PLAN_RULES;
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  DATA={'TP':{headers:h,v3:'1',port:'1',rows:[[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',90,0]]}};
+  POS_META={};
+  // v1-правило старого клиента → v2, поля v1 не тронуты
+  var v1={id:'pl1757500000000_12',tab:'TP',tk:'ACME',act:'buy',level:95,qty:0,amount:0,deadline:'',note:'',hitAt:0,done:true};
+  planRuleNorm(v1);
+  __eq('norm: done → status done', v1.status, 'done');
+  __eq('norm: side long', v1.side, 'long');
+  __eq('norm: createdAt from id', v1.createdAt, 1757500000000);
+  __eq('norm: v1 fields kept', [v1.act,v1.level,v1.done], ['buy',95,true]);
+  v1.done=false; planRuleNorm(v1);
+  __eq('old client reactivated → armed', v1.status, 'armed');
+  // вход лонг со стопом: цена 100 ≤ уровня 105 → ready; уровень 95 не достигнут
+  __ok('long entry ready', planStatus({tk:'ACME',act:'buy',level:105,stop:90,tab:'TP'}).ready);
+  __eq('long entry hit=level', planStatus({tk:'ACME',act:'buy',level:105,stop:90,tab:'TP'}).hit, 'level');
+  // цена уже за стопом (стоп 101 > цены 100) → сетап сломан, не «пора»
+  var inv=planStatus({tk:'ACME',act:'buy',level:105,stop:101,tab:'TP'});
+  __ok('entry beyond stop → invalid, not ready', inv.invalid && !inv.ready);
+  // выход лонга со стопом-лоссом: продать ≥120 или при уходе под 100
+  var ex=planStatus({tk:'ACME',act:'sell',level:120,stop:100,tab:'TP'});
+  __ok('long exit stop-loss ready', ex.ready && ex.hit==='stop');
+  // шорт: вход продажей, когда цена поднимется до 98 (сейчас 100 ≥ 98) → ready
+  __ok('short entry ready ≥ level', planStatus({tk:'ACME',act:'sell',side:'short',level:98,stop:110,tab:'TP'}).ready);
+  __ok('short entry NOT ready < level', !planStatus({tk:'ACME',act:'sell',side:'short',level:105,stop:110,tab:'TP'}).ready);
+  __ok('short entry beyond stop → invalid', planStatus({tk:'ACME',act:'sell',side:'short',level:95,stop:99,tab:'TP'}).invalid);
+  // R/R
+  __approx('planRR long (130-100)/(100-90)', planRR({level:100,stop:90,target:130}), 3);
+  __approx('planRR short', planRR({side:'short',level:50,stop:55,target:40}), 2);
+  __eq('planRR no target', planRR({level:100,stop:90}), null);
+  __eq('planRR wrong side → null', planRR({level:100,stop:110,target:130}), null);
+  // исполнение: open → мета позиции, дальше стоп/цель из POS_META
+  PLAN_RULES=[planRuleNorm({id:'pl1',tab:'TP',tk:'ACME',act:'buy',level:100,stop:90,target:130,done:false})];
+  var m=planMarkOpen('pl1','2026-09-10');
+  __eq('markOpen status', PLAN_RULES[0].status, 'open');
+  __eq('markOpen meta', [m.side,m.stop0,m.stop,m.target,m.opened,m.planId], ['long',90,90,130,'2026-09-10','pl1']);
+  __ok('open: not ready between stop/target', !planStatus(PLAN_RULES[0]).ready);
+  posMetaSet('TP','ACME',{stop:101});   // трейлинг-стоп над ценой 100 → стоп пробит
+  var so=planStatus(PLAN_RULES[0]);
+  __ok('open: stop from POS_META hit', so.ready && so.hit==='stop' && so.stop===101);
+  posMetaSet('TP','ACME',{stop:90,target:99});
+  __eq('open: target hit', planStatus(PLAN_RULES[0]).hit, 'target');
+  // ui-селект ↔ (act,side)
+  __eq('ui short', planFromUiAct('short'), {act:'sell',side:'short'});
+  __eq('ui cover', planFromUiAct('cover'), {act:'buy',side:'short'});
+  __eq('ui roundtrip cover', planUiAct({act:'buy',side:'short'}), 'cover');
+  DATA=_D;POS_META=_pm;PLAN_RULES=_pr;
+});
+
+// 🧾 Налог по шорту (blankning): результат в дату откупа, выручка — средняя по открытым шорт-продажам
+grp('tax lots short pair', function(){
+  var tr=[
+    {tk:'NKE',ccy:'USD',act:'sell',short:true,qty:10,price:100,fee:5,date:'2025-11-01',ord:0},
+    {tk:'NKE',ccy:'USD',act:'sell',short:true,qty:10,price:90, fee:5,date:'2025-11-10',ord:1},
+    {tk:'NKE',ccy:'USD',act:'buy', short:true,qty:10,price:80, fee:5,date:'2026-01-15',ord:2},
+    {tk:'NKE',ccy:'USD',act:'buy', short:true,qty:10,price:95, fee:5,date:'2026-02-01',ord:3},
+  ];
+  var r=pfTaxLots(tr,'avg');
+  __eq('short: 2 records (at covers)', r.length, 2);
+  // средняя выручка = (995+895)/20 = 94.5/шт → 945; себестоимость 805 → +140, год откупа
+  __eq('short cover1 gain', r[0].gain, 140);
+  __eq('short cover1 year = cover year', r[0].year, '2026');
+  __ok('short record flagged', r[0].short===true);
+  __eq('short cover2 gain (945-955)', r[1].gain, -10);
+  __eq('fifo same for shorts', pfTaxLots(tr,'fifo')[0].gain, 140);
+  // лонг по тому же тикеру не смешивается с шортом
+  var mix=tr.concat([{tk:'NKE',ccy:'USD',act:'buy',qty:5,price:70,date:'2026-03-01',ord:4},{tk:'NKE',ccy:'USD',act:'sell',qty:5,price:75,date:'2026-03-05',ord:5}]);
+  __eq('long pair after shorts', pfTaxLots(mix,'avg')[2].gain, 25);
+});
+
+grp('secFromRow & universe', function(){
+  var _D=DATA,_px=PX_LIVE;
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление'];
+  DATA={};
+  DATA[PF3_KEY]={headers:h,v3:'1',rows:[[1,'Micron','MU','🇺🇸','Semis','Рост',5,100,'USD',80,1.5,95,90,85,92,110]]};
+  DATA['Nasdaq 100']={headers:h,v3:'1',rows:[[1,'Micron','mu','🇺🇸','Semis','Рост',0,99,'USD',0,1.2,'','','','',''],[2,'Volvo','VOLV-B','🇸🇪','Auto','Акция',0,250,'SEK',0,0,'','','','','']]};
+  DATA['OMXS30']={headers:h,v3:'1',rows:[[1,'Volvo B','VOLV B','🇸🇪','Auto','Акция',0,251,'SEK',0,0,'','','','','']]};
+  PX_LIVE={}; var _role=userRole, _allowed=allowedTabs; userRole='admin';
+  var s=secFromRow(DATA[PF3_KEY],DATA[PF3_KEY].rows[0],PF3_KEY);
+  __eq('sec sym/key', [s.sym,s.key], ['MU','MU|USD']);
+  __eq('sec levels', [s.sma50,s.sma200,s.sup,s.res], [95,85,92,110]);
+  __eq('sec held', s.held, [{tab:PF3_KEY,qty:5,avg:80}]);
+  __ok('sec seed price NOT live', s.live===false && s.price===100);
+  var U=deskUniverse();
+  __eq('universe dedup (MU ×2, Volvo ×2 → 2)', U.list.length, 2);
+  __eq('universe tabs counted', U.tabsN, 3);
+  __eq('MU seen in 2 tabs', U.bySym['MU|USD'].tabs.length, 2);
+  __eq('Volvo "VOLV B" = "VOLV-B" (.ST)', U.bySym['VOLV-B.ST|SEK'].tabs, ['Nasdaq 100','OMXS30']);
+  __eq('index row not held', U.bySym['VOLV-B.ST|SEK'].held.length, 0);
+  // гейт свежести: живая котировка этой сессии → live и её цена
+  pxMarkLive('MU',104,1000);
+  var sl=secFromRow(DATA[PF3_KEY],DATA[PF3_KEY].rows[0],PF3_KEY,1000+60e3);
+  __ok('live after mark', sl.live && sl.price===104);
+  __ok('stale after 30 min', !secFromRow(DATA[PF3_KEY],DATA[PF3_KEY].rows[0],PF3_KEY,1000+31*60e3).live);
+  userRole='user'; allowedTabs=['Nasdaq 100'];
+  __eq('RBAC: user sees only allowed tabs', deskUniverse().tabsN, 1);
+  userRole=_role; allowedTabs=_allowed;
+  DATA=_D;PX_LIVE=_px;
+});
+
+// Одноразовые сиды (schemaV): удалённые вкладки не воскресают (data-model-sync#5, stale-info#3)
+grp('migrateSchema seeds', function(){
+  var _D=DATA,_V=STATE_V,_save=scheduleSave; scheduleSave=function(){};
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  DATA={}; DATA[PF3_KEY]={headers:h,rows:[],v3:'1'}; DATA['OMXSPI']={headers:h,rows:[],v3:'1'};
+  STATE_V=1;
+  migrateFamilyPortfolios(); migrateGoldSilver(); migrateSmallCap(); migrateTabAdds(); migratePortfolio3();
+  __ok('v1: Anna not recreated', !DATA['Portfolio (Anna)']);
+  __ok('v1: Sergei not recreated', !DATA['Portfolio (Sergei)']);
+  __ok('v1: Gold and Silver not recreated', !DATA['Gold and Silver']);
+  __ok('v1: Small Cap not recreated', !DATA['Small Cap']);
+  __eq('v1: HEM not re-added', DATA['OMXSPI'].rows.length, 0);
+  __eq('v1: empty PF3 not seeded with MU', DATA[PF3_KEY].rows.length, 0);
+  STATE_V=0;
+  migrateFamilyPortfolios(); migrateTabAdds(); migratePortfolio3();
+  __ok('v0: Anna seeded', !!DATA['Portfolio (Anna)']);
+  __eq('v0: HEM added', DATA['OMXSPI'].rows.length, 1);
+  __eq('v0: MU seed', DATA[PF3_KEY].rows.length, 1);
+  PLAN_RULES=[{id:'plx',tk:'A',act:'buy',level:1,done:false}];
+  migrateSchema();
+  __eq('migrateSchema → SCHEMA_V', STATE_V, SCHEMA_V);
+  __eq('migrateSchema normalizes plans', PLAN_RULES[0].status, 'armed');
+  PLAN_RULES=[];
+  DATA=_D;STATE_V=_V;scheduleSave=_save;
 });

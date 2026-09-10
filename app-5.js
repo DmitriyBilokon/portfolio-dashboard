@@ -191,6 +191,9 @@ function pfTradeAddRecord(){
 // (genomsnittsmetoden — корректно для шведского K4 и совпадает с журналом),
 // 'fifo' — первый-пришёл-первый-ушёл (для сверки). Комиссия покупки входит в
 // себестоимость, комиссия продажи уменьшает выручку. Возвращает записи-продажи.
+// Шорт (blankning, сделки с short:true): продажа открывает, покупка закрывает; результат
+// признаётся в дату закрывающей покупки: выручка = средняя выручка открытых шорт-продаж
+// (genomsnitt, в обоих методах), себестоимость = цена откупа + комиссия. Запись с short:true.
 let _taxMethod='avg';
 function pfTaxLots(trades, method){
   const recs=[],byTk={};
@@ -200,6 +203,14 @@ function pfTaxLots(trades, method){
     const q=Math.abs(parseFloat(t.qty)||0);if(!(q>0))continue;
     const price=parseFloat(t.price)||0,fee=Math.abs(parseFloat(t.fee)||0);
     const st=byTk[tk]||(byTk[tk]={qty:0,cost:0,lots:[]});
+    if(t.short){
+      const sh=st.sh||(st.sh={qty:0,proc:0});
+      if(t.act==='sell'){sh.qty+=q;sh.proc+=q*price-fee;continue;}
+      const pps=sh.qty>0?sh.proc/sh.qty:0,proceeds=pps*q,cost=q*price+fee,gain=proceeds-cost;
+      sh.proc=Math.max(0,sh.proc-proceeds);sh.qty=Math.max(0,sh.qty-q);
+      recs.push({trade:t,tk,name:t.name||tk,ccy:t.ccy||'SEK',date:t.date||'',year:String(t.date||'').slice(0,4)||'—',qty:q,proceeds:Math.round(proceeds*100)/100,cost:Math.round(cost*100)/100,gain:Math.round(gain*100)/100,short:true});
+      continue;
+    }
     if(t.act==='sell'){
       let cost=0;
       if(method==='fifo'){let need=q;while(need>1e-9&&st.lots.length){const lot=st.lots[0],take=Math.min(need,lot.q);cost+=take*lot.cps;lot.q-=take;need-=take;if(lot.q<=1e-9)st.lots.shift();}st.qty=Math.max(0,st.qty-q);}
@@ -211,7 +222,7 @@ function pfTaxLots(trades, method){
   return recs;
 }
 // Журнал семейного портфеля → формат движка.
-function pfTaxTrades(tab){return (PF_TRADES||[]).filter(e=>(e.tab||PF3_KEY)===(tab||v3Key)).map((e,i)=>({tk:e.tk,name:e.name,ccy:e.ccy,act:e.act,qty:e.qty,price:e.price,fee:e.feeNative,date:e.date,ord:i,_e:e}));}
+function pfTaxTrades(tab){return (PF_TRADES||[]).filter(e=>(e.tab||PF3_KEY)===(tab||v3Key)).map((e,i)=>({tk:e.tk,name:e.name,ccy:e.ccy,act:e.act,short:!!e.short,qty:e.qty,price:e.price,fee:e.feeNative,date:e.date,ord:i,_e:e}));}
 // Пересчёт реализованного P&L журнала по средней цене (после импорта) — чтобы
 // сумма «Реализованный P&L» осталась консистентной (тот же метод, что у pfTrade).
 function pfRecalcRealized(tab){
@@ -308,13 +319,27 @@ function planStatus(rule){
   const overdue=dleft!=null&&dleft<0, dueSoon=dleft!=null&&dleft>=0&&dleft<=3;
   // Готово к исполнению: если задан уровень — по цене; если уровня нет, а есть
   // дедлайн — по приближению/наступлению даты.
-  const ready = hasLvl ? priceReady : (dueSoon||overdue);
-  return {price,lvl,hasLvl,priceReady,gapPct,dleft,overdue,dueSoon,ready};
+  let ready = hasLvl ? priceReady : (dueSoon||overdue);
+  // v2: стоп/цель по стороне. У открытой по плану позиции они берутся из POS_META (там их
+  // двигают), иначе — из правила. hit: level|deadline|stop|target|invalid.
+  const side=rule.side==='short'?'short':'long',dir=side==='short'?-1:1,open=rule.status==='open'&&!rule.done;
+  const m=open?posMetaGet(rule.tab||PF3_KEY,rule.tk):null;
+  const stop=(m&&m.stop)||_pnum(rule.stop)||0,target=(m&&m.target)||_pnum(rule.target)||0;
+  const stopHit=price>0&&stop>0&&dir*(price-stop)<=0,targetHit=price>0&&target>0&&dir*(target-price)<=0;
+  let hit=null,invalid=false;
+  if(open){ ready=stopHit||targetHit; hit=stopHit?'stop':targetHit?'target':null; }
+  else if(stopHit&&planIsEntry(rule)){ invalid=true; ready=false; hit='invalid'; }   // цена уже за стопом — сетап сломан до входа
+  else if(stopHit){ ready=true; hit='stop'; }                                           // стоп-лосс правила выхода
+  else if(ready) hit=hasLvl?'level':'deadline';
+  return {price,lvl,hasLvl,priceReady,gapPct,dleft,overdue,dueSoon,ready,side,stop,target,stopHit,targetHit,hit,invalid,open};
 }
 function planReadyCount(tab){ return (PLAN_RULES||[]).filter(r=>(!tab||(r.tab||PF3_KEY)===tab)&&!r.done&&planStatus(r).ready).length; }
 function planBadge(tab){ const n=planReadyCount(tab); return n?` 🔔${n}`:''; }
-function planActIcon(act){ return act==='sell'?'🔴':act==='watch'?'👁':'🟢'; }
-function planActLabel(act){ return act==='sell'?RT('Сократить','Trim'):act==='watch'?RT('Наблюдать','Watch'):RT('Купить','Buy'); }
+function planActIcon(act,side){ if(side==='short')return act==='sell'?'🔻':'🔺'; return act==='sell'?'🔴':act==='watch'?'👁':'🟢'; }
+function planActLabel(act,side){ if(side==='short')return act==='sell'?RT('Шорт','Short'):RT('Откупить шорт','Cover short'); return act==='sell'?RT('Сократить','Trim'):act==='watch'?RT('Наблюдать','Watch'):RT('Купить','Buy'); }
+// Значение селекта формы ↔ (act, side): short = открыть шорт продажей, cover = закрыть покупкой.
+const planUiAct=r=>r.side==='short'?(r.act==='sell'?'short':'cover'):(r.act||'buy');
+const planFromUiAct=v=>v==='short'?{act:'sell',side:'short'}:v==='cover'?{act:'buy',side:'short'}:{act:v==='sell'?'sell':v==='watch'?'watch':'buy',side:'long'};
 function planNotify(title,body){
   try{
     if(typeof Notification==='undefined')return;
@@ -341,10 +366,12 @@ function planCheck(){
     else if(!st.ready&&rule.hitAt&&st.price>0){ rule.hitAt=0; changed=true; }   // ушли из зоны → сброс, чтобы уведомить при повторном входе
   });
   fired.forEach(({rule,st})=>{
-    const lvlTxt=st.hasLvl
+    const lvlTxt=st.hit==='stop'?`⛔ ${RT('стоп','stop')} ${pf3Fmt(st.stop,2)} ${rule.ccy||''} ${RT('пробит — выйти','hit — exit')}`
+      :st.hit==='target'?`🎯 ${RT('цель','target')} ${pf3Fmt(st.target,2)} ${rule.ccy||''} ${RT('достигнута','reached')}`
+      :st.hasLvl
       ?`${rule.act==='sell'?RT('цена выросла до','price rose to'):RT('цена опустилась к','price dropped to')} ${pf3Fmt(st.lvl,2)} ${rule.ccy||''}`
       :RT('подошёл срок','deadline reached');
-    const msg=`${planActIcon(rule.act)} ${rule.tk}: ${lvlTxt}${rule.amount?` · ~${pf3Fmt(rule.amount,0)} kr`:''}`;
+    const msg=`${planActIcon(rule.act,rule.side)} ${rule.tk}: ${lvlTxt}${rule.amount?` · ~${pf3Fmt(rule.amount,0)} kr`:''}`;
     toast('🎯 '+msg);
     planNotify(RT('🎯 План действий — пора исполнять','🎯 Action plan — act now'), msg+(rule.note?`\n${rule.note}`:''));
   });
@@ -373,6 +400,12 @@ function planQtyBit(r, price){
       return `~${pf3Fmt(r.amount,0)} kr · ≈ ${sh} ${RT('шт','sh')}`;
     }
     return `~${pf3Fmt(r.amount,0)} kr`;
+  }
+  // Размер по риску: стоп задан, а кол-во/сумма нет → сколько акций при риске riskPct % капитала.
+  const e=_pnum(r.level)||_pnum(price);
+  if(r.stop>0&&e){
+    const rk=r.riskKr>0?r.riskKr:bookRiskState(r.tab||PF3_KEY).riskKr,q=qtyByRisk(rk,e,r.stop,FX[r.ccy]||1);
+    if(rk>0)return `${RT('по риску','by risk')} ${pf3Fmt(rk,0)} kr: ${q>0?q+' '+RT('шт','sh'):'⚠ '+RT('меньше 1 акции','under 1 share')}`;
   }
   return '';
 }
@@ -417,7 +450,7 @@ function planImportFromAi(){
     else if(/€|eur/i.test(a.details||''))ccy='EUR';
     else if(/£|gbp/i.test(a.details||''))ccy='GBP';
     const amount=typeof a.amountSEK==='number'&&a.amountSEK>0?a.amountSEK:0;
-    PLAN_RULES.push({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1,ver});
+    PLAN_RULES.push(planRuleNorm({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
     added++;
   });
   // 👁 Лист ожидания (приоритет 4) — отдельным типом «watch».
@@ -427,18 +460,29 @@ function planImportFromAi(){
     const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
     const ccy=row&&row[8]?String(row[8]).toUpperCase():'USD';
     const note=[w.condition?RT('Условие','When')+': '+w.condition:'',w.rationale||''].filter(Boolean).join(' · ');
-    PLAN_RULES.push({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[1])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver});
+    PLAN_RULES.push(planRuleNorm({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[1])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
     added++;
   });
   if(added){planAskNotify(true);scheduleSave();renderPF3();toast('📥 '+RT('Перенесено из совета AI','Imported from AI advice')+` (v${ver}): ${added}. `+RT('Проверьте уровни и кол-во ✏','Check levels & qty ✏'));}
   else toast(RT('Новых правил нет (уже добавлены или нет торговых действий)','No new rules (already added or no trade actions)'));
+}
+// Проверка формы: стоп/цель по нужную сторону от уровня входа (для выхода — от текущей цены).
+function planLevelsOk(r){
+  if(!(r.stop>0)&&!(r.target>0))return true;
+  const e=planIsEntry(r)?_pnum(r.level):(planCurPrice(r.tk)||_pnum(r.level));
+  if(!e)return true;
+  const c=posLevelsCheck(r.side,e,r.stop,r.target);if(c.ok)return true;
+  const sh=r.side==='short';
+  toast(c.errs.includes('stop')?(sh?RT('Стоп шорта должен быть ВЫШЕ входа','Short stop must be ABOVE entry'):RT('Стоп лонга должен быть НИЖЕ входа','Long stop must be BELOW entry'))
+    :(sh?RT('Цель шорта должна быть НИЖЕ входа','Short target must be BELOW entry'):RT('Цель лонга должна быть ВЫШЕ входа','Long target must be ABOVE entry')),true);
+  return false;
 }
 function planEdit(id){ planEditId=(planEditId===id?null:id); renderPF3(); }
 function planCancelEdit(){ planEditId=null; renderPF3(); }
 function planSave(id){
   const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return;
   const g=k=>document.getElementById(k);
-  r.act=(g('planE_act')&&g('planE_act').value)||r.act;
+  if(g('planE_act')&&g('planE_act').value)Object.assign(r,planFromUiAct(g('planE_act').value));
   const tk=String((g('planE_tk')&&g('planE_tk').value)||'').trim().toUpperCase(); if(tk)r.tk=tk;
   r.level=parseFloat(g('planE_lvl')&&g('planE_lvl').value)||0;
   r.ccy=String((g('planE_ccy')&&g('planE_ccy').value)||r.ccy||'USD').trim().toUpperCase();
@@ -446,8 +490,12 @@ function planSave(id){
   r.amount=parseFloat(g('planE_amt')&&g('planE_amt').value)||0;
   r.deadline=(g('planE_dl')&&g('planE_dl').value)||'';
   r.note=String((g('planE_note')&&g('planE_note').value)||'').trim();
+  r.stop=parseFloat(g('planE_stop')&&g('planE_stop').value)||0;
+  r.target=parseFloat(g('planE_tgt')&&g('planE_tgt').value)||0;
   if(!(r.level>0)&&!r.deadline){toast(RT('Задайте уровень цены или дедлайн','Set a price level or a deadline'),true);return;}
+  if(!planLevelsOk(r))return;
   r.hitAt=0;   // условие изменилось → пересверить заново
+  if(r.status==='open'&&!r.done)posMetaSet(r.tab||PF3_KEY,r.tk,{stop:r.stop||null,target:r.target||null});   // у открытой позиции стоп/цель живут в POS_META
   planEditId=null; scheduleSave(); renderPF3();
   toast('🎯 '+RT('Правило обновлено','Rule updated'));
 }
@@ -465,10 +513,12 @@ function planRulesHTML(){
   const readyN=mine.filter(x=>!x.r.done&&x.st.ready).length;
   const editRow=r=>`<div class="plan-row plan-edit">
       <div class="plan-add-form plan-edit-form">
-        <select id="planE_act"><option value="buy"${r.act!=='sell'?' selected':''}>🟢 ${RT('Купить','Buy')}</option><option value="sell"${r.act==='sell'?' selected':''}>🔴 ${RT('Сократить','Trim')}</option></select>
+        <select id="planE_act"><option value="buy"${planUiAct(r)==='buy'?' selected':''}>🟢 ${RT('Купить','Buy')}</option><option value="sell"${planUiAct(r)==='sell'?' selected':''}>🔴 ${RT('Сократить','Trim')}</option><option value="short"${planUiAct(r)==='short'?' selected':''}>🔻 ${RT('Шорт','Short')}</option><option value="cover"${planUiAct(r)==='cover'?' selected':''}>🔺 ${RT('Откупить шорт','Cover short')}</option></select>
         <input id="planE_tk" value="${esc(r.tk||'')}" list="planTkList" style="text-transform:uppercase;width:92px">
         <input id="planE_lvl" type="number" step="any" min="0" value="${r.level||''}" placeholder="${RT('Уровень','Level')}">
         <input id="planE_ccy" value="${esc(r.ccy||'USD')}" style="width:58px;text-transform:uppercase">
+        <input id="planE_stop" type="number" step="any" min="0" value="${r.stop||''}" placeholder="${RT('Стоп','Stop')}" title="${RT('Стоп-лосс: лонг — ниже входа, шорт — выше','Stop-loss: long below entry, short above')}">
+        <input id="planE_tgt" type="number" step="any" min="0" value="${r.target||''}" placeholder="${RT('Цель','Target')}">
         <input id="planE_qty" type="number" step="any" min="0" value="${r.qty||''}" placeholder="${RT('Кол-во, шт','Qty, sh')}">
         <input id="planE_amt" type="number" step="any" min="0" value="${r.amount||''}" placeholder="${RT('Сумма, kr','Amount, kr')}">
         <input id="planE_dl" type="date" value="${r.deadline||''}" title="${RT('Дедлайн','Deadline')}">
@@ -481,6 +531,10 @@ function planRulesHTML(){
     if(planEditId===r.id)return editRow(r);
     let badge;
     if(r.done)badge=`<span class="plan-badge plan-done">✓ ${RT('Исполнено','Done')}</span>`;
+    else if(st.hit==='stop')badge=`<span class="plan-badge plan-over">⛔ ${RT('Стоп пробит','Stop hit')}</span>`;
+    else if(st.hit==='target')badge=`<span class="plan-badge plan-ready">🎯 ${RT('Цель','Target')}</span>`;
+    else if(st.invalid)badge=`<span class="plan-badge plan-over">✖ ${RT('Сетап сломан: цена за стопом','Setup broken: price beyond stop')}</span>`;
+    else if(st.open)badge=`<span class="plan-badge plan-wait">📍 ${RT('Открыта','Open')}</span>`;
     else if(r.act==='watch')badge=`<span class="plan-badge plan-watch">👁 ${RT('Наблюдение','Watch')}</span>`;
     else if(st.ready)badge=`<span class="plan-badge plan-ready">🔔 ${RT('Пора','Act now')}</span>`;
     else if(st.overdue)badge=`<span class="plan-badge plan-over">⌛ ${RT('Просрочено','Overdue')}</span>`;
@@ -491,6 +545,10 @@ function planRulesHTML(){
       if(st.price>0)bits.push(`${RT('сейчас','now')} ${pf3Fmt(st.price,2)} ${r.ccy||''}`);
       if(!st.ready&&st.gapPct!=null)bits.push(`${st.gapPct>=0?'+':''}${pf3Fmt(st.gapPct,1)}% ${RT('до уровня','to level')}`);
     }
+    if(st.stop>0)bits.push(`${RT('стоп','stop')} ${pf3Fmt(st.stop,2)}`);
+    if(st.target>0)bits.push(`${RT('цель','target')} ${pf3Fmt(st.target,2)}`);
+    const rr=planRR(Object.assign({},r,{stop:st.stop,target:st.target}),st.price);
+    if(rr!=null&&!st.open)bits.push(`R/R ${pf3Fmt(rr,1)}`);
     if(r.deadline){
       const dl=st.dleft;
       bits.push(`📅 ${r.deadline}${dl!=null?` (${dl<0?RT('просрочен','past'):dl===0?RT('сегодня','today'):dl+RT(' дн','d')})`:''}`);
@@ -498,10 +556,11 @@ function planRulesHTML(){
     const qb=planQtyBit(r, st.price>0?st.price:st.lvl);
     if(qb)bits.push(qb);
     return`<div class="plan-row${st.ready&&!r.done?' is-ready':''}${r.done?' is-done':''}">
-      <span class="plan-act ${r.act}">${planActIcon(r.act)} ${planActLabel(r.act)}</span>
+      <span class="plan-act ${r.act}">${planActIcon(r.act,r.side)} ${planActLabel(r.act,r.side)}</span>
       <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}${r.ver?' · v'+r.ver:''}">🤖${r.ver?' v'+r.ver:''}</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
       ${can('action.edit_plan')?`<span class="plan-btns">
         <button class="pf3-del" onclick="planEdit('${r.id}')" title="${RT('Редактировать','Edit')}">✏</button>
+        ${(!r.done&&!st.open&&planIsEntry(r)&&r.act!=='watch'&&r.stop>0)?`<button class="pf3-del" onclick="planOpen('${r.id}')" title="${RT('Позиция открыта по плану — следить за стопом и целью','Position opened — watch stop & target')}">📍</button>`:''}
         ${r.done?`<button class="pf3-del" onclick="planDone('${r.id}',0)" title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" onclick="planDone('${r.id}',1)" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}
         <button class="pf3-del" onclick="planDel('${r.id}')" title="${RT('Удалить','Delete')}">🗑</button>
       </span>`:''}
@@ -517,17 +576,19 @@ function planRulesHTML(){
     <details class="plan-add"${mine.length?'':' open'}>
       <summary>➕ ${RT('Добавить правило плана','Add plan rule')}</summary>
       <div class="plan-add-form">
-        <select id="planAct"><option value="buy">🟢 ${RT('Купить/докупить','Buy/add')}</option><option value="sell">🔴 ${RT('Сократить/продать','Trim/sell')}</option></select>
+        <select id="planAct"><option value="buy">🟢 ${RT('Купить/докупить','Buy/add')}</option><option value="sell">🔴 ${RT('Сократить/продать','Trim/sell')}</option><option value="short">🔻 ${RT('Шорт (открыть)','Short (open)')}</option><option value="cover">🔺 ${RT('Откупить шорт','Cover short')}</option></select>
         <input id="planTk" list="planTkList" placeholder="${RT('Тикер','Ticker')}" autocomplete="off" style="text-transform:uppercase">
         <input id="planLvl" type="number" step="any" min="0" placeholder="${RT('Уровень цены','Price level')}">
         <input id="planCcy" placeholder="${RT('Валюта','Ccy')}" value="USD" style="width:64px;text-transform:uppercase">
+        <input id="planStop" type="number" step="any" min="0" placeholder="${RT('Стоп (необяз.)','Stop (opt.)')}" title="${RT('Стоп-лосс: лонг — ниже входа, шорт — выше','Stop-loss: long below entry, short above')}">
+        <input id="planTgt" type="number" step="any" min="0" placeholder="${RT('Цель (необяз.)','Target (opt.)')}">
         <input id="planQty" type="number" step="any" min="0" placeholder="${RT('Кол-во, шт','Qty, sh')}">
         <input id="planAmt" type="number" step="any" min="0" placeholder="${RT('или сумма, kr','or amount, kr')}">
         <input id="planDl" type="date" title="${RT('Дедлайн (необязательно)','Deadline (optional)')}">
         <input id="planNote" placeholder="${RT('Заметка / условие','Note / condition')}" style="flex:1;min-width:160px">
         <button class="pf3-btn" onclick="planAdd()">${RT('Добавить','Add')}</button>
       </div>
-      <div class="pf3-reco-note">${RT('Уровень: для покупки сработает, когда цена опустится ДО уровня (≤); для продажи — когда поднимется ДО уровня (≥). Кол-во указывайте в штуках (акции покупаются поштучно). Если указать сумму в kr — покажу, сколько целых акций на неё влезает по цене. Дедлайн без уровня сработает по дате.','Level: a buy triggers when price drops TO the level (≤); a sell when it rises TO the level (≥). Enter quantity in shares (stocks are bought per share). If you enter a kr amount, I show how many whole shares it covers at price. A deadline without a level triggers by date.')}</div>
+      <div class="pf3-reco-note">${RT('Уровень: для покупки сработает, когда цена опустится ДО уровня (≤); для продажи — когда поднимется ДО уровня (≥). Кол-во указывайте в штуках (акции покупаются поштучно). Если указать сумму в kr — покажу, сколько целых акций на неё влезает по цене. Дедлайн без уровня сработает по дате.','Level: a buy triggers when price drops TO the level (≤); a sell when it rises TO the level (≥). Enter quantity in shares (stocks are bought per share). If you enter a kr amount, I show how many whole shares it covers at price. A deadline without a level triggers by date.')} ${RT('Стоп и цель необязательны: со стопом покажу размер по риску (1 % капитала) и R/R, а после «📍 Открыта» буду следить за стопом и целью. Шорт: вход — когда цена поднимется до уровня, стоп выше, цель ниже.','Stop and target are optional: with a stop I show risk-based size (1% of equity) and R/R; after «📍 Opened» I watch the stop and target. Short: entry when price rises to the level, stop above, target below.')}</div>
     </details>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🎯 ${RT('План действий','Action plan')} — ${TAB_LABEL(v3Key)}</span>${readyN?`<span class="pf3-asof"><b class="plan-ready-t">🔔 ${readyN} ${RT('к исполнению','ready')}</b></span>`:''}${importBtn}${notifBtn}</div>
@@ -539,24 +600,184 @@ function planAdd(){
   const g=id=>document.getElementById(id);
   const tk=String((g('planTk')&&g('planTk').value)||'').trim().toUpperCase();
   if(!tk){toast(RT('Укажите тикер','Enter a ticker'),true);return;}
-  const act=(g('planAct')&&g('planAct').value)||'buy';
+  const {act,side}=planFromUiAct((g('planAct')&&g('planAct').value)||'buy');
   const level=parseFloat(g('planLvl')&&g('planLvl').value)||0;
+  const stop=parseFloat(g('planStop')&&g('planStop').value)||0,target=parseFloat(g('planTgt')&&g('planTgt').value)||0;
   const qty=parseFloat(g('planQty')&&g('planQty').value)||0;
   const amount=parseFloat(g('planAmt')&&g('planAmt').value)||0;
   const deadline=(g('planDl')&&g('planDl').value)||'';
   const note=String((g('planNote')&&g('planNote').value)||'').trim();
   let ccy=String((g('planCcy')&&g('planCcy').value)||'').trim().toUpperCase()||'USD';
   if(!(level>0)&&!deadline){toast(RT('Задайте уровень цены или дедлайн','Set a price level or a deadline'),true);return;}
+  if(!planLevelsOk({act,side,level,stop,target}))return;
   const d=pf3D(); let name=tk;
   const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
   if(row){ name=String(row[1]||tk); if(row[8])ccy=String(row[8]).toUpperCase(); }
-  PLAN_RULES.push({id:'pl'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name,ccy,act,level:level>0?level:0,qty:qty>0?qty:0,amount:amount>0?amount:0,deadline,note,hitAt:0,done:false});
+  PLAN_RULES.push(planRuleNorm({id:'pl'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name,ccy,act,side,level:level>0?level:0,stop,target,qty:qty>0?qty:0,amount:amount>0?amount:0,deadline,note,hitAt:0,done:false,createdAt:Date.now()}));
   planAskNotify(true);   // тихо запросить разрешение на push при первом правиле
   scheduleSave();renderPF3();
   toast('🎯 '+RT('Правило добавлено','Rule added')+': '+tk);
 }
 function planDel(id){ PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==id); if(planEditId===id)planEditId=null; scheduleSave();renderPF3(); }
-function planDone(id,v){ const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return; r.done=!!(+v); if(r.done)r.hitAt=0; scheduleSave();renderPF3(); }
+function planDone(id,v){ const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return; r.done=!!(+v); if(r.done)r.hitAt=0; planRuleNorm(r); scheduleSave();renderPF3(); }
+
+// ── 📍 Слой данных редизайна (S3): позиция, план сделки v2, бумага ─────────────
+// Чистые функции без DOM (покрыты тестами): их читают экраны desk (S6) и cron bookcheck
+// (S8). Позиция = строка портфеля (qty r[6], средняя r[9] — как раньше, налог не
+// меняется) + POS_META[tab][TK] (сторона/стоп/цель). Функции-мутаторы не сохраняют —
+// вызывающий сам зовёт scheduleSave().
+const _pnum=v=>{const x=parseFloat(v);return isFinite(x)&&x>0?x:null;};
+const _pday=v=>/^\d{4}-\d{2}-\d{2}/.test(String(v||''))?String(v).slice(0,10):'';
+const posTk=tk=>String(tk||'').trim().toUpperCase();
+function posMetaNorm(m){
+  m=(m&&typeof m==='object')?m:{};
+  const o={side:m.side==='short'?'short':'long',stop0:_pnum(m.stop0),stop:_pnum(m.stop),target:_pnum(m.target),riskKr:_pnum(m.riskKr),opened:_pday(m.opened),planId:m.planId?String(m.planId):''};
+  if(o.stop0==null&&o.stop!=null)o.stop0=o.stop;   // R считается от стопа входа — первый заданный стоп и есть он
+  return o;
+}
+function posMetaGet(tab,tk){const t=POS_META&&POS_META[tab],m=t&&t[posTk(tk)];return m?posMetaNorm(m):null;}
+// Слить patch в мету. stop0 фиксируется первым стопом и дальше меняется только явно
+// (перенос стопа в безубыток не должен искажать R). null в patch стирает поле.
+function posMetaSet(tab,tk,patch){
+  const k=posTk(tk);if(!tab||!k)return null;
+  const cur=posMetaGet(tab,k),p=patch||{};
+  const next=posMetaNorm(Object.assign({},cur||{},p));
+  if(cur&&cur.stop0!=null&&!('stop0' in p))next.stop0=cur.stop0;
+  if(!POS_META||typeof POS_META!=='object')POS_META={};
+  (POS_META[tab]||(POS_META[tab]={}))[k]=next;
+  return next;
+}
+function posMetaDel(tab,tk){const t=POS_META&&POS_META[tab];if(!t)return;delete t[posTk(tk)];if(!Object.keys(t).length)delete POS_META[tab];}
+const posMetaCount=pm=>Object.keys(pm||{}).reduce((n,k)=>n+Object.keys((pm[k]&&typeof pm[k]==='object')?pm[k]:{}).length,0);
+// Порядок уровней для стороны: лонг stop < entry < target, шорт target < entry < stop.
+function posLevelsCheck(side,entry,stop,target){
+  const dir=side==='short'?-1:1,e=_pnum(entry),st=_pnum(stop),tg=_pnum(target),errs=[];
+  if(!e)errs.push('entry');
+  else{ if(st&&dir*(e-st)<=0)errs.push('stop'); if(tg&&dir*(tg-e)<=0)errs.push('target'); }
+  return {ok:!errs.length,errs};
+}
+// Позиция по текущей цене. p={side,qty,entry,stop0,stop,target}; price — в валюте бумаги;
+// fx — kr за единицу валюты. P&L шорта зеркальный. rNow — ход в единицах начального риска
+// |entry−stop0| (перенос стопа его не меняет). riskSEK — открытый риск до ТЕКУЩЕГО стопа.
+function posCalc(p,price,fx){
+  p=p||{};fx=fx>0?fx:1;
+  const dir=p.side==='short'?-1:1,qty=Math.abs(parseFloat(p.qty)||0),entry=_pnum(p.entry),now=_pnum(price);
+  if(!entry||!now)return null;
+  const stop=_pnum(p.stop),stop0=_pnum(p.stop0)||stop,target=_pnum(p.target);
+  const pl=(now-entry)*dir*qty,r1=stop0?Math.abs(entry-stop0):0;
+  return {side:dir<0?'short':'long',qty,entry,now,stop,stop0,target,fx,
+    plNative:pl,plSEK:pl*fx,plPct:(now/entry-1)*dir*100,valueSEK:now*qty*fx,
+    rNow:r1>0?(now-entry)*dir/r1:null,
+    riskSEK:stop?Math.max(0,dir*(now-stop))*qty*fx:null,
+    toStopPct:stop?dir*(now-stop)/now*100:null,
+    toTargetPct:target?dir*(target-now)/now*100:null,
+    stopHit:!!stop&&dir*(now-stop)<=0,
+    targetHit:!!target&&dir*(target-now)<=0,
+    progress:(stop&&target&&target!==stop)?Math.max(0,Math.min(1,dir*(now-stop)/Math.abs(target-stop))):null};
+}
+// Размер по риску: целых акций, чтобы потеря до стопа ≈ riskKr (та же формула, что tradePlan в signals.js).
+function qtyByRisk(riskKr,entry,stop,fx){
+  const e=_pnum(entry),st=_pnum(stop),per=(e&&st)?Math.abs(e-st)*(fx>0?fx:1):0;
+  return (riskKr>0&&per>0)?Math.floor(riskKr/per):0;
+}
+function deskNorm(x){
+  x=(x&&typeof x==='object')?x:{};
+  const clamp=(v,lo,hi,def)=>{const n=parseFloat(v);return isFinite(n)&&n>0?Math.min(hi,Math.max(lo,n)):def;};
+  return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{}};
+}
+// Капитал портфеля в kr: акции по текущей цене + свободный кэш (d.cashFree — в базовой валюте вкладки).
+// Плечо не входит (решение §10#6: капитал = акции + кэш).
+function pfEquitySEK(tab){
+  const d=DATA[tab];if(!d||!Array.isArray(d.rows))return 0;
+  let s=0;
+  d.rows.forEach(r=>{const q=parseFloat(r[6])||0,px=parseFloat(r[7])||0;if(q>0&&px>0)s+=q*px*(FX[String(r[8]||'SEK')]||1);});
+  return s+(parseFloat(d.cashFree)||0)*pf3BaseFx(d);
+}
+// Книга позиций портфеля: строки с qty>0 + мета + расчёт по текущей цене. Без меты — лонг
+// без стопа (как сейчас). Вход = средняя цена r[9] (genomsnittsmetoden), иначе текущая.
+function bookPositions(tab){
+  const d=DATA[tab];if(!d||!Array.isArray(d.rows))return [];
+  const out=[];
+  d.rows.forEach(r=>{
+    const qty=parseFloat(r[6])||0,tk=posTk(r[2]);if(!(qty>0)||!tk)return;
+    const ccy=String(r[8]||'SEK').toUpperCase(),fx=FX[ccy]||1,meta=posMetaGet(tab,tk);
+    const m=meta||posMetaNorm({}),entry=_pnum(r[9])||_pnum(r[7]);
+    out.push(Object.assign({tab,tk,sym:exSymbol(tk,ccy),name:String(r[1]||tk),ccy,qty,entry,hasMeta:!!meta},m,{calc:posCalc(Object.assign({},m,{qty,entry}),r[7],fx)}));
+  });
+  return out;
+}
+// Бюджет риска портфеля: риск на сделку (riskPct % капитала) и открытый риск книги до стопов
+// против лимита riskCapPct. overCap → «Исполнить» блокируется (только «В план»).
+function bookRiskState(tab){
+  const D=deskNorm(DESK),eq=pfEquitySEK(tab);
+  const open=bookPositions(tab).reduce((a,p)=>a+((p.calc&&p.calc.riskSEK)||0),0),cap=eq*D.riskCapPct/100;
+  return {equitySEK:eq,riskKr:Math.round(eq*D.riskPct/100),openRiskSEK:open,capSEK:cap,capLeftSEK:Math.max(0,cap-open),overCap:open>cap};
+}
+
+// 🎯 План сделки v2 — аддитивно к v1: act/level/qty/amount/deadline/note/done/hitAt не
+// меняются (старый клиент читает их как раньше). Новые: side, stop, target, riskKr, status
+// ('armed' ждёт входа · 'open' позиция открыта по плану · 'done'), createdAt. «Исполнено»
+// решает done (старый клиент ставит только его) — status выводится из него. Мутирует на месте.
+function planRuleNorm(r){
+  if(!r||typeof r!=='object')return r;
+  r.side=r.side==='short'?'short':'long';
+  r.stop=_pnum(r.stop)||0;r.target=_pnum(r.target)||0;r.riskKr=_pnum(r.riskKr)||0;
+  r.status=r.done?'done':(r.status==='open'?'open':'armed');
+  if(!(r.createdAt>0)){const m=String(r.id||'').match(/^plw?(\d{12,})/);r.createdAt=m?+m[1]:0;}
+  return r;
+}
+// Правило входа в позицию (лонг — покупка, шорт — продажа) или выхода из неё.
+const planIsEntry=r=>r.act==='watch'||(r.side==='short'?r.act==='sell':r.act==='buy');
+// R/R входа: награда/риск от уровня (или цены) до цели/стопа; null без стопа или цели.
+function planRR(r,price){
+  const e=_pnum(r.level)||_pnum(price),st=_pnum(r.stop),tg=_pnum(r.target);if(!e||!st||!tg)return null;
+  const dir=r.side==='short'?-1:1,risk=dir*(e-st),reward=dir*(tg-e);
+  return (risk>0&&reward>0)?reward/risk:null;
+}
+// План исполнен (позиция открыта): правило → 'open', позиции пишется мета (стоп/цель/дата/план).
+// Сама сделка (qty/цена) вносится в журнал как раньше; дальше planStatus следит за стопом/целью.
+function planMarkOpen(id,day){
+  const r=(PLAN_RULES||[]).find(x=>x.id===id);if(!r)return null;
+  planRuleNorm(r);r.status='open';r.done=false;r.hitAt=0;
+  return posMetaSet(r.tab||PF3_KEY,r.tk,{side:r.side,stop:r.stop||null,stop0:r.stop||null,target:r.target||null,riskKr:r.riskKr||null,opened:day||new Date().toISOString().slice(0,10),planId:r.id});
+}
+function planOpen(id){ if(!planMarkOpen(id))return; scheduleSave();renderPF3(); toast('📍 '+RT('Позиция открыта по плану — слежу за стопом и целью','Position opened from plan — watching stop & target')); }
+
+// 🌐 Бумага и вселенная. Живые котировки этой сессии (гейт свежести): sym → {at, price}.
+// Цена из снапшота/сида не подтверждена как live — live=false, пока бумагу не обновили.
+let PX_LIVE={};
+const PX_FRESH_MS=30*60e3;
+function pxMarkLive(sym,price,at){ if(sym&&price>0)PX_LIVE[sym]={at:at||Date.now(),price}; }
+// Адаптер строки v3-вкладки → бумага. Ключ — биржевой символ + валюта: одна бумага в
+// нескольких вкладках = одна запись (дедуп в deskUniverse).
+function secFromRow(d,r,tab,now){
+  const tk=posTk(r&&r[2]);if(!tk)return null;
+  const h=(d&&d.headers)||[],ccy=String(r[8]||'USD').trim().toUpperCase(),sym=exSymbol(tk,ccy);
+  const {s50,s100,s200}=smaIdx({headers:h}),day=parseFloat(r[10]);
+  const lv=PX_LIVE[sym],live=!!(lv&&(now||Date.now())-lv.at<=PX_FRESH_MS),qty=parseFloat(r[6])||0;
+  return {key:sym+'|'+ccy,sym,tk,name:String(r[1]||tk),ccy,sector:String(r[4]||''),type:String(r[5]||''),
+    price:live?lv.price:_pnum(r[7]),day:isFinite(day)?day:null,live,pxAt:lv?lv.at:0,
+    sma50:_pnum(r[s50]),sma100:_pnum(r[s100]),sma200:_pnum(r[s200]),
+    sup:_pnum(r[h.indexOf('Поддержка')]),res:_pnum(r[h.indexOf('Сопротивление')]),
+    tabs:[tab],held:(pf3MyPort(tab)&&qty>0)?[{tab,qty,avg:_pnum(r[9])}]:[]};
+}
+// Вселенная скринера: все разрешённые v3-вкладки (портфели, индексы, свои), без AI-портфеля. held —
+// позиции во всех моих портфелях; поля цены/уровней берутся из первой строки с ценой.
+function deskUniverse(now){
+  const bySym={},list=[];let tabsN=0;
+  v3Tabs().filter(tabAllowed).forEach(tab=>{   // RBAC: только разрешённые вкладки
+    const d=DATA[tab];if(!d||!Array.isArray(d.rows))return;tabsN++;
+    d.rows.forEach(r=>{
+      const x=secFromRow(d,r,tab,now);if(!x)return;
+      const e=bySym[x.key];
+      if(!e){bySym[x.key]=x;list.push(x);return;}
+      if(!e.tabs.includes(tab))e.tabs.push(tab);
+      e.held=e.held.concat(x.held);
+      if(!e.price&&x.price)['price','day','sma50','sma100','sma200','sup','res','sector','type'].forEach(k=>{e[k]=x[k];});
+    });
+  });
+  return {list,bySym,tabsN};
+}
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
 // ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —
@@ -570,7 +791,7 @@ async function pf3FetchPrices(d,key){
   d.rows.forEach((r,i)=>{
     const q=prices[exSymbol(r[2],r[8])];
     if(!(q&&typeof q.price==='number'))return;
-    r[7]=q.price;
+    r[7]=q.price;pxMarkLive(exSymbol(r[2],r[8]),q.price);
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
     // Обе серии SMA (дневные и недельные) — в SMA_TF; в видимые колонки
     // идёт набор выбранного периода (1Г/3Г), а не всегда дневной. От этих
@@ -633,7 +854,7 @@ async function pf3RefreshCardPrice(d,r){
     const i=d.rows.indexOf(r);if(i<0)return;
     const {s50,s100,s200}=smaIdx(d);
     const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
-    r[7]=q.price;
+    r[7]=q.price;pxMarkLive(sym,q.price);
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
     const tk=String(r[2]||''),mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
     CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,day:typeof q.pct==='number'?q.pct:null,at:Date.now()};   // объём торгов + дневное движение (лайв)
@@ -860,6 +1081,7 @@ async function refreshLivePrices(){
     const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
     if(price != null){
       if(priceC>=0) row[priceC] = price;
+      pxMarkLive(exSymbol(row[2], rowCcy(row)), price);
       if(p && typeof p === 'object'){
         if(dayC>=0 && typeof p.pct === 'number') row[dayC] = Math.round(p.pct * 100) / 100;   // 1д %
         if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка

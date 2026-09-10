@@ -19,7 +19,8 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'),
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR };
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
+           posMeta:POS_META, desk:DESK, schemaV:STATE_V };
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -97,8 +98,9 @@ function pfBackupSave(){
     const hasTrades=Array.isArray(PF_TRADES)&&PF_TRADES.length;
     const ports={};let hasPos=false;
     Object.keys(DATA).forEach(key=>{ if(!pf3MyPort(key))return; const d=DATA[key]; const pos=(d.rows||[]).some(r=>(parseFloat(r[6])||0)>0); if(pos)hasPos=true; ports[key]={rows:d.rows,cashFree:d.cashFree}; });
-    if(!hasTrades&&!hasPos)return;   // нечего бэкапить — не затираем хороший бэкап пустым
-    localStorage.setItem(k, JSON.stringify({at:Date.now(),pfTrades:PF_TRADES,ports}));
+    const hasMeta=posMetaCount(POS_META)>0;
+    if(!hasTrades&&!hasPos&&!hasMeta)return;   // нечего бэкапить — не затираем хороший бэкап пустым
+    localStorage.setItem(k, JSON.stringify({at:Date.now(),pfTrades:PF_TRADES,ports,posMeta:hasMeta?POS_META:undefined}));
   }catch(e){}
 }
 function pfBackupRestore(){
@@ -113,6 +115,14 @@ function pfBackupRestore(){
   PF_TRADES=bak.pfTrades.slice();
   if(bak.ports)Object.keys(bak.ports).forEach(key=>{ const d=DATA[key],b=bak.ports[key]; if(d&&b&&Array.isArray(b.rows)){ d.rows=b.rows; d.count=b.rows.length; if(b.cashFree!=null)d.cashFree=b.cashFree; } });
   return true;
+}
+// Мета позиций (стоп/цель/сторона) из локального бэкапа — когда облачный снапшот пришёл без
+// ключа posMeta (его записал клиент до S3). true — восстановили, нужен push.
+function posMetaBackupRestore(){
+  const k=pfBackupKey(); if(!k)return false;
+  let bak=null; try{ bak=JSON.parse(localStorage.getItem(k)||'null'); }catch(e){}
+  if(!bak||!bak.posMeta||!posMetaCount(bak.posMeta))return false;
+  POS_META=bak.posMeta; return true;
 }
 async function pullState(){
   if(!currentUser) return;
@@ -168,7 +178,14 @@ function applyRemoteState(s){
   if(s.smaTf) SMA_TF=s.smaTf;
   if(Array.isArray(s.sim)) SIM=s.sim;
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
-  if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules;
+  if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules.map(planRuleNorm);   // v1 → v2 (аддитивные поля, идемпотентно)
+  STATE_V=(typeof s.schemaV==='number')?s.schemaV:0;   // до init(): migrateSchema знает, какие одноразовые шаги уже применены
+  // posMeta/desk: ключа НЕТ ⇔ снапшот записал клиент до S3 (он их не знает и при записи выбросил).
+  // Тогда не затираем локальные — берём их или локальный бэкап и пушим обратно после init.
+  let restoreMeta=false;
+  if(s.posMeta&&typeof s.posMeta==='object') POS_META=s.posMeta;
+  else restoreMeta=posMetaCount(POS_META)>0||posMetaBackupRestore();
+  if(s.desk&&typeof s.desk==='object') DESK=deskNorm(s.desk);
   if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   AI_PREFS=[];   // 🤖 автономия: личные правила инвестора отменены — не восстанавливаем из снапшота
@@ -200,6 +217,7 @@ function applyRemoteState(s){
     toast(RT('Восстановлены сделки и позиции из локальной копии (облако было обнулено)','Restored trades & positions from local backup (cloud was wiped)'),true);
     scheduleSave();
   }
+  if(restoreMeta) scheduleSave();   // стоп/цель позиций пережили запись старым клиентом — вернуть их в облако
   init();   // rebuild tabs (idempotent) + re-render with synced data
 }
 function subscribeRealtime(){
@@ -321,6 +339,16 @@ let SIM=[];
 // qty,price,plNative,date}] — plNative = реализованный P&L в валюте бумаги (для продаж).
 let PF_TRADES=[];
 let PLAN_RULES=[];   // 🎯 правила-триггеры плана действий (уровень/дедлайн → уведомление)
+// 📍 Мета позиции (слой данных редизайна, S3): POS_META[tab][TK] = {side:'long'|'short', stop0, stop,
+// target, riskKr, opened, planId}. qty и средняя цена остаются в строке r[6]/r[9] (налог pfTaxLots их
+// считает как раньше); стоп входа stop0 хранится отдельно от текущего stop — R считается от него.
+let POS_META={};
+// ⚙ Настройки риска новой оболочки: riskPct — % капитала портфеля на сделку, riskCapPct — лимит
+// суммарного открытого риска книги (решение §10#6); shortOk[SYM] — ручной флаг «шорт доступен» (§10#7).
+let DESK={riskPct:1,riskCapPct:6,shortOk:{}};
+// Версия схемы снапшота (schemaV): одноразовые шаги migrateSchema не повторяются после применения.
+const SCHEMA_V=1;
+let STATE_V=0;
 let SCN_ALERT_STATE={};   // 📊 Блок D: последнее наблюдаемое состояние сценариев по тикеру (дедуп алертов)
 // Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
 // свои сохранения, чтобы push дашборда не стирал память бота.
@@ -783,7 +811,9 @@ function pfTotalRealizedSEK(tabKey){
 // cost = выручка − P/L: PF продажи (price·qty − plNative − fee)×FX; AI продажи price·qty×FX − plSEK.
 function pfTotalRealizedCostSEK(tabKey){
   if(tabKey===AIP_KEY)return Math.round(((AI_PORT&&AI_PORT.trades)||[]).filter(t=>t.action==='sell'&&typeof t.plSEK==='number').reduce((a,t)=>a+((+t.price||0)*(+t.qty||0)*(FX[t.ccy||'SEK']||1)-(t.plSEK||0)),0));
-  return Math.round((PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===tabKey&&t.act==='sell').reduce((a,t)=>a+(((+t.price||0)*(+t.qty||0)-(t.plNative||0)-(t.feeNative||0))*(FX[t.ccy]||1)),0));
+  // Лонг: себестоимость проданного = выручка − P&L − комиссия. Шорт: открытие продажей не реализует
+  // ничего, база реализованного — стоимость откупа (цена×кол-во + комиссия).
+  return Math.round((PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===tabKey&&(t.short?t.act==='buy':t.act==='sell')).reduce((a,t)=>a+((t.short?(+t.price||0)*(+t.qty||0)+(t.feeNative||0):(+t.price||0)*(+t.qty||0)-(t.plNative||0)-(t.feeNative||0))*(FX[t.ccy]||1)),0));
 }
 function recalcPF(i,idx){const k=idx||curIdx,d=DATA[k],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0;}
 function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
@@ -846,7 +876,7 @@ function migratePortfolio3(){
       d.rows.push(row);have.add(tk);added++;
     });
   }
-  if(!d.rows.length){   // no Портфель 2.0 in this state — fall back to the single MU seed
+  if(!d.rows.length&&STATE_V<1){   // no Портфель 2.0 in this state — fall back to the single MU seed (однократно: опустевший портфель не засеваем снова)
     d.rows.push([1,'Micron Technology','MU','🇺🇸','Полупроводники','Акция',0,0,'USD',0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать']);
     added++;
   }
@@ -1098,7 +1128,7 @@ function migrateAiHistory(){
 }
 function init(){
   aiPlaybookEnsure();   // 📚 засеять плейбук стандартными принципами при первом запуске
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();
+  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();migrateSchema();
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SECT_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx===AIP_KEY&&!can('view.ai_portfolio'))curIdx=keys[0]||Object.keys(DATA)[0];   // AIP — по праву просмотра (RBAC)
@@ -1181,7 +1211,7 @@ function init(){
 // нет — создаём; уже добавленные пользователем бумаги не трогаем.
 function migrateGoldSilver(){
   const KEY='Gold and Silver',p3=DATA[PF3_KEY];
-  if(!p3)return;
+  if(!p3||(!DATA[KEY]&&STATE_V>=1))return;   // сид одноразовый: удалённую вкладку не воскрешаем
   const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
   if(d.gsSeed==='1')return;
   d.gsSeed='1';
@@ -1214,7 +1244,7 @@ function migrateGoldSilver(){
 // обновлении метрик; сектор задан для иконок/группировки.
 function migrateSmallCap(){
   const KEY='Small Cap',p3=DATA[PF3_KEY];
-  if(!p3)return;
+  if(!p3||(!DATA[KEY]&&STATE_V>=1))return;   // сид одноразовый: удалённую вкладку не воскрешаем
   const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
   if(d.scSeed==='1')return;
   d.scSeed='1';
@@ -1262,8 +1292,9 @@ function migrateAiPort(){
   if(!applyingRemote)scheduleSave();
 }
 // Точечные добавления акций в индексные вкладки (по запросам пользователя).
-// Идемпотентно: проверка по тикеру, флагов не нужно.
+// Идемпотентно по тикеру; выполняется до schemaV 1.
 function migrateTabAdds(){
+  if(STATE_V>=1)return;   // одноразово (schemaV): удалённая пользователем бумага не возвращается
   const ADDS=[
     // [вкладка, тикер, название, сектор, валюта, флаг]  · HEM.ST проверен на Yahoo 2026-06-14
     ['OMXSPI','HEM','Hemnet Group','Интернет-площадка недвижимости','SEK','🇸🇪'],
@@ -1289,7 +1320,7 @@ function migrateFamilyPortfolios(){
   let changed=false;
   if(!p3.ttlMig){p3.title=p3.title||'Portfolio (Dima)';p3.ttlMig='1';changed=true;}
   const AK='Portfolio (Anna)';
-  if(!DATA[AK]){
+  if(!DATA[AK]&&STATE_V<1){   // сид одноразовый (schemaV): удалённый портфель не воскрешаем
     const d=DATA[AK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:AK,cashFree:4251};
     const SEED=[
       // [тикер, название, сектор, валюта, флаг, кол-во, покупка, тип]
@@ -1313,7 +1344,7 @@ function migrateFamilyPortfolios(){
   // скрина US-брокера 2026-06-14, все суммы в USD. Кол-во выведено из Cost Basis
   // ÷ Avg Price; кэш ≈ 26.7K USD пересчитан в SEK (база дашборда).
   const SK='Portfolio (Sergei)';
-  if(!DATA[SK]){
+  if(!DATA[SK]&&STATE_V<1){
     const d=DATA[SK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:SK,baseCcy:'USD',cashFree:26747};
     const SEED=[
       // [тикер, название, сектор, валюта, флаг, кол-во, ср. цена покупки (avg), тип]
@@ -1340,6 +1371,18 @@ function migrateFamilyPortfolios(){
   // Плечо — только у Dima; у семейных портфелей убираем.
   [AK,SK].forEach(k=>{if(DATA[k]&&DATA[k].leverage!=null){delete DATA[k].leverage;changed=true;}});
   if(changed&&!applyingRemote)scheduleSave();
+}
+// Версионированные одноразовые шаги схемы снапшота (schemaV). Выполняются после цепочки
+// миграций init() и больше не повторяются для этого состояния: сиды вкладок/позиций выше
+// смотрят на STATE_V<1, поэтому удалённое пользователем не воскресает при каждом init().
+// Новый шаг = блок `if(STATE_V<N)` + SCHEMA_V=N.
+function migrateSchema(){
+  if(STATE_V>=SCHEMA_V)return;
+  if(STATE_V<1){   // v1 (S3 редизайна): сиды отработали; правила плана → v2
+    PLAN_RULES=(PLAN_RULES||[]).map(planRuleNorm);
+  }
+  STATE_V=SCHEMA_V;
+  if(!applyingRemote)scheduleSave();
 }
 // Восстановление выбора доп. колонок из localStorage, если облачная копия
 // вкладки пришла без него (затёрта старым клиентом и т.п.).

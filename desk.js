@@ -405,8 +405,7 @@ function deskSetFlag(on){try{localStorage.setItem(DESK_LS,on?'1':'0');}catch(e){
 function deskToggle(on){
   DESK_UI.on=!!on;DESK_UI.classic=false;deskSetFlag(on);
   const de=document.documentElement;de.classList.toggle('desk',!!on);
-  let ui2=true;try{ui2=localStorage.getItem('dash_ui2')!=='0';}catch(e){}
-  de.classList.toggle('ui2',!on&&ui2);
+  de.classList.toggle('ui2',!on);   // классика — всегда ui2 (тумблер удалён в S7a)
   if(on)deskEnable();else{deskStopTimers();deskBackBtn(false);init();}
 }
 function deskEnable(){
@@ -1397,7 +1396,7 @@ function deskWatchFocus(key){
 function deskClassic(tab,tk,sub){
   DESK_UI.classic=true;DESK_UI.menu=false;deskChartsDrop();
   const de=document.documentElement;de.classList.remove('desk');
-  let ui2=true;try{ui2=localStorage.getItem('dash_ui2')!=='0';}catch(e){}de.classList.toggle('ui2',ui2);
+  de.classList.add('ui2');
   const t=tab&&DATA[tab]?tab:(deskRiskTab()||PF3_KEY);
   curIdx=t;v3Key=t;pf3Sel=tk||null;pf3Tab=sub||'list';
   deskBackBtn(true);init();

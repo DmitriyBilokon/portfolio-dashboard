@@ -19,7 +19,7 @@ let manualPriceRows=new Set();   // portfolio row indices the last refresh could
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'),
-           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
+           hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
            posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
 }
 // Call after any edit: debounce-push to the cloud.
@@ -187,7 +187,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.sim)) SIM=s.sim;
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules.map(planRuleNorm);   // v1 → v2 (аддитивные поля, идемпотентно)
-  STATE_V=(typeof s.schemaV==='number')?s.schemaV:0;   // до init(): migrateSchema знает, какие одноразовые шаги уже применены
+  STATE_V=(typeof s.schemaV==='number')?s.schemaV:0;   // до migrateState(): migrateSchema знает, какие одноразовые шаги уже применены
   // posMeta/desk: ключа НЕТ ⇔ снапшот записал клиент до S3 (он их не знает и при записи выбросил).
   // Тогда не затираем локальные — берём их или локальный бэкап и пушим обратно после init.
   let restoreMeta=false;
@@ -201,7 +201,6 @@ function applyRemoteState(s){
   else restoreWatch=(DESK_WATCH&&DESK_WATCH.items&&DESK_WATCH.items.length>0)||deskWatchBackupRestore();
   if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
-  AI_PREFS=[];   // 🤖 автономия: личные правила инвестора отменены — не восстанавливаем из снапшота
   if(typeof s.aiInclChat==='boolean') AI_INCL_CHAT=s.aiInclChat;
   if(typeof s.news==='string') NEWS_TEXT=s.news;
   if(s.newsImpact&&typeof s.newsImpact==='object') NEWS_IMPACT=s.newsImpact;
@@ -220,7 +219,6 @@ function applyRemoteState(s){
   if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=(s.aiDash.cards||s.aiDash.headline)?{[PF3_KEY]:s.aiDash}:s.aiDash;   // миграция старого одиночного дашборда в карту по портфелям
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
-  if(s.layout&&typeof s.layout==='object') LAYOUT=Object.assign({sub:{},cards:[],home:[],dash:[]},s.layout);
   if(typeof s.rev==='number') stateRev=s.rev;   // приняли облачную ревизию → наш след. push = rev+1
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -231,6 +229,7 @@ function applyRemoteState(s){
     scheduleSave();
   }
   if(restoreMeta||restoreWatch) scheduleSave();   // мета позиций / список покупок пережили запись старым клиентом — вернуть в облако
+  migrateState();   // один проход на загрузку облачного состояния (S7a)
   init();   // rebuild tabs (idempotent) + re-render with synced data
 }
 function subscribeRealtime(){
@@ -272,7 +271,6 @@ async function initAccess(){
     if(acc){ ACCESS.roleId=acc.role_id||null; if(acc.overrides&&typeof acc.overrides==='object')ACCESS.overrides=acc.overrides; }
   }catch(e){}
   const st=document.getElementById('settingsBtn'); if(st)st.style.display=can('action.manage_users')?'':'none';
-  const eb=document.getElementById('editBtn'); if(eb)eb.style.display=userRole==='admin'?'':'none';
   const pb=document.getElementById('promptBtn'); if(pb)pb.style.display=userRole==='admin'?'':'none';
   const hs=document.querySelector('.header-sub'); if(hs&&userRole!=='admin')hs.textContent='Аналитика и технические уровни';
   clearInterval(hbTimer);
@@ -321,10 +319,11 @@ function onbHTML(){
     <h2>👋 ${RT('Добро пожаловать','Welcome')}</h2>
     <div class="faq-sub">${RT('Это аналитический дашборд портфеля: индексы, ваши портфели и AI-разбор бумаг.','An analytical portfolio dashboard: indices, your portfolios and AI stock analysis.')}</div>
     <div class="onb-list">
-      ${row('🗂','Вкладки сверху — индексы (Nasdaq, OMXS30…) и ваши портфели. 🏠 Home — сводка рынка и барометр.','Tabs on top — indices (Nasdaq, OMXS30…) and your portfolios. 🏠 Home — market overview & barometer.')}
+      ${row('🗂','Вкладки в меню слева (на телефоне — сверху): индексы (Nasdaq, OMXS30…) и ваши портфели. 🏠 Home — сводка рынка и барометр.','Tabs in the left menu (on top on a phone): indices (Nasdaq, OMXS30…) and your portfolios. 🏠 Home — market overview & barometer.')}
       ${row('📋','Клик по строке/бумаге открывает карточку: цена, уровни, фундаментал, тезис-монитор.','Click a row/stock to open its card: price, levels, fundamentals, thesis monitor.')}
       ${row('🤖','В карточке — AI-анализ и AI-рекомендация (Claude + веб-поиск свежих новостей).','In the card — AI analysis & AI recommendation (Claude + web search of fresh news).')}
-      ${row('🔄','«Цены» подтягивают живые котировки и технические уровни (Yahoo).','“Prices” pulls live quotes and technical levels (Yahoo).')}
+      ${row('🔄','«Обновить» подтягивает живые котировки и технические уровни (Yahoo).','“Refresh” pulls live quotes and technical levels (Yahoo).')}
+      ${row('🖥','Trade Desk (кнопка 🖥 в шапке, бета) — решения дня: вход, стоп, цель и R/R, скринер по всем вкладкам, график с планом лонг/шорт.','Trade Desk (🖥 in the header, beta) — today’s decisions: entry, stop, target and R/R, a screener across all tabs, a chart with a long/short plan.')}
       ${row('❓','Кнопка «?» в шапке и значки «!» рядом с разделами объясняют все обозначения.','The “?” button in the header and “!” icons next to sections explain every label.')}
     </div>
     <div class="onb-note">${RT('Справочная аналитика, не индивидуальная инвестиционная рекомендация.','Reference analytics, not individual investment advice.')}</div>
@@ -332,6 +331,7 @@ function onbHTML(){
 }
 async function boot(){
   initTheme();
+  migrateState();                 // бандл data.js → текущая схема (v3-вкладки, сид Портфеля 3.0)
   init();                         // paint with bundled data first
   if(!SYNC_ENABLED){
     // Синк сконфигурирован, но supabase-js с CDN не загрузился — предупреждаем и живём офлайн.
@@ -369,10 +369,8 @@ let SCN_ALERT_STATE={};   // 📊 Блок D: последнее наблюда�
 // Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
 // свои сохранения, чтобы push дашборда не стирал память бота.
 let TG_ALERTS={};
-// AI Proto: диалог с ассистентом и его «память» — правила инвестора,
-// которые ассистент извлекает из чата (и которые можно добавить вручную).
-// Правила передаются и в чат, и в полный анализ портфеля (investorRules).
-let AI_CHAT=[],AI_PREFS=[],aiChatBusy=false;
+// AI Proto: диалог с ассистентом (личные правила инвестора отменены — investorRules пуст).
+let AI_CHAT=[],aiChatBusy=false;
 let AI_INCL_CHAT=false;   // 💬 включать последние сообщения чата в следующий анализ портфеля
 function aiToggleInclChat(){AI_INCL_CHAT=!AI_INCL_CHAT;scheduleSave();renderPF3();}
 let NEWS_TEXT='';   // 📰 вставленная сводка новостей (sync)
@@ -633,43 +631,11 @@ const pf3MyPort=k=>pf3IsPort(k)&&k!==AIP_KEY;   // редактируемые п
 const OMX_IDX='OMXS30';
 // Все v3-вкладки: портфель + любые вкладки с флагом v3 (индексы и созданные пользователем).
 const v3Tabs=()=>[PF3_KEY,...Object.keys(DATA).filter(k=>k!==PF3_KEY&&k!==AIP_KEY&&DATA[k]&&DATA[k].v3==='1')];
-// Группы вкладок: по умолчанию по странам; пользовательская раскладка хранится в TAB_GROUPS (sync).
+// Группы вкладок: по умолчанию по странам. TAB_GROUPS/TAB_ORDER — раскладка, сохранённая до S7a
+// (редактор групп и перетаскивание удалены): только читается и синкается, пока жива классическая навигация.
 let TAB_GROUPS=null;
-let TAB_ORDER=[];   // порядок негруппированных вкладок (drag-and-drop), синхронизируется
+let TAB_ORDER=[];
 
-// ===== Конструктор раскладки («✏️ Редактор») =====
-// Единый режим перетаскивания: саб-вкладки, карточки сводки, виджеты HOME и
-// карточки AI-Dashboard. Порядок хранится в LAYOUT и синхронизируется через
-// ledger_state (вкладки/группы уже двигаются через TAB_ORDER/TAB_GROUPS).
-let editMode=false;
-let LAYOUT={ sub:{}, cards:[], home:[], dash:[] };
-function editLayout(){ if(!LAYOUT||typeof LAYOUT!=='object')LAYOUT={sub:{},cards:[],home:[],dash:[]}; if(!LAYOUT.sub)LAYOUT.sub={}; ['cards','home','dash'].forEach(k=>{if(!Array.isArray(LAYOUT[k]))LAYOUT[k]=[]}); return LAYOUT; }
-// Сохранённый порядок для области (scope: 'cards' | 'home' | 'dash' | 'sub:<tab>').
-function eord(scope){ const L=editLayout(); if(scope.startsWith('sub:'))return Array.isArray(L.sub[scope.slice(4)])?L.sub[scope.slice(4)]:[]; return Array.isArray(L[scope])?L[scope]:[]; }
-function eset(scope,ids){ const L=editLayout(); if(scope.startsWith('sub:'))L.sub[scope.slice(4)]=ids; else L[scope]=ids; scheduleSave(); }
-// Переставить массив элементов {id,...} по сохранённому порядку; новые id — в конец.
-function eapply(scope,items){ const saved=eord(scope),by=new Map(items.map(it=>[String(it.id),it])),out=[]; saved.forEach(id=>{const it=by.get(String(id));if(it){out.push(it);by.delete(String(id))}}); items.forEach(it=>{if(by.has(String(it.id))){out.push(it);by.delete(String(it.id))}}); return out; }
-// Обернуть массив {id,html} в перетаскиваемый контейнер (для строковых билдеров).
-function erow(scope,items,cls){ return `<div class="edit-rows ${cls||''}" data-edit-row="${scope}">${eapply(scope,items).map(it=>`<div class="edit-cell" data-eid="${String(it.id).replace(/"/g,'&quot;')}">${it.html}</div>`).join('')}</div>`; }
-function toggleEdit(){ editMode=!editMode; document.body.classList.toggle('edit-on',editMode); const b=document.getElementById('editBtn'); if(b)b.classList.toggle('active',editMode); const bar=document.getElementById('editBar'); if(bar){ bar.classList.toggle('hidden',!editMode); if(editMode)bar.innerHTML=`✏️ <b>${RT('Режим редактора','Edit mode')}</b> — ${RT('тяните вкладки, саб-вкладки, карточки и блоки','drag tabs, sub-tabs, cards and blocks')} <button class="edit-reset" onclick="editReset()">↺ ${RT('Сбросить раскладку','Reset layout')}</button>`; } renderAll(); }
-function editReset(){ if(!confirm(RT('Сбросить раскладку блоков к стандартной?','Reset block layout to default?')))return; LAYOUT={sub:{},cards:[],home:[],dash:[]}; scheduleSave(); renderAll(); }
-let _eWire=null,_eDrag=null;
-function editScheduleWire(){ clearTimeout(_eWire); _eWire=setTimeout(editWireAll,0); }
-function editWireAll(){
-  document.querySelectorAll('[data-edit-row]').forEach(c=>{
-    const scope=c.dataset.editRow, horiz=(scope==='cards'||scope==='dash'||scope.startsWith('sub:'));
-    [...c.children].forEach(ch=>{
-      if(!ch.dataset||ch.dataset.eid==null)return;
-      ch.draggable=!!editMode;
-      ch.classList.toggle('edit-item',!!editMode);
-      if(!editMode){ ch.ondragstart=ch.ondragend=ch.ondragover=null; return; }
-      ch.ondragstart=e=>{ _eDrag=c; ch.classList.add('edit-drag'); try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',ch.dataset.eid)}catch(_){ } e.stopPropagation(); };
-      ch.ondragend=()=>{ ch.classList.remove('edit-drag'); editSaveRow(c); _eDrag=null; };
-      ch.ondragover=e=>{ if(_eDrag!==c)return; e.preventDefault(); const drag=c.querySelector('.edit-drag'); if(!drag||drag===ch)return; const r=ch.getBoundingClientRect(); const before=horiz?(e.clientX<r.left+r.width/2):(e.clientY<r.top+r.height/2); c.insertBefore(drag, before?ch:ch.nextSibling); };
-    });
-  });
-}
-function editSaveRow(c){ const scope=c.dataset.editRow; const ids=[...c.children].filter(ch=>ch.dataset&&ch.dataset.eid!=null).map(ch=>ch.dataset.eid); eset(scope,ids); }
 const defaultGroups=()=>[
   {name:'🇺🇸 USA',tabs:['S&P 500','Nasdaq 100']},
   {name:'🇸🇪 Швеция',tabs:['OMXS30','OMXSPI']},
@@ -695,46 +661,6 @@ function ungroupedKeys(){
     if(ib<0)ib=1e6+un.indexOf(b);
     return ia-ib;
   });
-}
-// ── Перетаскивание вкладок (админ): меняем порядок и группировку ──
-let _dragTab=null;
-function tabDragStart(ev,key){_dragTab=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key)}catch(e){}}
-function tabDragOver(ev){if(_dragTab){ev.preventDefault();ev.currentTarget.classList.add('drag-over')}}
-function tabDragLeave(ev){ev.currentTarget.classList.remove('drag-over')}
-function tabDragClear(){document.querySelectorAll('.drag-over').forEach(x=>x.classList.remove('drag-over'))}
-function tabDropOn(ev,dropKey){
-  ev.preventDefault();tabDragClear();
-  const drag=_dragTab;_dragTab=null;
-  if(!drag||drag===dropKey)return;
-  reorderTab(drag,dropKey);
-}
-function tabDropGroup(ev,gName){
-  ev.preventDefault();tabDragClear();
-  const drag=_dragTab;_dragTab=null;
-  if(!drag)return;
-  const groups=ensureGroups();
-  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==drag)});
-  TAB_ORDER=(Array.isArray(TAB_ORDER)?TAB_ORDER:[]).filter(x=>x!==drag);
-  const g=groups.find(g=>g.name===gName);if(g)g.tabs.push(drag);
-  // Присвоить вкладке значок группы (флаг страны) — ведущий эмодзи имени группы.
-  if(DATA[drag]){const ico=(gName.match(/^\S+/)||[''])[0];if(ico&&/[^\x00-\x7F]/.test(ico))DATA[drag].icon=ico;}
-  scheduleSave();init();
-}
-// Вставить drag перед dropKey — в его группе или в негруппированной зоне.
-function reorderTab(drag,dropKey){
-  const groups=ensureGroups();
-  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==drag)});
-  const tgt=groups.find(g=>g.tabs.includes(dropKey));
-  if(tgt){
-    tgt.tabs.splice(tgt.tabs.indexOf(dropKey),0,drag);
-    TAB_ORDER=(Array.isArray(TAB_ORDER)?TAB_ORDER:[]).filter(x=>x!==drag);
-  }else{
-    const ord=ungroupedKeys().filter(x=>x!==drag);
-    const i=ord.indexOf(dropKey);
-    if(i<0)ord.push(drag);else ord.splice(i,0,drag);
-    TAB_ORDER=ord;
-  }
-  scheduleSave();init();
 }
 const isV3=()=>v3Tabs().includes(curIdx)||curIdx===HOME_KEY||curIdx===DUP_KEY||curIdx===AIP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SIM_KEY||curIdx===SECT_KEY;
 // ===== i18n: RU (база) / EN. T() переводит по словарю; непереведённые строки
@@ -864,74 +790,17 @@ function tradeFeeNative(ccy,amount,isBuy){
   return{courtage:r2(courtage),fx:r2(fx),tax:r2(tax),total:r2(courtage+fx+tax)};
 }
 
-// Ensure the portfolio has the analyst-target column (added by a feature update).
-function migratePortfolio(){
-  const pf = DATA['💼 Портфель 2.0']; if(!pf) return;
-  if(pf.headers.indexOf('Аналит. таргет') === -1){
-    pf.headers.push('Аналит. таргет');
-    pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
-    if(!applyingRemote) scheduleSave();
-  }
-}
-// Сид вкладки Портфель 3.0. В бандле (data.js) «💼 Портфель 2.0» больше нет — при первом
-// входе сид 3.0 = одна строка MU. Импорт из PF2 (тикеры, qty / цена покупки) остаётся
-// только для старых облачных состояний, где эта вкладка ещё есть; строки становятся
-// собственными копиями 3.0 — правки в 3.0 не трогают 2.0.
+// Сид вкладки Портфель 3.0: при первом входе (бандл data.js, schemaV 0) — одна строка MU с нулём
+// акций; опустевший портфель больше не засевается.
 function migratePortfolio3(){
-  const pf2=DATA['💼 Портфель 2.0'];
   if(!DATA[PF3_KEY])
-    DATA[PF3_KEY]={headers:pf2?pf2.headers.slice():['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие'],rows:[],count:0,subtitle:'Портфель 3.0'};
+    DATA[PF3_KEY]={headers:['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие'],rows:[],count:0,subtitle:'Портфель 3.0'};
   const d=DATA[PF3_KEY];
-  let added=0;
-  if(pf2){
-    const have=new Set(d.rows.map(r=>String(r[2]||'').trim().toUpperCase()));
-    const removed=new Set((d.removed||[]).map(s=>String(s).trim().toUpperCase()));   // user deleted these in 3.0 — don't re-import
-    pf2.rows.forEach(r=>{
-      const tk=String(r[2]||'').trim().toUpperCase();
-      if(!tk||have.has(tk)||removed.has(tk))return;
-      const row=r.slice();
-      while(row.length<d.headers.length)row.push('');
-      d.rows.push(row);have.add(tk);added++;
-    });
-  }
-  if(!d.rows.length&&STATE_V<1){   // no Портфель 2.0 in this state — fall back to the single MU seed (однократно: опустевший портфель не засеваем снова)
+  if(!d.rows.length&&STATE_V<1){
     d.rows.push([1,'Micron Technology','MU','🇺🇸','Полупроводники','Акция',0,0,'USD',0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать']);
-    added++;
-  }
-  if(added){
-    d.rows.forEach((r,i)=>{r[0]=i+1});
     d.count=d.rows.length;
     if(!applyingRemote)scheduleSave();
   }
-}
-// One-time sync with the broker statement (Avanza screenshot, 2026-06-10):
-// share counts + buy prices for both portfolio tabs, cash/leverage for the summary.
-// Marked done via brokerSnap/cashSnap flags in the synced state, so it runs once.
-function migrateBrokerSnap20260610(){
-  const SNAP={MU:[5,509.48],AVGO:[6,408.08],BKNG:[10,156.55],RHM:[1,1196.60],O:[20,66.11],MSFT:[3,373.04],META:[2,573.42],GOOG:[3,288.00],NVDA:[5,174.10],MCHP:[8,99.17],AZN:[4,1659.75],MSTR:[5,123.30]};   // ticker → [qty, buy price]
-  let touched=false;
-  ['💼 Портфель 2.0',PF3_KEY].forEach(k=>{
-    const d=DATA[k];
-    if(!d||d.brokerSnap==='2026-06-10')return;
-    d.rows.forEach((r,i)=>{
-      const s=SNAP[String(r[2]||'').trim().toUpperCase()];
-      if(!s)return;
-      r[6]=s[0];r[9]=s[1];
-      recalcPF(i,k);
-    });
-    d.brokerSnap='2026-06-10';
-    touched=true;
-  });
-  // Cash semantics ('b' revision): 283 179 = весь капитал (акции + свободные),
-  // store only свободные (113 848) and плечо (50 000); totals are computed live.
-  const p3=DATA[PF3_KEY],p2=DATA['💼 Портфель 2.0'];
-  if(p3&&p3.cashSnap!=='2026-06-10b'){
-    p3.cashFree=113848;p3.leverage=50000;p3.cashSnap='2026-06-10b';
-    delete p3.cash;   // obsolete field from the first revision
-    if(p2)p2.cash=113848;   // PF2's «Кэш» card = свободные средства
-    touched=true;
-  }
-  if(touched&&!applyingRemote)scheduleSave();
 }
 // Proper company names — manual adds and some imports stored the ticker as the name.
 const PF3_NAMES={MU:'Micron Technology',AVGO:'Broadcom',BKNG:'Booking Holdings',RHM:'Rheinmetall',O:'Realty Income',MSFT:'Microsoft',META:'Meta Platforms',GOOG:'Alphabet (Class C)',NVDA:'NVIDIA',MCHP:'Microchip Technology',AZN:'AstraZeneca',MSTR:'Strategy (MicroStrategy)'};
@@ -1054,7 +923,7 @@ function pf3DeriveType(tk,sec,cur,d,r){
 }
 function fixCompanyNames(){
   let touched=false;
-  ['💼 Портфель 2.0',...v3Tabs()].forEach(k=>{
+  v3Tabs().forEach(k=>{
     const d=DATA[k];if(!d)return;
     d.rows.forEach(r=>{
       const tk=String(r[2]||'').trim().toUpperCase();
@@ -1107,64 +976,30 @@ function migrateIndexV3(KEY,flag,ccy,sfx){
   DATA[KEY]={headers:nh,rows,count:rows.length,subtitle:d.subtitle||KEY,v3:'1',xcols:d.xcols};
   if(!applyingRemote)scheduleSave();
 }
-// Портфель 2.0 is retired — Портфель 3.0 owns the holdings now. Runs after
-// migratePortfolio3, чтобы старое облачное состояние с PF2 успело импортироваться в 3.0
-// (в бандле data.js вкладки PF2 больше нет).
-function migrateRemovePF2(){
-  let touched=false;
-  if(DATA['💼 Портфель 2.0']){ delete DATA['💼 Портфель 2.0']; touched=true; }
-  if(RANK&&RANK['💼 Портфель 2.0']){ delete RANK['💼 Портфель 2.0']; touched=true; }   // рейтинги ушедшей вкладки продолжали синкаться
-  if(touched&&!applyingRemote)scheduleSave();
-}
-
-// Одноразово: AI-отчёты индексов, сохранённые до фикса во вкладку Портфель,
-// переезжают в свои вкладки. Watchlist-отчёт узнаём по разделу «Картина по
-// индексу», вкладку — по упоминанию имени индекса.
-function migrateAiHistory(){
-  const pf=DATA[PF3_KEY];
-  if(!pf||pf.aiMig==='2')return;
-  pf.aiMig='2';
-  // Шведские тикеры OMXS30 — портфельный отчёт о них не рассуждает.
-  const SWE=/SAAB|VOLV|ERIC|TELIA|TEL2|ATCO|EVO\b|HEXA|SAND|\bBOL\b|SKF|ESSITY|SEB A|SWED|SHB|INVE B|ASSA|ALFA|NIBE|EPI A|LIFCO|ADDT|SKA B|INDU C/g;
-  const moved={};
-  pf.aiHistory=(pf.aiHistory||[]).filter(e=>{
-    const t=String(e&&e.text||'');
-    const watch=/Картина по индексу/i.test(t);
-    const sweHits=(t.match(SWE)||[]).length;
-    let idx=null;
-    if(watch)idx=/OMXS30/i.test(t)?OMX_IDX:/Nasdaq.?100/i.test(t)?ANALYSIS_IDX:null;
-    else if(/OMXS30/i.test(t)&&sweHits>=3)idx=OMX_IDX;   // старый формат, но контент индексный
-    if(!idx||!DATA[idx])return true;
-    (moved[idx]=moved[idx]||[]).push(e);
-    return false;
-  });
-  let n=0;
-  Object.entries(moved).forEach(([k,arr])=>{
-    DATA[k].aiHistory=[...arr,...(DATA[k].aiHistory||[])].slice(0,10);n+=arr.length;
-  });
-  if(n&&!applyingRemote)scheduleSave();
+// ===== Миграции состояния (S7a) =====
+// Один проход на загрузку состояния — в boot() (бандл data.js) и в applyRemoteState() (облако),
+// а не при каждом init() (его зовут переименование вкладки, смена языка, вход и т.д.). Все шаги
+// идемпотентны; одноразовые — только под STATE_V (migrateSchema). Старые шаги (Портфель 2.0,
+// снимок брокера 2026-06-10, перенос AI-отчётов, сиды Anna/Sergei/Gold and Silver/Small Cap/HEM,
+// заголовок «Portfolio (Dima)») удалены в S7a: в облаке они давно применены, а новому аккаунту
+// чужие позиции не нужны. Их флаги в данных (brokerSnap, cashSnap, gsSeed, scSeed, aiMig, ttlMig)
+// НЕ удалять, пока жив клиент до S7a: без флага он применит шаг заново (кэш, удалённые тикеры).
+function migrateState(){
+  migratePortfolio3();migrateNasdaqV3();simMigrateTabs();migrateAiPort();restoreXcols();migrateSchema();
 }
 function init(){
   aiPlaybookEnsure();   // 📚 засеять плейбук стандартными принципами при первом запуске
-  migratePortfolio();migratePortfolio3();migrateBrokerSnap20260610();fixCompanyNames();migrateNasdaqV3();migrateRemovePF2();simMigrateTabs();migrateAiHistory();migrateGoldSilver();migrateSmallCap();migrateTabAdds();migrateFamilyPortfolios();migrateAiPort();restoreXcols();migrateSchema();
+  fixCompanyNames();   // имена/секторы/типы строк — производные поля, пересчитываются на каждом init()
   const keys=Object.keys(DATA).filter(k=>k!==AIP_KEY&&tabAllowed(k));   // AIP — только как виртуальная (mkVirt), иначе дубль
   if((curIdx===DUP_KEY||curIdx===STK_KEY||curIdx===AIDASH_KEY||curIdx===SECT_KEY)&&!isAdmin())curIdx=keys[0]||Object.keys(DATA)[0];
   if(curIdx===AIP_KEY&&!can('view.ai_portfolio'))curIdx=keys[0]||Object.keys(DATA)[0];   // AIP — по праву просмотра (RBAC)
   if(curIdx!==HOME_KEY&&curIdx!==DUP_KEY&&curIdx!==AIP_KEY&&curIdx!==STK_KEY&&curIdx!==AIDASH_KEY&&curIdx!==SIM_KEY&&curIdx!==SECT_KEY&&(!DATA[curIdx]||!tabAllowed(curIdx)))curIdx=keys[0]||Object.keys(DATA)[0];
   const t=document.getElementById('tabs');t.innerHTML='';
-  const mkTab=(n,lbl,noDrag)=>{
+  const mkTab=(n,lbl)=>{
     const el=document.createElement('div');
     el.className='tab'+(n===curIdx?' active':'');el.dataset.tab=n;
     el.innerHTML=`${(DATA[n]&&DATA[n].icon)||META[n]||''} ${lbl||TAB_LABEL(n)}<span class="cnt">${DATA[n].count}</span>`;
     el.onclick=()=>{curIdx=n;sortCol=-1;sortDir=0;curSub='table';selected.clear();renderAll()};
-    if(isAdmin()&&n!==PF3_KEY&&!noDrag){
-      el.draggable=true;el.title=RT('Перетащите, чтобы переставить','Drag to reorder');
-      el.addEventListener('dragstart',e=>tabDragStart(e,n));
-      el.addEventListener('dragover',tabDragOver);
-      el.addEventListener('dragleave',tabDragLeave);
-      el.addEventListener('drop',e=>tabDropOn(e,n));
-      el.addEventListener('dragend',tabDragClear);
-    }
     return el;
   };
   const mkVirt=(key,label)=>{
@@ -1193,9 +1028,9 @@ function init(){
     hd.textContent=(pcol?'▸ ':'▾ ')+GN;
     hd.onclick=()=>grpToggleCollapse(GN);
     t.appendChild(hd);
-    if(!pcol)portTabs.forEach(k=>t.appendChild((k===AIP_KEY||k===SIM_KEY)?mkVirt(k,portShort(k)):mkTab(k,portShort(k),true)));
+    if(!pcol)portTabs.forEach(k=>t.appendChild((k===AIP_KEY||k===SIM_KEY)?mkVirt(k,portShort(k)):mkTab(k,portShort(k))));
   }
-  // Группы (страны по умолчанию, пользовательская раскладка — из TAB_GROUPS).
+  // Группы (страны по умолчанию или раскладка из TAB_GROUPS).
   const groups=ensureGroups();
   const grouped=new Set(portMembers);   // порт-вкладки уже показаны в 💼 Portfolio
   groups.forEach(g=>{
@@ -1207,93 +1042,17 @@ function init(){
     hd.className='tab-group-hd'+(col?' col':'');
     hd.textContent=(col?'▸ ':'▾ ')+g.name;
     hd.onclick=()=>grpToggleCollapse(g.name);
-    if(isAdmin()){
-      hd.addEventListener('dragover',tabDragOver);
-      hd.addEventListener('dragleave',tabDragLeave);
-      hd.addEventListener('drop',e=>tabDropGroup(e,g.name));
-    }
     t.appendChild(hd);
     if(!col)members.forEach(n=>t.appendChild(mkTab(n)));
   });
   ungroupedKeys().forEach(n=>{if(!grouped.has(n))t.appendChild(mkTab(n))});
   if(isAdmin()){
     const add=document.createElement('div');add.className='tab tab-add';add.textContent=RT('➕ Вкладка','➕ Tab');add.title=RT('Создать свою вкладку-watchlist','Create a custom watchlist tab');add.onclick=pf3NewTab;t.appendChild(add);
-    const grp=document.createElement('div');grp.className='tab tab-add';grp.textContent=RT('🗂 Группы','🗂 Groups');grp.title=RT('Настроить группировку вкладок','Edit tab grouping');grp.onclick=toggleGroupsEditor;t.appendChild(grp);
   }
   renderAll();
 }
 
 
-// Одноразово: наполняем пользовательскую вкладку «Gold and Silver» золото-
-// серебряными добытчиками (тикеры проверены на Yahoo 2026-06-12). Если вкладки
-// нет — создаём; уже добавленные пользователем бумаги не трогаем.
-function migrateGoldSilver(){
-  const KEY='Gold and Silver',p3=DATA[PF3_KEY];
-  if(!p3||(!DATA[KEY]&&STATE_V>=1))return;   // сид одноразовый: удалённую вкладку не воскрешаем
-  const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
-  if(d.gsSeed==='1')return;
-  d.gsSeed='1';
-  const SEC='Добыча золота и серебра';
-  const SEED=[
-    ['FF.TO','First Mining Gold Corp','CAD','🇨🇦'],['NGEX.TO','NGEx Minerals','CAD','🇨🇦'],
-    ['PRU.TO','Perseus Mining Limited','CAD','🇨🇦'],['MSA.TO','Mineros S.A.','CAD','🇨🇦'],
-    ['APM.TO','Andean Precious Metals Corp','CAD','🇨🇦'],['CG.TO','Centerra Gold','CAD','🇨🇦'],
-    ['SVRS.V','Silver Storm Mining Ltd.','CAD','🇨🇦'],['AGX.V','Silver X Mining Corp','CAD','🇨🇦'],
-    ['SVM.TO','Silvercorp Metals','CAD','🇨🇦'],['TXG.TO','Torex Gold Resources Inc','CAD','🇨🇦'],
-    ['WGX.TO','Westgold Resources Limited','CAD','🇨🇦'],['TG.V','Trifecta Gold','CAD','🇨🇦'],
-    ['EML.V','Electric Metals (USA) Ltd','CAD','🇨🇦'],
-    ['FRES.L','Fresnillo PLC','GBP','🇬🇧'],
-    ['LUG','Lundin Gold','SEK','🇸🇪'],['EPI A','Epiroc A','SEK','🇸🇪'],['GULD','Guldbrev Holding','SEK','🇸🇪'],
-    ['MUX','McEwen Inc.','USD','🇺🇸'],['HMY','Harmony Gold Mining ADR','USD','🇺🇸'],
-    ['EQX','Equinox Gold','USD','🇺🇸'],['CDE','Coeur Mining','USD','🇺🇸'],['SBSW','Sibanye-Stillwater ADR','USD','🇺🇸'],
-  ];
-  SEED.forEach(([tk,name,ccy,flag])=>{
-    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
-    const row=new Array(d.headers.length).fill('');
-    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=SEC;row[5]='Циклическая';
-    row[6]=0;row[7]=0;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
-    d.rows.push(row);
-  });
-  d.count=d.rows.length;
-  if(!applyingRemote)scheduleSave();
-}
-// Вкладка «Small Cap»: шведские компании малой капитализации (скриншот пользователя,
-// тикеры проверены живыми котировками Yahoo). Тип пересчитает скоринг при первом
-// обновлении метрик; сектор задан для иконок/группировки.
-function migrateSmallCap(){
-  const KEY='Small Cap',p3=DATA[PF3_KEY];
-  if(!p3||(!DATA[KEY]&&STATE_V>=1))return;   // сид одноразовый: удалённую вкладку не воскрешаем
-  const d=DATA[KEY]||(DATA[KEY]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:KEY});
-  if(d.scSeed==='1')return;
-  d.scSeed='1';
-  const SEED=[
-    ['EPEN','Ependion','Промтех и автоматизация'],
-    ['NEWA-B','New Wave Group','Потребительские товары: одежда'],
-    ['BEIA-B','Beijer Alma','Промышленный конгломерат'],
-    ['SHOT','Scandic Hotels','Отели и туризм'],
-    ['FMM-B','FM Mattsson','Строительство: сантехника'],
-    ['TROAX','Troax Group','Промышленная безопасность'],
-    ['SYSR','Systemair','Промтех: вентиляция'],
-    ['ARJO-B','Arjo','Медицинское оборудование'],
-    ['PLAZ-B','Platzer Fastigheter','Недвижимость'],
-    ['MILDEF','MilDef Group','Оборонная электроника'],
-    ['ELAN-B','Elanders','Промышленность: логистика'],
-    ['XANO-B','XANO Industri','Промтех: автоматизация'],
-    ['ITAB','ITAB Shop Concept','Потребительский сектор: ритейл-оборудование'],
-    ['ARPL','Arla Plast','Промышленность: пластики'],
-    ['GARO','GARO','Электрификация и EV-зарядка'],
-    ['BOUL','Boule Diagnostics','Медицинская диагностика'],
-  ];
-  SEED.forEach(([tk,name,sec])=>{
-    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
-    const row=new Array(d.headers.length).fill('');
-    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]='🇸🇪';row[4]=sec;row[5]='Акция';
-    row[6]=0;row[7]=0;row[8]='SEK';row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
-    d.rows.push(row);
-  });
-  d.count=d.rows.length;
-  if(!applyingRemote)scheduleSave();
-}
 // 🤖 AI Портфель: дефолтное состояние (worker торгует, клиент отображает).
 // myStartEquity — стоимость МОЕГО портфеля в момент старта (для «Я vs AI»).
 function migrateAiPort(){
@@ -1309,90 +1068,8 @@ function migrateAiPort(){
     positions:[],trades:[],equityHistory:[],myStartEquity:null,lastRunAt:0,lastNote:''};
   if(!applyingRemote)scheduleSave();
 }
-// Точечные добавления акций в индексные вкладки (по запросам пользователя).
-// Идемпотентно по тикеру; выполняется до schemaV 1.
-function migrateTabAdds(){
-  if(STATE_V>=1)return;   // одноразово (schemaV): удалённая пользователем бумага не возвращается
-  const ADDS=[
-    // [вкладка, тикер, название, сектор, валюта, флаг]  · HEM.ST проверен на Yahoo 2026-06-14
-    ['OMXSPI','HEM','Hemnet Group','Интернет-площадка недвижимости','SEK','🇸🇪'],
-  ];
-  let n=0;
-  ADDS.forEach(([key,tk,name,sec,ccy,flag])=>{
-    const d=DATA[key];
-    if(!d||d.v3!=='1')return;
-    if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===tk.toUpperCase()))return;
-    const row=new Array(d.headers.length).fill('');
-    row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]='Акция';
-    row[6]=0;row[7]=0;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
-    d.rows.push(row);d.count=d.rows.length;n++;
-  });
-  if(n&&!applyingRemote)scheduleSave();
-}
-// Семейные портфели: Портфель → «Portfolio (Dima)» (однократно, флаг ttlMig);
-// «Portfolio (Anna)» — второй полноценный портфель (port:'1'), позиции со
-// скрина Avanza 2026-06-14, тикеры проверены живыми котировками Yahoo.
-function migrateFamilyPortfolios(){
-  const p3=DATA[PF3_KEY];
-  if(!p3)return;
-  let changed=false;
-  if(!p3.ttlMig){p3.title=p3.title||'Portfolio (Dima)';p3.ttlMig='1';changed=true;}
-  const AK='Portfolio (Anna)';
-  if(!DATA[AK]&&STATE_V<1){   // сид одноразовый (schemaV): удалённый портфель не воскрешаем
-    const d=DATA[AK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:AK,cashFree:4251};
-    const SEED=[
-      // [тикер, название, сектор, валюта, флаг, кол-во, покупка, тип]
-      ['MU','Micron Technology','Полупроводники','USD','🇺🇸',1,672.38,'Акция'],
-      ['NVDA','NVIDIA','ИИ / Чипы','USD','🇺🇸',2,206.50,'Акция'],
-      ['AVGO','Broadcom','Полупроводники','USD','🇺🇸',1,398.26,'Акция'],
-      ['O','Realty Income REIT','Недвижимость / REIT','USD','🇺🇸',6,66.07,'Дивидендная'],
-      ['MCHP','Microchip Technology','Полупроводники','USD','🇺🇸',2,98.92,'Акция'],
-      ['AZN','AstraZeneca','Фармацевтика','SEK','🇸🇪',1,1650.00,'Акция'],
-      ['0P00005U1J.ST','Avanza Zero','Индексный фонд (Швеция)','SEK','🇸🇪',1.956,511.25,'Фонд'],
-    ];
-    SEED.forEach(([tk,name,sec,ccy,flag,qty,buy,typ])=>{
-      const row=new Array(d.headers.length).fill('');
-      row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]=typ;
-      row[6]=qty;row[7]=0;row[8]=ccy;row[9]=buy;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
-      d.rows.push(row);
-    });
-    d.count=d.rows.length;changed=true;
-  }
-  // «Portfolio (Sergei)» — третий полноценный портфель (port:'1'), позиции со
-  // скрина US-брокера 2026-06-14, все суммы в USD. Кол-во выведено из Cost Basis
-  // ÷ Avg Price; кэш ≈ 26.7K USD пересчитан в SEK (база дашборда).
-  const SK='Portfolio (Sergei)';
-  if(!DATA[SK]&&STATE_V<1){
-    const d=DATA[SK]={headers:p3.headers.slice(),rows:[],count:0,v3:'1',custom:'1',port:'1',subtitle:SK,baseCcy:'USD',cashFree:26747};
-    const SEED=[
-      // [тикер, название, сектор, валюта, флаг, кол-во, ср. цена покупки (avg), тип]
-      ['NVO','Novo Nordisk','Фармацевтика','USD','🇺🇸',11,65.69,'Акция'],
-      ['NVDA','NVIDIA','ИИ / Чипы','USD','🇺🇸',52,169.05,'Акция'],
-      ['MSFT','Microsoft','Технологии / ПО','USD','🇺🇸',13,385.47,'Акция'],
-      ['META','Meta Platforms','Технологии / Соцсети','USD','🇺🇸',7,589.44,'Акция'],
-      ['MA','Mastercard','Финансы / Платежи','USD','🇺🇸',4,488.12,'Акция'],
-      ['GOOGL','Alphabet','Технологии / Интернет','USD','🇺🇸',13,153.63,'Акция'],
-      ['AVGO','Broadcom','Полупроводники','USD','🇺🇸',10,391.80,'Акция'],
-      ['AMZN','Amazon','Технологии / E-commerce','USD','🇺🇸',9,214.88,'Акция'],
-    ];
-    SEED.forEach(([tk,name,sec,ccy,flag,qty,buy,typ])=>{
-      const row=new Array(d.headers.length).fill('');
-      row[0]=d.rows.length+1;row[1]=name;row[2]=tk;row[3]=flag;row[4]=sec;row[5]=typ;
-      row[6]=qty;row[7]=0;row[8]=ccy;row[9]=buy;row[10]=0;row[11]=0;row[12]=0;row[13]=0;row[14]='—';row[15]='—';
-      d.rows.push(row);
-    });
-    d.count=d.rows.length;changed=true;
-  }
-  // Миграция уже созданного Sergei: база USD + кэш в USD (а не пересчёт в кроны).
-  const sk=DATA[SK];
-  if(sk&&sk.baseCcy!=='USD'){sk.baseCcy='USD';sk.cashFree=26747;delete sk.leverage;changed=true;}
-  // Плечо — только у Dima; у семейных портфелей убираем.
-  [AK,SK].forEach(k=>{if(DATA[k]&&DATA[k].leverage!=null){delete DATA[k].leverage;changed=true;}});
-  if(changed&&!applyingRemote)scheduleSave();
-}
-// Версионированные одноразовые шаги схемы снапшота (schemaV). Выполняются после цепочки
-// миграций init() и больше не повторяются для этого состояния: сиды вкладок/позиций выше
-// смотрят на STATE_V<1, поэтому удалённое пользователем не воскресает при каждом init().
+// Версионированные одноразовые шаги схемы снапшота (schemaV) — последний шаг migrateState().
+// Сид Портфеля 3.0 смотрит на STATE_V<1, поэтому опустевший портфель не засевается снова.
 // Новый шаг = блок `if(STATE_V<N)` + SCHEMA_V=N.
 function migrateSchema(){
   if(STATE_V>=SCHEMA_V)return;
@@ -1426,7 +1103,8 @@ function pf3NewTab(){
   init();
   toast(RT('Вкладка создана — добавляйте акции формой внизу списка','Tab created — add stocks with the form below the list'));
 }
-function pf3TabDelete(name){
+function pf3TabDelete(name,ev){
+  if(ev)ev.stopPropagation();
   if(!DATA[name]||DATA[name].custom!=='1')return;
   if(!confirm(RT(`Удалить вкладку «${name}» со всеми её акциями?`,`Delete tab “${name}” with all its stocks?`)))return;
   delete DATA[name];
@@ -1434,64 +1112,6 @@ function pf3TabDelete(name){
   if(curIdx===name)curIdx=PF3_KEY;
   if(v3Key===name)v3Key=PF3_KEY;
   scheduleSave();init();
-  if(_grpEditorOpen)renderGroupsEditor();
-}
-
-// ===== Редактор групп вкладок (админ): группы + назначение вкладок =====
-let _grpEditorOpen=false;
-function toggleGroupsEditor(){
-  const o=document.getElementById('grpOverlay');if(!o)return;
-  _grpEditorOpen=o.classList.contains('hidden');
-  o.classList.toggle('hidden',!_grpEditorOpen);
-  if(_grpEditorOpen)renderGroupsEditor();
-}
-function renderGroupsEditor(){
-  const card=document.getElementById('grpCard');if(!card)return;
-  const groups=ensureGroups();
-  const tabs=Object.keys(DATA).filter(k=>k!==PF3_KEY&&DATA[k]&&DATA[k].v3==='1');
-  const groupOf=n=>{const i=groups.findIndex(g=>g.tabs.includes(n));return i};
-  card.innerHTML=`<button class="faq-close" onclick="toggleGroupsEditor()">✕</button>
-    <h2>🗂 ${RT('Группы вкладок','Tab groups')}</h2>
-    <div class="faq-sub">${RT('Группы сворачиваются в навигации; вкладка может быть в одной группе или без группы','Groups collapse in the navigation; a tab belongs to one group or none')}</div>
-    <div class="faq-sec" style="margin-top:14px"><h3>${RT('Группы','Groups')}</h3>
-      ${groups.map((g,i)=>`<div class="ai-pref"><span>${g.name} <small style="color:var(--text3)">· ${g.tabs.length}</small></span>
-        <button class="pf3-btn pf3-btn-sm" onclick="grpRename(${i})">✏️</button>
-        <button class="pf3-del" onclick="grpDel(${i})" title="${RT('Удалить группу (вкладки останутся)','Delete group (tabs remain)')}">🗑</button></div>`).join('')}
-      <button class="pf3-btn" style="margin-top:8px" onclick="grpAdd()">➕ ${RT('Новая группа','New group')}</button>
-    </div>
-    <div class="faq-sec"><h3>${RT('Вкладки','Tabs')}</h3>
-      ${tabs.map(n=>`<div class="ai-pref"><span>${META[n]||''} ${n}${DATA[n].custom==='1'?' <small style="color:var(--text3)">· '+RT('своя','custom')+'</small>':''}</span>
-        <select class="grp-sel" onchange="grpAssign('${n.replace(/'/g,"\\'")}',this.value)">
-          <option value="-1">${RT('— без группы —','— no group —')}</option>
-          ${groups.map((g,i)=>`<option value="${i}"${groupOf(n)===i?' selected':''}>${g.name}</option>`).join('')}
-        </select>
-        ${DATA[n].custom==='1'?`<button class="pf3-del" onclick="pf3TabDelete('${n.replace(/'/g,"\\'")}')" title="${RT('Удалить вкладку','Delete tab')}">🗑</button>`:''}
-      </div>`).join('')}
-    </div>`;
-}
-function grpAdd(){
-  const name=(prompt(RT('Название группы (можно с флагом, например 🇺🇸 USA):','Group name (emoji ok, e.g. 🇺🇸 USA):'))||'').trim();
-  if(!name)return;
-  ensureGroups().push({name,tabs:[]});
-  scheduleSave();renderGroupsEditor();init();
-}
-function grpRename(i){
-  const g=ensureGroups()[i];if(!g)return;
-  const name=(prompt(RT('Новое название группы:','New group name:'),g.name)||'').trim();
-  if(!name)return;
-  g.name=name;scheduleSave();renderGroupsEditor();init();
-}
-function grpDel(i){
-  const g=ensureGroups()[i];if(!g)return;
-  if(!confirm(RT(`Удалить группу «${g.name}»? Вкладки останутся без группы.`,`Delete group “${g.name}”? Tabs stay ungrouped.`)))return;
-  ensureGroups().splice(i,1);scheduleSave();renderGroupsEditor();init();
-}
-function grpAssign(tab,gi){
-  const groups=ensureGroups();
-  groups.forEach(g=>{g.tabs=g.tabs.filter(x=>x!==tab)});
-  gi=parseInt(gi,10);
-  if(gi>=0&&groups[gi])groups[gi].tabs.push(tab);
-  scheduleSave();renderGroupsEditor();init();
 }
 
 function renderAll(){
@@ -1500,9 +1120,8 @@ function renderAll(){
   if(curIdx!==SECT_KEY)sectStop();      // лайв-поллинг секторов — только на вкладке Сектора
   if(curIdx===AIP_KEY&&isAdmin())aipStart();else aipStop();   // синхрон AI-портфеля с воркером (эндпоинт admin-only) — только на вкладке AI-Портфель
   if(curIdx!==_pfPPKey)pfSumPPStop();   // лайв изм. баланса — только на открытом портфеле
-  editScheduleWire();                   // навесить drag на блоки после перерисовки (режим ✏️)
   document.querySelectorAll('.tab').forEach(t=>{t.className='tab'+(t.dataset.tab===curIdx?' active':'')});
-  const st=document.getElementById('subTabs');st.innerHTML='';st.removeAttribute('data-edit-row');
+  const st=document.getElementById('subTabs');st.innerHTML='';
   document.body.classList.toggle('v3',isV3());   // Портфель 3.0 restyles the whole site
   const pf3El=document.getElementById('pf3Area');
   if(isV3()){
@@ -1551,7 +1170,7 @@ function renderAll(){
       return;
     }
     if(curIdx===AIP_KEY)aipSyncTab();   // 🤖: материализовать позиции AI как вкладку
-    if(v3Key!==curIdx){   // switched between Портфель 3.0 and Nasdaq 100 — rebind the v3 UI
+    if(v3Key!==curIdx){   // сменилась v3-вкладка — перепривязать v3 UI
       v3Key=curIdx;pf3Sel=null;pf3Tab='list';pf3TypeSel={};pf3XMenuOpen=false;
       pf3Sort=pf3IsPort(curIdx)?{key:'val',dir:-1}:{key:'day',dir:-1};   // index default: top movers first
     }
@@ -1569,8 +1188,7 @@ function renderAll(){
       ?[[T('📊 Портфель'),'list'],...(v3Key===PF3_KEY&&isAdmin()?[['📊 '+RT('Статистика','Statistics'),'stats']]:[]),['🏭 '+RT('Структура','Breakdown'),'alloc'],['🔮 '+RT('Прогноз','Forecast'),'fcast'],['🎯 '+RT('План','Plan')+planBadge(v3Key),'plan'],['📜 '+RT('Сделки','Trades'),'trades'],['🧾 '+RT('Налоги','Tax'),'tax'],[T('📅 Дивиденды и отчёты'),'cal'],[T('🩺 Состояние портфеля'),'health'],['🤖 AI Proto','ai'],[T('⚖️ Предложение'),'prop'],['📈 '+RT('Анализ','Analysis'),'analysis'],['🧪 '+RT('Бэктест','Backtest'),'backtest']]
       :[[T('📊 Акции'),'list'],['🏭 '+RT('Структура','Breakdown'),'alloc'],['🤖 AI Proto','ai'],[T('📅 Дивиденды и отчёты'),'cal']]
     ).filter(([,k])=>canTab(k));   // RBAC: видимость под-вкладок по правам view.*
-    st.dataset.editRow='sub:'+curIdx;
-    eapply('sub:'+curIdx,_subs.map(([l,k])=>({id:k,l,k}))).forEach(({l,k})=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.dataset.eid=k;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
+    _subs.forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(pf3Tab===k?' active':'');b.textContent=l;b.onclick=()=>{pf3Tab=k;renderAll()};st.appendChild(b)});
     if(pf3El)pf3El.style.display='';
     renderPF3();
     pf3EnsureAutoRefresh();
@@ -1580,8 +1198,7 @@ function renderAll(){
   if(pf3El)pf3El.style.display='none';
   // Classic index tabs (OMXS30, S&P 500, …): table + ranking sub-tabs.
   const subs=[['📊 Таблица','table'],['🏆 Рейтинг','ranking']].filter(([,k])=>!(k==='ranking'&&!(RANK[curIdx]?.length)));
-  st.dataset.editRow='sub:'+curIdx;
-  eapply('sub:'+curIdx,subs.map(([l,k])=>({id:k,l,k}))).forEach(({l,k})=>{const b=document.createElement('div');b.className='sub-tab'+(curSub===k?' active':'');b.textContent=l;b.dataset.eid=k;b.onclick=()=>{curSub=k;renderAll()};st.appendChild(b)});
+  subs.forEach(([l,k])=>{const b=document.createElement('div');b.className='sub-tab'+(curSub===k?' active':'');b.textContent=l;b.onclick=()=>{curSub=k;renderAll()};st.appendChild(b)});
   const smB=document.getElementById('smaBanner');smB.innerHTML='';smB.style.display='';renderSMA();
   document.getElementById('tableArea').style.display=curSub==='table'?'':'none';
   document.getElementById('rankingArea').style.display=curSub==='ranking'?'':'none';
@@ -1656,13 +1273,14 @@ function faqHTML(){
   <div class="faq-sub">${T('Нажмите на раздел, чтобы развернуть его')}</div>
 
   ${sec(T('🗂 Вкладки и виды'),
-    row('<b>✨ Новый интерфейс</b>','Кнопка ✨ в шапке переключает сайт на интерфейс 2026 года: навигация-сайдбар слева, «стеклянные» панели, плавные переходы. ↩ возвращает классический вид; выбор запоминается на устройстве.')
-   +row('<b>🏠 Home</b>','Сводный дашборд по всем акциям: кого покупать/продавать прямо сейчас (цена в ±2% от уровня), кто подходит к уровню покупки (≤5%), падающие ножи, движения дня и статистика рыночных фаз. Клик по строке открывает карточку.')
-   +row('<b>📊 Портфель / Акции</b>','Главный список: клик по строке открывает карточку акции слева (график, здоровье бизнеса, уровни, отчёты). Колонки сортируются кликом по заголовку.')
-   +row('<b>🏭 Сектора · 🏷 Тип</b>','Те же акции, сгруппированные по категориям: слева список групп с итогами, справа акции выбранной группы. Сектора Nasdaq укрупнены до 12 макро-групп.')
-   +row('<b>🧪 Симуляция</b>','Бумажный портфель из тестовых покупок — без реальных денег. Подробнее в разделе «Симуляция» ниже.')
+    row('<b>🖥 Trade Desk</b>','Новый интерфейс (бета, кнопка 🖥 в шапке или ?desk=1): «Сегодня» — что купить, продать или сократить с входом, стопом, целью и R/R; «Скринер» — все бумаги всех вкладок с фильтрами; «Акция» — график со свечами, уровнями и планом лонг/шорт; «Позиции» — книга с риском; «Журнал» — сделки, планы и бэктест правил. «⋯ → Классический вид» возвращает эти вкладки.')
+   +row('<b>🏠 Home</b>','Сводка рынка: живые фьючерсы и индексы, барометр фаз рынка, доска лучших акций (общий рейтинг со столбцом «v2» — вердикт нового слоя сигналов), разбивка по горизонтам и прогноз. Клик по строке открывает карточку.')
+   +row('<b>📊 Портфель / Акции</b>','Главный список: клик по строке открывает карточку акции слева (график, здоровье бизнеса, уровни, отчёты). Колонки сортируются кликом по заголовку; «⚙ Колонки» включает дополнительные, в том числе «Вердикт v2».')
+   +row('<b>🏭 Структура</b>','Те же акции, сгруппированные по сектору, типу и диверсификации: слева группы с итогами, справа акции выбранной группы.')
+   +row('<b>🧪 Симуляция</b>','Бумажный портфель из тестовых покупок — без реальных денег, вкладка в группе «💼 Portfolio». Подробнее в разделе «Симуляция» ниже.')
+   +row('<b>🎯 План · 📜 Сделки · 🧾 Налоги</b>','У портфелей: план сделок (уровень входа или выхода, стоп, цель, R/R), журнал сделок с реализованным P&L и налог K4 по средней цене (genomsnittsmetoden).')
    +row('<b>📅 Дивиденды и отчёты</b>','Календарь: ближайшие отчёты компаний, экс-дивидендные даты и выплаты.')
-   +row('<b>🩺 Состояние · 🤖 AI · ⚖️ Предложение</b>','Только на Портфеле 3.0: здоровье портфеля, AI-аналитика с историей запусков и план ребалансировки. В AI Proto есть чат: задавайте вопросы по портфелю, а свои правила («никогда не предлагай плечо») ассистент запоминает в 🧠 память и учитывает во всех анализах.'),true)}
+   +row('<b>🩺 Состояние · 🤖 AI · ⚖️ Предложение</b>','У каждого портфеля: здоровье портфеля, AI Proto (анализ с историей запусков и чат по портфелю) и план ребалансировки.'),true)}
 
   ${sec(T('🏷 Тип акции'),
     typ('Защитная','Стабильный спрос вне зависимости от экономического цикла: фарма, потребительские товары, коммунальные услуги, телеком. Меньше падает в кризис, медленнее растёт на бычьем рынке.')
@@ -1694,9 +1312,9 @@ function faqHTML(){
 
   ${sec(T('🧪 Симуляция — тестовые покупки'),
     row('<b>Как купить</b>','Откройте карточку акции → секция «🧪 Симуляция» внизу → укажите количество и цену (предзаполнена текущей) → «Купить (тест)». Реальный портфель не затрагивается.')
-   +row('<b>Где следить</b>','В карточке акции — позиции по этой бумаге; в саб-вкладке «🧪 Симуляция» — весь тестовый портфель: вложено, стоимость сейчас и результат в kr по живым ценам и курсу.')
+   +row('<b>Где следить</b>','В карточке акции — позиции по этой бумаге; на вкладке «🧪 Симуляция» — весь тестовый портфель: вложено, стоимость сейчас и результат в kr по живым ценам и курсу.')
    +row('<b>Закрыть позицию</b>','Кнопка 🗑 в карточке или в таблице симуляции. Клик по строке таблицы открывает карточку акции.')
-   +row('<b>Свой портфель у каждой вкладки</b>','Тестовые покупки хранятся на той вкладке, где сделаны: Портфель 3.0 → Симуляция и Nasdaq 100 → Симуляция независимы. Синхронизируются между устройствами.'))}
+   +row('<b>Привязка к вкладке</b>','Тестовая покупка помнит вкладку, из карточки которой сделана; вкладка «🧪 Симуляция» показывает все вместе. Синхронизируются между устройствами.'))}
 
   ${sec(T('📐 Технические уровни и колонки'),
     row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')
@@ -1865,7 +1483,7 @@ function toggleFaq(){
   if(o.classList.contains('hidden')){document.getElementById('faqCard').innerHTML=faqHTML();o.classList.remove('hidden');}
   else o.classList.add('hidden');
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','grpOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
 // ♿ A11y интерактив. Многие кликабельные элементы — это <div>/<span>/<th> с onclick,
 // которые без role/tabindex не доступны с клавиатуры. Здесь, без правки сотен шаблонов:
@@ -1910,7 +1528,7 @@ function a11yInit(){
   });
   // Фокус на открытии модалки и возврат на элемент-открыватель при закрытии.
   let _retFocus=null;
-  ['faqOverlay','setOverlay','grpOverlay','prmOverlay','authOverlay','onbOverlay'].forEach(id=>{
+  ['faqOverlay','setOverlay','prmOverlay','authOverlay','onbOverlay'].forEach(id=>{
     const ov=document.getElementById(id);if(!ov)return;
     try{new MutationObserver(()=>{
       const open=!ov.classList.contains('hidden');
@@ -2108,33 +1726,7 @@ function toggleTheme(){
 function initTheme(){
   // Дефолт сайта: тёмная тема + новый интерфейс; сохранённый выбор важнее.
   applyTheme(localStorage.getItem('dash_theme') || document.documentElement.dataset.theme || 'dark');
-  initUI2();
   initLang();
-}
-
-// ===== ✨ Новый интерфейс (2026): сайдбар-навигация, glass/bento-дизайн,
-// плавные переходы (View Transitions API). Та же логика и данные — другая
-// оболочка; переключается кнопкой в шапке, выбор хранится на устройстве.
-let UI2=false;
-function applyUI2(){
-  document.documentElement.classList.toggle('ui2',UI2);   // на <html> — применяется до отрисовки body (без мигания)
-  const b=document.getElementById('ui2Btn');
-  if(b){b.textContent=UI2?'↩':'✨';b.title=UI2?'Вернуть классический интерфейс':'Новый интерфейс (2026)';}
-}
-function initUI2(){
-  try{UI2=localStorage.getItem('dash_ui2')!=='0'}catch(e){UI2=true}   // дефолт: новый интерфейс включён
-  applyUI2();
-}
-function toggleUI2(){
-  const sw=()=>{
-    UI2=!UI2;
-    try{localStorage.setItem('dash_ui2',UI2?'1':'0')}catch(e){}
-    applyUI2();
-    renderAll();
-  };
-  // Smooth morph between the two shells where the browser supports it.
-  if(document.startViewTransition&&!matchMedia('(prefers-reduced-motion: reduce)').matches)document.startViewTransition(sw);
-  else sw();
 }
 
 /* ===== Live prices =====
@@ -2310,7 +1902,7 @@ function stockChartsRetheme(){
   if(typeof pf3State!=='undefined'&&pf3State.ch)stockChartDraw(pf3State,'pf3ChartBox');
   if(typeof deskRetheme==='function')deskRetheme();
 }
-/* ===== Портфель 3.0 — single-stock (MU) page with the v3 redesign ===== */
+/* ===== v3-вкладки: список бумаг и карточка любой бумаги ===== */
 let pf3State={tab:null,row:null,tk:null,ccy:'USD',years:1,side:null,ch:null};
 const pf3Fmt=(n,dec=0)=>{const v=parseFloat(n);return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}):'—'};
 // $12.3B / 9.9B EUR — money formatting for fundamentals in the report currency.

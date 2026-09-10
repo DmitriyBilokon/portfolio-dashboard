@@ -272,7 +272,6 @@ function homeHTML(){
     <div class="home-head-l"><span class="home-title">🏠 ${RT('Главная','Home')}</span><span class="pf3-asof">${RT('рынки, уровни и лучшие акции','markets, levels & best stocks')} · ${homeFutAtLbl()}</span></div>
     <div class="home-head-actions"><button class="pf3-btn pf3-btn-primary" id="homeUpdBtn" onclick="homeUpdateAll()">🔄 ${RT('Обновить всё','Update all')}</button><button class="pf3-btn pf3-btn-sm" id="homeNewsBtn" onclick="homeNewsAll()" title="${RT('Подтянуть свежие новости Yahoo по всем акциям — учитываются в рейтинге','Pull fresh Yahoo news for all stocks — factored into the rank')}">📰 ${RT('Новости','News')}</button>${adminTools}</div>
   </section>`;
-  // Шапка ВНЕ перетаскиваемой раскладки — всегда сверху и видима (не зависит от сохранённого порядка секций).
   const items=[
     {id:'futures',html:homeFuturesHTML()},
     {id:'baro',html:homeBaroHTML()},
@@ -281,7 +280,7 @@ function homeHTML(){
     {id:'forecast',html:homeForecastHTML()},
   ];
   if(isAdmin()){ items.push({id:'signal',html:homeSignalHTML()}); items.push({id:'val',html:homeValHTML()}); items.push({id:'insider',html:homeInsiderHTML()}); }
-  return head+erow('home',items,'edit-rows-v');
+  return head+items.map(it=>it.html).join('');
 }
 
 // 🧭 Сигналы разворота цикла памяти — модуль-мониторинг тезиса по бумаге.

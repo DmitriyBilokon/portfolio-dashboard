@@ -12,21 +12,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Index Dash">
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="preconnect" href="https://telegram-notify-abc.dmitriy-bilokon.workers.dev">
 <link rel="preconnect" href="https://fvrebkwczqmeorytujbn.supabase.co">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="preconnect" href="https://images.financialmodelingprep.com">
 <link rel="preconnect" href="https://assets.parqet.com">
-<script>(function(){try{var de=document.documentElement,ls=localStorage,dm=/[?&]desk=([01])(?:&|$)/.exec(location.search);de.dataset.theme=ls.getItem('dash_theme')||'dark';if(dm?dm[1]==='1':ls.getItem('dash_desk')==='1')de.classList.add('desk');else if(ls.getItem('dash_ui2')!=='0')de.classList.add('ui2')}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.classList.add('ui2')}})()</script>
-<link rel="stylesheet" href="styles.css?v=29ba118e-hub">
-<link rel="stylesheet" href="desk.css?v=96ca6335">
+<script>(function(){try{var de=document.documentElement,ls=localStorage,dm=/[?&]desk=([01])(?:&|$)/.exec(location.search);de.dataset.theme=ls.getItem('dash_theme')||'dark';if(dm?dm[1]==='1':ls.getItem('dash_desk')==='1')de.classList.add('desk');else de.classList.add('ui2')}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.classList.add('ui2')}})()</script>
+<link rel="stylesheet" href="styles.css?v=349a87d0-hub">
+<link rel="stylesheet" href="desk.css?v=0d09fc50">
 </head>
 <body>
 <a class="skip-link" href="#contentArea">К содержимому / Skip to content</a>
-<div class="header" role="banner"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><a class="theme-toggle hub-home" id="hubHome" href="../hub/index.html" title="Назад в Hub" aria-label="Назад в Hub">Hub</a><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="deskBtn" onclick="deskToggle(true)" title="Trade Desk — новый интерфейс (бета) / new interface (beta)" aria-label="Trade Desk">🖥</button><button class="theme-toggle" id="ui2Btn" onclick="toggleUI2()" title="Новый интерфейс (2026)" aria-label="Новый интерфейс / New UI">✨</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="editBtn" onclick="toggleEdit()" title="Редактор раскладки / Layout editor" aria-label="Редактор раскладки / Layout editor" style="display:none">✏️</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
+<div class="header" role="banner"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">Индексы и портфели • сигналы входа и выхода • лонг и шорт</div><a class="theme-toggle hub-home" id="hubHome" href="../hub/index.html" title="Назад в Hub" aria-label="Назад в Hub">Hub</a><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="deskBtn" onclick="deskToggle(true)" title="Trade Desk — новый интерфейс (бета) / new interface (beta)" aria-label="Trade Desk">🖥</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
 <div class="tabs" id="tabs" role="navigation" aria-label="Вкладки / Tabs"><span style="padding:8px 12px;font-size:12px;opacity:.6">Загрузка… / Loading…</span></div>
-<div class="edit-bar hidden" id="editBar"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
 <div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" title="Удалить выбранное / Delete selected" aria-label="Удалить выбранное" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены и технические уровни (Yahoo) / Refresh prices & levels (Yahoo)" aria-label="Обновить цены">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
@@ -34,7 +35,6 @@
 <div id="contentArea" role="main" tabindex="-1"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"><tr><td style="padding:14px;font-size:12px;opacity:.6">Загрузка… / Loading…</td></tr></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
 <div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard" role="dialog" aria-modal="true" aria-label="Справка / Help"></div></div>
 <div class="faq-overlay hidden" id="setOverlay" onclick="if(event.target===this)toggleSettings()"><div class="faq-card" id="setCard" role="dialog" aria-modal="true" aria-label="Настройки доступа / Access settings"></div></div>
-<div class="faq-overlay hidden" id="grpOverlay" onclick="if(event.target===this)toggleGroupsEditor()"><div class="faq-card" id="grpCard" role="dialog" aria-modal="true" aria-label="Группы вкладок / Tab groups"></div></div>
 <div class="faq-overlay hidden" id="prmOverlay" onclick="if(event.target===this)togglePrompts()"><div class="faq-card" id="prmCard" role="dialog" aria-modal="true" aria-label="AI-промпты / AI prompts"></div></div>
 <div class="faq-overlay hidden" id="onbOverlay" onclick="if(event.target===this)onbDone()"><div class="faq-card" id="onbCard" role="dialog" aria-modal="true" aria-label="Добро пожаловать / Welcome"></div></div>
 <div class="auth-overlay hidden" id="authOverlay">
@@ -51,12 +51,12 @@
 <script src="data.js?v=b1c7bc89" defer></script>
 <script src="signals.js?v=0867cc01" defer></script>
 <script src="chart.js?v=b108c2a5" defer></script>
-<script src="app.js?v=108847df" defer></script>
-<script src="app-2.js?v=d3b0e533" defer></script>
-<script src="app-3.js?v=79fc243f" defer></script>
-<script src="app-4.js?v=e05f75b0" defer></script>
+<script src="app.js?v=6107f264" defer></script>
+<script src="app-2.js?v=83129cf5" defer></script>
+<script src="app-3.js?v=b724f416" defer></script>
+<script src="app-4.js?v=eb464a99" defer></script>
 <script src="app-5.js?v=ff9051ff" defer></script>
-<script src="desk.js?v=5ff71bce" defer></script>
+<script src="desk.js?v=b144397c" defer></script>
 <script>if(location.protocol!=='file:'){var h=document.getElementById('hubHome');if(h)h.href='../hub/'}</script>
 <script>if('serviceWorker' in navigator)addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});</script>
 </body>

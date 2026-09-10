@@ -13,17 +13,6 @@ grp('commission', function(){
   __ok('fee min bites small trade', tradeFeeNative('USD',100,true).courtage === 6);
 });
 
-// 2) Раскладка-конструктор: eapply сохраняет порядок, добавляет новые в конец
-grp('eapply layout', function(){
-  LAYOUT = {sub:{},cards:[],home:[],dash:[]};
-  var items=[{id:'a'},{id:'b'},{id:'c'},{id:'d'}];
-  __eq('eapply natural', eapply('cards',items).map(function(x){return x.id;}).join(''), 'abcd');
-  LAYOUT.cards=['c','a'];
-  __eq('eapply partial saved', eapply('cards',items).map(function(x){return x.id;}).join(''), 'cabd');
-  LAYOUT.cards=['z','d','b'];   // z stale (ignored), a/c new → в конец
-  __eq('eapply stale+new', eapply('cards',items).map(function(x){return x.id;}).join(''), 'dbac');
-});
-
 // 3) Валюта: pf3BaseFx / pf3Cv / pf3Money
 grp('currency helpers', function(){
   FX.USD=10; FX.EUR=11; FX.GBP=13; FX.CAD=7.5; FX.CHF=12;
@@ -107,7 +96,7 @@ grp('pfRecentTrades', function(){
 
 // 9) Покрытие ключей синка: ПОЛНЫЙ список ключей snapshotState (tests-quality#5) —
 // новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
-var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','aiPrefs','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','layout','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -602,14 +591,13 @@ grp('pfApplyBuy', function(){
 // 🔄 Round-trip синка: каждый ключ snapshotState восстанавливается applyRemoteState
 // (ловит забытую ветку — тихая потеря данных на втором устройстве).
 grp('sync round-trip', function(){
-  var _init=init, _save=scheduleSave, saves=0;
-  init=function(){}; scheduleSave=function(){ saves++; };
+  var _init=init, _mig=migrateState, _save=scheduleSave, saves=0;
+  init=function(){}; migrateState=function(){}; scheduleSave=function(){ saves++; };
   var orig=snapshotState();
   var mk={};
   SNAP_KEYS.forEach(function(k){
     var v=orig[k];
-    if(k==='aiPrefs') mk[k]=[];                          // по дизайну не восстанавливается (правила отменены)
-    else if(k==='theme') mk[k]='dark';
+    if(k==='theme') mk[k]='dark';
     else if(k==='desk') mk[k]=deskNorm({riskPct:2,riskCapPct:8,shortOk:{'MU':true},whatIf:{mode:'weight',amountSEK:25000,weightPct:3,port:'TP'}});
     else if(k==='deskWatch') mk[k]=deskWatchNorm({items:[{key:'MU|USD',tk:'MU',name:'Micron',buyLo:90,buyHi:100,thesis:{title:'HBM',text:'t'},createdAt:1,updatedAt:2}]});
     else if(Array.isArray(v)||k==='tabGroups') mk[k]=['__'+k];   // tabGroups по умолчанию null, но хранится массивом
@@ -623,7 +611,7 @@ grp('sync round-trip', function(){
   var back=snapshotState();
   SNAP_KEYS.forEach(function(k){
     var m=mk[k], b=back[k], ok;
-    if(m && typeof m==='object' && !Array.isArray(m) && m.__m) ok = b && b.__m===k;   // layout/aiSpend дополняются дефолтами
+    if(m && typeof m==='object' && !Array.isArray(m) && m.__m) ok = b && b.__m===k;   // aiSpend дополняется дефолтами
     else ok = JSON.stringify(b)===JSON.stringify(m);
     __ok('round-trip '+k, ok, 'got '+JSON.stringify(b));
   });
@@ -644,7 +632,7 @@ grp('sync round-trip', function(){
   applyRemoteState(pre);
   __eq('pre-I2 desk keeps local whatIf', [DESK.riskPct,DESK.whatIf.mode,DESK.whatIf.weightPct], [3,'weight',4]);
   applyRemoteState(orig);
-  init=_init; scheduleSave=_save;
+  init=_init; migrateState=_mig; scheduleSave=_save;
 });
 
 grp('posMeta', function(){
@@ -838,30 +826,36 @@ grp('secFromRow & universe', function(){
   DATA=_D;PX_LIVE=_px;
 });
 
-// Одноразовые сиды (schemaV): удалённые вкладки не воскресают (data-model-sync#5, stale-info#3)
-grp('migrateSchema seeds', function(){
-  var _D=DATA,_V=STATE_V,_save=scheduleSave; scheduleSave=function(){};
+// Миграции (S7a): один проход migrateState() на загрузку; сиды только для PF3 и только при schemaV 0
+// (data-model-sync#5, stale-info#3); личные сиды (Anna/Sergei/Gold/Small Cap/HEM/брокер) удалены.
+grp('migrateState', function(){
+  var _D=DATA,_V=STATE_V,_save=scheduleSave,_P=PLAN_RULES; scheduleSave=function(){};
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
   DATA={}; DATA[PF3_KEY]={headers:h,rows:[],v3:'1'}; DATA['OMXSPI']={headers:h,rows:[],v3:'1'};
-  STATE_V=1;
-  migrateFamilyPortfolios(); migrateGoldSilver(); migrateSmallCap(); migrateTabAdds(); migratePortfolio3();
-  __ok('v1: Anna not recreated', !DATA['Portfolio (Anna)']);
-  __ok('v1: Sergei not recreated', !DATA['Portfolio (Sergei)']);
-  __ok('v1: Gold and Silver not recreated', !DATA['Gold and Silver']);
-  __ok('v1: Small Cap not recreated', !DATA['Small Cap']);
-  __eq('v1: HEM not re-added', DATA['OMXSPI'].rows.length, 0);
+  STATE_V=1; PLAN_RULES=[];
+  migrateState();
   __eq('v1: empty PF3 not seeded with MU', DATA[PF3_KEY].rows.length, 0);
-  STATE_V=0;
-  migrateFamilyPortfolios(); migrateTabAdds(); migratePortfolio3();
-  __ok('v0: Anna seeded', !!DATA['Portfolio (Anna)']);
-  __eq('v0: HEM added', DATA['OMXSPI'].rows.length, 1);
-  __eq('v0: MU seed', DATA[PF3_KEY].rows.length, 1);
+  __eq('v1: no family/watchlist seeds', Object.keys(DATA).sort(), ['OMXSPI',PF3_KEY].sort());
+  __eq('v1: HEM not added', DATA['OMXSPI'].rows.length, 0);
+  DATA={}; STATE_V=0;
   PLAN_RULES=[{id:'plx',tk:'A',act:'buy',level:1,done:false}];
-  migrateSchema();
+  migrateState();
+  __eq('v0: PF3 created with MU seed', DATA[PF3_KEY].rows.map(function(r){return r[2];}), ['MU']);
+  __ok('v0: no Anna/Sergei seed', !DATA['Portfolio (Anna)']&&!DATA['Portfolio (Sergei)']);
+  __ok('v0: PF3 title not personal', !DATA[PF3_KEY].title);
   __eq('migrateSchema → SCHEMA_V', STATE_V, SCHEMA_V);
   __eq('migrateSchema normalizes plans', PLAN_RULES[0].status, 'armed');
-  PLAN_RULES=[];
-  DATA=_D;STATE_V=_V;scheduleSave=_save;
+  var n=DATA[PF3_KEY].rows.length; migrateState();
+  __eq('migrateState idempotent', DATA[PF3_KEY].rows.length, n);
+  // Классический индекс из бандла → v3 (схема колонок PF3)
+  DATA={}; DATA[PF3_KEY]={headers:h.concat(['SMA 50']),rows:[],v3:'1'};
+  DATA['OMXS30']={headers:['#','Компания','Тикер','Сектор','Цена 13 фев','1д %','SMA 50'],rows:[[1,'Volvo','VOLV B','Industri',250,1.5,240]],count:1};
+  migrateState();
+  __eq('bundle index → v3', [DATA['OMXS30'].v3, DATA['OMXS30'].rows[0][2], DATA['OMXS30'].rows[0][7], DATA['OMXS30'].rows[0][DATA['OMXS30'].headers.indexOf('SMA 50')]], ['1','VOLV B',250,240]);
+  // init() больше не мигрирует: удалённый MU-сид не возвращается при перерисовке
+  DATA={}; DATA[PF3_KEY]={headers:h,rows:[],v3:'1'}; STATE_V=0;
+  __ok('init has no migrateState call', !/migrateState|migratePortfolio3/.test(String(init)));
+  DATA=_D;STATE_V=_V;scheduleSave=_save;PLAN_RULES=_P;
 });
 
 // ── 📡 S4: слой сигналов v2 (signals.js) — эталоны, паритет со старыми движками, теневой адаптер ──

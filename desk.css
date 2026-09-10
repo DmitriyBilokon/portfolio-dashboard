@@ -13,7 +13,7 @@ html.desk{
   --dk-r:6px;--dk-r2:10px;color-scheme:light;
   /* алиасы старых токенов */
   --bg:var(--dk-page);--bg1:var(--dk-panel);--bg2:var(--dk-panel);--bg3:var(--dk-raised);--bg4:var(--dk-raised);
-  --border:var(--dk-line);--border2:var(--dk-line2);--text:var(--dk-ink);--text1:var(--dk-ink);--text2:var(--dk-ink2);--text3:var(--dk-muted);--muted:var(--dk-muted);
+  --border:var(--dk-line);--border2:var(--dk-line2);--text:var(--dk-ink);--text1:var(--dk-ink);--text2:var(--dk-ink2);--text3:var(--dk-muted);
   --accent:var(--dk-accent);--green:var(--dk-long);--red:var(--dk-short);--yellow:var(--dk-warn);
 }
 html.desk[data-theme="dark"]{

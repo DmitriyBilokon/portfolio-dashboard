@@ -119,17 +119,17 @@ function pf3Summary(){
   const num=(key,val,cls)=>`<input class="pf3-cash-input${cls?' '+cls:''}" type="number" step="any" min="0" value="${val}" onchange="pf3SetNum('${key}',this.value)" title="Нажмите, чтобы изменить">`;
   const fxChip=c=>typeof FX[c]==='number'?`<span class="pf3-chip">1 ${c} = <b>${(+FX[c]).toFixed(2)}</b> kr</span>`:'';
   const cards=[
-    {id:'equity',html:`<div class="pf3-card pf3-sum-hero" data-eid="equity"><div class="pf3-card-l">${T('Чистый капитал')}</div><div class="pf3-card-v">${pf3Fmt(equity)} ${unit}</div><div class="pf3-card-s">${T('акции + свободный кэш')}</div></div>`},
-    {id:'stocks',html:`<div class="pf3-card" data-eid="stocks"><div class="pf3-card-l">${T('Акции')}</div><div class="pf3-card-v">${pf3Fmt(totalValB)} ${unit}</div><div class="pf3-card-s">${d.rows.length} ${T('позиций')} · ${equity>0?(totalValB/equity*100).toFixed(1):'—'}%</div></div>`},
-    {id:'profit',html:`<div class="pf3-card" data-eid="profit"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${totalProfit>=0?'pf3-up':'pf3-down'}">${totalProfit>0?'+':''}${pf3Fmt(totalProfitB)} ${unit}</div><div class="pf3-card-s ${pct>=0?'pf3-up':'pf3-down'}">${pct>0?'+':''}${pct.toFixed(1)}% ${T('от вложений')}</div></div>`},
-    {id:'alltime',html:`<div class="pf3-card" data-eid="alltime"><div class="pf3-card-l">${RT('P/L всё время','All-time P/L')}</div><div class="pf3-card-v ${allTimeSEK>=0?'pf3-up':'pf3-down'}">${allTimeSEK>0?'+':''}${pf3Fmt(allTimeB)} ${unit}</div><div class="pf3-card-s ${allTimePct>=0?'pf3-up':'pf3-down'}">${allTimePct>0?'+':''}${allTimePct.toFixed(1)}% ${RT('от всех вложений','on all invested')}${realizedSEK?` · ${realizedSEK>0?'+':''}${pf3Fmt(realizedB)} ${RT('реализ.','realized')}`:''}</div></div>`},
-    {id:'cash',html:`<div class="pf3-card" data-eid="cash"><div class="pf3-card-l">${T('Свободный кэш')}</div><div class="pf3-card-v">${num('cashFree',free)} <small>${unit}</small></div><div class="pf3-card-s">${equity>0&&free>0?(free/equity*100).toFixed(1)+'% '+T('% капитала · доступно для покупок').replace('% of equity','of equity').replace('% капитала','капитала'):T('нажмите, чтобы изменить')}</div></div>`},
+    {id:'equity',html:`<div class="pf3-card pf3-sum-hero"><div class="pf3-card-l">${T('Чистый капитал')}</div><div class="pf3-card-v">${pf3Fmt(equity)} ${unit}</div><div class="pf3-card-s">${T('акции + свободный кэш')}</div></div>`},
+    {id:'stocks',html:`<div class="pf3-card"><div class="pf3-card-l">${T('Акции')}</div><div class="pf3-card-v">${pf3Fmt(totalValB)} ${unit}</div><div class="pf3-card-s">${d.rows.length} ${T('позиций')} · ${equity>0?(totalValB/equity*100).toFixed(1):'—'}%</div></div>`},
+    {id:'profit',html:`<div class="pf3-card"><div class="pf3-card-l">${T('Прибыль')}</div><div class="pf3-card-v ${totalProfit>=0?'pf3-up':'pf3-down'}">${totalProfit>0?'+':''}${pf3Fmt(totalProfitB)} ${unit}</div><div class="pf3-card-s ${pct>=0?'pf3-up':'pf3-down'}">${pct>0?'+':''}${pct.toFixed(1)}% ${T('от вложений')}</div></div>`},
+    {id:'alltime',html:`<div class="pf3-card"><div class="pf3-card-l">${RT('P/L всё время','All-time P/L')}</div><div class="pf3-card-v ${allTimeSEK>=0?'pf3-up':'pf3-down'}">${allTimeSEK>0?'+':''}${pf3Fmt(allTimeB)} ${unit}</div><div class="pf3-card-s ${allTimePct>=0?'pf3-up':'pf3-down'}">${allTimePct>0?'+':''}${allTimePct.toFixed(1)}% ${RT('от всех вложений','on all invested')}${realizedSEK?` · ${realizedSEK>0?'+':''}${pf3Fmt(realizedB)} ${RT('реализ.','realized')}`:''}</div></div>`},
+    {id:'cash',html:`<div class="pf3-card"><div class="pf3-card-l">${T('Свободный кэш')}</div><div class="pf3-card-v">${num('cashFree',free)} <small>${unit}</small></div><div class="pf3-card-s">${equity>0&&free>0?(free/equity*100).toFixed(1)+'% '+T('% капитала · доступно для покупок').replace('% of equity','of equity').replace('% капитала','капитала'):T('нажмите, чтобы изменить')}</div></div>`},
   ];
   if(isDima){
-    cards.push({id:'lev',html:`<div class="pf3-card" data-eid="lev"><div class="pf3-card-l">${T('Кредитное плечо')}</div><div class="pf3-card-v">${lev>0?'+':''}${num('leverage',lev)} <small>${unit}</small></div><div class="pf3-card-s">${T('доступный кредит сверх капитала')}</div></div>`});
-    cards.push({id:'levavail',html:`<div class="pf3-card" data-eid="levavail"><div class="pf3-card-l">${T('Доступно с плечом')}</div><div class="pf3-card-v">${pf3Fmt(withLev)} ${unit}</div><div class="pf3-card-s">${T('капитал + кредитное плечо')}</div></div>`});
+    cards.push({id:'lev',html:`<div class="pf3-card"><div class="pf3-card-l">${T('Кредитное плечо')}</div><div class="pf3-card-v">${lev>0?'+':''}${num('leverage',lev)} <small>${unit}</small></div><div class="pf3-card-s">${T('доступный кредит сверх капитала')}</div></div>`});
+    cards.push({id:'levavail',html:`<div class="pf3-card"><div class="pf3-card-l">${T('Доступно с плечом')}</div><div class="pf3-card-v">${pf3Fmt(withLev)} ${unit}</div><div class="pf3-card-s">${T('капитал + кредитное плечо')}</div></div>`});
   }
-  return`<section class="pf3-summary" data-edit-row="cards">${eapply('cards',cards).map(c=>c.html).join('')}</section>
+  return`<section class="pf3-summary">${cards.map(c=>c.html).join('')}</section>
   <div id="pfSumPP" class="pf3-pp pfsum-pp">${pfSumPPInner(pf3D())}</div>
   <div class="pf3-fx"><span class="pf3-fx-l">${T('💱 Курсы')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')}<span class="pf3-fx-note">${RT('курсы ECB · база SEK','ECB rates · SEK base')}${fxFreshLbl()}</span></div>`;
 }
@@ -706,6 +706,7 @@ function pf3XMenuHTML(d){
   const on=pf3XC(d);
   return`<div class="xcols-menu" onclick="event.stopPropagation()">
     ${isAdmin()?`<button class="pf3-btn" style="margin-bottom:6px" onclick="pf3RenameTab(event)">✏️ ${RT('Переименовать вкладку','Rename tab')}</button>`:''}
+    ${isAdmin()&&d.custom==='1'?`<button class="pf3-btn" style="margin-bottom:6px" onclick="pf3TabDelete(v3Key,event)">🗑 ${RT('Удалить вкладку','Delete tab')}</button>`:''}
     <div class="xcols-t">${T('Доп. колонки списка')}</div>
     ${PF3_XDEF.map(([k,l])=>`<label class="set-tab"><input type="checkbox"${on.includes(k)?' checked':''} onchange="pf3XToggle('${k}',event)"><span>${T(l)}</span></label>`).join('')}
     ${on.includes('sig2')?`<button class="pf3-btn" style="margin-top:4px" onclick="sigShadowShow(event)">📋 ${RT('Отчёт расхождений v2','Shadow report v2')}</button>`:''}
@@ -962,7 +963,6 @@ function pf3Add(e){
   while(row.length<d.headers.length)row.push('');
   d.rows.push(row);
   d.count=d.rows.length;
-  if(d.removed)d.removed=d.removed.filter(x=>x!==t);   // re-adding cancels an earlier delete
   recalcPF(d.rows.length-1,v3Key);
   // Покупка списывает деньги со свободного кэша (кэш → акции, чистый капитал
   // не меняется). Только мои/семейные портфели; AI-портфель сюда не попадает
@@ -1005,8 +1005,7 @@ async function pf3FillProfile(tk){
   }catch(e){}
 }
 
-// Delete a stock from Портфель 3.0. Remembered in d.removed so the 2.0 sync
-// migration doesn't immediately re-import it.
+// Удалить бумагу из текущей v3-вкладки.
 function pf3Delete(tk,ev){
   if(ev)ev.stopPropagation();
   const d=pf3D(),i=d.rows.findIndex(r=>String(r[2]||'')===tk);
@@ -1015,7 +1014,6 @@ function pf3Delete(tk,ev){
   d.rows.splice(i,1);
   d.rows.forEach((r,j)=>r[0]=j+1);
   d.count=d.rows.length;
-  (d.removed=d.removed||[]).push(String(tk).trim().toUpperCase());
   if(pf3Sel===tk)pf3Sel=null;
   scheduleSave();
   init();
@@ -1030,7 +1028,6 @@ function renderPF3(){
   // контент, если пользователь уже ушёл на Home/другую вкладку.
   if(curIdx!==v3Key)return;
   if(pf3IsPort(v3Key))pfSumPPStart(v3Key);else pfSumPPStop();   // лайв изм. баланса по пре/пост-рынку
-  editScheduleWire();   // перевесить drag на карточки сводки после перерисовки pf3
   if(pf3Tab==='alloc'){   // объединённая вкладка: Сектора + Тип + Диверсификация (каждый блок — по своему праву)
     const port=pf3IsPort(v3Key);
     const secB=can('view.sectors')?pf3GroupedHTML('sec'):'';
@@ -1137,7 +1134,7 @@ function renderPF3(){
 // позиций (приближение: состав считается неизменным), кумулятив в %.
 // Бенчмарки сравниваются от начала выбранного периода. Кеш 6 часов.
 // Все семейные портфели + индексы OMXS30/Nasdaq 100, цвета линий настраиваются,
-// старт по умолчанию — с прошлой пятницы. Кеш 6 часов.
+// старт по умолчанию — с PF_START_DATE (range:'start'). Кеш 6 часов.
 let pfPerf={range:'start',hist:null,loaded:0,loading:false,failed:false,on:{},_init:false};
 const PF_START_DATE='2026-06-12';   // дата создания портфелей — точка входа для «Развития»
 const PFP_BENCH=[['^GSPC','S&P 500','#ef4444'],['^NDX','Nasdaq 100','#8b8cf8'],['^OMX','OMXS30','#f5c863']];

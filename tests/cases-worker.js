@@ -71,6 +71,8 @@ grp('newsItemsFromYahoo', function(){
   __eq('нет времени → 0', it[1].time, 0);
   __ok('нет news → []', newsItemsFromYahoo({}).length === 0);
   __ok('null → []', newsItemsFromYahoo(null).length === 0);
+  var bad = newsItemsFromYahoo({ news: [{ title: 'a', link: 'javascript:alert(1)' }, { title: 'b', link: 'HTTPS://ok/1' }, { title: 'c', link: 'data:text/html,x' }] });
+  __eq('ссылки только http(s)', bad.map(function(x){ return x.link; }), ['', 'HTTPS://ok/1', '']);
 });
 
 // 7c) 📐 indexLevels — S/R уровни индекса (pivots + свинги, классификация по цене)
@@ -161,15 +163,17 @@ grp('mergeAiPortSettings', function(){
 
 // 9) ⏱ pickCronTask — одна задача за тик крона (free=50 подзапросов/вызов)
 grp('pickCronTask', function(){
-  __eq('00 → цикл', pickCronTask(0), 'cycle');
-  __eq('10 → цикл', pickCronTask(10), 'cycle');
-  __eq('20 → PF3', pickCronTask(20), 'pf3');
-  __eq('30 → PF3', pickCronTask(30), 'pf3');
-  __eq('40 → Anna', pickCronTask(40), 'anna');
-  __eq('50 → Anna', pickCronTask(50), 'anna');
-  __eq('границы 19/39', pickCronTask(19), 'cycle');
-  __eq('граница 39', pickCronTask(39), 'pf3');
-  __eq('нормализация >59', pickCronTask(65), 'cycle');   // 65%60=5
+  __eq(':00 → цикл', pickCronTask(0), 'cycle');
+  __eq(':10 → bookcheck', pickCronTask(10), 'book');
+  __eq(':20 → PF3', pickCronTask(20), 'pf3');
+  __eq(':30 → bookcheck', pickCronTask(30), 'book');
+  __eq(':40 → Anna', pickCronTask(40), 'anna');
+  __eq(':50 → bookcheck', pickCronTask(50), 'book');
+  __eq('*/5: :05/:25/:45 → bookcheck', [pickCronTask(5), pickCronTask(25), pickCronTask(45)], ['book','book','book']);
+  __eq('граница :19 → bookcheck, :04 → цикл', [pickCronTask(19), pickCronTask(4)], ['book','cycle']);
+  __eq('нормализация >59 и <0', [pickCronTask(62), pickCronTask(-18)], ['cycle','anna']);   // 62%60=2, −18→42
+  var n = { cycle:0, pf3:0, anna:0, book:0 }; for(var m = 0; m < 60; m += 10) n[pickCronTask(m)]++;
+  __eq('крон */10: по разу AI-задачи, bookcheck ×3 в час', n, { cycle:1, pf3:1, anna:1, book:3 });
 });
 
 // 10) 🔒 parseSyms — разбор ?param=A,B,C на публичных батч-роутах (trim/дедуп/лимит)
@@ -320,6 +324,104 @@ grp('financials', function(){
   __eq('nodata: прогноз без факта не отдаётся', [nd.status, nd.estimates], ['nodata', []]);
   __ok('подзапросов ≤ 4: FMP×2 + earningsTrend + фолбэк timeseries', 2 + 1 + 1 <= 4);
   __eq('TTL: память 30 мин, edge 12 ч, нет данных 1 ч', [FIN_CFG.memMs, FIN_CFG.edgeS, FIN_CFG.edgeNoDataS], [1800000, 43200, 3600]);
+});
+
+// 11b) 📨 bookcheck (S8) — стопы/цели позиций и лимиты плана → Telegram с гистерезисом
+grp('atrLast', function(){
+  var ts = [], o = [], h = [], l = [], c = [];
+  for(var i = 0; i < 30; i++){ ts.push(1e9 + i * 86400); o.push(100); h.push(102); l.push(98); c.push(100); }
+  var res = { timestamp: ts, indicators: { quote: [{ open: o, high: h, low: l, close: c, volume: [] }] } };
+  __approx('ровный диапазон 4 → ATR 4', atrLast(res), 4, 1e-9);
+  __eq('< 14 свечей → null', atrLast({ timestamp: ts.slice(0, 10), indicators: { quote: [{ open: o.slice(0,10), high: h.slice(0,10), low: l.slice(0,10), close: c.slice(0,10) }] } }), null);
+  __eq('нет ответа → null', atrLast(null), null);
+  h[29] = 120; __ok('скачок последнего бара поднимает ATR (Уайлдер: TR 22 → +18/14)', Math.abs(atrLast(res) - (4 + 18 / 14)) < 1e-3);
+});
+grp('bookcheck', function(){
+  var snap = {
+    fx: { USD: 10 },
+    data: {
+      '🚀 Портфель 3.0': { rows: [
+        ['', 'Micron', 'MU', '', '', '', 10, 105, 'USD', 100],       // лонг: стоп 95, цель 130 из POS_META
+        ['', 'Volvo B', 'VOLV-B', '', '', '', 50, 250, 'SEK', 240],   // без меты, но open-правило со стопом
+        ['', 'Nokia', 'NOKIA', '', '', '', 0, 4, 'EUR', 0],           // qty 0 — не позиция
+        ['', 'Apple', 'AAPL', '', '', '', 5, 200, 'USD', 190],        // мета без стопа/цели — нечего проверять
+      ] },
+      'Portfolio (Anna)': { rows: [['', 'Tesla', 'TSLA', '', '', '', 3, 300, 'USD', 320]] },   // шорт
+      '🤖 AI Портфель': { rows: [['', 'X', 'XX', '', '', '', 5, 10, 'USD', 9]] },
+      'Nasdaq 100': { v3: '1', rows: [['', 'Nvidia', 'NVDA', '', '', '', 0, 120, 'USD', 0]] },
+    },
+    posMeta: { '🚀 Портфель 3.0': { MU: { side: 'long', stop: 95, stop0: 90, target: 130 }, AAPL: { side: 'long' } },
+               'Portfolio (Anna)': { TSLA: { side: 'short', stop: 340, target: 280 } },
+               '🤖 AI Портфель': { XX: { stop: 9.5 } } },
+    planRules: [
+      { id: 'pl1', tab: '🚀 Портфель 3.0', tk: 'NVDA', act: 'buy', side: 'long', level: 115, stop: 108, target: 135, qty: 20, done: false, status: 'armed', note: 'откат к SMA50' },
+      { id: 'pl2', tk: 'MU', act: 'sell', level: 128, done: false },                                    // v1: без tab/ccy/side
+      { id: 'pl3', tk: 'VOLV-B', tab: '🚀 Портфель 3.0', act: 'buy', side: 'long', stop: 230, target: 280, status: 'open', done: false },
+      { id: 'pl4', tk: 'AMD', act: 'buy', level: 150, done: true },                                     // исполнено — не следим
+      { id: 'pl5', tk: 'SHOP', ccy: 'USD', act: 'sell', side: 'short', level: 90, stop: 97, done: false, status: 'armed' },
+    ],
+  };
+  var it = bookItems(snap), keys = it.map(function(x){ return x.key; }).sort();
+  __eq('условия: позиции + правила (без qty 0, AI-портфеля, исполненных и open-правил)', keys, [
+    'pos|Portfolio (Anna)|TSLA|stop|340', 'pos|Portfolio (Anna)|TSLA|target|280',
+    'pos|🚀 Портфель 3.0|MU|stop|95', 'pos|🚀 Портфель 3.0|MU|target|130',
+    'pos|🚀 Портфель 3.0|VOLV-B|stop|230', 'pos|🚀 Портфель 3.0|VOLV-B|target|280',
+    'rule|pl1|invalid|108', 'rule|pl1|level|115', 'rule|pl2|level|128', 'rule|pl5|invalid|97', 'rule|pl5|level|90']);
+  var by = {}; it.forEach(function(x){ by[x.key] = x; });
+  __eq('лонг: стоп le, цель ge', [by['pos|🚀 Портфель 3.0|MU|stop|95'].cross, by['pos|🚀 Портфель 3.0|MU|target|130'].cross], ['le', 'ge']);
+  __eq('шорт: стоп ge, цель le', [by['pos|Portfolio (Anna)|TSLA|stop|340'].cross, by['pos|Portfolio (Anna)|TSLA|target|280'].cross], ['ge', 'le']);
+  __eq('open-правило даёт стоп/цель позиции без меты', [by['pos|🚀 Портфель 3.0|VOLV-B|stop|230'].sym, by['pos|🚀 Портфель 3.0|VOLV-B|stop|230'].stop0], ['VOLV-B.ST', 230]);
+  __eq('stop0 из меты (R от стопа входа)', by['pos|🚀 Портфель 3.0|MU|stop|95'].stop0, 90);
+  __eq('v1-правило: tab PF3, валюта из строки, продажа ge', [by['rule|pl2|level|128'].tab, by['rule|pl2|level|128'].ccy, by['rule|pl2|level|128'].cross], ['🚀 Портфель 3.0', 'USD', 'ge']);
+  __eq('вход в шорт: лимит ge, стоп выше → invalid ge', [by['rule|pl5|level|90'].cross, by['rule|pl5|invalid|97'].cross], ['ge', 'ge']);
+  __eq('битый снапшот → []', [bookItems(null).length, bookItems({ data: { x: null }, planRules: [null, 5] }).length], [0, 0]);
+
+  // Символы: стопы первыми, только открытые рынки, лимит
+  var syms = bookPickSyms(it, function(c){ return c !== 'SEK'; }, 3);
+  __eq('pickSyms: стопы → цели → лимиты, без закрытого SEK, ≤ max', syms, ['MU', 'TSLA', 'NVDA']);
+
+  // Срабатывание, дедуп, гистерезис 0.3·ATR
+  var mu = [by['pos|🚀 Портфель 3.0|MU|stop|95']];
+  var e1 = bookEval(mu, { MU: { price: 94, atr: 5 } }, null, 1000);
+  __eq('пробой стопа → 1 уведомление', [e1.fires.length, e1.fires[0].kind, e1.fires[0].price, e1.changed], [1, 'stop', 94, true]);
+  var e2 = bookEval(mu, { MU: { price: 93, atr: 5 } }, e1.state, 2000);
+  __eq('ниже стопа дальше — повтора нет, состояние не менялось', [e2.fires.length, e2.changed, e2.state.keys[mu[0].key].at], [0, false, 1000]);
+  var e3 = bookEval(mu, { MU: { price: 96, atr: 5 } }, e2.state, 3000);
+  __eq('отскок в полосу 0.3·ATR (95..96.5) — не взводится', [e3.fires.length, !!e3.state.keys[mu[0].key]], [0, true]);
+  var e4 = bookEval(mu, { MU: { price: 94.9, atr: 5 } }, e3.state, 4000);
+  __eq('дребезг у уровня — без повтора', e4.fires.length, 0);
+  var e5 = bookEval(mu, { MU: { price: 96.6, atr: 5 } }, e4.state, 5000);
+  __eq('ушла за 0.3·ATR — взведено заново', [e5.fires.length, !!e5.state.keys[mu[0].key], e5.changed], [0, false, true]);
+  __eq('новый пробой — снова уведомление', bookEval(mu, { MU: { price: 95, atr: 5 } }, e5.state, 6000).fires.length, 1);
+  var e6 = bookEval(mu, { MU: { price: 95.5 } }, e1.state, 7000);
+  __ok('без ATR — гистерезис 1 % уровня (95.5 < 95.95 держит)', !!e6.state.keys[mu[0].key]);
+  __eq('нет котировки — состояние переносится', bookEval(mu, {}, e1.state, 8000).state.keys[mu[0].key].at, 1000);
+  var gone = bookEval([], {}, e1.state, 9000);
+  __eq('условие исчезло (уровень сдвинут/правило удалено) — ключ убран', [Object.keys(gone.state.keys).length, gone.changed], [0, true]);
+  var tsl = bookEval([by['pos|Portfolio (Anna)|TSLA|stop|340'], by['pos|Portfolio (Anna)|TSLA|target|280']], { TSLA: { price: 341, atr: 10 } }, null, 1);
+  __eq('шорт: цена выше стопа → стоп', tsl.fires.map(function(f){ return f.kind; }), ['stop']);
+  var nv = bookEval([by['rule|pl1|level|115'], by['rule|pl1|invalid|108']], { NVDA: { price: 107, atr: 4 } }, null, 1);
+  __eq('цена за стопом правила входа: «сетап сломан», лимит в том же тике не шлётся', nv.fires.map(function(f){ return f.kind; }), ['invalid']);
+  __ok('…но лимит отмечен (не всплывёт на отскоке без выхода за полосу)', !!nv.state.keys['rule|pl1|level|115']);
+  __eq('лимит без стопа: цена ≤ уровня', bookEval([by['rule|pl1|level|115']], { NVDA: { price: 114 } }, null, 1).fires.length, 1);
+
+  // Тексты Telegram (HTML)
+  var fx = Object.assign({}, FX_DEFAULT, snap.fx);
+  __eq('позиция: стоп', bookLine(e1.fires[0], fx.USD), '⛔ <b>MU</b> лонг · стоп 95 USD пробит: цена 94 · 10 шт · −0.6R · −600 kr — выйти');
+  var tg = bookEval([by['pos|🚀 Портфель 3.0|MU|target|130']], { MU: { price: 131 } }, null, 1).fires[0];
+  __eq('позиция: цель', bookLine(tg, 10), '🎯 <b>MU</b> лонг · цель 130 USD достигнута: цена 131 · 10 шт · +3.1R · +3 100 kr — зафиксировать или подтянуть стоп');
+  __eq('шорт в другом портфеле', bookLine(tsl.fires[0], 10), '⛔ <b>TSLA</b> шорт · стоп 340 USD пробит: цена 341 · 3 шт · −1.1R · −630 kr — выйти · Portfolio (Anna)');
+  var lv = bookEval([by['rule|pl1|level|115']], { NVDA: { price: 114.5 } }, null, 1).fires[0];
+  __eq('лимит плана: размер, стоп/цель, R/R, заметка', bookLine(lv, 10), '🟢 <b>NVDA</b> · Купить: цена 114.5 ≤ лимит 115 USD · 20 шт · стоп 108 / цель 135 · R/R 2.9\n    <i>откат к SMA50</i>');
+  __eq('сетап сломан', bookLine(nv.fires[0], 10), '✖ <b>NVDA</b> · сетап сломан: цена 107 за стопом 108 USD — снять «Купить ≤ 115»\n    <i>откат к SMA50</i>');
+  var sh = bookEval([by['rule|pl5|level|90']], { SHOP: { price: 91 } }, null, 1).fires[0];
+  __eq('вход в шорт лимитом', bookLine(sh, 10), '🔻 <b>SHOP</b> · Шорт: цена 91 ≥ лимит 90 USD · стоп 97 / цель —');
+  __ok('HTML экранируется', bookLine(Object.assign({}, lv, { tk: '<X>', note: 'a<b' }), 1).indexOf('&lt;X&gt;') > 0 && bookLine(Object.assign({}, lv, { note: 'a<b' }), 1).indexOf('a&lt;b') > 0);
+  var many = []; for(var i = 0; i < 20; i++) many.push(Object.assign({}, lv, { tk: 'T' + i }));
+  var msg = bookMessage(many, fx);
+  __ok('сообщение: заголовок, ≤ maxLines строк и «…и ещё»', msg.indexOf('📨 <b>Книга: стопы и лимиты</b>') === 0 && msg.indexOf('<b>T14</b>') > 0 && msg.indexOf('<b>T15</b>') < 0 && msg.indexOf('…и ещё 5') > 0);
+  __ok('бюджет подзапросов: ledger + состояние + котировки + запись + Telegram ×2 ≤ 50', 1 + 1 + BOOK_CFG.maxSyms + 1 + 2 <= 50);
+  __eq('гистерезис по плану: 0.3·ATR', BOOK_CFG.hystAtr, 0.3);
 });
 
 // 12) 🏗 worker build — бампается при каждой правке воркера

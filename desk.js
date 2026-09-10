@@ -626,6 +626,7 @@ function deskMenuHTML(){
     ${it('theme',(dark?'☀️ ':'🌙 ')+RT('Тема: '+(dark?'светлая':'тёмная'),'Theme: '+(dark?'light':'dark')))}
     ${it('lang','🌐 '+(LANG==='ru'?'English':'Русский'))}
     ${it('risk','⚖️ '+RT('Риск: ','Risk: ')+deskNorm(DESK).riskPct+'% · '+RT('лимит книги ','book cap ')+deskNorm(DESK).riskCapPct+'%')}
+    ${it('tg','📨 '+RT('Telegram-алерты: ','Telegram alerts: ')+(deskNorm(DESK).tg?RT('вкл','on'):RT('выкл','off')),` title="${RT('Воркер по крону шлёт в Telegram пробой стопа, достижение цели и срабатывание лимита плана — даже при закрытой странице','The worker cron sends stop hits, targets and plan limits to Telegram — even with the page closed')}"`)}
     ${it('classic','🗂 '+RT('Классический вид','Classic view'))}
     ${it('classic-plan','🎯 '+RT('План (классика)','Plan (classic)'))}
     ${can('action.manage_users')?it('settings','⚙️ '+RT('Доступ','Access')):''}
@@ -1473,6 +1474,8 @@ function deskOnClick(e){
     case 'theme':DESK_UI.menu=false;toggleTheme();deskRender(true);break;
     case 'lang':DESK_UI.menu=false;toggleLang();break;
     case 'risk':DESK_UI.menu=false;deskRiskEdit();break;
+    case 'tg':{if(!can('action.edit_plan'))return;DESK_UI.menu=false;DESK=deskNorm(Object.assign({},DESK,{tg:!deskNorm(DESK).tg}));scheduleSave();deskRender(true);
+      toast('📨 '+(DESK.tg?RT('Telegram по стопам и лимитам включён','Telegram stop & limit alerts on'):RT('Telegram по стопам и лимитам выключен','Telegram stop & limit alerts off')));break;}
     case 'classic':deskClassic(el.dataset.tab,k,el.dataset.sub);break;
     case 'classic-plan':deskClassic(deskRiskTab()||PF3_KEY,null,'plan');break;
     case 'settings':DESK_UI.menu=false;deskRender(true);toggleSettings();break;
@@ -1490,7 +1493,7 @@ function deskRiskEdit(){
   const D=deskNorm(DESK),v=prompt(RT('Риск на сделку, % капитала портфеля (0.1–5) и лимит открытого риска книги, % (1–30), через пробел:','Risk per trade, % of portfolio equity (0.1–5) and book open-risk cap, % (1–30), space-separated:'),D.riskPct+' '+D.riskCapPct);
   if(v==null)return;
   const [a,b]=String(v).replace(/,/g,'.').trim().split(/\s+/).map(parseFloat);
-  DESK=deskNorm({riskPct:a,riskCapPct:isFinite(b)?b:D.riskCapPct,shortOk:D.shortOk});scheduleSave();deskRender(true);
+  DESK=deskNorm(Object.assign({},DESK,{riskPct:a,riskCapPct:isFinite(b)?b:D.riskCapPct}));scheduleSave();deskRender(true);   // остальные поля (whatIf, shortOk, tg) не теряются
   toast('⚖️ '+RT('Риск ','Risk ')+DESK.riskPct+'% · '+RT('лимит книги ','book cap ')+DESK.riskCapPct+'%');
 }
 function deskOnChange(e){

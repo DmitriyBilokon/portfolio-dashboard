@@ -351,6 +351,9 @@ let SIM=[];
 // 📜 Журнал реальных сделок по портфелям: [{id,tab,tk,name,ccy,act:'buy'|'sell',
 // qty,price,plNative,date}] — plNative = реализованный P&L в валюте бумаги (для продаж).
 let PF_TRADES=[];
+// Экранирование внешних строк (Yahoo, e-mail чужих аккаунтов) для innerHTML и атрибутов; ссылки — только http(s) (аудит security-rbac#6).
+const escHtml=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const safeUrl=u=>/^https?:\/\//i.test(String(u||''))?String(u):'';
 let PLAN_RULES=[];   // 🎯 правила-триггеры плана действий (уровень/дедлайн → уведомление)
 // 📍 Мета позиции (слой данных редизайна, S3): POS_META[tab][TK] = {side:'long'|'short', stop0, stop,
 // target, riskKr, opened, planId}. qty и средняя цена остаются в строке r[6]/r[9] (налог pfTaxLots их
@@ -1279,6 +1282,7 @@ function faqHTML(){
    +row('<b>🏭 Структура</b>','Те же акции, сгруппированные по сектору, типу и диверсификации: слева группы с итогами, справа акции выбранной группы.')
    +row('<b>🧪 Симуляция</b>','Бумажный портфель из тестовых покупок — без реальных денег, вкладка в группе «💼 Portfolio». Подробнее в разделе «Симуляция» ниже.')
    +row('<b>🎯 План · 📜 Сделки · 🧾 Налоги</b>','У портфелей: план сделок (уровень входа или выхода, стоп, цель, R/R), журнал сделок с реализованным P&L и налог K4 по средней цене (genomsnittsmetoden).')
+   +row('<b>📨 Telegram: стопы и лимиты</b>','Открытая страница уведомляет о сработавшем плане сама. При закрытой — сервер по расписанию (в часы бирж, каждые 10–20 минут) проверяет стоп и цель позиций и лимиты плана и пишет в Telegram: пробит стоп, достигнута цель, сработал лимит, «сетап сломан» (цена ушла за стоп до входа). Одно условие приходит один раз; повторно — только если цена отошла от уровня на 0.3·ATR и вернулась. Выключить: Trade Desk → ⋯ → «📨 Telegram-алерты».')
    +row('<b>📅 Дивиденды и отчёты</b>','Календарь: ближайшие отчёты компаний, экс-дивидендные даты и выплаты.')
    +row('<b>🩺 Состояние · 🤖 AI · ⚖️ Предложение</b>','У каждого портфеля: здоровье портфеля, AI Proto (анализ с историей запусков и чат по портфелю) и план ребалансировки.'),true)}
 
@@ -1427,7 +1431,7 @@ async function renderSettings(){
     const grants=adm?'<span class="set-all">все портфели/вкладки</span>'
       :tabs.map(t=>`<label class="set-tab"><input type="checkbox"${(u.tabs||[]).includes(t)?' checked':''} onchange="setGrant('${u.user_id}','${t.replace(/'/g,"\\'")}',this.checked)"><span>${META[t]||''} ${t}</span></label>`).join('');
     return`<div class="set-user">
-      <div class="set-user-hd"><b>${u.email||u.user_id}</b>${roleSel}${seen}</div>
+      <div class="set-user-hd"><b>${escHtml(u.email||u.user_id)}</b>${roleSel}${seen}</div>
       <div class="set-preview">👁 ${RT('Видит вкладки','Sees tabs')}: ${prevTabs}</div>
       <details class="set-perms"><summary>🔐 ${RT('Права (переопределения)','Permissions (overrides)')}</summary>${ovEditor}</details>
       <details class="set-tabs-d"><summary>💼 ${RT('Доступ к портфелям/вкладкам','Portfolio/tab access')}</summary><div class="set-tabs">${grants}</div></details>

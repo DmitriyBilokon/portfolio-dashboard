@@ -479,8 +479,8 @@ function pf3NewsLiveHTML(tk,ccy){
   if(n&&n.items&&n.items.length){
     body=`<div class="nlv-list">${n.items.map(it=>{
       const pol=it.pol||0,ic=pol>0?'🟢':pol<0?'🔴':'⚪';
-      const link=it.link?`href="${it.link}" target="_blank" rel="noopener"`:'';
-      return`<a class="nlv-row" ${link}><span class="nlv-pol">${ic}</span><span class="nlv-main"><span class="nlv-title">${(it.title||'').replace(/</g,'&lt;')}</span><span class="nlv-meta">${it.publisher?it.publisher+' · ':''}${newsAgoLbl(it.time)}</span></span></a>`;
+      const url=safeUrl(it.link),link=url?`href="${escHtml(url)}" target="_blank" rel="noopener"`:'';
+      return`<a class="nlv-row" ${link}><span class="nlv-pol">${ic}</span><span class="nlv-main"><span class="nlv-title">${escHtml(it.title||'')}</span><span class="nlv-meta">${it.publisher?escHtml(it.publisher)+' · ':''}${newsAgoLbl(it.time)}</span></span></a>`;
     }).join('')}</div>`;
   }else if(n&&n.loading){ body=`<div class="pf3-empty">⏳ ${RT('Загрузка новостей…','Loading news…')}</div>`; }
   else { body=`<div class="pf3-empty">${RT('Свежих новостей не найдено.','No recent news found.')}</div>`; }

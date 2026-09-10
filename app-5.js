@@ -685,7 +685,8 @@ function deskNorm(x){
   const clamp=(v,lo,hi,def)=>{const n=parseFloat(v);return isFinite(n)&&n>0?Math.min(hi,Math.max(lo,n)):def;};
   // I2: настройки «Что если?» (сумма в kr или доля капитала на сделку, портфель симуляции) — лимиты в DESK_IDEA_CFG.whatIf.
   const W=DESK_IDEA_CFG.whatIf,w=(x.whatIf&&typeof x.whatIf==='object')?x.whatIf:{};
-  return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{},
+  // S8: tg — Telegram по стопам/целям/лимитам из cron воркера (bookcheck); выключается только явным false.
+  return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{},tg:x.tg!==false,
     whatIf:{mode:w.mode==='weight'?'weight':'amount',amountSEK:Math.round(clamp(w.amountSEK,W.amount[0],W.amount[1],W.def.amountSEK)),
       weightPct:Math.round(clamp(w.weightPct,W.weight[0],W.weight[1],W.def.weightPct)*10)/10,port:w.port?String(w.port).slice(0,80):null}};
 }

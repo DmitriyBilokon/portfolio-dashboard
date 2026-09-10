@@ -721,6 +721,9 @@ grp('bookRiskState', function(){
   __eq('deskNorm whatIf defaults', deskNorm({}).whatIf, {mode:'amount',amountSEK:5000,weightPct:2,port:null});
   __eq('deskNorm whatIf clamps', deskNorm({whatIf:{mode:'x',amountSEK:50,weightPct:80,port:'TP'}}).whatIf, {mode:'amount',amountSEK:100,weightPct:50,port:'TP'});
   __eq('deskNorm whatIf clamps high/low', [deskNorm({whatIf:{amountSEK:2e7,weightPct:0.01,mode:'weight'}}).whatIf.amountSEK,deskNorm({whatIf:{weightPct:0.01}}).whatIf.weightPct,deskNorm({whatIf:{mode:'weight'}}).whatIf.mode], [1e7,0.1,'weight']);
+  __eq('deskNorm tg (S8 bookcheck): по умолчанию вкл, выкл только явным false', [deskNorm({}).tg,deskNorm({tg:false}).tg,deskNorm({tg:0}).tg,deskNorm({tg:true}).tg], [true,false,true,true]);
+  __eq('escHtml: & < > " \' и null', [escHtml('<a href="x">\'&'),escHtml(null)], ['&lt;a href=&quot;x&quot;&gt;&#39;&amp;','']);
+  __eq('safeUrl: только http(s)', [safeUrl('https://a/b'),safeUrl('HTTP://a'),safeUrl('javascript:alert(1)'),safeUrl(' data:x'),safeUrl(null)], ['https://a/b','HTTP://a','','','']);
   __eq('deskNorm keeps risk fields with whatIf', [deskNorm({riskPct:2,whatIf:{amountSEK:10000}}).riskPct,deskNorm({riskPct:2,whatIf:{amountSEK:10000}}).whatIf.amountSEK], [2,10000]);
   DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;
 });

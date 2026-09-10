@@ -14,3 +14,8 @@ create table if not exists public.ai_state (
 alter table public.ai_state enable row level security;
 -- Политик нет намеренно: anon/authenticated не имеют доступа,
 -- service_role (worker) обходит RLS.
+
+-- S8 (2026-09-10): состояние дедупа bookcheck — какие стопы/цели/лимиты уже отправлены
+-- в Telegram (гистерезис 0.3·ATR). Без этой колонки bookcheck НЕ шлёт уведомления
+-- (иначе повторял бы их каждые 20 минут). Можно выполнить отдельно — идемпотентно.
+alter table public.ai_state add column if not exists book jsonb;

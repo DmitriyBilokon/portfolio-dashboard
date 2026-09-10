@@ -1,13 +1,15 @@
 // Cloudflare Worker — scheduled Telegram alerts for the Index Portfolio Dashboard.
 //
 // What it does (on a cron, even when the site is closed):
-//   Telegram теперь получает ТОЛЬКО действия AI-портфеля и авто-анализ:
+//   Telegram получает действия AI-портфеля, авто-анализ и bookcheck:
 //     🤖 AI ПОРТФЕЛЬ — 🟢 ПОКУПКА / 🔴 ПРОДАЖА (каждая сделка вирт. портфеля)
 //     📈 Анализ портфеля — рекомендации по реальным портфелям (PF3, Anna)
+//     📨 Книга: стопы и лимиты — стоп/цель позиции (POS_META) и лимиты плана (S8;
+//        нужна колонка ai_state.book — см. ai-state.sql)
 //   Точечные алерты по уровням акций (🟢/🔴/📡 у SMA/поддержки/сопротивления)
 //   и сигналы 🕵 cluster-buy / 📐 недооценка / 📊 сценарий УДАЛЕНЫ 2026-06-24:
 //   состояние акций смотрим на сайте, не в Telegram (хватит спама).
-//   Рекомендуемый cron: */10 6-22 * * 1-5.
+//   Рекомендуемый cron: */10 6-22 * * 1-5 (bookcheck раз в 20 мин); */5 — bookcheck каждые 5–10 мин.
 //
 // ── Setup (≈10 min, free) ───────────────────────────────────────────────
 //  Bot:   message @BotFather → /newbot → copy the token.
@@ -27,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10i3b-est-check';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10s8-bookcheck';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -341,11 +343,21 @@ async function yahooLite(sym){
     const pct = (prev && prev > 0) ? (price - prev) / prev * 100 : null;
     return {
       price, pct, vol: (typeof m.regularMarketVolume === 'number' ? m.regularMarketVolume : null), avgVol: null,
+      atr: atrLast(res),   // ATR(14) Уайлдера по тем же свечам — гистерезис bookcheck (S8), 0 новых подзапросов
       sma50: smaLast(closes, 50), sma100: smaLast(closes, 100), sma200: smaLast(closes, 200),
       support: lows.length ? round2(Math.min(...lows)) : null,
       resistance: highs.length ? round2(Math.max(...highs)) : null,
     };
   }catch(e){ return null; }
+}
+
+// ATR(14) Уайлдера на последнем баре chart-ответа (как atrWilder в signals.js). null при < n свечей.
+function atrLast(res, n = 14){
+  const b = ohlcvFromChart(res); if(!b || b.c.length < n) return null;
+  const tr = b.c.map((c, i) => i === 0 ? b.h[i] - b.l[i] : Math.max(b.h[i] - b.l[i], Math.abs(b.h[i] - b.c[i - 1]), Math.abs(b.l[i] - b.c[i - 1])));
+  let a = 0; for(let i = 0; i < n; i++) a += tr[i]; a /= n;
+  for(let i = n; i < tr.length; i++) a = (a * (n - 1) + tr[i]) / n;
+  return a > 0 ? Math.round(a * 1e4) / 1e4 : null;   // 4 знака: у бумаг по 0.5 kr round2 съел бы ATR
 }
 
 // Weekly-bar SMA 50/100/200 (~1yr / 2yr / 3.8yr) — powers the dashboard's 3-year SMA view.
@@ -459,7 +471,7 @@ function newsItemsFromYahoo(j){
   return news.map(n => ({
     title: String((n && n.title) || '').trim().slice(0, 220),
     publisher: String((n && n.publisher) || '').trim(),
-    link: String((n && n.link) || ''),
+    link: /^https?:\/\//i.test(String((n && n.link) || '')) ? String(n.link) : '',   // только http(s): javascript:/data: в href — XSS (аудит security-rbac#6)
     time: (n && typeof n.providerPublishTime === 'number') ? n.providerPublishTime * 1000 : 0,
   })).filter(x => x.title).slice(0, 10);
 }
@@ -1581,10 +1593,10 @@ async function aiPortfolioReset(env){
     strategy: old.strategy || '', positions: [], trades: [], equityHistory: [],
     myStartEquity: null, myStartLive: '', lastRunAt: 0, lastNote: '',
   };
-  row.snap.aiPort = ap;
-  row.snap.aiPortBak = JSON.parse(JSON.stringify(ap));
-  await writeRow(env, row.userId, row.snap);
-  await saveBak(env, row.userId, ap);
+  // Резерв ai_state — первым: самовосстановление не должно вернуть старые позиции, даже если ledger не запишется.
+  const bakOk = await saveBak(env, row.userId, ap);
+  const ok = await writeChecked(env, snap => { snap.aiPort = ap; snap.aiPortBak = JSON.parse(JSON.stringify(ap)); });
+  if(!ok) return bakOk ? 'Резерв обнулён, но запись в ledger не прошла (конфликт) — повторите ♻️' : 'Не удалось обнулить: Supabase не принял запись — повторите ♻️';
   return 'AI портфель обнулён ✓ Счёт 300 000 kr, настройки сохранены. Нажмите ▶ или ждите следующего тика крона.';
 }
 
@@ -2010,7 +2022,8 @@ async function analyzeOnePortfolio(env, key, force){
   if(!snap || !snap.data || !snap.data[key]) return `Нет данных портфеля ${key}`;
   const now = Date.now();
   const lastAt = snap.data[key].pfAnalysisAt || 0;
-  if(!force && lastAt && now - lastAt < PFANALYSIS_INTERVAL_MS){
+  // −90 с допуска: слот анализа — один тик в час (pickCronTask), тик на секунды раньше часа не должен сдвигать анализ на 2 ч.
+  if(!force && lastAt && now - lastAt < PFANALYSIS_INTERVAL_MS - 90e3){
     return `Рано: анализ ${key} через ${Math.ceil((lastAt + PFANALYSIS_INTERVAL_MS - now) / 60e3)} мин`;
   }
   let a = null;
@@ -2021,29 +2034,216 @@ async function analyzeOnePortfolio(env, key, force){
     return `Анализ ${key}: ошибка — ${msg}`;
   }
   if(!a) return `Анализ ${key}: пусто`;
-  // Перечитываем свежую строку и пишем анализ, не затирая параллельные изменения.
-  const fresh = await loadRow(env);
-  if(fresh && fresh.snap && fresh.snap.data && fresh.snap.data[key]){
-    const d = fresh.snap.data[key];
-    const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
+  // Пишем анализ в СВЕЖИЙ снапшот с повтором при rev-конфликте (клиент автосохраняет); Telegram — только после коммита.
+  const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
+  const saved = await writeChecked(env, snap => {
+    const d = snap && snap.data && snap.data[key];
+    if(!d) return false;
     d.analysis = entry;
     d.analysisHistory = [entry, ...(d.analysisHistory || [])].slice(0, 5);
     d.pfAnalysisAt = now;   // per-portfolio гейт — чтобы анализы разных портфелей не блокировали друг друга
-    await writeRow(env, fresh.userId, fresh.snap);
-  }
+  });
+  if(!saved){ console.error('analyze ' + key + ': запись не закоммичена'); return `Анализ ${key}: не удалось сохранить (конфликт записи) — Telegram не отправлен`; }
   const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
     .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
   try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
   return `Анализ ${key}: ${(a.actions || []).length} реком.`;
 }
 // Выбор задачи cron по минуте — одна задача за тик (отдельный вызов = свой бюджет
-// подзапросов). 0–19 → цикл AI-портфеля, 20–39 → анализ PF3, 40–59 → анализ Anna.
-// Чистая функция (покрыта тестом). Гейты внутри задач ограничивают частоту ~раз/час.
+// подзапросов). По десяткам минут: :00 цикл AI-портфеля, :20 анализ PF3, :40 анализ Anna,
+// :10/:30/:50 — bookcheck (S8). Минуты x5–x9 (крон */5) — тоже bookcheck: при */10 он идёт
+// раз в 20 мин, при */5 — каждые 5–10 мин. Чистая функция (покрыта тестом).
+// Гейты внутри AI-задач ограничивают их частоту ~раз/час.
 function pickCronTask(minute){
   const m = ((Number(minute) % 60) + 60) % 60;
-  if(m < 20) return 'cycle';
-  if(m < 40) return 'pf3';
-  return 'anna';
+  if(m % 10 >= 5) return 'book';
+  return ['cycle', 'book', 'pf3', 'book', 'anna', 'book'][Math.floor(m / 10)];
+}
+
+// ── 📨 bookcheck (S8): стопы/цели позиций и лимиты плана → Telegram при закрытой странице ──
+// Клиент (planCheck) уведомляет только в открытой вкладке. Здесь cron читает ledger владельца:
+// позиции = строки с qty>0 (r[6]) + POS_META (snap.posMeta[tab][TK]: side/stop/target/stop0) или
+// открытое правило плана; лимиты = snap.planRules (не done, не open). Цены — yahooLite
+// (1 подзапрос на символ, ATR из тех же свечей), только бумаги, чей рынок сейчас открыт.
+// Дедуп с гистерезисом: условие шлётся один раз при срабатывании и взводится заново, только
+// когда цена отойдёт от уровня на 0.3·ATR (без ATR — 1 % уровня). Ключ условия содержит
+// уровень — перенос стопа/лимита взводит его сразу. Состояние — ai_state.book (клиент
+// его не видит и не затрёт); Telegram — только после сохранения состояния (иначе спам).
+// Выключатель — snap.desk.tg === false (Trade Desk → ⋯). Подзапросов: ledger 1 + состояние 1 +
+// котировки ≤ maxSyms + запись 1 + Telegram 1–2 ≤ 25.
+const BOOK_CFG = { hystAtr: 0.3, hystPct: 1, maxSyms: 20, maxLines: 15, noteLen: 90 };
+const BOOK_SKIP_TABS = ['🤖 AI Портфель'];   // виртуальный счёт — у него свои Telegram-уведомления
+const bkNum = v => { const x = parseFloat(v); return isFinite(x) && x > 0 ? x : 0; };
+const bkTk = tk => String(tk || '').trim().toUpperCase();
+function bkRowCcy(data, tk){
+  for(const k of Object.keys(data || {})){
+    const r = ((data[k] && data[k].rows) || []).find(r => bkTk(r[2]) === tk);
+    if(r && r[8]) return String(r[8]);
+  }
+  return '';
+}
+// Снапшот → условия [{key, kind: stop|target|level|invalid, level, cross: le|ge, sym, …}].
+// cross le — срабатывает при цене ≤ уровня, ge — при ≥. Семантика та же, что planStatus на клиенте:
+// у открытой позиции стоп/цель из POS_META (иначе из её open-правила); у правила входа стоп за
+// ценой = «сетап сломан» (invalid), у правила выхода — стоп-лосс. Чистая функция (покрыта тестом).
+function bookItems(snap){
+  const data = (snap && snap.data) || {}, pm = (snap && snap.posMeta && typeof snap.posMeta === 'object') ? snap.posMeta : {};
+  const rules = Array.isArray(snap && snap.planRules) ? snap.planRules.filter(r => r && typeof r === 'object') : [];
+  const items = [], openRule = {};
+  rules.forEach(r => { if(!r.done && r.status === 'open') openRule[(r.tab || PF3_KEY) + '|' + bkTk(r.tk)] = r; });
+  for(const tab of Object.keys(data)){
+    const d = data[tab];
+    if(!d || !Array.isArray(d.rows) || d.aip === '1' || BOOK_SKIP_TABS.includes(tab)) continue;
+    for(const r of d.rows){
+      const qty = parseFloat(r[6]) || 0, tk = bkTk(r[2]);
+      if(!(qty > 0) || !tk) continue;
+      const m = (pm[tab] && typeof pm[tab][tk] === 'object') ? pm[tab][tk] : null, rule = openRule[tab + '|' + tk] || null;
+      const stop = bkNum(m && m.stop) || bkNum(rule && rule.stop), target = bkNum(m && m.target) || bkNum(rule && rule.target);
+      if(!stop && !target) continue;
+      const side = (m ? m.side : rule && rule.side) === 'short' ? 'short' : 'long', dir = side === 'short' ? -1 : 1;
+      const ccy = String(r[8] || 'SEK').toUpperCase();
+      const base = { src: 'pos', tab, tk, name: String(r[1] || tk), ccy, sym: exSymbol(tk, ccy), side, qty,
+        entry: bkNum(r[9]) || bkNum(r[7]), stop0: bkNum(m && m.stop0) || stop, stop, target, note: rule ? String(rule.note || '') : '' };
+      if(stop) items.push({ ...base, key: `pos|${tab}|${tk}|stop|${stop}`, kind: 'stop', level: stop, cross: dir > 0 ? 'le' : 'ge' });
+      if(target) items.push({ ...base, key: `pos|${tab}|${tk}|target|${target}`, kind: 'target', level: target, cross: dir > 0 ? 'ge' : 'le' });
+    }
+  }
+  rules.forEach(r => {
+    if(r.done || r.status === 'open' || !r.id) return;   // open — следит блок позиций
+    const tk = bkTk(r.tk); if(!tk) return;
+    const tab = r.tab || PF3_KEY, side = r.side === 'short' ? 'short' : 'long', dir = side === 'short' ? -1 : 1;
+    const act = r.act === 'sell' ? 'sell' : r.act === 'watch' ? 'watch' : 'buy';
+    const entryRule = act === 'watch' || (side === 'short' ? act === 'sell' : act === 'buy');
+    const ccy = String(r.ccy || bkRowCcy(data, tk) || 'USD').toUpperCase();
+    const lvl = bkNum(r.level), stop = bkNum(r.stop), target = bkNum(r.target);
+    const base = { src: 'rule', ruleId: String(r.id), tab, tk, name: String(r.name || tk), ccy, sym: exSymbol(tk, ccy), side, act,
+      qty: bkNum(r.qty), amount: bkNum(r.amount), lvl, stop, target, note: String(r.note || '') };
+    if(lvl) items.push({ ...base, key: `rule|${r.id}|level|${lvl}`, kind: 'level', level: lvl, cross: act === 'sell' ? 'ge' : 'le' });
+    if(stop) items.push({ ...base, key: `rule|${r.id}|${entryRule ? 'invalid' : 'stop'}|${stop}`, kind: entryRule ? 'invalid' : 'stop', level: stop, cross: dir > 0 ? 'le' : 'ge' });
+  });
+  return items;
+}
+// Символы для котировок: сначала стопы/«сетап сломан», потом цели, потом лимиты; только открытые рынки.
+function bookPickSyms(items, isOpen, max){
+  const rank = { stop: 0, invalid: 0, target: 1, level: 2 }, out = [];
+  items.slice().sort((a, b) => rank[a.kind] - rank[b.kind]).forEach(it => {
+    if(out.length < max && !out.includes(it.sym) && isOpen(it.ccy)) out.push(it.sym);
+  });
+  return out;
+}
+// Сверка условий с ценами и состоянием дедупа {v, at, keys:{key:{at, px}}}. Без котировки (рынок
+// закрыт, лимит символов, сбой Yahoo) состояние условия переносится как есть; ключи исчезнувших
+// условий (правило удалено/исполнено, уровень сдвинут) отбрасываются. Если у правила сработал
+// «сетап сломан», его лимит в том же тике не шлётся (как planStatus: invalid гасит ready).
+// Чистая функция (покрыта тестом).
+function bookEval(items, quotes, state, now, cfg){
+  cfg = cfg || BOOK_CFG;
+  const prev = (state && state.keys && typeof state.keys === 'object') ? state.keys : {}, keys = {}, fires = [];
+  for(const it of items){
+    const q = quotes && quotes[it.sym], s = prev[it.key];
+    if(!(q && q.price > 0)){ if(s) keys[it.key] = s; continue; }
+    const px = q.price, hit = it.cross === 'le' ? px <= it.level : px >= it.level;
+    if(hit){
+      keys[it.key] = s || { at: now, px };
+      if(!s) fires.push({ ...it, price: px, atr: q.atr > 0 ? q.atr : null });
+    }else if(s){
+      const h = q.atr > 0 ? cfg.hystAtr * q.atr : it.level * cfg.hystPct / 100;
+      const away = it.cross === 'le' ? px >= it.level + h : px <= it.level - h;
+      if(!away) keys[it.key] = s;   // в полосе гистерезиса — не взводим, дребезг у уровня не шлёт повторов
+    }
+  }
+  const broken = new Set(fires.filter(f => f.kind === 'invalid').map(f => f.ruleId));
+  const out = fires.filter(f => !(f.kind === 'level' && broken.has(f.ruleId)));
+  const changed = fires.length > 0 || Object.keys(prev).some(k => !keys[k]);
+  return { fires: out, state: { v: 1, at: now, keys }, changed };
+}
+const bkPx = v => String(round2(v));
+const bkKr = v => (v < 0 ? '−' : '+') + String(Math.abs(Math.round(v))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' kr';
+const bkAct = (act, side) => side === 'short' ? (act === 'sell' ? ['🔻', 'Шорт'] : ['🔺', 'Откупить шорт'])
+  : act === 'sell' ? ['🔴', 'Сократить'] : act === 'watch' ? ['👁', 'Наблюдать'] : ['🟢', 'Купить'];
+// Одна строка Telegram (HTML) на сработавшее условие; fx — kr за единицу валюты бумаги.
+function bookLine(f, fx){
+  fx = fx > 0 ? fx : 1;
+  const tk = `<b>${esc(f.tk)}</b>`, c = ' ' + esc(f.ccy), side = f.side === 'short' ? 'шорт' : 'лонг', dir = f.side === 'short' ? -1 : 1;
+  const where = f.tab && f.tab !== PF3_KEY ? ` · ${esc(f.tab)}` : '';
+  const note = f.note ? `\n    <i>${esc(String(f.note).replace(/\s+/g, ' ').slice(0, BOOK_CFG.noteLen))}</i>` : '';
+  if(f.src === 'pos'){
+    const r1 = f.entry && f.stop0 ? Math.abs(f.entry - f.stop0) : 0;
+    const R = r1 > 0 ? (f.price - f.entry) * dir / r1 : null, pl = f.entry ? (f.price - f.entry) * dir * f.qty * fx : null;
+    const tail = `${f.qty} шт${R != null ? ` · ${R >= 0 ? '+' : '−'}${Math.abs(R).toFixed(1)}R` : ''}${pl != null ? ` · ${bkKr(pl)}` : ''}`;
+    return f.kind === 'stop'
+      ? `⛔ ${tk} ${side} · стоп ${bkPx(f.level)}${c} пробит: цена ${bkPx(f.price)} · ${tail} — выйти${where}${note}`
+      : `🎯 ${tk} ${side} · цель ${bkPx(f.level)}${c} достигнута: цена ${bkPx(f.price)} · ${tail} — зафиксировать или подтянуть стоп${where}${note}`;
+  }
+  const [ico, lbl] = bkAct(f.act, f.side), rule = `${lbl} ${f.act === 'sell' ? '≥' : '≤'} ${bkPx(f.lvl || f.level)}`;
+  if(f.kind === 'invalid') return `✖ ${tk} · сетап сломан: цена ${bkPx(f.price)} за стопом ${bkPx(f.level)}${c} — снять «${rule}»${where}${note}`;
+  if(f.kind === 'stop') return `⛔ ${tk} · стоп ${bkPx(f.level)}${c} пробит: цена ${bkPx(f.price)} — выйти («${lbl}»)${where}${note}`;
+  const size = f.qty ? ` · ${f.qty} шт` : f.amount ? ` · ~${bkKr(f.amount).slice(1)}` : '';
+  const rr = (f.stop && f.target && dir * (f.level - f.stop) > 0 && dir * (f.target - f.level) > 0) ? ` · R/R ${(dir * (f.target - f.level) / (dir * (f.level - f.stop))).toFixed(1)}` : '';
+  const plan = f.stop || f.target ? ` · стоп ${f.stop ? bkPx(f.stop) : '—'} / цель ${f.target ? bkPx(f.target) : '—'}${rr}` : '';
+  return `${ico} ${tk} · ${lbl}: цена ${bkPx(f.price)} ${f.act === 'sell' ? '≥' : '≤'} лимит ${bkPx(f.level)}${c}${size}${plan}${where}${note}`;
+}
+function bookMessage(fires, fx){
+  const lines = fires.slice(0, BOOK_CFG.maxLines).map(f => bookLine(f, (fx || {})[f.ccy]));
+  const more = fires.length > BOOK_CFG.maxLines ? `\n…и ещё ${fires.length - BOOK_CFG.maxLines} — откройте Trade Desk` : '';
+  return `📨 <b>Книга: стопы и лимиты</b>\n${lines.join('\n')}${more}`;
+}
+async function loadBookState(env, userId){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state?user_id=eq.${userId}&select=book`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+    if(!r.ok) return { err: 'HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 120) };
+    const rows = await r.json();
+    return { book: (rows && rows[0] && rows[0].book) || null };
+  }catch(e){ return { err: String((e && e.message) || e) }; }
+}
+// Upsert только колонки book (merge-duplicates обновляет лишь переданные колонки — port не трогается).
+async function saveBookState(env, userId, book){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state`, {
+      method: 'POST',
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: userId, book }),
+    });
+    return !!(r && r.ok);
+  }catch(e){ return false; }
+}
+let BOOK_LAST = null;   // последний прогон в этом изоляте — строка в ?action=version
+// opts: dry — только посчитать (без записи и Telegram), all — не смотреть на часы бирж.
+async function bookCheckRun(env, opts){
+  opts = opts || {};
+  const done = res => { BOOK_LAST = { at: new Date().toISOString().slice(0, 16), res: typeof res === 'string' ? res : `dry: ${res.fires.length} сработало` }; return res; };
+  const row = await loadRow(env);
+  if(!row || !row.snap) return done('bookcheck: нет строки ledger');
+  const snap = row.snap;
+  if(!opts.dry && snap.desk && snap.desk.tg === false) return done('bookcheck: выключен (Trade Desk → ⋯ → Telegram)');
+  const now = Date.now(), items = bookItems(snap);
+  if(!items.length) return done('bookcheck: нет стопов, целей и лимитов');
+  const syms = bookPickSyms(items, ccy => !!opts.all || marketOpen(ccy, new Date(now)), BOOK_CFG.maxSyms);
+  if(!syms.length) return done(`bookcheck: рынки закрыты — ждут ${items.length} условий`);
+  const st = await loadBookState(env, row.userId);
+  if(st.err && !opts.dry) return done('bookcheck: нет состояния дедупа (выполните ai-state.sql — колонка ai_state.book): ' + st.err);
+  const quotes = {};
+  await Promise.all(syms.map(async sym => { quotes[sym] = await yahooLite(sym).catch(() => null); }));
+  const ev = bookEval(items, quotes, st.book, now);
+  const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
+  if(opts.dry) return done({ items: items.length, quoted: syms, missing: syms.filter(s => !quotes[s]), fires: ev.fires.map(f => bookLine(f, fx[f.ccy])), state: ev.state, stateErr: st.err || null });
+  if(ev.changed && !(await saveBookState(env, row.userId, ev.state))){
+    console.error('bookcheck: состояние не сохранено — Telegram придержан');
+    return done(`bookcheck: не удалось сохранить состояние — ${ev.fires.length} уведомл. придержано до следующего тика`);
+  }
+  if(ev.fires.length){
+    try{ await sendTelegram(env, bookMessage(ev.fires, fx)); }
+    catch(e){
+      // Не дошло — снимаем отметки этих условий, чтобы следующий тик повторил.
+      console.error('bookcheck: Telegram', e);
+      ev.fires.forEach(f => { delete ev.state.keys[f.key]; });
+      await saveBookState(env, row.userId, ev.state);
+      return done('bookcheck: Telegram не принял сообщение — повтор на следующем тике');
+    }
+  }
+  return done(`bookcheck: условий ${items.length}, котировок ${syms.length}${syms.length - Object.values(quotes).filter(Boolean).length ? ` (нет ${syms.length - Object.values(quotes).filter(Boolean).length})` : ''}, сработало ${ev.fires.length}`);
 }
 
 // ── 🕵 Инсайдерские сделки (Finnhub): сбор, агрегация, кластерные покупки ───
@@ -2709,21 +2909,24 @@ async function writeRow(env, userId, snap){
     return writeCommitted(rows, expectedRev);
   }catch(e){ return false; }
 }
-// Read-modify-write для aiPort с повтором при rev-конфликте. applyFn(snap)
-// накладывает наше состояние на СВЕЖИЙ снапшот (клиент перенимает серверный
-// aiPort — конфликты идут от записи клиентом ДРУГИХ частей, повторное наложение
-// безопасно). Возвращает true ⇔ ledger закоммичен.
-async function writeAiPortChecked(env, applyFn, opts){
+// Read-modify-write ledger с повтором при rev-конфликте. applyFn(snap) накладывает
+// наши изменения на СВЕЖИЙ снапшот (повторное наложение должно быть безопасным);
+// вернёт false — записывать нечего (например, вкладку удалили). Возвращает true ⇔
+// ledger закоммичен. Клиент автосохраняет с растущим rev — без повтора запись воркера
+// теряется молча (аудит worker#6), поэтому «успех»/Telegram — только после true.
+async function writeChecked(env, applyFn, opts){
   const tries = (opts && opts.tries) || 3;
   for(let i = 0; i < tries; i++){
     const fresh = await loadRow(env);
     if(!fresh) return false;
-    applyFn(fresh.snap);
+    if(applyFn(fresh.snap) === false) return false;
     if(await writeRow(env, fresh.userId, fresh.snap)) return true;
+    console.error('writeChecked: rev-конфликт, попытка ' + (i + 1));
     await sleep(150 * (i + 1));
   }
   return false;
 }
+const writeAiPortChecked = writeChecked;   // aiPort: клиент перенимает серверный aiPort — конфликты идут от записи ДРУГИХ частей
 // 🤝 Примирение состояния AI-портфеля: «настоящее» = более СВЕЖЕЕ из ledger_state.aiPort
 // и резерва ai_state (по поколению startedAt → затем lastRunAt → затем объёму журнала).
 // Если победил резерв (клиент затёр сделки воркера) — пишем его обратно в ledger, сохраняя
@@ -2782,44 +2985,51 @@ async function updateTargets(env){
       await sleep(250);   // stay under FMP's burst rate limit
     }
   }
-  // Этап 2: перечитываем строку и пишем в СВЕЖИЙ снапшот — за минуты сбора
-  // клиент мог сохранить свои изменения, их нельзя затирать старой копией.
-  const fresh = await loadRow(env) || row;
-  let updated = 0, total = 0, changed = false;
-  for(const pf of tabsOf(fresh.snap)){
-    let ti = pf.headers.indexOf(TARGET_COL);
-    if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
-    let tri = pf.headers.indexOf(TARGET_RECENT_COL);
-    if(tri === -1){ pf.headers.push(TARGET_RECENT_COL); tri = pf.headers.length - 1; changed = true; }
-    pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
-    for(const r of pf.rows){
-      total++;
-      const res = cache[exSymbol(r[2], r[8])];
-      if(res && typeof res.avg === 'number'){
-        r[ti] = res.avg; updated++; changed = true;
-        if(typeof res.recent === 'number') r[tri] = res.recent;
+  // Этап 2: пишем в СВЕЖИЙ снапшот (writeChecked перечитывает и повторяет при
+  // rev-конфликте) — за минуты сбора клиент мог сохранить свои изменения.
+  let updated = 0, total = 0;
+  const saved = await writeChecked(env, snap => {
+    updated = 0; total = 0; let changed = false;
+    for(const pf of tabsOf(snap)){
+      let ti = pf.headers.indexOf(TARGET_COL);
+      if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
+      let tri = pf.headers.indexOf(TARGET_RECENT_COL);
+      if(tri === -1){ pf.headers.push(TARGET_RECENT_COL); tri = pf.headers.length - 1; changed = true; }
+      pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
+      for(const r of pf.rows){
+        total++;
+        const res = cache[exSymbol(r[2], r[8])];
+        if(res && typeof res.avg === 'number'){
+          r[ti] = res.avg; updated++; changed = true;
+          if(typeof res.recent === 'number') r[tri] = res.recent;
+        }
       }
     }
-  }
-  if(changed) await writeRow(env, fresh.userId, fresh.snap);
-  return { updated, total, details };
+    return changed;
+  });
+  if(!saved && updated) details.unshift('⚠ запись в Supabase не прошла (конфликт) — таргеты не сохранены');
+  return { updated: saved ? updated : 0, total, details };
 }
 
 
 // Точечные алерты по уровням акций (🟢/🔴/📡 у SMA/поддержки/сопротивления) —
-// УДАЛЕНЫ намеренно (2026-06-24): в Telegram теперь летят ТОЛЬКО действия
-// AI-портфеля (🤖 покупка/продажа) и авто-анализ реальных портфелей (📈).
-// Состояние акций смотрим на сайте, не в Telegram.
+// УДАЛЕНЫ намеренно (2026-06-24): состояние акций смотрим на сайте, не в Telegram.
+// В Telegram летят: действия AI-портфеля (🤖), авто-анализ реальных портфелей (📈) и
+// bookcheck (📨, S8) — ТОЛЬКО то, что пользователь сам завёл: стоп/цель позиции и лимиты плана.
 export default {
   // Cron — ОДНА задача за тик (отдельный вызов воркера = свой бюджет подзапросов,
-  // free=50). Распределение по минуте: цикл AI-портфеля / анализ PF3 / анализ Anna.
-  // Гейты внутри задач (intervalMin / pfAnalysisAt) ограничивают реальную частоту ~раз/час.
+  // free=50). Распределение по минуте — pickCronTask: цикл AI-портфеля / bookcheck / анализ PF3 / анализ Anna.
+  // Гейты внутри AI-задач (intervalMin / pfAnalysisAt) ограничивают их частоту ~раз/час.
+  // Итог и ошибки — в Workers Logs (console.*), раньше ошибки глотались молча (аудит worker#4).
   async scheduled(event, env, ctx){
     ctx.waitUntil((async () => {
       const slot = pickCronTask(new Date().getUTCMinutes());
-      if(slot === 'cycle') await aiPortfolioRun(env, false).catch(() => {});
-      else if(slot === 'pf3') await analyzeOnePortfolio(env, ANALYZE_PORTFOLIOS[0], false).catch(() => {});
-      else await analyzeOnePortfolio(env, ANALYZE_PORTFOLIOS[1], false).catch(() => {});
+      try{
+        const res = slot === 'cycle' ? await aiPortfolioRun(env, false)
+          : slot === 'book' ? await bookCheckRun(env)
+          : await analyzeOnePortfolio(env, ANALYZE_PORTFOLIOS[slot === 'pf3' ? 0 : 1], false);
+        console.log('cron ' + slot + ': ' + String(res).slice(0, 300));
+      }catch(e){ console.error('cron ' + slot + ' упал:', (e && e.stack) || e); }
     })());
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
@@ -2840,7 +3050,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
@@ -3049,6 +3259,14 @@ export default {
         try{ return { result: await analyzeOnePortfolio(env, key, true) }; }
         catch(e){ return { error: String((e && e.message) || e) }; }
       });
+    }
+    if(url.searchParams.get('action') === 'bookcheck'){
+      // 📨 Ручной прогон bookcheck (S8, только админ). &dry=1 — только показать, что сработало бы
+      // (без записи состояния и Telegram); &all=1 — не смотреть на часы бирж.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return json({ error: adm.error }, 403);
+      try{ const res = await bookCheckRun(env, { dry: url.searchParams.get('dry') === '1', all: url.searchParams.get('all') === '1' }); return json(typeof res === 'string' ? { result: res } : res); }
+      catch(e){ return json({ error: String(e.message || e) }, 500); }
     }
     if(url.searchParams.get('action') === 'aiportstate'){
       // Авторитетное состояние AI-портфеля (примиряет ledger ↔ резерв ai_state) — для дисплея сайта.

@@ -13,10 +13,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 737, worker 190) —
-# защита от случайно урезанного/не подхваченного файла кейсов. Поднимать вместе с кейсами.
+# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 763, worker 207,
+# worker-async 33) — защита от случайно урезанного/не подхваченного файла кейсов.
+# Поднимать вместе с кейсами.
 MIN_CASES_app=720
-MIN_CASES_worker=180
+MIN_CASES_worker=195
+MIN_CASES_worker_async=30
 TIMEOUT=90   # сек на сьют; по истечении perl alarm убивает раннер → rc 142
 
 fail=0
@@ -55,6 +57,28 @@ for suite in app worker; do
   if grep -q "EVAL $suite" <<<"$out"; then bad "исходник не загрузился (EVAL $suite)"; fi
   if grep -q "execution error" <<<"$out"; then bad "крэш JXA (execution error)"; fi
 done
+
+# Асинхронный сьют воркера (блок A: моки fetch, повторы/таймауты/max_tokens, сквозной
+# цикл AI-портфеля) — под node: JSC в osascript не крутит промисы. Без node — провал,
+# а не тихий пропуск (pre-commit на этой машине node имеет).
+suite=worker-async
+if command -v node >/dev/null 2>&1; then
+  out=$(perl -e "alarm $TIMEOUT; exec @ARGV or exit 127" node tests/run-worker-async.js 2>&1)
+  rc=$?
+  echo "$out"
+  echo
+  if [ "$rc" -ne 0 ]; then bad "код возврата $rc"; fi
+  marker=$(grep -E '^WORKER-ASYNC TESTS: [0-9]+/[0-9]+ passed' <<<"$out" | head -1)
+  if [ -z "$marker" ]; then
+    bad "нет маркера «WORKER-ASYNC TESTS: N/N passed»"
+  else
+    total=$(sed -E 's#^WORKER-ASYNC TESTS: [0-9]+/([0-9]+) passed.*#\1#' <<<"$marker")
+    if [ "$total" -lt "$MIN_CASES_worker_async" ]; then bad "кейсов $total < порога $MIN_CASES_worker_async"; fi
+  fi
+  if grep -q "FAILED" <<<"$out"; then bad "есть FAILED"; fi
+else
+  bad "нет node — асинхронный сьют воркера не запущен"
+fi
 
 if [ "$fail" -eq 0 ]; then
   echo "✅ ALL TESTS PASSED"

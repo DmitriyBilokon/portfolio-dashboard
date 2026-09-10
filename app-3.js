@@ -907,7 +907,7 @@ async function aiDashRun(onlyKey){
       try{
         const r=await fetch(PRICE_PROXY+'?action=dashboard',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
         const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
-        if(j&&j.queued){const res=await aiJobPoll(j.jobId);if(res.ok&&res.result)j=res.result;else{toast(TAB_LABEL(k)+': '+(res.error||'нет результата'),true);continue;}}
+        if(j&&j.queued){const res=await aiJobPoll(j.jobId,{onRunning:()=>toast('🤖 '+TAB_LABEL(k)+': '+RT('идёт…','running…'))});if(res.ok&&res.result)j=res.result;else{toast(TAB_LABEL(k)+': '+(res.error||'нет результата'),true);continue;}}
         if(j&&j.dash&&Array.isArray(j.dash.cards)){
           aiSpendAdd(j.cost);
           AI_DASH[k]={headline:j.dash.headline||'',cards:j.dash.cards,picks:Array.isArray(j.dash.picks)?j.dash.picks:[],asOf:j.dash.asOf||null,at:new Date().toISOString(),cost:j.cost||null};

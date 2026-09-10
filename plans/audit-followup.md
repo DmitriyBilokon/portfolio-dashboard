@@ -29,6 +29,19 @@
 
 **Проверка вживую:** после деплоя — `?action=aiport` (кнопка ▶) и `pfanalyze` отрабатывают; в Workers Logs нет `упал`.
 
+### Итоги A (2026-09-10, Opus 5) — сделано, воркер ждёт деплоя
+
+- **Один путь к Anthropic.** `aiChat`, `aiPortfolioRun`, `portfolioAnalyze` идут через `anthropicRun` (стрим SSE, повторы, общий usage); прямых `fetch` к `api.anthropic.com` вне `anthropicStream` больше нет. `anthropicRun` возвращает `{content, usage, stop_reason}`.
+- **Таймаут раунда** (`anthropicRound` → `anthropicStream` с `AbortController`): вместо одного бюджета ≈4 мин — **тишина 90 с** (Anthropic шлёт ping, значит молчание = зависание) + **потолок раунда 6 мин**. Отклонение от плана: жёсткие 4 мин обрезали бы законную генерацию 16 000 токенов у AI Proto. Обе причины — ошибка `code:'timeout'`, её повторяют.
+- **Повторы** — `aiRetryable(status,msg)`: со статусом решает только статус (408/429/5xx/529), текст тела 4xx не влияет (раньше `400 … stream …` ретраился); без статуса — обрыв стрима/сеть/таймаут. Пауза `aiRetryDelay` — `retry-after` или 1.5·2ⁿ с, не больше 30 с; 4 попытки на раунд. Все числа — в `AI_NET`.
+- **max_tokens** — `aiNeedsMoreTokens` (только `json_schema`): один повтор с `aiBumpTokens` (×1.5, потолок `AI_MAX_TOKENS_CAP` = 24 000), затем ошибка `code:'truncated'`. Действует на все 4 json_schema-вызова (aiport, pfanalyze, chat, watchlist-режим AI Proto). Markdown-вызовы с web_search не повторяются.
+- **Гейты:** `aiPortfolioRun` на усечённом **или нераспознанном** ответе (`aiParseJson` → null) бросает ошибку до исполнения — `lastRunAt`, ai_state, ledger и Telegram не трогаются, следующий тик повторит. Раньше нераспознанный ответ давал «0 сделок» и записывал гейт. Валидный пустой список решений — обычный цикл. `portfolioAnalyze` — так же (ошибка → `pfAnalysisAt` не ставится; Telegram с ошибкой, как и раньше).
+- **ai_jobs:** `aiJobStart` пишет `running` до работы. Клиент (`aiJobPoll`) различает таймауты «стартовала, но не завершилась» и «не записалась», `onRunning` показывает тост «идёт…». **Важно:** по докам Cloudflare `waitUntil` живёт **≤ 30 с после ответа** — фоновый режим (`AI_BG_ENABLED`, выключен) в принципе не дотянет 3–5-минутный прогон; `running`, повисший навсегда, теперь это показывает. Включать фон без переноса на Queues/Durable Objects бессмысленно.
+- **`?action=aiport`/`pfanalyze`:** работа — промис в `ctx.waitUntil`, стрим ждёт его же. Из-за того же лимита 30 с это страхует **хвост** (ai_state → ledger → Telegram после ответа модели), а не сам вызов Claude: обрыв клиента во время генерации по-прежнему гасит цикл, но без записи — следующий тик повторит.
+- **Бюджет подзапросов:** худший случай +7 вызовов Anthropic (4 попытки + повтор при усечении): цикл ≈26 → ≈33, анализ ≈33 → ≈40 из 50.
+- **Тесты:** worker-suite — группа `AI retry helpers` (14); новый **node-сьют** `tests/run-worker-async.js` (33 кейса, подключён в `run.sh`, порог 30): моки fetch для `anthropicRun` (529/429/503 → повтор, 400 — нет, 4×529 → ошибка, error-событие в стриме, зависший стрим → timeout → повтор, max_tokens → повтор/ошибка/потолок, pause_turn), сквозной `aiPortfolioRun` (усечён/не JSON → ни одной записи; 529 → сделка → ai_state → ledger → Telegram), `analyzeOnePortfolio`, роуты через `waitUntil`, `running → done` в ai_jobs. Мутационная проверка (tries=1, без гейта) роняет 5 групп. app 763 / worker 207 / worker-async 33.
+- Build `2026-09-10a-ai-retry`. **Осталось:** деплой воркера → `verify-worker` → кнопка ▶ (aiport) и `pfanalyze` вживую; в Workers Logs нет `упал`.
+
 ---
 
 ## B. Экранирование внешнего текста и CSP (security-rbac#6 остаток, #7)

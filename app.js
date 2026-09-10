@@ -2375,6 +2375,7 @@ async function aiJobsReady(){
 async function aiJobPoll(jobId,opt){
   const timeoutMs=(opt&&opt.timeoutMs)||6*60*1000,intervalMs=(opt&&opt.intervalMs)||4000;
   const deadline=Date.now()+timeoutMs;
+  let started=false;   // воркер пишет 'running' при старте (блок A) — отличаем «не стартовала» от «оборвалась»
   while(Date.now()<deadline){
     await new Promise(r=>setTimeout(r,intervalMs));
     if(!sb)break;
@@ -2383,10 +2384,16 @@ async function aiJobPoll(jobId,opt){
       if(data){
         if(data.status==='done')return{ok:true,result:data.result};
         if(data.status==='error')return{ok:false,error:data.error||'AI error'};
+        if(data.status==='running'&&!started){started=true;if(opt&&opt.onRunning)try{opt.onRunning()}catch(_){}}
       }
     }catch(_){/* сеть/таблицы нет — продолжаем опрос до дедлайна */}
   }
-  return{ok:false,error:RT('таймаут ожидания результата (фоновый прогон не записался — создана ли таблица ai_jobs?)','result wait timeout (was ai_jobs table created?)')};
+  return{ok:false,error:aiJobTimeoutMsg(started)};
+}
+function aiJobTimeoutMsg(started){
+  return started
+    ?RT('таймаут: фоновый прогон стартовал, но не завершился (воркер оборвал задачу — повторите)','timeout: background run started but never finished (worker stopped it — retry)')
+    :RT('таймаут ожидания результата (фоновый прогон не записался — создана ли таблица ai_jobs?)','result wait timeout (was ai_jobs table created?)');
 }
 async function pf3AiRun(){
   if(pf3Ai.loading)return;
@@ -2425,7 +2432,7 @@ async function pf3AiRun(){
     const bodyText=await r.text();
     let j=null;try{j=JSON.parse(bodyText)}catch(_){}
     if(j&&j.queued){   // фоновый прогон — ждём результат из ai_jobs
-      const res=await aiJobPoll(j.jobId);
+      const res=await aiJobPoll(j.jobId,{onRunning:()=>toast('🤖 '+RT('Анализ «'+TAB_LABEL(key)+'» идёт…','Analysis of '+TAB_LABEL(key)+' running…'))});
       if(res.ok&&res.result)j=res.result;else{toast('AI ('+TAB_LABEL(key)+'): '+(res.error||'нет результата'),true);pf3Ai.loading=false;if(isV3())renderPF3();return;}
     }
     if(j&&j.text){

@@ -42,6 +42,14 @@ bash tests/run.sh
 
 Кейсы — в `cases-app.js` и `cases-worker.js`.
 
+JSC в `osascript` не крутит промисы, поэтому асинхронные пути воркера (вызовы
+Claude с повторами/таймаутами, сквозной цикл AI-портфеля, роуты с `waitUntil`)
+проверяет третий сьют — **`run-worker-async.js` под node** (`node tests/run-worker-async.js`,
+маркер `WORKER-ASYNC TESTS: N/N passed`, порог `MIN_CASES_worker_async`). Он грузит
+воркер в `vm`-контекст с подменёнными `fetch` (Anthropic SSE / Supabase / Yahoo /
+Telegram) и `Date` (среда, биржи открыты — тест не зависит от дня запуска). Без node
+`run.sh` падает, а не пропускает сьют.
+
 ## Что покрыто (сейчас)
 
 - **Комиссия** (Avanza «Small»): `tradeFeeNative` / `tradeFeeNativeW` — паритет

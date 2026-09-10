@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10s8c-asml-ccy';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10a-ai-retry';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -144,19 +144,75 @@ function cacheSys(s){
   if(typeof s === 'string' && s) return [{ type: 'text', text: s, cache_control: { type: 'ephemeral' } }];
   return s;   // уже массив блоков или пусто — не трогаем
 }
+// Надёжность (аудит worker#4, блок A): раунд стрима ограничен по тишине (Anthropic шлёт
+// ping-события, так что 90 с без байтов = зависший стрим) и по общему времени; оба
+// случая — ошибка с пометкой timeout, её ретраит anthropicRun. Повторы: 429/5xx/529
+// и сетевые/стрим-сбои, бэкофф base·2^n (или retry-after, не дольше maxWaitMs).
+// json_schema-ответ, упёршийся в max_tokens, — усечённый JSON: один повтор с лимитом
+// ×1.5 (потолок AI_MAX_TOKENS_CAP), затем ошибка «ответ модели усечён» (e.code='truncated').
+// Сеть к Anthropic: попыток на раунд, бэкофф, потолок паузы, тишина стрима, общий бюджет раунда.
+const AI_NET = { tries: 4, baseMs: 1500, maxWaitMs: 30e3, idleMs: 90e3, roundMs: 6 * 60e3 };
+const AI_MAX_TOKENS_CAP = 24000;
+// Повторять ли ошибку вызова Claude. С HTTP-статусом решает статус (текст тела 4xx
+// может случайно содержать «stream»/«timeout»); без статуса — сеть/обрыв стрима/таймаут.
+function aiRetryable(status, msg){
+  if(status) return status === 408 || status === 429 || status >= 500;
+  return /network|сеть|stream|timeout|overloaded|524|529|connection|reset/i.test(String(msg || ''));
+}
+// Пауза перед попыткой attempt+1: retry-after (сек) от API, иначе экспонента.
+function aiRetryDelay(attempt, retryAfterSec){
+  const ra = parseFloat(retryAfterSec);
+  if(ra > 0) return Math.min(AI_NET.maxWaitMs, ra * 1000);
+  return Math.min(AI_NET.maxWaitMs, AI_NET.baseMs * Math.pow(2, attempt));
+}
+// Усечён ли структурный ответ: stop_reason max_tokens у json_schema-вызова.
+function aiNeedsMoreTokens(stop_reason, body){
+  const f = body && body.output_config && body.output_config.format;
+  return stop_reason === 'max_tokens' && !!(f && f.type === 'json_schema');
+}
+// Новый лимит для повтора усечённого ответа; null — дальше некуда (уже на потолке).
+function aiBumpTokens(maxTokens){
+  const n = Math.min(AI_MAX_TOKENS_CAP, Math.ceil((Number(maxTokens) || 0) * 1.5));
+  return n > (Number(maxTokens) || 0) ? n : null;
+}
+// JSON структурного ответа: склеить text-блоки, распарсить, проверить форму ok(p).
+// null — пусто/не JSON/не та форма (вызывающий бросает ошибку, а не пишет «пустой» результат).
+function aiParseJson(j, ok){
+  const raw = ((j && j.content) || []).filter(b => b && b.type === 'text').map(b => b.text || '').join('');
+  if(!raw) return null;
+  let p = null; try{ p = JSON.parse(raw); }catch(e){ return null; }
+  return (p && typeof p === 'object' && (!ok || ok(p))) ? p : null;
+}
 async function anthropicRound(env, body){
+  const ac = new AbortController();
+  let why = '';
+  const abort = w => { if(!why){ why = w; try{ ac.abort(); }catch(_){} } };
+  const hard = setTimeout(() => abort('раунд дольше ' + Math.round(AI_NET.roundMs / 1000) + ' с'), AI_NET.roundMs);
+  const onIdle = () => abort('нет данных ' + Math.round(AI_NET.idleMs / 1000) + ' с');
+  let idle = setTimeout(onIdle, AI_NET.idleMs);
+  const poke = () => { clearTimeout(idle); idle = setTimeout(onIdle, AI_NET.idleMs); };
+  try{
+    return await anthropicStream(env, body, ac.signal, poke);
+  }catch(e){
+    if(why){ const t = new Error('Claude API timeout: ' + why); t.code = 'timeout'; throw t; }
+    throw e;
+  }finally{ clearTimeout(hard); clearTimeout(idle); }
+}
+async function anthropicStream(env, body, signal, poke){
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ ...body, system: cacheSys(body.system), stream: true }),
+    signal,
   });
-  if(!r.ok || !r.body){ const e = new Error('Claude API ' + r.status + ': ' + (await r.text().catch(() => '')).slice(0, 200)); e.status = r.status; throw e; }
+  if(!r.ok || !r.body){ const e = new Error('Claude API ' + r.status + ': ' + (await r.text().catch(() => '')).slice(0, 200)); e.status = r.status; e.retryAfter = r.headers && r.headers.get ? r.headers.get('retry-after') : null; throw e; }
   const reader = r.body.getReader(), dec = new TextDecoder();
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
   let buf = '', blocks = [], partial = {}, stop_reason = null;
   for(;;){
     const { done, value } = await reader.read();
     if(done) break;
+    poke();
     buf += dec.decode(value, { stream: true });
     let i;
     while((i = buf.indexOf('\n\n')) >= 0){
@@ -180,31 +236,55 @@ async function anthropicRound(env, body){
   }
   return { content: blocks.filter(Boolean), usage, stop_reason };
 }
+// Один раунд с повторами (aiRetryable/aiRetryDelay); последняя ошибка — наружу как есть.
+async function anthropicRoundRetry(env, reqBody){
+  for(let attempt = 0; ; attempt++){
+    try{ return await anthropicRound(env, reqBody); }
+    catch(e){
+      const msg = String((e && e.message) || e);
+      if(!aiRetryable((e && e.status) || 0, msg) || attempt >= AI_NET.tries - 1) throw e;
+      console.warn('Claude: попытка ' + (attempt + 1) + ' не удалась — ' + msg.slice(0, 160));
+      await sleep(aiRetryDelay(attempt, e && e.retryAfter));
+    }
+  }
+}
+function anthropicUsageAdd(usage, u){
+  u = u || {};
+  usage.input_tokens += u.input_tokens || 0;
+  usage.output_tokens += u.output_tokens || 0;
+  usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+  usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
+  usage.server_tool_use.web_search_requests += (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+}
+// Возвращает {content, usage, stop_reason} (stop_reason — последнего раунда). usage
+// суммируется по всем раундам и повторам (за них тоже платим).
 async function anthropicRun(env, body){
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
+  let res = await anthropicRunOnce(env, body, usage);
+  if(aiNeedsMoreTokens(res.stop_reason, body)){
+    const more = aiBumpTokens(body.max_tokens);
+    console.warn('Claude: ответ усечён на max_tokens ' + body.max_tokens + (more ? ' — повтор с ' + more : ' — потолок, без повтора'));
+    if(more) res = await anthropicRunOnce(env, { ...body, max_tokens: more }, usage);
+    if(aiNeedsMoreTokens(res.stop_reason, body)){
+      const e = new Error('ответ модели усечён (max_tokens ' + (more || body.max_tokens) + ') — результат не записан, следующий запуск повторит');
+      e.code = 'truncated'; e.usage = usage;
+      throw e;
+    }
+  }
+  return { content: res.content, usage, stop_reason: res.stop_reason };
+}
+async function anthropicRunOnce(env, body, usage){
   const started = Date.now();
   let messages = (body.messages || []).slice();
-  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 0 } };
-  let content = [];
+  let content = [], stop_reason = null;
   let summarize = false;   // дедлайн ресёрча истёк — последний раунд без инструментов
   for(let round = 0; round < 6; round++){
     // В режиме summarize убираем tools → модель не ищет, а сводит найденное.
     const reqBody = summarize ? { ...body, tools: undefined, messages } : { ...body, messages };
-    let j = null, lastErr = '';
-    for(let attempt = 0; attempt < 4; attempt++){
-      try{ j = await anthropicRound(env, reqBody); break; }
-      catch(e){ lastErr = String(e.message || e); const st = e.status || 0;
-        const retr = st === 429 || st >= 500 || /network|сеть|stream|timeout|524|529/i.test(lastErr);
-        if(retr && attempt < 3){ await sleep(1500 * Math.pow(2, attempt)); continue; }
-        throw new Error(lastErr); }
-    }
-    if(!j) throw new Error(lastErr || 'Claude API: нет ответа после ретраев');
-    const u = j.usage || {};
-    usage.input_tokens += u.input_tokens || 0;
-    usage.output_tokens += u.output_tokens || 0;
-    usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
-    usage.cache_read_input_tokens += u.cache_read_input_tokens || 0;
-    usage.server_tool_use.web_search_requests += (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+    const j = await anthropicRoundRetry(env, reqBody);
+    anthropicUsageAdd(usage, j.usage);
     content = content.concat(j.content || []);
+    stop_reason = j.stop_reason;
     if(!summarize && j.stop_reason === 'pause_turn'){
       messages = messages.concat([{ role: 'assistant', content: j.content }]);
       // Лимит на ресёрч: израсходовали ~90 секунд → просим свести найденное БЕЗ новых поисков.
@@ -216,7 +296,7 @@ async function anthropicRun(env, body){
     }
     break;
   }
-  return { content, usage };
+  return { content, stop_reason };
 }
 
 // ── In-memory кэш изолята с TTL + дедуп параллельных запросов ────────────────
@@ -1162,8 +1242,11 @@ async function aiJobWrite(env, uid, jobId, kind, key, status, result, error){
   }catch(e){ /* таблицы ещё нет — клиент покажет таймаут опроса */ }
 }
 // Запустить работу в фоне (ctx.waitUntil) и отметить результат в ai_jobs.
+// Сначала 'running' — клиент отличает «задача идёт / изолят умер посреди» от «не стартовала».
+// ⚠ Cloudflare: waitUntil живёт ≤ 30 с после ответа — прогон дольше рвётся и остаётся 'running'.
 function aiJobStart(ctx, env, uid, jobId, kind, key, workFn){
   ctx.waitUntil((async () => {
+    await aiJobWrite(env, uid, jobId, kind, key, 'running', null, null);
     try{ const out = await workFn(); await aiJobWrite(env, uid, jobId, kind, key, 'done', out, null); }
     catch(e){ await aiJobWrite(env, uid, jobId, kind, key, 'error', null, String((e && e.message) || e)); }
   })());
@@ -1379,20 +1462,14 @@ async function aiChat(env, body){
     .filter(m => m.content);
   if(!messages.length) throw new Error('Пустое сообщение');
   const ctx = `Сегодня ${new Date().toISOString().slice(0, 10)}.\n\nПравила инвестора:\n${(body.prefs || []).map(p => '• ' + p).join('\n') || '(пока нет)'}\n\nСнапшот портфеля (JSON):\n${JSON.stringify(body.snapshot || {})}`;
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: aiModel('chat'),
-      max_tokens: 4000,
-      thinking: { type: 'adaptive' },
-      output_config: { format: { type: 'json_schema', schema: CHAT_SCHEMA } },
-      system: [{ type: 'text', text: CHAT_SYSTEM, cache_control: { type: 'ephemeral' } }, { type: 'text', text: ctx }],
-      messages,
-    }),
+  const j = await anthropicRun(env, {
+    model: aiModel('chat'),
+    max_tokens: 4000,
+    thinking: { type: 'adaptive' },
+    output_config: { format: { type: 'json_schema', schema: CHAT_SCHEMA } },
+    system: [{ type: 'text', text: CHAT_SYSTEM, cache_control: { type: 'ephemeral' } }, { type: 'text', text: ctx }],
+    messages,
   });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-  const j = await r.json();
   const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
   if(!raw) throw new Error('Пустой ответ модели');
   const cost = aiCost(j);
@@ -1729,23 +1806,18 @@ async function aiPortfolioRun(env, force){
   payload.universe.forEach(u => { if(!u[15]) u[15] = aipVerdict(u); recoBy[String(u[0]).toUpperCase()] = u[15]; });
   // reason обязан ссылаться на вердикт, когда сделка идёт против него.
   const mentionsReco = t => /reco|вердикт|скоринг|wait|avoid|ждать|опасн/i.test(String(t || ''));
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: aiModel('aiport'),
-      max_tokens: 6000,
-      thinking: { type: 'adaptive' },
-      output_config: { format: { type: 'json_schema', schema: AIPORT_SCHEMA } },
-      system: cacheSys(AIPORT_SYSTEM),
-      messages: [{ role: 'user', content: JSON.stringify(payload) }],
-    }),
+  // Повторы 429/5xx/529 и таймаут стрима — в anthropicRun; усечённый ответ (max_tokens)
+  // и нераспознанный JSON — ошибка ДО исполнения: lastRunAt не ставится, следующий тик повторит.
+  const j = await anthropicRun(env, {
+    model: aiModel('aiport'),
+    max_tokens: 6000,
+    thinking: { type: 'adaptive' },
+    output_config: { format: { type: 'json_schema', schema: AIPORT_SCHEMA } },
+    system: AIPORT_SYSTEM,
+    messages: [{ role: 'user', content: JSON.stringify(payload) }],
   });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 300));
-  const j = await r.json();
-  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  let parsed = { decisions: [], note: '' };
-  try{ const p = JSON.parse(raw); if(p && Array.isArray(p.decisions)) parsed = p; }catch(e){ /* нет решений */ }
+  const parsed = aiParseJson(j, p => Array.isArray(p.decisions));
+  if(!parsed) throw new Error('некорректный ответ модели (stop_reason ' + (j.stop_reason || '—') + ') — цикл не записан');
   // ── Исполнение с валидацией ──
   const trades = [], skipped = [];
   for(const dec of parsed.decisions.slice(0, 20)){   // мех. предохранитель по бюджету subrequest (не стратегический лимит)
@@ -1994,23 +2066,16 @@ async function portfolioAnalyze(env, key, snap){
   if(!payload) return null;
   payload.liveMarkets = await liveMarkets().catch(() => []);
   payload.today = new Date().toISOString().slice(0, 10);
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: aiModel('portfolio'),
-      max_tokens: 6000,
-      thinking: { type: 'adaptive' },
-      output_config: { format: { type: 'json_schema', schema: PFANALYZE_SCHEMA } },
-      system: cacheSys(PFANALYZE_SYSTEM),
-      messages: [{ role: 'user', content: 'Снапшот портфеля (JSON):\n' + JSON.stringify(payload) }],
-    }),
+  const j = await anthropicRun(env, {
+    model: aiModel('portfolio'),
+    max_tokens: 6000,
+    thinking: { type: 'adaptive' },
+    output_config: { format: { type: 'json_schema', schema: PFANALYZE_SCHEMA } },
+    system: PFANALYZE_SYSTEM,
+    messages: [{ role: 'user', content: 'Снапшот портфеля (JSON):\n' + JSON.stringify(payload) }],
   });
-  if(!r.ok) throw new Error('Claude API ' + r.status + ': ' + (await r.text()).slice(0, 200));
-  const j = await r.json();
-  const raw = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  let parsed = null; try{ parsed = JSON.parse(raw); }catch(e){}
-  if(!parsed || !Array.isArray(parsed.actions)) throw new Error('Пустой/некорректный ответ анализа');
+  const parsed = aiParseJson(j, p => Array.isArray(p.actions));
+  if(!parsed) throw new Error('Пустой/некорректный ответ анализа (stop_reason ' + (j.stop_reason || '—') + ')');
   return { summary: String(parsed.summary || ''), report: String(parsed.report || ''), actions: parsed.actions, cost: aiCost(j), at: new Date().toISOString() };
 }
 // Анализ ОДНОГО реального портфеля (отдельный вызов воркера — экономим бюджет
@@ -3057,7 +3122,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
@@ -3249,11 +3314,14 @@ export default {
       // (по одному за тик) либо вручную через ?action=pfanalyze&key=<вкладка>.
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
-      return streamJson(async () => {
-        let cycle = '';
-        try{ cycle = await aiPortfolioRun(env, true); }catch(e){ cycle = 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e); }
-        return { result: cycle };
-      });
+      // Работа — в ctx.waitUntil, стрим лишь ждёт промис: обрыв клиента после ответа модели
+      // не прерывает запись ai_state → ledger → Telegram (waitUntil даёт ещё ≤ 30 с).
+      const work = (async () => {
+        try{ return { result: await aiPortfolioRun(env, true) }; }
+        catch(e){ console.error('aiport упал:', (e && e.stack) || e); return { result: 'цикл AI-портфеля: ошибка — ' + String((e && e.message) || e) }; }
+      })();
+      ctx.waitUntil(work);
+      return streamJson(() => work);
     }
     if(url.searchParams.get('action') === 'pfanalyze'){
       // Ручной анализ ОДНОГО реального портфеля (отдельный вызов = свой бюджет
@@ -3262,10 +3330,12 @@ export default {
       const adm = await requireAdmin(request, env);
       if(!adm.ok) return json({ error: adm.error }, 403);
       const key = url.searchParams.get('key') || ANALYZE_PORTFOLIOS[0];
-      return streamJson(async () => {
+      const work = (async () => {   // как aiport: запись переживает обрыв клиента
         try{ return { result: await analyzeOnePortfolio(env, key, true) }; }
-        catch(e){ return { error: String((e && e.message) || e) }; }
-      });
+        catch(e){ console.error('pfanalyze упал:', (e && e.stack) || e); return { error: String((e && e.message) || e) }; }
+      })();
+      ctx.waitUntil(work);
+      return streamJson(() => work);
     }
     if(url.searchParams.get('action') === 'bookcheck'){
       // 📨 Ручной прогон bookcheck (S8, только админ). &dry=1 — только показать, что сработало бы

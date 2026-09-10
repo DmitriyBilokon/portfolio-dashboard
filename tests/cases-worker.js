@@ -432,6 +432,28 @@ grp('exSymbol worker', function(){
   __eq('SEK с классом акции и простая подмена', [exSymbol('INVE B','SEK'), exSymbol('RHM','EUR')], ['INVE-B.ST','RHM.DE']);
 });
 
+// Блок A (worker#4): надёжность AI-вызовов — чистые решения о повторе/усечении/разборе.
+// Сквозные прогоны с подменённым fetch (529 → повтор, max_tokens → повтор/ошибка, цикл
+// AI-портфеля без записи гейта) — в tests/run-worker-async.js (node: JSC не крутит промисы).
+grp('AI retry helpers', function(){
+  __eq('повтор: 429/529/500/503/408', [429, 529, 500, 503, 408].map(function(s){ return aiRetryable(s, ''); }), [true, true, true, true, true]);
+  __eq('без повтора: 400/401/403/404/413', [400, 401, 403, 404, 413].map(function(s){ return aiRetryable(s, ''); }), [false, false, false, false, false]);
+  __eq('4xx со словом stream/timeout в теле — не повтор', aiRetryable(400, 'Claude API 400: stream timeout invalid'), false);
+  __eq('без статуса: обрыв стрима/таймаут/сеть — повтор', [aiRetryable(0, 'Claude API stream: {"type":"overloaded_error"}'), aiRetryable(0, 'Claude API timeout: нет данных 90 с'), aiRetryable(0, 'Network connection lost')], [true, true, true]);
+  __eq('без статуса: прочее — не повтор', aiRetryable(0, 'Unexpected token < in JSON'), false);
+  __eq('бэкофф 1.5/3/6 с', [aiRetryDelay(0), aiRetryDelay(1), aiRetryDelay(2)], [1500, 3000, 6000]);
+  __eq('retry-after в секундах, потолок 30 с', [aiRetryDelay(0, '4'), aiRetryDelay(0, '120'), aiRetryDelay(1, 'x')], [4000, 30000, 3000]);
+  __ok('бюджет повторов: 4 попытки на раунд, суммарная пауза < 15 с', AI_NET.tries === 4 && aiRetryDelay(0) + aiRetryDelay(1) + aiRetryDelay(2) < 15e3);
+  var js = { output_config: { format: { type: 'json_schema', schema: {} } } };
+  __eq('усечение: max_tokens у json_schema', aiNeedsMoreTokens('max_tokens', js), true);
+  __eq('не усечение: end_turn / без схемы / markdown с web_search', [aiNeedsMoreTokens('end_turn', js), aiNeedsMoreTokens('max_tokens', {}), aiNeedsMoreTokens('max_tokens', { tools: [{}] })], [false, false, false]);
+  __eq('лимит ×1.5 с потолком; на потолке — null', [aiBumpTokens(6000), aiBumpTokens(4000), aiBumpTokens(20000), aiBumpTokens(AI_MAX_TOKENS_CAP)], [9000, 6000, AI_MAX_TOKENS_CAP, null]);
+  __ok('таймауты: тишина < раунда; зависший стрим × попытки < 15 мин cron', AI_NET.idleMs < AI_NET.roundMs && AI_NET.idleMs * AI_NET.tries < 15 * 60e3);
+  var txt = function(s){ return { content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: s }] }; };
+  __eq('разбор JSON: text-блоки, форма ok', aiParseJson(txt('{"decisions":[],"note":"n"}'), function(p){ return Array.isArray(p.decisions); }), { decisions: [], note: 'n' });
+  __eq('разбор JSON: усечённый/пустой/не та форма → null', [aiParseJson(txt('{"decisions":[{"ticker":"MU"'), null), aiParseJson({ content: [] }, null), aiParseJson(txt('{"actions":1}'), function(p){ return Array.isArray(p.actions); }), aiParseJson(txt('"str"'), null)], [null, null, null, null]);
+});
+
 // 12) 🏗 worker build — бампается при каждой правке воркера
 grp('worker build', function(){
   __ok('WORKER_BUILD bumped', WORKER_BUILD !== '2026-06-30subreq-split');

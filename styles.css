@@ -30,7 +30,8 @@
 [data-theme="dark"] table{box-shadow:0 1px 2px rgba(0,0,0,.4)}
 html{transition:background .2s ease,color .2s ease}
 /* Theme toggle button (pushed to the right of the header) */
-.theme-toggle{margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--text);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
+.theme-toggle{margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--text);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;text-decoration:none}
+a.theme-toggle.hub-home{width:auto;padding:0 10px;font-size:11px;font-weight:700;letter-spacing:.02em}
 .theme-toggle:hover{border-color:var(--accent)}
 /* ♿ Видимый фокус для клавиатуры (focus-visible не срабатывает на клик мышью) */
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}

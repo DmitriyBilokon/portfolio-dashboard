@@ -140,21 +140,25 @@ It stays silent when there's nothing to report.
   | `SUPABASE_SERVICE_KEY` | Secret | service_role key |
   | `CHAT_ID` | Text | your chat id |
   | `SUPABASE_URL` | Text | `https://<project>.supabase.co` |
-  | `MOVER_THRESHOLD` | Text | optional, % (default `5`) |
+  | `OWNER_USER_ID` | Text | **required** — Supabase user id of the owner (Authentication → Users). The Worker reads and writes only that `ledger_state` row; without it cron and every admin route fail |
   | `FMP_KEY` | Secret | [Financial Modeling Prep](https://site.financialmodelingprep.com) API key — fills the **Аналит. таргет** column |
-  | `RESTRICT_FIRMS` | Text | optional, set `1` to average only the whitelisted analyst firms |
+  | `ANTHROPIC_API_KEY` | Secret | Claude API key — all AI endpoints |
+  | `FINNHUB_KEY` | Secret | optional — insider transactions (US) |
 
   **Analyst targets:** with `FMP_KEY` set, each cron run also fills the portfolio's
   **Аналит. таргет** column with the *average analyst price target from the last
   90 days* (per stock), via FMP's per-analyst feed. Needs an FMP plan that includes
   the Price Target endpoint. Coverage is strongest for US names; many Nordic/EU
-  holdings may stay blank (and are editable by hand). Test: open the Worker URL with
-  `?action=targets` → it replies `Targets updated: N/total`.
+  holdings may stay blank (and are editable by hand). `?action=targets` triggers a
+  refresh, but it is an **admin route** — it needs an `Authorization: Bearer <Supabase
+  access token>` header and returns 403 from a plain browser tab.
 - **Settings → Triggers → Cron Triggers** → add e.g. `30 17 * * 1-5`
   (weekdays 17:30 UTC). Adjust to taste.
 
-**4. Test:** open the Worker's URL in a browser — it runs the check immediately and
-either sends the digest or replies "Nothing to report".
+**4. Test:** open `<worker-url>?action=version` — it is public and prints the build id
+plus `owner: OWNER_USER_ID задан` / `НЕ ЗАДАН`. The admin routes (`?action=targets`,
+`?action=chart`, `?action=ydebug` and every AI endpoint) require a Bearer token, so
+test them with `curl -H "Authorization: Bearer <token>"`, not from the address bar.
 
 > All config lives in the Worker (secrets stay server-side). To make the chat id
 > or threshold editable from the app later, we can move them into your synced

@@ -1584,27 +1584,3 @@ function dupHTML(){
   }
   return h;
 }
-// ===== 🏠 Home: виджеты сигналов и уровней по акциям обеих v3-вкладок =====
-// Собирает все акции из доступных пользователю вкладок (портфель в приоритете
-// при дубликатах тикера) с сигналом и рыночной фазой каждой.
-function homeItems(){
-  const out=[];
-  v3Tabs().filter(k=>DATA[k]&&tabAllowed(k)).forEach(k=>{
-    DATA[k].rows.forEach((r,i)=>{
-      recalcPF(i,k);
-      const tk=String(r[2]||'').trim().toUpperCase();
-      if(!tk||out.some(x=>x.tk===tk))return;
-      out.push({tk,name:String(r[1]||tk),flag:r[3]&&r[3]!=='—'?r[3]+' ':'',price:parseFloat(r[7])||0,ccy:r[8]||'USD',
-        day:parseFloat(r[10]),sig:pf3SignalInfo(DATA[k],r),crit:pf3Criterion(DATA[k],r),port:k===PF3_KEY&&(parseFloat(r[6])||0)>0});
-    });
-  });
-  return out;
-}
-function homeRowHTML(x,extra){
-  return`<div class="home-row" onclick="simOpen('${x.tk}')">
-    ${logoHTML(x.tk,x.ccy,'pf3-row-logo')}
-    <div class="pf3-row-name"><b>${x.flag}${x.name}</b><span>${x.tk}${x.port?' · '+T('в портфеле'):''}</span></div>
-    <div class="home-px"><b>${x.price>0?pf3Fmt(x.price,2):'—'} ${x.ccy}</b>${isFinite(x.day)?`<span class="${x.day>=0?'pf3-up':'pf3-down'}">${x.day>0?'+':''}${x.day.toFixed(2)}%</span>`:''}</div>
-    ${extra}
-  </div>`;
-}

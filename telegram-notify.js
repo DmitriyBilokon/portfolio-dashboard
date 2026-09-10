@@ -19,15 +19,15 @@
 //     SUPABASE_SERVICE_KEY  (Secret)  – service_role key
 //     CHAT_ID               (Text)    – your Telegram chat id
 //     SUPABASE_URL          (Text)    – https://<project>.supabase.co
-//     NEAR_THRESHOLD        (Text)    – optional, percent proximity to a level (default 10)
+//     OWNER_USER_ID         (Text)    – Supabase user id владельца (Authentication → Users): строка ledger_state, с которой работают cron и admin-роуты
 //     FMP_KEY               (Secret)  – Financial Modeling Prep API key (analyst targets)
 //     ANTHROPIC_API_KEY     (Secret)  – Claude API key (AI Assistant) — console.anthropic.com
-//     RESTRICT_FIRMS        (Text)    – optional, set "1" to only average the whitelisted firms
 //     FINNHUB_KEY           (Secret)  – Finnhub API key (insider transactions) — finnhub.io
 //  Cron: Settings → Triggers → Cron Triggers → add e.g.  30 17 * * 1-5
-//        (weekdays 17:30 UTC). Visit the Worker URL any time to test/send now.
+//        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
+//        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-06-30subreq-split';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10s1-quickwins';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -82,6 +82,17 @@ const tgApi = (env, method) => `https://api.telegram.org/bot${env.BOT_TOKEN}/${m
 const CORS = { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Methods':'GET, POST, OPTIONS', 'Access-Control-Allow-Headers':'Content-Type, Authorization', 'Content-Type':'application/json; charset=utf-8' };
 const json = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: CORS });
 const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+// Публичные батч-роуты: лимит числа символов за вызов. Бюджет Cloudflare free —
+// 50 подзапросов/вызов; на символ: symbols = 3 (chart 1y + quoteSummary + weekly),
+// targets = 2 (quoteSummary + FMP), calendar/prepost/levels = 1; плюс yAuth ≤ 4 за вызов.
+// Клиент чанкует под эти же лимиты (fetchQuotes 15, ?targets= 20, ?calendar= 40).
+const SYM_LIMITS = { symbols: 15, targets: 20, calendar: 40, prepost: 40, levels: 20 };
+// Разбор ?param=A,B,C: trim, дедуп, отброс пустых и слишком длинных; over = превышен лимит.
+function parseSyms(raw, max){
+  const syms = [...new Set(String(raw || '').split(',').map(s => s.trim()).filter(s => s && s.length <= 24))];
+  return { syms: syms.slice(0, max), over: syms.length > max, total: syms.length };
+}
+const tooMany = (p, max) => json({ error: `too many symbols: ${p.total} > ${max}` }, 413);
 
 // Долгие AI-ответы (web_search + генерация отчёта) не успевают в окно Cloudflare:
 // если воркер не начал отвечать ~за 100с, соединение рвётся (524 → «Failed to fetch»).
@@ -619,62 +630,28 @@ async function sendChartMU(env){
   return true;
 }
 
-// Portfolio row schema (indices): 1 name · 2 ticker · 8 ccy
-// Alert when the live price is within ±NEAR_THRESHOLD% of any technical level
-// (SMA 50/100/200, support, resistance). Silent when nothing is close.
-async function buildReport(env){
-  const pf = await loadPortfolio(env);
-  if(!pf) return null;
-  const nearPct = parseFloat(env.NEAR_THRESHOLD || '10');
-  const blocks = [];
-
-  // All quotes in parallel (Yahoo handles this fine; the ?symbols= endpoint already does the same).
-  const quotes = await Promise.all(pf.rows.map(row => yahoo(exSymbol(row[2], row[8]))));
-  for(let ri = 0; ri < pf.rows.length; ri++){
-    const row = pf.rows[ri];
-    const name = esc(row[1]), ccy = row[8];
-    const q = quotes[ri];
-    if(!q || typeof q.price !== 'number' || q.price <= 0) continue;
-    const price = q.price;
-    const levels = [
-      ['SMA 50', q.sma50], ['SMA 100', q.sma100], ['SMA 200', q.sma200],
-      ['Поддержка', q.support], ['Сопротивление', q.resistance],
-    ];
-    const near = [];
-    for(const [label, val] of levels){
-      if(typeof val !== 'number' || val <= 0) continue;
-      const dist = (price - val) / val * 100;   // price above (+) / below (−) the level
-      if(Math.abs(dist) <= nearPct) near.push({ label, val, dist });
-    }
-    if(!near.length) continue;
-    near.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));   // nearest level first
-    const lines = near.map(n => {
-      const dot = n.dist >= 0 ? '🟢' : '🔴';                    // above level / below level
-      const arrow = n.dist >= 0 ? '▲' : '▼';
-      return `${dot} ${n.label} <code>${n.val}</code> ${arrow} <b>${Math.abs(n.dist).toFixed(1)}%</b>`;
-    });
-    blocks.push(`🏢 <b>${name}</b> · <b>${price}</b> ${ccy}\n` + lines.join('\n'));
-  }
-
-  if(!blocks.length) return null;
-  return `📈 <b>Цена рядом с уровнями</b>  ±${nearPct}%\n`
-       + `<i>🟢 цена выше уровня · 🔴 цена ниже уровня</i>\n\n`
-       + blocks.join('\n\n');
-}
-
 // ── Yahoo fallback for fundamentals / earnings ──────────────────────────────
 // FMP covers mostly US tickers; for EU/Nordic stocks (RHM.DE, .ST, .OL, .CO)
 // we fall back to Yahoo: quoteSummary needs a crumb+cookie pair (cached per
 // isolate), the revenue timeseries endpoint needs no auth at all.
-let _yAuth = null;
+let _yAuth = null, _yAuthP = null;   // готовая пара cookie+crumb / промис идущего раунда авторизации
 // Browser-like headers — Yahoo is picky about bare UAs coming from datacenter IPs.
 const Y_UA = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept': '*/*',
   'Accept-Language': 'en-US,en;q=0.9',
 };
+// Дедуп параллельных раундов: батч-роуты стартуют N символов через Promise.all, и на
+// холодном изоляте каждый yQuoteSummary запускал бы СВОЙ раунд (2–4 подзапроса) —
+// бюджет 50 подзапросов/вызов сгорал бы на авторизации. Теперь раунд один на всех
+// (SYM_LIMITS считают yAuth ≤ 4 за вызов). С `log` (?action=ydebug) — всегда свой раунд.
 async function yAuth(log){
   if(_yAuth) return _yAuth;
+  if(log) return yAuthRound(log);
+  if(!_yAuthP) _yAuthP = yAuthRound().finally(() => { _yAuthP = null; });
+  return _yAuthP;
+}
+async function yAuthRound(log){
   const dbg = log || (() => {});
   try{
     let cookie = '';
@@ -2289,26 +2266,6 @@ async function dashboardGen(env, snapshot){
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
 const TARGET_COL = 'Аналит. таргет';
 const TARGET_RECENT_COL = 'Таргет 3м';   // свежий срез (последний квартал/месяц)
-// Optional firm whitelist — only applied when env RESTRICT_FIRMS === '1'.
-// Off by default: restricting to these would blank most Nordic/EU holdings.
-const TARGET_FIRMS = new Set([
-  // US coverage
-  'kgi securities','fubon securities','gf securities','loop capital markets','evercore isi',
-  'itau bba securities','oppenheimer','president capital management','craig-hallum','susquehanna',
-  'new street research','benchmark co','bnp paribas','huatai research','aletheia capital',
-  'ctbc securities','melius research','edgewater research','goldman sachs','d.a. davidson',
-  'truist securities','jefferies','wedbush','keybanc capital markets','raymond james','banco safra',
-  'cantor fitzgerald','mizuho securities','stifel','wells fargo','td cowen','seaport global',
-  'barclays','summit insights group',
-  // Nordic brokers — primary research houses for Swedish/Norwegian/Danish equities
-  'seb','seb equities','handelsbanken','handelsbanken capital markets','carnegie','dnb carnegie',
-  'nordea','nordea markets','dnb markets','abg sundal collier','pareto securities','danske bank',
-  'sparebank 1 markets','arctic securities',
-  // European banks covering EU large caps
-  'kepler cheuvreux','berenberg','deutsche bank','ubs','morgan stanley','jp morgan','j.p. morgan',
-  'jpmorgan','citigroup','citi','bofa securities','bank of america','hsbc','societe generale',
-  'oddo bhf','exane bnp paribas','bernstein','rbc capital markets','santander',
-].map(s => s.toLowerCase()));
 
 // Yahoo (Refinitiv/LSEG) consensus — aggregates exactly those brokers' targets for
 // EU/Nordic tickers FMP can't price. targetMeanPrice is in the stock's TRADING
@@ -2323,38 +2280,6 @@ async function yahooTarget(sym){
 }
 
 const sleep = ms => new Promise(res => setTimeout(res, ms));
-// Average analyst target for one symbol (FMP "stable" API).
-// Returns { avg, count } on success, or { err } describing why it couldn't.
-//  • default: FMP's pre-computed last-quarter (~3-month) average (price-target-summary)
-//  • RESTRICT_FIRMS=1: average per-analyst targets from the last 90 days, whitelisted firms only
-async function fmpTarget(symbol, env){
-  try{
-    if(env.RESTRICT_FIRMS === '1'){
-      const r = await fetch(`https://financialmodelingprep.com/stable/price-target-news?symbol=${encodeURIComponent(symbol)}&page=0&limit=100&apikey=${env.FMP_KEY}`);
-      if(!r.ok) return { err: 'http ' + r.status };
-      const arr = await r.json();
-      if(!Array.isArray(arr)) return { err: 'bad json' };
-      const cutoff = Date.now() - 90 * 24 * 3600 * 1000, vals = [];
-      for(const x of arr){
-        const t = Date.parse(x.publishedDate || x.date);
-        if(isNaN(t) || t < cutoff) continue;
-        if(!TARGET_FIRMS.has(String(x.analystCompany || '').toLowerCase())) continue;
-        if(typeof x.priceTarget === 'number' && x.priceTarget > 0) vals.push(x.priceTarget);
-      }
-      return vals.length ? { avg: round2(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length } : { err: 'no recent (firms)' };
-    }
-    const r = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
-    if(!r.ok) return { err: 'http ' + r.status };
-    const arr = await r.json();
-    const d = Array.isArray(arr) ? arr[0] : arr;
-    if(!d) return { err: 'no data' };
-    if(typeof d.lastQuarterAvgPriceTarget === 'number' && d.lastQuarterAvgPriceTarget > 0)
-      return { avg: round2(d.lastQuarterAvgPriceTarget), count: d.lastQuarter ?? d.lastQuarterCount ?? 0 };
-    if(typeof d.lastMonthAvgPriceTarget === 'number' && d.lastMonthAvgPriceTarget > 0)
-      return { avg: round2(d.lastMonthAvgPriceTarget), count: d.lastMonth ?? d.lastMonthCount ?? 0 };
-    return { err: 'no recent target' };
-  }catch(e){ return { err: 'exc ' + String(e.message || '').slice(0, 24) }; }
-}
 // Полная картина по таргету из FMP price-target-summary: all-time консенсус
 // ПЛЮС свежий срез (последний квартал, иначе последний месяц) — чтобы устаревшее
 // среднее за всё время можно было сверить с актуальными таргетами.
@@ -2517,8 +2442,14 @@ async function saveBak(env, userId, ap){
     return !!(r && r.ok);
   }catch(e){ return false; }
 }
+// Строка ledger_state ВЛАДЕЛЬЦА (env OWNER_USER_ID = Supabase user id администратора).
+// Раньше бралась «последняя обновлённая» строка любого пользователя — семейный/чужой
+// аккаунт, сохранившись, становился портфелем записи для cron и admin-роутов.
+// Без OWNER_USER_ID — падаем с понятной ошибкой, а не берём чужую строку.
 async function loadRow(env){
-  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&order=updated_at.desc&limit=1`,
+  const uid = String(env.OWNER_USER_ID || '').trim();
+  if(!uid) throw new Error('OWNER_USER_ID не задан в переменных воркера (Supabase user id владельца) — см. шапку файла');
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?select=user_id,data&user_id=eq.${encodeURIComponent(uid)}&limit=1`,
     { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
   if(!r.ok) throw new Error('Supabase read failed: ' + r.status);
   const row = (await r.json())?.[0];
@@ -2679,8 +2610,10 @@ export default {
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
   // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
-  // GET ?action=chart            → send the CHART_TICKER chart photo to Telegram now (manual test).
-  // GET with no query             → run the alert report now (manual test).
+  // Публичные батч-роуты (?symbols/?targets/?calendar/?prepost/?levels) ограничены SYM_LIMITS (413 при превышении).
+  // Админ-роуты (?action=chart / targets / ydebug и все AI-эндпоинты) требуют заголовок
+  //   Authorization: Bearer <Supabase access token> — «manual test» из адресной строки не работает.
+  // GET without query             → текст-подсказка с worker-build (ручного прогона алертов давно нет).
   async fetch(request, env, ctx){
     const url = new URL(request.url);
     if(request.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -2690,9 +2623,15 @@ export default {
         const loc = new Intl.DateTimeFormat('en-GB', { timeZone: MARKET_HOURS[c].tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
-      return txt(`worker-build ${WORKER_BUILD}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature)\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature)\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
+      // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
+      // Нужен заголовок Authorization: Bearer <Supabase access token> (как у AI-эндпоинтов);
+      // из адресной строки больше не работает. ?debug=NVDA → сырой ответ FMP.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return txt('403 ' + adm.error, 403);
       const dbg = url.searchParams.get('debug');   // ?action=targets&debug=NVDA → raw FMP reply
       if(dbg){
         const fr = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(dbg)}&apikey=${env.FMP_KEY}`);
@@ -2932,7 +2871,10 @@ export default {
       ]);
     }
     if(url.searchParams.get('action') === 'ydebug'){
-      // Step-by-step Yahoo auth diagnostics: ?action=ydebug&sym=RHM.DE
+      // Админ-роут: пошаговая диагностика Yahoo-авторизации (?action=ydebug&sym=RHM.DE).
+      // Нужен заголовок Authorization: Bearer <Supabase access token>; из адресной строки не работает.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return txt('403 ' + adm.error, 403);
       const sym = (url.searchParams.get('sym') || 'RHM.DE').trim();
       const lines = [];
       _yAuth = null;   // force a fresh auth round
@@ -2974,7 +2916,9 @@ export default {
     }
     if(url.searchParams.has('calendar')){
       // Batch: next earnings date + dividend info per symbol → «Дивиденды и отчёты».
-      const syms = url.searchParams.get('calendar').split(',').map(s => s.trim()).filter(Boolean);
+      const p = parseSyms(url.searchParams.get('calendar'), SYM_LIMITS.calendar);
+      if(p.over) return tooMany(p, SYM_LIMITS.calendar);
+      const syms = p.syms;
       const out = {};
       await Promise.all(syms.map(async s => { out[s] = await calendarInfo(s); }));
       return json(out);
@@ -2988,7 +2932,9 @@ export default {
       // Batch: analyst consensus target + valuation extras (P/E, P/S, dividend
       // yield) in ONE quoteSummary call per symbol → fills «Аналит. таргет» and
       // the optional list columns on the dashboard.
-      const syms = url.searchParams.get('targets').split(',').map(s => s.trim()).filter(Boolean);
+      const p = parseSyms(url.searchParams.get('targets'), SYM_LIMITS.targets);
+      if(p.over) return tooMany(p, SYM_LIMITS.targets);
+      const syms = p.syms;
       const out = {};
       await Promise.all(syms.map(async s => {
         // Основной таргет — FMP (all-time консенсус + свежий срез за квартал/месяц);
@@ -3035,7 +2981,9 @@ export default {
     }
     if(url.searchParams.has('levels')){
       // S/R уровни индексов (pivots + свинги). Кэш 10 мин; публичные данные.
-      const syms = url.searchParams.get('levels').split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
+      const p = parseSyms(url.searchParams.get('levels'), SYM_LIMITS.levels);
+      if(p.over) return tooMany(p, SYM_LIMITS.levels);
+      const syms = p.syms;
       const out = {};
       for(const s of syms){ try{ const lv = await levelsFor(s); if(lv) out[s] = lv; }catch(e){} }
       return json(out);
@@ -3054,19 +3002,26 @@ export default {
     if(url.searchParams.has('prepost')){
       // Pre/post-market: одна бумага (карточка) или несколько через запятую
       // (сводка портфеля) → карта {sym: {state,pre,post,...}}.
-      const syms = url.searchParams.get('prepost').split(',').map(s => s.trim()).filter(Boolean);
+      const p = parseSyms(url.searchParams.get('prepost'), SYM_LIMITS.prepost);
+      if(p.over) return tooMany(p, SYM_LIMITS.prepost);
+      const syms = p.syms;
       if(syms.length <= 1) return json(await prePost(syms[0] || '') || {});
       const out = {};
       await Promise.all(syms.map(async s => { out[s] = await prePost(s); }));
       return json(out);
     }
     if(url.searchParams.get('action') === 'chart'){
-      // Manual test: send the CHART_TICKER chart photo to Telegram now.
+      // Админ-роут: отправить график CHART_TICKER из портфеля владельца в Telegram сейчас.
+      // Нужен заголовок Authorization: Bearer <Supabase access token>; из адресной строки не работает.
+      const adm = await requireAdmin(request, env);
+      if(!adm.ok) return txt('403 ' + adm.error, 403);
       try{ const ok = await sendChartMU(env); return txt(ok ? `Chart sent ✓ (${CHART_TICKER})` : `No chart (${CHART_TICKER} not in portfolio or render failed)`); }
       catch(e){ return txt('Error: ' + e.message, 500); }
     }
     if(url.searchParams.has('symbols')){
-      const syms = url.searchParams.get('symbols').split(',').map(s => s.trim()).filter(Boolean);
+      const p = parseSyms(url.searchParams.get('symbols'), SYM_LIMITS.symbols);
+      if(p.over) return tooMany(p, SYM_LIMITS.symbols);
+      const syms = p.syms;
       const out = {};
       await Promise.all(syms.map(async s => {
         const q = await yahoo(s);

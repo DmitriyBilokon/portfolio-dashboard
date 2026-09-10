@@ -9,7 +9,7 @@
 - **Cloudflare Worker** `telegram-notify.js`: live-цены/уровни (Yahoo), фундаментал (FMP→Yahoo), все AI-эндпоинты (Claude + web_search), Telegram-алерты, cron (AI-портфель + авто-анализ).
 
 ## Рабочий процесс (ВАЖНО)
-- **Коммитить/пушить только по явной просьбе.** Это solo-проект, коммиты идут в `main`.
+- **Коммиты:** в сессиях Implementation редизайна (`plans/redesign-integration.md`, S1–S8) — один коммит в `main` в конце сессии после зелёных `bash tests/run.sh` (решение пользователя 2026-09-10). В остальных случаях коммитить только по явной просьбе. **Push — всегда только по явной просьбе.** Это solo-проект, коммиты идут в `main`.
 - **Тесты:** `bash tests/run.sh` (osascript/JSC, конкатенирует `app*.js` + кейсы; есть и worker-suite). Pre-commit hook (`.githooks/pre-commit`) сам гоняет тесты и **авто-проставляет `?v=<хэш>`** ассетам в `index.html` — вручную версии не трогать.
 - Чистые функции покрывать тестами в `tests/cases-app.js` (`__eq`/`__ok`/`grp`).
 - Синтаксис без браузера: per-file `new Function(s)` через JSC (для воркера заменить `export default` перед проверкой).

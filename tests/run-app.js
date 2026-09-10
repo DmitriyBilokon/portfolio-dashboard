@@ -24,7 +24,9 @@ var sbStub = {
     select:function(){ return { eq:function(){ return { maybeSingle:function(){return Promise.resolve({data:null,error:null});} }; },
       limit:function(){return Promise.resolve({data:[],error:null});},
       order:function(){return {limit:function(){return Promise.resolve({data:[],error:null});}};} }; },
-    upsert:function(){return Promise.resolve({error:null});}, insert:function(){return Promise.resolve({error:null});} }; },
+    // upsert chainable: .upsert(...).select(...) — pushState читает вернувшийся rev
+    upsert:function(){ var p=Promise.resolve({data:[],error:null}); p.select=function(){return Promise.resolve({data:[],error:null});}; return p; },
+    insert:function(){return Promise.resolve({error:null});} }; },
   channel:function(){ var c={on:function(){return c;},subscribe:function(){return c;}}; return c; },
   removeChannel:noop, rpc:function(){return Promise.resolve({data:null,error:null});}
 };

@@ -559,15 +559,11 @@ function planDel(id){ PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==id); if(planE
 function planDone(id,v){ const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)return; r.done=!!(+v); if(r.done)r.hitAt=0; scheduleSave();renderPF3(); }
 function pf3SetYears(y){pf3State.years=y;renderPF3()}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
-// ОДНОЙ вкладки. Batched in chunks of 20 — the worker makes 2 Yahoo calls per
-// symbol and Cloudflare caps subrequests; все чанки параллельно.
+// ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —
+// 0 обновлено, без ошибки.
 async function pf3FetchPrices(d,key){
   const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
-  const chunks=[];
-  // По 15: воркер на тикер делает ~3 подзапроса (chart 1y + chart 1d + weekly), лимит Cloudflare ~50.
-  for(let i=0;i<syms.length;i+=15)chunks.push(syms.slice(i,i+15).join(','));
-  const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
-  const prices=Object.assign({},...parts.filter(Boolean));
+  let prices={}; try{ prices=await fetchQuotes(syms); }catch(e){ prices={}; }
   const {s50,s100,s200}=smaIdx(d);
   const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
   let updated=0;
@@ -736,9 +732,15 @@ async function pfSumPPLoad(){
   try{
     const syms=[...new Set(d.rows.map(r=>(parseFloat(r[6])||0)>0?exSymbol(r[2],r[8]):null).filter(Boolean))];
     if(syms.length){
-      const j=await fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(syms.join(','))).then(r=>r.json()).catch(()=>null);
+      // Чанками по 40 (лимит ?prepost= воркера, 1 подзапрос/символ); чанк с {error} (413 и т.п.) пропускаем.
+      // ВАЖНО: на ОДИН символ воркер отдаёт объект бумаги, а не карту {sym:{…}} — нормализуем
+      // прямо в чанке, иначе хвостовой чанк из 1 символа (41-я позиция) сливал бы свои поля в PF_PP.
+      const parts=await Promise.all(chunkList(syms,40).map(c=>fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(c.join(','))).then(r=>r.json())
+        .then(j=>(c.length===1&&j&&typeof j==='object'&&!j.error)?{[c[0]]:j}:j).catch(()=>null)));
+      const good=parts.filter(p=>p&&typeof p==='object'&&!p.error);
+      const j=good.length?Object.assign({},...good):null;
       if(j&&typeof j==='object'){
-        if(syms.length===1)PF_PP[syms[0]]=j; else Object.assign(PF_PP,j);   // 1 символ → объект бумаги, не карта
+        Object.assign(PF_PP,j);
         const el=document.getElementById('pfSumPP');
         if(el&&curIdx===key)el.innerHTML=pfSumPPInner(DATA[key]);
       }
@@ -843,51 +845,35 @@ async function refreshLivePrices(){
   let updated = 0, manual = 0;
   manualPriceRows.clear();
 
-  if(PRICE_PROXY){
-    // One batched request → covers US + Nordic/EU via Yahoo.
-    const symbols = [...new Set(d.rows.map(r => exSymbol(r[2], rowCcy(r))).filter(Boolean))];
-    let prices = {};
-    try{
-      const r = await fetch(PRICE_PROXY + '?symbols=' + encodeURIComponent(symbols.join(',')));
-      if(!r.ok) throw new Error('proxy ' + r.status);
-      prices = await r.json();
-    }catch(e){
-      if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
-      toast('Прокси цен недоступен — проверьте PRICE_PROXY', true); return;
-    }
-    d.rows.forEach((row, i) => {
-      const p = prices[exSymbol(row[2], rowCcy(row))];
-      const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
-      if(price != null){
-        if(priceC>=0) row[priceC] = price;
-        if(p && typeof p === 'object'){
-          if(dayC>=0 && typeof p.pct === 'number') row[dayC] = Math.round(p.pct * 100) / 100;   // 1д %
-          if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
-          if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
-          // Store both daily (1Y) and weekly (3Y) SMA sets; show the one matching this stock's toggle.
-          const tk = String(row[2] || ''), mode = (SMA_TF[tk] && SMA_TF[tk].mode) || '1Y';
-          SMA_TF[tk] = { mode,
-            d: [p.sma50 ?? null, p.sma100 ?? null, p.sma200 ?? null],
-            w: [p.sma50w ?? null, p.sma100w ?? null, p.sma200w ?? null] };
-          applySmaTF(d, i);
-        }
-        updated++;
-      } else { manual++; manualPriceRows.add(i); }
-    });
-  } else {
-    // Fallback: Finnhub free tier (US only).
-    if(!finnhubKey){
-      const k = prompt('Вставьте Finnhub API ключ (бесплатно), или задайте PRICE_PROXY для полного покрытия:');
-      if(!k){ if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; } return; }
-      finnhubKey = k.trim(); scheduleSave();
-    }
-    for(let i = 0; i < d.rows.length; i++){
-      const row = d.rows[i];
-      let q = null;
-      try{ q = await fetchFinnhub(exSymbol(row[2], rowCcy(row))); }catch(e){ q = null; }
-      if(q != null){ if(priceC>=0) row[priceC] = q.price; if(dayC>=0 && typeof q.pct === 'number') row[dayC] = Math.round(q.pct * 100) / 100; updated++; } else { manual++; manualPriceRows.add(i); }
-    }
+  // Чанками через fetchQuotes (US + Nordic/EU via Yahoo) — большие вкладки (S&P 500)
+  // не упираются в лимит подзапросов воркера.
+  const symbols = [...new Set(d.rows.map(r => exSymbol(r[2], rowCcy(r))).filter(Boolean))];
+  let prices = {};
+  try{
+    prices = await fetchQuotes(symbols);
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
+    toast('Прокси цен недоступен — проверьте PRICE_PROXY', true); return;
   }
+  d.rows.forEach((row, i) => {
+    const p = prices[exSymbol(row[2], rowCcy(row))];
+    const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
+    if(price != null){
+      if(priceC>=0) row[priceC] = price;
+      if(p && typeof p === 'object'){
+        if(dayC>=0 && typeof p.pct === 'number') row[dayC] = Math.round(p.pct * 100) / 100;   // 1д %
+        if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
+        if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
+        // Store both daily (1Y) and weekly (3Y) SMA sets; show the one matching this stock's toggle.
+        const tk = String(row[2] || ''), mode = (SMA_TF[tk] && SMA_TF[tk].mode) || '1Y';
+        SMA_TF[tk] = { mode,
+          d: [p.sma50 ?? null, p.sma100 ?? null, p.sma200 ?? null],
+          w: [p.sma50w ?? null, p.sma100w ?? null, p.sma200w ?? null] };
+        applySmaTF(d, i);
+      }
+      updated++;
+    } else { manual++; manualPriceRows.add(i); }
+  });
 
   renderTable(); scheduleSave();
   if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }

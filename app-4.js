@@ -1,14 +1,13 @@
 // ── 📈 Лайв-рынки на Home: фьючерсы + сырьё + мировые индексы ──
 // Фьючерсы (=F) трейдятся ~23ч → живой барометр риска; спот-индексы (^…) —
-// в часы своей биржи. Всё тянем одним ?symbols= (yahoo: цена + дневное изм. %).
+// в часы своей биржи. Всё тянем через fetchQuotes (?symbols=; yahoo: цена + дневное изм. %).
 const HOME_MKT_FUT=[['ES=F','S&P 500','S&P 500'],['NQ=F','Nasdaq 100','Nasdaq 100'],['YM=F','Dow Jones','Dow Jones'],['RTY=F','Russell 2000','Russell 2000'],['GC=F','Золото','Gold'],['CL=F','Нефть WTI','WTI Oil'],['^VIX','VIX','VIX']];
 const HOME_MKT_IDX=[['^OMX','OMXS30','OMXS30'],['^GDAXI','DAX','DAX'],['^STOXX50E','Euro Stoxx 50','Euro Stoxx 50'],['^FCHI','CAC 40','CAC 40'],['^FTSE','FTSE 100','FTSE 100'],['^N225','Nikkei 225','Nikkei 225']];
 let HOME_FUT={},_homeFutTimer=null,_homeFutLoading=false,_homeFutAt=0;
 async function homeLoadFutures(){
   if(_homeFutLoading)return;_homeFutLoading=true;
   try{
-    const syms=HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0]).join(',');
-    const j=await fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(syms)).then(r=>r.json()).catch(()=>null);
+    const j=await fetchQuotes(HOME_MKT_FUT.concat(HOME_MKT_IDX).map(x=>x[0])).catch(()=>null);
     if(j&&typeof j==='object'){HOME_FUT=j;_homeFutAt=Date.now();const el=document.getElementById('homeFutWrap');if(el&&curIdx===HOME_KEY)el.innerHTML=homeMktInner();const be=document.getElementById('homeBaroWrap');if(be&&curIdx===HOME_KEY)be.innerHTML=homeBaroInner();}
   }catch(e){}
   _homeFutLoading=false;

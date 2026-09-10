@@ -1,0 +1,1047 @@
+[
+ {
+  "key": "terminal",
+  "name": "DESK — терминал торговых решений (лонг · шорт · свинг)",
+  "thesis": "Сердце приложения — не портфель и не вкладки индексов, а ОДНА таблица-скринер по всей вселенной (~394 уникальных тикера из 9 индексных вкладок + позиции Портфель 3.0/Anna/Sergei/AI), где каждая строка — это уже готовый план сделки: сторона (▲ лонг / ▼ шорт / ○ ждать), вход, стоп, цель, R/R, дистанция до входа, размер позиции по риску. Всё, что сегодня разбросано по HOME-виджетам, «Уровням покупки», «Сценариям», «Плану», «Симуляции» и пяти дублирующим движкам, сводится к трём чистым функциям (sigFrame → sigSetup → sigScore) и одной сущности TradePlan. Детали открываются в правой панели без перехода, график показывает свечи + объём + линии входа/стопа/цели и маркеры моих сделок. Телефон отвечает на один вопрос «что делать сегодня», десктоп — «что искать и где входить». Состояние сигнала читается формой (▲▼○◆, сплошная/пунктир/точки), цвет только подтверждает. Плотно, моноширинно, без карточек и градиентов.",
+  "ia": [
+   {
+    "screen": "1. Сегодня (очередь действий)",
+    "job": "Что мне нужно сделать сегодня: где вход дошёл до лимита, где поднять стоп, где отчёт, какие новые сетапы появились за ночь?",
+    "blocks": [
+     "Лента рынка в одну строку: фьючерсы ES/NQ, OMXS30/DAX, барометр (homeBarometer сжат до числа 0–100 и слова risk-on/off), VIX",
+     "ДЕЙСТВОВАТЬ: планы со статусом armed/open, у которых сработало условие (вход ≤2% / стоп пробит / цель достигнута / трейлинг поднялся) — из planTick()",
+     "ПОЗИЦИИ ПОД РИСКОМ: held-позиции с дистанцией до стопа ≤5%, без стопа (⚠), отчёт ≤5 дней (pf3Earnings)",
+     "НОВЫЕ СЕТАПЫ: топ-3 лонг и топ-2 шорт по sigScore со state=ready, появившиеся с последнего визита (diff по дате frame)",
+     "Секторная строка (sectHTML сжат до 11 чипов с 1д/1н %) — свёрнута по умолчанию"
+    ],
+    "wireframe": "┌ СЕГОДНЯ · ср 9 сен · 09:31 ────────────────────────────────────────────────────┐\n│ ES +0.4  NQ +0.7  OMXS30 2612 +0.2  DAX −0.1 │ барометр risk-on 62 │ VIX 15.8   │\n├ ДЕЙСТВОВАТЬ (3) ────────────────────────────────────────────────────────────────┤\n│ ▲ MU    ВХОД  лимит 118.40 · цена 119.10 · стоп 111.20 · цель 131.00 · R/R 1.9  │\n│ ◆ NVDA  СТОП  трейлинг поднят 168.00 → 171.50 · позиция +2.1R                    │\n│ ▼ EQT   ШОРТ  у сопротивления 42.90 · RSI 74 · стоп 44.70 · цель 38.60 · R/R 2.4 │\n├ ПОЗИЦИИ ПОД РИСКОМ ─────────────────────────────────────────────────────────────┤\n│ AZN    1718  до стопа −4.1% (1648)     │ INVE B  320.15  отчёт через 4 дня        │\n├ НОВЫЕ СЕТАПЫ · лонг 5 · шорт 2 ───────────────────────────────────────── все › ┤\n│ ▲ ASML  у SMA50 −0.8% · R/R 2.1  │ ▲ SEB A  разворот · R/R 1.7  │ ▼ TSLA  2.0    │\n└─────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Это и есть главный мобильный экран: лента рынка одной прокручиваемой строкой, затем список решений (одна строка = тикер · глиф стороны · действие · цена/уровень), тап открывает инспектор на весь экран; секторы и новые сетапы свёрнуты."
+   },
+   {
+    "screen": "2. Скринер (сердце)",
+    "job": "Что добавить в портфель (лонг) и что шортить/продавать прямо сейчас — по всей вселенной, с фильтрами по фазе, R/R, дистанции до входа, betyg и стороне?",
+    "blocks": [
+     "Строка фильтров-чипов: поиск (/), сторона L/S/все, фаза (9 фаз pf3Criterion), R/R ≥, Δвход ≤, betyg ≥, рынок (SE/US/EU/NO), в портфеле (3.0/Anna/Sergei/AI/нет), отчёт ≤ n дн, shortable",
+     "Сохранённые виды: «Лонг у входа» (side=long, state=ready, rr≥1.5), «Шорт перегрев» (phase∈{heat,down}, side=short), «Мои — проверить стоп» (held, distStop≤5% или стоп пуст), + свои",
+     "Таблица (виртуализированная, 28px/строка): Тикер · Цена · 1д · Фаза · L/S · Вход · Δвход · Стоп · Цель · R/R · Балл; доп. колонки из PF3_XDEF (ATR% · RSI · betyg · апсайд · P/E · β · объём× · AI-вердикт · инсайдеры) через «колонки»",
+     "Инспектор справа (экран 3) открывается по Enter/клику, не покидая таблицу; j/k листают выбранную строку и синхронно перерисовывают инспектор",
+     "Нижняя строка-подсказка клавиш + счётчик «394 → 27 бумаг»"
+    ],
+    "wireframe": "┌ СКРИНЕР  [/ поиск]  сторона [L][S][все]  фаза ▾  R/R ≥1.5  Δвход ≤3%  betyg ≥C ─┐\n│ вид: Лонг у входа · Шорт перегрев · Мои позиции · + сохранить      394 → 27 бумаг │\n├───────┬────────┬──────┬──────────┬───┬────────┬───────┬────────┬────────┬────┬────┤\n│ Тикер │  Цена  │  1д  │ Фаза     │L/S│  Вход  │ Δвход │  Стоп  │  Цель  │R/R │Балл│\n├───────┼────────┼──────┼──────────┼───┼────────┼───────┼────────┼────────┼────┼────┤\n│▸MU    │ 119.10 │ +0.6 │ аптренд  │ ▲ │ 118.40 │ −0.6% │ 111.20 │ 131.00 │1.9 │ 78 │\n│ NVDA  │ 176.30 │ +1.2 │ импульс  │ ▲ │ 172.00 │ −2.4% │ 165.50 │ 186.00 │2.2 │ 74 │\n│ AZN   │   1718 │ +0.8 │ коррекц. │ ▲ │   1676 │ −2.4% │   1648 │   1790 │4.1 │ 66 │\n│ INVE B│ 320.15 │  0.0 │ боковик  │ ○ │ 305.50 │ −4.6% │ 296.00 │ 334.00 │3.0 │ 58 │\n│ EQT   │  42.60 │ +3.1 │ перегрев │ ▼ │  42.90 │ +0.7% │  44.70 │  38.60 │2.4 │ 71 │\n│ TSLA  │ 341.00 │ +4.8 │ перегрев │ ▼ │ 348.00 │ +2.0% │ 362.00 │ 318.00 │2.1 │ 63 │\n├───────┴────────┴──────┴──────────┴───┴────────┴───────┴────────┴────────┴────┴────┤\n│ j/k выбор · Enter инспектор · l/s сторона · a в план · f фильтры · ? клавиши      │\n└───────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Те же строки, но 4 колонки (Тикер+фаза · Цена+1д · L/S+Δвход · R/R), фильтры — нижний лист (bottom sheet) по кнопке «фильтры», сохранённые виды — горизонтальные чипы над списком."
+   },
+   {
+    "screen": "3. Инспектор (правая панель / экран на мобиле)",
+    "job": "Это сделка или нет? Где именно вход, где стоп, где цель, сколько акций на мой риск — и почему движок так считает?",
+    "blocks": [
+     "Заголовок: тикер · компания · биржа · валюта · фаза · глиф стороны и балл · betyg-буква · переключатель [L|S] (клавиши l/s) · ✕",
+     "Строка метрик: цена, 1д, ATR (абс. и %), RSI, SMA50/200 с ▲▼ положением, дата отчёта",
+     "График (chart_spec): свечи, объём, SMA, зоны S/R, линии входа/стопа/цели, R-боксы, маркеры моих сделок/инсайдеров/отчётов, RSI-панель; 1Г/3Г",
+     "ПЛАН СДЕЛКИ: вход (тип лимит/рынок, к какому уровню), стоп (%, в ATR), цель1/цель2, риск в kr → количество акций → сумма и % капитала, R/R, статус (✓ готов / слабый / ждать / невалидно) и флаги (широкий стоп, отчёт, устаревший таргет, squeeze); кнопки «В план», «Открыть в <портфель>» (= pfTrade + link), «Бумажная»; трейлинг ▾",
+     "ПОЧЕМУ: три строки Ф/Т/Р с баллами и причинами из sigScore (наследие pf3Reco), горизонты now/mid/long одним рядом глифов",
+     "СОБЫТИЯ: отчёт + implied move (?options=), инсайдеры за 30 дн (INSIDER), X-dag/дивиденд, новости с тональностью (pf3NewsLiveHTML) — свёрнуто",
+     "ФУНДАМЕНТАЛ: буква betyg и 5 столпов одной строкой; «подробно» раскрывает pf3Health/valHTML/targetsBlockHTML",
+     "AI (admin): последний вердикт и давность, кнопки разбор/чат/цикл-монитор (cycleMonitorHTML для MU) — свёрнуто, по требованию"
+    ],
+    "wireframe": "┌ MU · Micron · NASDAQ · USD ──────────── аптренд ▲ ЛОНГ 78 · betyg B ── [L|S] ✕ ┐\n│ 119.10 +0.6%  ATR 3.9 (3.3%)  RSI 58  SMA50 116.2 ▲  SMA200 98.4 ▲  отчёт 24 сен │\n├ ГРАФИК  1Г ▸ 3Г ────────────────────────────────────────────────────────────────┤\n│ 135 ┤                                        ┈┈┈┈┈┈┈ цель 131.00 ┈┈┈┈┈┈┈┈┈┈┈┈┈┈ │\n│ 125 ┤            ▁▂▃▅▆▇█▇▆▅▇█▇▆▅▆▇█ ▌                                            │\n│ 118 ┤ ▃▄▅▆▅▄▃▄▅▆▇   ─── SMA50 ───    ▌═══ вход 118.40 ═══════════════ ● сейчас │\n│ 111 ┤          ░░░░ зона S ░░░░      ▌╌╌╌ стоп 111.20 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ │\n│ vol ┤ ▁▂▁▃▂▁▂▅▂▁▃▂▁▂▃▁▂▄▂▁▂█▃▂▁▂▃▂▁   ▲ мои покупки  ✚ инсайдер  ┆ отчёт        │\n│ RSI ┤ ──────────────70──────────── ╱╲╱╲──────30──────────                       │\n├ ПЛАН СДЕЛКИ · лонг · свинг ─────────────────────────────────────────────────────┤\n│ Вход  118.40 лимит (SMA50 −0.6%)   Стоп 111.20 (−6.1% · 1.8 ATR)   Цель 131.00   │\n│ Риск  1000 kr → 14 акц. (≈15 900 kr · 4.2% капитала)          R/R 1.9  ✓ готов  │\n│ [В план]  [Открыть в Портфель 3.0]  [Бумажная]             трейлинг 2 ATR ▾     │\n├ ПОЧЕМУ ─────────────────────────────────────────────────────────────────────────┤\n│ Ф +2.5  апсайд +18% к таргету · ROE 32% · P/E 19 ≤ сектора                       │\n│ Т +2.0  аптренд · у SMA50 · объём 1.3× · новости +2                              │\n│ Р −0.5  β 1.6 · отчёт через 11 дней                                              │\n├ СОБЫТИЯ · отчёт 24 сен (implied ±8%) · инсайдеры 2 покупки/30 дн · X-dag — ─────┤\n├ ФУНДАМЕНТАЛ B · рост A · маржа B · долг A · кэш B · оценка C ───────── подробно ┤\n├ AI ▸ вердикт 2 дн назад: покупать · разбор · чат ───────────────────────────────┤\n└─────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Полноэкранный push-экран: метрики → график (RSI-панель свёрнута, значения в легенде) → план сделки с крупными кнопками → «почему» → остальное аккордеоном; свайп вправо = назад к списку."
+   },
+   {
+    "screen": "4. Позиции и планы",
+    "job": "Что я держу, сколько риска открыто, где стопы, что стоит в очереди на вход — по каждому портфелю (3.0 / Anna / Sergei / AI)?",
+    "blocks": [
+     "Шапка: селектор портфеля, капитал, кэш %, день %; строка риска: Σ риск открытых (kr и % капитала), у стопа, цель достигнута, отчёты ≤5д",
+     "ДЕРЖУ (лонг, из r[]): Тикер · Кол · Средняя (genomsnitt r[9]) · Цена · P/L % · Доля · Стоп · до стопа · R · Фаза → клик = инспектор; строки без стопа помечены ⚠ и предлагают стоп из sigSetup",
+     "ШОРТ / СВИНГ (из plans, не r[]): те же колонки, P/L для шорта = (вход − цена)·кол·FX − комиссии",
+     "В ПЛАНЕ: armed/idea/paper планы с Δвход, статусом и флагом TG-алерта; кнопки открыть/отменить",
+     "Свёрнутые ящики: структура (pf3GroupedHTML/pf3Diversification), статистика (pfPerf/pfDeepCmp/pfRisk/cashDrag/fxHedge), налоги K4 (pfTaxHTML), дивиденды и отчёты (pf3CalendarHTML), AI-разбор портфеля (pf3AiHTML/pf3PropHTML/pf3AnalysisHTML)"
+    ],
+    "wireframe": "┌ ПОЗИЦИИ  [Портфель 3.0 ▾]  капитал 378 400 kr · кэш 12% · день +0.8% ───────────┐\n│ риск открытых 2100 kr (0.6%) · у стопа 1 · цель достигнута 0 · отчёты ≤5д 1      │\n├ ДЕРЖУ · лонг ───────────────────────────────────────────────────────────────────┤\n│ Тикер │ Кол │ Средн.│  Цена  │  P/L │ Доля │  Стоп  │ до стопа │  R   │ Фаза    │\n│ MU    │  40 │  92.10│ 119.10 │ +29% │ 12%  │ 111.20 │  −6.6%   │ +3.4 │ аптренд │\n│ NVDA  │  30 │ 140.00│ 176.30 │ +26% │ 14%  │ 171.50 │  −2.7% ! │ +2.1 │ импульс │\n│ AZN   │ 120 │   1590│   1718 │  +8% │ 22%  │   1648 │  −4.1%   │ +1.0 │ коррекц.│\n│ INVE B│ 200 │ 289.00│ 320.15 │ +11% │ 17%  │    —   │ нет ⚠    │   —  │ боковик │\n├ ШОРТ / СВИНГ · отдельный учёт, вне r[] ─────────────────────────────────────────┤\n│ EQT ▼ │ 300 │  42.90│  42.60 │ +0.7%│  —   │  44.70 │  +4.9%   │ +0.2 │ перегрев│\n├ В ПЛАНЕ (3) ────────────────────────────────────────────────────────────────────┤\n│ ▲ ASML   вход 640 · стоп 612 · цель 702 · Δвход −1.1% · взведён · TG-алерт вкл   │\n│ ▲ SEB A  вход 158 · стоп 151 · цель 172 · Δвход −3.9% · идея                     │\n│ ▼ TSLA   вход 348 · стоп 362 · цель 318 · Δвход +2.0% · взведён                  │\n├ структура ▸  статистика ▸  налоги K4 (genomsnitt) ▸  дивиденды ▸  AI-разбор ▸ ──┤\n└─────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Список позиций из 3 колонок (Тикер+фаза · P/L · до стопа) с цветной левой кромкой по состоянию стопа; планы — отдельная вкладка-чип; ящики статистики/налогов открываются полноэкранно."
+   },
+   {
+    "screen": "5. Журнал и проверка",
+    "job": "Работает ли мой процесс: какие сетапы дают положительный R, где я нарушаю план, насколько точны движок и AI?",
+    "blocks": [
+     "Сводка: сделок, win-rate, средний R, profit factor, макс. серия убытков — из закрытых planов (r_mult) и PF_TRADES",
+     "Распределение R (гистограмма −3R…+5R) — единственный «график» экрана, inline-SVG",
+     "По типу сетапа: btRuleStats + фактические сделки, сгруппированные по plan.setup (bounceSup/breakUp/rejectRes/overheat/manual): сделок · hit · ср. R · вес (btCalibrate)",
+     "СДЕЛКИ: дата · тикер · L/S · сетап · вход · выход · R · P/L kr · заметка (тезис); импорт CSV (pfImportTradesCSV)",
+     "AI TRACK RECORD: aiTrackRecord/aiBenchmarks сжаты в одну строку + ссылка на журнал AI-разборов (stkLogHTML)",
+     "Кнопки: калибровать веса (btCalibrate → btApplyCalib), экспорт CSV"
+    ],
+    "wireframe": "┌ ЖУРНАЛ  [все портфели ▾]  период 2026 ▾ ─────────────────────────────────────────┐\n│ сделок 42 · win 57% · ср. R +0.62 · profit factor 1.9 · макс. серия −3           │\n├ РАСПРЕДЕЛЕНИЕ R ────────────────────────────────────────────────────────────────┤\n│ −3R ▁   −2R ▂   −1R █████   0 ███   +1R ██████   +2R ████   +3R ██   +5R ▁       │\n├ ПО ТИПУ СЕТАПА · бэктест 2y, validation ────────────────────────────────────────┤\n│ Сетап         │ сделок │ hit │ ср. R │ вес │ Сетап        │ сделок │ hit │ ср. R │\n│ отскок от S ▲ │   61   │ 58% │ +0.7  │ 1.0 │ пробой SMA50 │   44   │ 52% │ +0.4  │\n│ отказ от R ▼  │   29   │ 55% │ +0.6  │ 0.8 │ перегрев ▼   │   18   │ 61% │ +0.9  │\n├ СДЕЛКИ ─────────────────────────────────────────────────────────────────────────┤\n│ дата  │ тикер │ L/S │ сетап        │ вход  │ выход  │   R  │ P/L kr │ заметка   │\n│ 02.09 │ MU    │  ▲  │ отскок от S  │ 96.20 │ 118.00 │ +3.4 │ +8 720 │ тезис DXI │\n│ 28.08 │ EQT   │  ▼  │ перегрев     │ 44.10 │  45.30 │ −1.0 │ −1 020 │ стоп      │\n├ AI TRACK RECORD · 31 вердикт · 61% верных за 60 дн · vs OMXS30 +2.3 п.п. ────────┤\n│ [калибровать веса]  [экспорт CSV]  [журнал AI-разборов ▸]                        │\n└─────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Сводка + гистограмма R + список сделок (дата · тикер · L/S · R); таблица сетапов и калибровка — только на десктопе."
+   }
+  ],
+  "navigation": "Десктоп: левая иконочная рейка 52px с 5 пунктами текстом-аббревиатурой, а не эмодзи (СЕГ · СКР · ПОЗ · ЖУР · ⚙ настройки) и цифрами 1–5 как хоткеями; портфели и индексы перестают быть вкладками верхнего уровня — это селектор в «Позиции» и чип-фильтр «рынок / в портфеле» в скринере. Шапка сжимается с 9 иконок до 3 (поиск ⌘K, тема, меню с языком/выходом/справкой/настройками доступа). Инспектор всегда справа от скринера (460px, тянется 380–620), под 1100px — выезжающий лист, на телефоне — push-экран. Клавиатура глобально: j/k — строка вверх/вниз (в любой таблице), Enter — открыть/закрепить инспектор, Esc — закрыть, / — фокус в поиск, f — фильтры, l/s — сторона плана, a — «в план», o — открыть сделку, 1–5 — экраны, ? — карта клавиш, ←→ в графике — шаг по барам. Мобиль: нижняя панель из 4 пунктов (Сегодня · Скринер · Позиции · Журнал), инспектор открывается поверх, свайп назад; «Сегодня» — стартовый экран на телефоне, «Скринер» — на десктопе (запоминается в localStorage). Двуязычие RT(ru,en) сохраняется; подписи в таблицах короткие, чтобы колонки не «плыли» при переключении языка.",
+  "chart_spec": {
+   "layers": [
+    "1. Сетка hairline 1px (--line), одна правая ценовая ось, ось времени снизу; фон = --panel, без градиентов",
+    "2. Зоны S/R: полосы sup60±0.25·ATR и res60±0.25·ATR (--neutral 8% alpha) + тонкие линии пивотов S1/S2/R1/R2 из ?levels= (--neutral 40%, точки); подпись на оси",
+    "3. SMA50 / SMA100 / SMA200 — 1px, категориальные, НЕ статусные цвета: SMA50 ink 60%, SMA100 ink 35% пунктир, SMA200 --accent 70%",
+    "4. Свечи OHLC — монохром: растущая полая (контур ink), падающая залитая ink; зелёный/красный на свечах НЕ используется, чтобы long/short-цвета остались только у плана",
+    "5. Объём — отдельная панель (v5 pane, 16% высоты): бары ink 25%, линия avgVol20; бары ≥1.5× среднего подкрашены --warning (это же условие подтверждает пробой)",
+    "6. Оверлей плана (из sigSetup или сохранённого TradePlan): вход — сплошная --accent с меткой на оси; стоп — штрих --short; цель1 — штрих --long; цель2 (аналит. таргет) — точки --long 50%; R-боксы: прямоугольник вход→стоп (--short 10%) и вход→цель1 (--long 10%) от даты плана/открытия на +20 баров (series primitive); для открытой позиции — плюс линия трейлинга",
+    "7. Маркеры: мои сделки из PF_TRADES (● buy / ○ sell с qty, ▼▲ для short/cover), исторические срабатывания движка btSignalAt (мелкие ▲▼ под/над баром, выключаемы), инсайдеры P/S (существующая агрегация из drawChart, перенесена на панель объёма как ✚/−), даты отчётов — вертикальные пунктиры, у ближайшего — полоса ±implied move из ?options=",
+    "8. Панель RSI(14) (12% высоты) с hairline 30/70 и заливкой вне полос; ATR% — только в легенде; на мобиле панель свёрнута, значения RSI/ATR остаются в легенде",
+    "9. Crosshair без магнита + тултип на все серии: дата, O/H/L/C, Δ%, объём (×avg), SMA50/100/200, RSI, ATR, расстояние до входа/стопа/цели в % и в R; легенда с тогглами серий (всегда ≥2 серии)"
+   ],
+   "entry_exit_logic": "ВХОДНЫЕ ДАННЫЕ (sigFrame): C,O,H,L,V за 2y; ATR14 = Wilder-среднее TR, TR=max(H−L,|H−Cprev|,|L−Cprev|) — заменяет atrFromCloses (средний |ΔC|, занижает ~1.4×); RSI14 (rsiFromCloses, оставляем); SMA50/100/200; sup60/res60 (60-дн. low/high как в ?symbols=), пивоты S1/S2/R1/R2 (?levels=); avgVol20, volRatio=V/avgVol20; phase = логика pf3Criterion без изменений (knife/down/corr/flat/rev/up/imp/undr/heat); upside = pf3EffUpside; earningsDays. КОНСТАНТЫ (переиспользуем): NEAR=2% (pf3SignalInfo), CORR=2.5·ATR (SCENARIO_CFG.corridorAtr), FALLBACK=1.5·ATR (atrMult), RSI_HOT=70, STOP_PAD=0.5·ATR, STOP_MIN=1·ATR, STOP_MAX=3·ATR, RR_MIN=1.5 (свинг), VOL_BREAK=1.5·avgVol20, RISK_DEFAULT=1% капитала портфеля, MAX_POS=15% капитала.\n\nЛОНГ. (1) Допуск: phase∉{knife,heat}; не (RSI>70 и C>1.15·SMA50) [btFiredAt.overheat]; earningsDays>2 или явный override. (2) Вход: S={sup60, SMA50, SMA100, SMA200, S1, S2 | ниже C}. Если ∃L*∈S с |C−L*|/L*≤2% → entry=L* (лимит), state=ready, setup=bounceSup. Иначе если phase∈{up,imp,rev} и C>res60 и V≥1.5·avgVol20 → entry=C (рынок), setup=breakUp, state=ready. Иначе L*=max(S) → entry=L*, state=wait, Δвход=(C−L*)/C·100 (как pf3SignalInfo 'wait'). Если S пусто → state=invalid («ниже всех поддержек»). (3) Стоп: stop=max{sup60, SMA50, S1 | <entry} − 0.5·ATR; клэмп entry−stop∈[1·ATR,3·ATR]; если естественный стоп >3·ATR → stop=entry−3·ATR и флаг 'wide'. (4) Цель: target1=min{R∈{res60,R1,R2,SMA выше} : entry+1·ATR<R≤entry+2.5·ATR}, иначе entry+1.5·ATR (ровно scenarioShort); target2=свежий аналит. таргет из scenarioMid если valid и >target1. (5) R/R=(target1−entry)/(entry−stop); ready при R/R≥1.5, 1.0–1.5 → weak, <1.0 → wait. (6) Размер: qty=floor(risk_kr/((entry−stop)·FX[ccy])), risk_kr по умолчанию 0.01·equity; если qty·entry·FX>0.15·equity → qty урезается, флаг 'cap'. (7) Ведение открытого лонга (planTick ежедневно по close): trail=max(stop, HHsince−2·ATR) (chandelier; k настраиваемый 2/3); при C≥target1 → действие 'scale' (продать 50%, stop→entry); 20 баров без +1R → 'review'; C<stop → 'stopped'; phase→knife или sigScore.long<35 → 'exit'.\n\nВЕРДИКТ (sigScore): long и short — два балла 0..100 (50+raw·4, как homeCompositeScore), verdict='long' если long≥65 и setupL.state=ready; 'short' если short≥65 и setupS.state=ready; 'exit' для held при C<stop / knife / long<35; 'avoid' по правилам pf3Reco (spec&&ts+rs≤−2 или total≤−4.5&&rs<0); иначе 'wait'.",
+   "short_mode": "Шорт — зеркало по тем же константам, переключается клавишей s / тогглом [L|S] в инспекторе, в скринере колонка L/S показывает лучшую сторону. Допуск: phase∈{down,heat} ИЛИ (RSI>70 и |C−res60|/res60≤2%) [btFiredAt.rejectRes]; запрещено при squeeze-риске (day≥+4% или V≥2·avgVol20 при растущем закрытии), при earningsDays≤2, и если тикер не в SHORTABLE (ручной список в настройках: по умолчанию US large-cap + OMXS30; шведские бумаги через blankning/CFD у брокера). Вход: R={res60,R1,R2,SMA выше C}; ∃R*∈R с |R*−C|/R*≤2% → entry=R* (лимит), setup=rejectRes, state=ready; или пробой вниз C<sup60 и V≥1.5·avgVol20 → entry=C, setup=breakDown; иначе entry=min(R), state=wait. Стоп: stop=min{res60, SMA50, R1 | >entry}+0.5·ATR, клэмп stop−entry∈[1·ATR,3·ATR]. Цель: target1=max{S : entry−2.5·ATR≤S<entry−1·ATR}, иначе entry−1.5·ATR; target2 — нет (аналит. таргеты вверх не используются). R/R=(entry−target1)/(stop−entry). Размер: qty=floor(risk_kr/((stop−entry)·FX)). Трейлинг: min(stop, LLsince+2·ATR). P/L=(entry−C)·qty·FX−комиссии. На графике те же слои: стоп сверху штрих --short, цель снизу штрих --long, R-боксы перевёрнуты; глиф ▼. В скринере фильтр «Шорт перегрев» = side=short, state∈{ready,weak}, сортировка по short-баллу.",
+   "data_changes": "1) ?history=SYM&range=2y|5y — вернуть {t,o,h,l,c,v}: yChart уже отдаёт indicators.quote[0].open/high/low/volume в том же ответе (telegram-notify.js:208, dailyHistory:451) — ноль дополнительных подзапросов, c[] сохраняем для совместимости; отбрасывать бары с null. 2) Новый ?ohlcv=S1,S2,… (≤10 символов за вызов, range=1y) для дозагрузки кадров в скринере; клиент режет на чанки с учётом лимита 50 подзапросов. 3) Кэш воркера: in-memory _histCache по образцу _levelsCache (10 мин) + заголовок Cache-Control: public, max-age=300; клиент: IndexedDB store ohlcv (sym→{t,o,h,l,c,v,at}, TTL 24ч) и дельта &since=<unix> — воркер возвращает только бары после since. 4) Cron-задача frames: ночью (и в 12:00 CET) воркер считает по всей вселенной сводный кадр {price,pct,atr14,atrPct,rsi14,sma50/100/200,sup60,res60,piv,avgVol20,volRatio,phase,earningsDays,asof} пакетами по 40 символов за тик (394 тикера → 10 тиков планировщика «одна задача за тик», telegram-notify.js:1846) и пишет в новую таблицу Supabase frames(sym pk, asof, json); клиент читает одним select — скринер по 394 бумагам без 394 fetch из браузера; ?symbols= остаётся для интрадей-обновления цены/pct. 5) ?earnings= включить в frames (earningsDays — guardrail шорта и флаг плана). 6) Telegram-алерты планов: cron уже тянет котировки — сверяет plans из ledger_state (entry ≤2%, стоп пробит, цель достигнута) и шлёт сообщение; браузерные Notification из planNotify остаются как дубль.",
+   "library": "lightweight-charts 5.0.x standalone, пин точной версии: https://cdn.jsdelivr.net/npm/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js (cdnjs библиотеку не хостит; текущий unpkg в loadLWC app.js:2140 медленнее и нестабильнее — меняем только URL и версию). Почему v5, а не 4.2: нативные панели (addPane) для объёма и RSI без хака scaleMargins на одной шкале; createSeriesMarkers и series primitives для R-боксов и полос implied move; addSeries(CandlestickSeries) с тем же canvas-рендером ~45KB gzip, 1260 баров × 6 серий держит 60fps на телефоне. Цена: API v5 несовместим с v4 (addLineSeries/setMarkers убраны) — но drawChart переписывается целиком в новый chart.js, старый код не мигрируем. Скрипт кэшируется sw.js для офлайн-открытия."
+  },
+  "trade_model": "r[] остаётся бухгалтерской истиной ТОЛЬКО для длинных позиций: r[6]=кол-во, r[9]=средняя по genomsnittsmetoden, r[7]=цена, r[8]=валюта — их читают recalcPF, доля, структура, pfTaxLots (K4) и семейные портфели; трогать нельзя. Поверх добавляется ОДНА новая сущность в ledger_state: plans: TradePlan[] = {id, tk, ccy, tab (ключ портфеля | null = наблюдение), side:'long'|'short', kind:'swing'|'position', status:'idea'|'armed'|'open'|'closed'|'cancelled'|'paper', entry, entryType:'limit'|'market', stop, target, target2?, trail:{type:'chandelier',k:2}|null, risk_kr, qty, notional_kr, horizonDays, setup:'bounceSup'|'breakUp'|'rejectRes'|'breakDown'|'overheat'|'manual', src:'engine'|'manual'|'ai', thesis, createdAt, updatedAt, openedAt, openPrice, closedAt, closePrice, feeNative, pl_kr, r_mult, alerts:{tg,push}, hitAt, linkedTradeIds[]}. Связь с r[]: «Открыть» лонг-план вызывает существующий pfTrade('buy') (средняя пересчитывается genomsnitt как сейчас), план получает status=open и linkedTradeIds; каждая held-позиция без плана получает неявный план kind=position со stop=null («нет стопа ⚠»), чтобы у любой бумаги в портфеле были стоп/цель/R; закрытие → pfTrade('sell') пишет plNative, план получает closePrice, pl_kr, r_mult=pl_kr/risk_kr. Шорт НИКОГДА не попадает в r[] (отрицательный qty сломал бы genomsnitt, долю, структуру и налоговые лоты): открытый шорт = план status=open side=short, живой P/L=(openPrice−price)·qty·FX−комиссии, капитал=Σлонги r[]+Σнереализованный P/L шортов+кэш; при закрытии в PF_TRADES пишется пара act:'short'/'cover' с plNative на cover — pfTaxLots считает такие пары отдельным лотом (себестоимость = цена покрытия), они показываются в K4-оценке отдельной строкой и не смешиваются со средней. Свинг-лонг в портфеле — это обычный r[]-лонг с планом kind=swing (короткий horizonDays, трейлинг). «Бумажные» сделки (бывшая SIM) = status='paper', те же поля, без r[] и без кэша. Слияние между устройствами: plans мержатся по id и updatedAt внутри applyRemoteState, а не перезаписываются массивом целиком. Миграция: PLAN_RULES{act:'buy',level}→plan{side:'long',entry:level,status:'armed',src:'manual'}; {act:'sell'}→неявный план held-позиции с target=level; SIM→status 'paper'.",
+  "signal_layer": "Новый файл signal.js (IIFE, namespace SIG, чистые функции, без DOM, покрыт tests/run.sh) — ровно три функции и один агрегатор:\\n\\n1) SIG.frame(ohlcv:{t,o,h,l,c,v}, row:r[], extras:{levels,targets,earnings,fund}) → Frame {sym, price, day, atr, atrPct, rsi, rsiW, sma50, sma100, sma200, sup, res, piv:{s1,s2,r1,r2}, avgVol, volRatio, trend, phase:{cls,rank,label}, upside, target:{eff,fresh,stale}, earningsDays, held:{qty,avg}|null}. Поглощает: pf3Criterion (переносится внутрь как phaseOf, логика 1:1), scenarioTech, atrFromCloses (замена на true ATR), rsiFromCloses/weeklyFromCloses, btFeatures (те же построители серий), smaIdx-поиск колонок, pf3EffTarget/pf3EffUpside (порог TG_STALE_PCT сохраняется).\\n\\n2) SIG.setup(frame, side:'long'|'short', opts:{riskKr, equity, fx, shortable, earningsGuard}) → Setup {side, state:'ready'|'weak'|'wait'|'invalid', setup, entry, entryType, stop, stopAtr, target, target2, rr, distToEntry, qty, notional, flags:['wide','cap','earnings','stale-target','squeeze','not-shortable'], reasons[]}. Поглощает: pf3SignalInfo (≤2% к уровню и 'wait' с дистанцией), pf3RowSignal (только данные), scenarioShort (коридор 2.5·ATR / fallback 1.5·ATR), pf3BuySection (уровни докупки), planStatus (цена vs уровень для armed-планов), правила btFiredAt как имена сетапов, плюс новое: стоп, размер позиции, трейлинг.\\n\\n3) SIG.score(frame, setupL, setupS, ctx:{betyg, news, insider, val, aiVerdict, spec}) → Score {long:0..100, short:0..100, verdict:'long'|'short'|'exit'|'wait'|'avoid', horizons:{now,mid,long}, F:[{pts,txt}], T:[], R:[], why:[≤3]}. Поглощает: pf3Reco (F/T/R-скоринг и ловушка устаревшего таргета сохраняются как есть), pf3RecoHorizons (now/mid/long), homeCompositeScore и homeBestPicks sShort/sMed/sLong (сводятся в long-балл 50+raw·4), signalScore (инсайдеры+оценка), newsSentiment, AI-вердикт как ±1. pf3Betyg остаётся отдельным столпом-входом (ctx.betyg), не сливается.\\n\\nАгрегатор: SIG.all(universe, framesFromSupabase, opts) → Row[] (мемоизация по rev ledger_state + asof кадров) — единственный источник строк для скринера, очереди «Сегодня» и таблицы позиций. planTick(plans, rows) (переименованный planCheck) — единственный обходчик планов: armed→ready-уведомление, open→trail/scale/stopped/review.\\n\\nОстаются нетронутыми: pf3Betyg/pf3Scores/pf3Grade, scenarioMid (источник target2), scenarioProjection (опциональный конус на графике), bt* (btFeatures читает серии из Frame), newsSentiment/newsPolarity. Удаляются после теневого прогона: pf3SignalInfo, pf3RowSignal, pf3Reco, pf3RecoHorizons, scenarioShort, scenarioTech, atrFromCloses, homeCompositeScore, homeBestPicks, homeBestComposite, homeBestList, pf3RowBetyg (lite-рейтинг → полный из PF_FUND или пусто), planStatus. Тесты: фикстуры OHLCV MU/AZN/EQT; паритет фаз с pf3Criterion; паритет target/rr с scenarioShort при подмене ATR; симметрия шорта (setup('short', mirror(frame)) == mirror(setup('long', frame))); qty при риске 1000 kr и известном FX.",
+  "tokens": {
+   "palette": [
+    {
+     "name": "surface",
+     "hex_light": "#F3F4F1",
+     "hex_dark": "#0D1117",
+     "role": "Фон страницы; панели/таблицы — --panel (#FFFFFF / #151B23), hairline-сетка и разделители — --line (#D9DCD5 / #262E38). Без теней и градиентов."
+    },
+    {
+     "name": "ink",
+     "hex_light": "#161A20",
+     "hex_dark": "#E4E7E1",
+     "role": "Текст, числа, монохромные свечи (растущая — контур, падающая — заливка), оси; ink 60/35% — SMA50/SMA100."
+    },
+    {
+     "name": "accent",
+     "hex_light": "#0E6F78",
+     "hex_dark": "#4FB8C2",
+     "role": "Выбранная строка, фокус клавиатуры, активные фильтры, линия ВХОДА на графике, SMA200. Бирюзовый — намеренно не совпадает ни с long, ни с short, ни с ui2-индиго."
+    },
+    {
+     "name": "long",
+     "hex_light": "#1E8B5A",
+     "hex_dark": "#3FD48B",
+     "role": "Сторона лонг (▲), линия ЦЕЛИ и reward-бокс, положительный R; только статус, не для свечей и не для 1д %."
+    },
+    {
+     "name": "short",
+     "hex_light": "#C43A2E",
+     "hex_dark": "#FF6F62",
+     "role": "Сторона шорт (▼), линия СТОПА и risk-бокс, отрицательный R, состояние 'stopped'/'exit'."
+    },
+    {
+     "name": "neutral",
+     "hex_light": "#737B89",
+     "hex_dark": "#8D97A6",
+     "role": "Состояние 'wait' (○), зоны S/R (8% alpha), подписи колонок, вторичный текст, отключённые серии."
+    },
+    {
+     "name": "warning",
+     "hex_light": "#B27B14",
+     "hex_dark": "#F0B33C",
+     "role": "Флаги: отчёт ≤5 дн, широкий стоп, устаревший таргет, squeeze-риск, всплеск объёма ≥1.5×, 'review'/'нет стопа'."
+    }
+   ],
+   "type_display": "IBM Plex Sans Condensed 600 (Google Fonts, latin+cyrillic) — тикеры, заголовки экранов, рельсы секций (11px uppercase, letter-spacing .06em); fallback: 'Arial Narrow','Helvetica Neue',system-ui,sans-serif. Кондесированный дисплей экономит ~20% ширины в плотных шапках таблиц и отличается от стандартных AI-наборов.",
+   "type_body": "IBM Plex Sans 400/500 13px — подписи, причины «почему», новости, формы; fallback: -apple-system,'Segoe UI',Roboto,sans-serif. Один суперсемейство с моно и кондесом — общая x-высота, поэтому тикер, подпись и число выравниваются в одной строке 28px без оптического дрожания.",
+   "type_data": "IBM Plex Mono 400/500 12px, font-variant-numeric: tabular-nums slashed-zero — все цены, %, R/R, оси графика, легенда; fallback: ui-monospace,'SF Mono',Menlo,Consolas,monospace. Перечёркнутый ноль и широкие 1/l/I критичны при 42.60 vs 42.80 на 12px; у нынешнего JetBrains Mono нет родственных sans/condensed начертаний.",
+   "layout": "Десктоп — трёхколоночный терминал: рейка 52px | скринер (fluid, min 640px) | инспектор 460px (resize 380–620), строки 28px, секции разделены hairline и левым рельсом-подписью вместо карточек; под 1100px инспектор становится выезжающим листом, на телефоне — одна колонка и push-экраны.",
+   "density": "12px данные / 11px подписи / 13px текст; строка 28px (36 в «просторном», 44 при pointer:coarse); отступ ячейки 8px; hairline 1px; радиус ≤4px; без теней; цвет только для статуса, форма (▲▼○◆, сплошная/штрих/точки) несёт смысл первой; на 1080p видно ~26 строк, на 1440p ~40."
+  },
+  "reuse_map": [
+   {
+    "existing": "renderAll (app.js:1410) — роутер вкладок/саб-вкладок",
+    "fate": "merge",
+    "into": "tRoute() в terminal.js: 5 экранов + инспектор; старая ветка живёт до cutover"
+   },
+   {
+    "existing": "pf3DetailHTML (app-4.js:454) — простыня карточки",
+    "fate": "merge",
+    "into": "inspectorHTML(): секции переставлены (график+план наверх), лишние удалены"
+   },
+   {
+    "existing": "homeHTML / homeFuturesHTML / homeBarometer / homeIdxCard (app-4.js:266/154/159/123)",
+    "fate": "merge",
+    "into": "экран «Сегодня»: лента рынка в одну строку + очередь действий"
+   },
+   {
+    "existing": "homeBestComposite / homeCompositeScore / homeBestPicks / homeBestList (app-3.js:1041–1188)",
+    "fate": "merge",
+    "into": "SIG.score (long-балл) — скринер заменяет 🏆 рейтинг и горизонты"
+   },
+   {
+    "existing": "pf3SignalInfo / pf3RowSignal (app-2.js:225/240)",
+    "fate": "merge",
+    "into": "SIG.setup (≤2% к уровню, wait с дистанцией)"
+   },
+   {
+    "existing": "pf3Criterion (app-2.js:256) — фаза рынка",
+    "fate": "keep",
+    "into": "переносится 1:1 внутрь SIG.frame как phaseOf; колонка «Фаза» и фильтр"
+   },
+   {
+    "existing": "pf3Reco (app-2.js:302) — F/T/R скоринг",
+    "fate": "merge",
+    "into": "SIG.score.F/T/R и вердикт; блок «Почему» в инспекторе"
+   },
+   {
+    "existing": "pf3RecoHorizons (app-2.js:371)",
+    "fate": "merge",
+    "into": "SIG.score.horizons {now,mid,long}"
+   },
+   {
+    "existing": "scenarioShort / scenarioProjection (app-3.js:395/388)",
+    "fate": "merge",
+    "into": "SIG.setup (коридор 2.5·ATR, fallback 1.5·ATR); проекция — опциональный конус на графике"
+   },
+   {
+    "existing": "scenarioMid (app-3.js:413)",
+    "fate": "keep",
+    "into": "источник target2 (свежий аналит. таргет) в SIG.setup"
+   },
+   {
+    "existing": "scenarioTech / atrFromCloses (app-3.js:381/367)",
+    "fate": "remove",
+    "into": "true ATR по H/L внутри SIG.frame"
+   },
+   {
+    "existing": "rsiFromCloses / weeklyFromCloses / smaSeries (app-3.js:373/379, app.js:2137)",
+    "fate": "move",
+    "into": "signal.js как построители серий Frame"
+   },
+   {
+    "existing": "btFeatures / btFiredAt / btSignalAt / btRun / btCalibrate / btRuleStats (app.js:3491–3677)",
+    "fate": "keep",
+    "into": "экран «Журнал»; btFeatures читает серии из Frame; имена правил = plan.setup"
+   },
+   {
+    "existing": "planStatus / planCheck / planNotify / PLAN_RULES (app-5.js:300/335/318)",
+    "fate": "merge",
+    "into": "planTick() над plans: armed→ready, open→trail/scale/stopped/review; PLAN_RULES мигрируют в plans"
+   },
+   {
+    "existing": "pfTrade / pfApplyBuy / PF_TRADES (app-5.js:11/38)",
+    "fate": "keep",
+    "into": "бухгалтерия лонгов (genomsnitt); расширить act:'short'|'cover'; вызывается из «Открыть»/«Закрыть» плана"
+   },
+   {
+    "existing": "pfTaxLots / pfTaxHTML / pfTaxExportCSV (app-5.js:195/258/279)",
+    "fate": "move",
+    "into": "ящик «Налоги K4» в «Позициях»; short/cover — отдельные лоты"
+   },
+   {
+    "existing": "drawChart / openStockChart / closeStockChart / loadLWC (app.js:2161/2148/2146/2140)",
+    "fate": "remove",
+    "into": "chart.js на lightweight-charts v5 (jsdelivr); попап-оверлей графика исчезает"
+   },
+   {
+    "existing": "pf3Betyg / pf3Scores / pf3Grade / pf3BetygRow / PF_FUND (app.js:2389/2341/2411/2318)",
+    "fate": "keep",
+    "into": "фундаментальный столп: колонка betyg в скринере, строка «Фундаментал» в инспекторе"
+   },
+   {
+    "existing": "pf3BuySection «Уровни покупки/докупки» (app.js:2460)",
+    "fate": "remove",
+    "into": "план сделки (entry/stop/target) полностью заменяет"
+   },
+   {
+    "existing": "pf3Items / pf3ListHTML / pf3RowHTML / pf3ListHead / pf3GridTpl (app-2.js:748/812/784/634/716)",
+    "fate": "merge",
+    "into": "виртуализированная таблица скринера на строках SIG.all"
+   },
+   {
+    "existing": "PF3_XDEF доп. колонки / pf3XCell (app-2.js:640/724)",
+    "fate": "merge",
+    "into": "выбор колонок скринера (ATR%, RSI, betyg, апсайд, P/E, β, объём×, AI, инсайдеры)"
+   },
+   {
+    "existing": "simSection / simTabHTML / SIM (app-2.js:1471/1497)",
+    "fate": "merge",
+    "into": "планы со status='paper'"
+   },
+   {
+    "existing": "pf3Earnings / pf3LoadEarnings / pf3OptEnsure (app.js:2435/2416, app-3.js:434)",
+    "fate": "move",
+    "into": "«События» инспектора + guardrail earningsDays в SIG.setup + полоса implied move на графике"
+   },
+   {
+    "existing": "insiderHTML / INSIDER + инсайдер-маркеры из drawChart (app.js:3037)",
+    "fate": "move",
+    "into": "маркеры на панели объёма + строка «События»"
+   },
+   {
+    "existing": "pf3NewsLiveHTML / newsSentiment / newsPolarity (app-3.js:474/449, app.js:316)",
+    "fate": "keep",
+    "into": "свёрнутый блок новостей в инспекторе; тональность — вход SIG.score"
+   },
+   {
+    "existing": "valHTML / targetsBlockHTML / pf3ValCard / pf3Health (app-3.js:736/713, app.js:2259/2495)",
+    "fate": "merge",
+    "into": "«Фундаментал → подробно» в инспекторе"
+   },
+   {
+    "existing": "aiRecoHTML / stockAiHTML / aiChatSend / cycleMonitorHTML (app.js:2895/3221/3275, app-4.js:365)",
+    "fate": "move",
+    "into": "свёрнутый AI-ящик инспектора (admin); MU-монитор цикла — «Тезис»"
+   },
+   {
+    "existing": "pfPerfHTML / pfDeepCmpHTML / pf3RiskHTML / cashDragHTML / fxHedgeHTML (app-2.js:1220/1341, app.js:3835/3887/3944)",
+    "fate": "move",
+    "into": "ящик «Статистика» в «Позициях»"
+   },
+   {
+    "existing": "pf3GroupedHTML / pf3Diversification / pf3CalendarHTML (app-2.js:925/876/164)",
+    "fate": "move",
+    "into": "ящики «Структура» и «Дивиденды и отчёты» в «Позициях»"
+   },
+   {
+    "existing": "sectHTML / sectStart (app-4.js:76/66)",
+    "fate": "move",
+    "into": "свёрнутая секторная строка на «Сегодня» + чип-фильтр сектора в скринере"
+   },
+   {
+    "existing": "pf3ForecastHTML / homeForecastHTML / pf3Fcast12 (app-2.js:547, app-4.js:242)",
+    "fate": "remove",
+    "into": "эвристика ⅓/⅔/1 дублирует scenarioMid; апсайд — колонка скринера"
+   },
+   {
+    "existing": "aiDashHTML / aiDashRun / AIDASH (app-3.js:994/903)",
+    "fate": "remove",
+    "into": "AI-вердикт — колонка скринера и строка в инспекторе"
+   },
+   {
+    "existing": "dupHTML / dupScan (app-2.js:1570/1540)",
+    "fate": "remove",
+    "into": "дедуп по тикеру встроен в SIG.all"
+   },
+   {
+    "existing": "editLayout / erow / eapply / editWireAll (app.js:578–605) — drag-редактор раскладки",
+    "fate": "remove"
+   },
+   {
+    "existing": "toggleUI2 / applyUI2 / html.ui2 CSS (app.js:2030–2039, styles.css:736–800)",
+    "fate": "remove"
+   },
+   {
+    "existing": "TAB_GROUPS / grp* / tabDrag* (app.js:605–671)",
+    "fate": "remove",
+    "into": "вкладок верхнего уровня больше нет"
+   },
+   {
+    "existing": "renderTable / renderRanking / renderSMA / toolbar / statsBar (app.js:1506–1544, index.html)",
+    "fate": "remove",
+    "into": "классические индексные таблицы заменяет скринер с фильтром «рынок»"
+   },
+   {
+    "existing": "a11yEnhance / a11yInit / keydown-хендлеры (app.js:1789–1837)",
+    "fate": "merge",
+    "into": "единый keymap terminal.js (j/k/Enter/Esc///f/l/s/a/o/1–5/?)"
+   },
+   {
+    "existing": "RT/T двуязычие, applyTheme/initTheme, RBAC can()/canTab(), snapshotState/pushState/applyRemoteState/subscribeRealtime (app.js:677/1550/710/17–205)",
+    "fate": "keep",
+    "into": "инфраструктура без изменений; applyRemoteState получает merge plans по id"
+   }
+  ],
+  "removed": [
+   "Вкладки верхнего уровня как навигация: 🏠 Home (→ «Сегодня»), 🚀 Портфель 3.0 / Anna / Sergei / 🤖 AI Портфель (→ селектор в «Позициях»), OMXS30 / Nasdaq 100 / S&P 500 / OMXSPI / DAX / CAC / FTSE MIB / OBX (→ чип «рынок» в скринере)",
+   "🔁 Дубли — целиком (дедуп встроен в SIG.all)",
+   "📊 AI-Dashboard — целиком (вердикт AI = колонка + строка инспектора)",
+   "🧪 Симуляция — как вкладка (→ планы status='paper')",
+   "🔄 Сектора — как вкладка (→ свёрнутая строка на «Сегодня» + фильтр)",
+   "🔬 AI-разборы — как вкладка (→ ссылка из «Журнала»)",
+   "Саб-вкладки портфеля: Прогноз (удаляется вместе с эвристикой ⅓/⅔/1), План (→ планы), Предложение и Анализ (→ AI-ящик «Позиций»), AI Proto (→ AI-ящик), Структура / Состояние / Статистика / Налоги / Дивиденды и отчёты / Бэктест / Сделки (→ свёрнутые ящики «Позиций» и экран «Журнал»)",
+   "Классическая таблица индексов + 🏆 Рейтинг + SMA-баннер + тулбар (🔍/↕/⚙ Колонки/🔄 Цены/📥 CSV) + statsBar",
+   "Попап-оверлей графика (chartOverlay) и линейный график только по закрытиям",
+   "Секции карточки: 🛒 Купить в портфель (→ кнопка «Открыть» плана), 🛒 Уровни покупки/докупки, «Сценарии» как отдельный блок (→ план + target2), 🔮 прогноз, 💪 Здоровье как развёрнутый блок (→ строка betyg + «подробно»), ✏️ Моя позиция и 💸 Сделка как отдельные формы (→ план/«Позиции»)",
+   "HOME-виджеты: 🏆 общий рейтинг, 🏅 горизонты, 🔮 топ-10, 🧭 сигналы/📐 оценка/🕵 инсайдеры как отдельные админ-панели, drag-порядок секций",
+   "Шапка: 9 иконок → 3 (поиск, тема, меню); ✨ ui2-скин и градиент #6366f1→#a855f7; ✏️ редактор раскладки; группы вкладок и drag-and-drop вкладок",
+   "Движки-дубли: pf3SignalInfo, pf3Reco, pf3RecoHorizons, scenarioShort, scenarioTech, atrFromCloses, homeCompositeScore, homeBestPicks/Composite, planStatus, pf3RowBetyg",
+   "Эмодзи как маркеры разделов и статусов (🟢🔴⏳🔻⭐) → глифы ▲▼○◆ и текст",
+   "Шрифты DM Sans / Space Grotesk / JetBrains Mono → IBM Plex Sans / Sans Condensed / Mono"
+  ],
+  "migration": [
+   "Этап 1 — Воркер (без изменений UI): ?history= отдаёт o/h/l/v рядом с c (dailyHistory:451, данные уже в ответе yChart); новый ?ohlcv= батч ≤10; in-memory кэш 10 мин + max-age=300 + &since=; cron-задача frames пакетами по 40 → таблица Supabase frames; ?earnings= в кадр. Старый клиент продолжает читать t/c.",
+   "Этап 2 — signal.js в теневом режиме: SIG.frame/setup/score с тестами в tests/run.sh (фикстуры MU/AZN/EQT, паритет с pf3Criterion/scenarioShort/pf3Reco); в текущий список добавляется временная колонка «Setup» (вход/стоп/R/R/сторона) через PF3_XDEF — пользователь сверяет с привычными бейджами; расхождения логируются в консоль.",
+   "Этап 3 — chart.js: lightweight-charts 5.0.8 с jsdelivr, свечи+объём+SMA+зоны+оверлей плана+маркеры+RSI; сначала монтируется в существующий #pf3ChartBox карточки вместо drawChart (быстрая видимая польза), попап-оверлей закрывается.",
+   "Этап 4 — plans.js и модель сделки: plans в ledger_state, миграция PLAN_RULES→plans и SIM→paper, planTick вместо planCheck, кнопки «В план/Открыть/Бумажная» в старой карточке через pfTrade; шорт как план вне r[]; merge plans по id в applyRemoteState; Telegram-алерты планов в cron.",
+   "Этап 5 — terminal.js + terminal.css за флагом (?ui=desk / localStorage dash_desk): рейка, «Сегодня», скринер с виртуализацией и клавиатурой, инспектор, «Позиции», «Журнал»; работает на тех же DATA/FX/PF_TRADES/plans, обе оболочки сосуществуют 2–4 недели; tokens.css с новой палитрой и IBM Plex, обе темы.",
+   "Этап 6 — Cutover: флаг по умолчанию включён, index.html грузит desk-оболочку; старый renderAll остаётся только для модалок настроек доступа/промптов; семейные аккаунты (RBAC) проверяются на всех 5 экранах; sw.js кэширует новый CDN-скрипт и шрифты.",
+   "Этап 7 — Чистка: удаление ui2-CSS, редактора раскладки, групп вкладок, классической таблицы/рейтинга/тулбара, HOME-виджетов, прогноза, Дублей, AI-Dashboard, старых движков (список в removed); styles.css → tokens.css + terminal.css; тесты обновлены; data.js больше не считается источником вкладок, а только сидом вселенной."
+  ],
+  "risks": [
+   "Бюджет воркера: 50 подзапросов за вызов на free-плане против ~394 тикеров — скринер по всей вселенной невозможен без cron-кадров в Supabase; кадры устаревают на выходных/праздниках и после сплитов — обязательна подпись asof и флаг «кадр старше 24ч».",
+   "Переход на true ATR (H/L) увеличит стопы и цели относительно нынешнего atrFromCloses примерно в 1.3–1.6×: тесты паритета scenarioShort сломаются намеренно, пороги SCENARIO_CFG (corridorAtr 2.5, atrMult 1.5) нужно перекалибровать бэктестом на 2y, иначе R/R по старым правилам систематически завысится.",
+   "Шорт в Швеции: доступность blankning/CFD зависит от брокера и бумаги, а налогообложение шорта в K4 отличается от genomsnitt (момент покрытия); приложение только оценивает — нужен явный список SHORTABLE и дисклеймер в K4-ящике.",
+   "Один глобальный scope без сборки: во время сосуществования двух оболочек возможны коллизии имён/состояния (pf3Sel, v3Key, curIdx); все новые файлы — IIFE с префиксами SIG/PLAN/DESK, никакого переиспользования старых глобалов кроме DATA/FX/PF_TRADES.",
+   "lightweight-charts v5 несовместим с v4 по API (addSeries, createSeriesMarkers, panes); смешивать нельзя — старый drawChart удаляется, версия пинится; при недоступности jsdelivr график не рисуется — нужен sw.js-кэш и текстовый фолбэк плана.",
+   "Смена вердиктов: SIG.score даст другие ответы, чем привычные pf3Reco/🏆-рейтинг; без теневого этапа с логом расхождений пользователь потеряет доверие к движку.",
+   "Конфликты синхронизации: ledger_state — одна JSON-строка с rev; правка плана с телефона и десктопа в одну минуту перезапишет чужие изменения — merge plans по id/updatedAt обязателен, иначе теряются стопы.",
+   "Авторитетный вид линий входа/стопа/цели: пользователь может воспринять их как совет; в плане всегда показываются флаги уверенности (wide, stale-target, earnings, squeeze), а в подвале инспектора — «оценка, не рекомендация».",
+   "Плотность 28px на тач-устройствах: цели касания меньше 44px; плотность переключается по pointer:coarse, а не по ширине экрана.",
+   "Стоимость AI-эндпоинтов не меняется, но их видимость падает (свёрнутый ящик) — риск, что дорогие RECO/STOCKAI станут «мёртвым» кодом; решение: AI-вердикт как колонка скринера с давностью держит их в обороте.",
+   "Шрифты IBM Plex (3 семейства, latin+cyrillic) ≈150 KB — display=swap, подмножества и предзагрузка только Mono, иначе FOUT на телефоне при первом открытии."
+  ]
+ },
+ {
+  "key": "decision",
+  "name": "Beslut — «Решение дня» (кодовое имя beslut, швед. «решение»; файлы beslut-*.js)",
+  "thesis": "Приложение перестаёт быть «дашбордом индексов с портфелем» и становится машиной решений: каждое утро один движок decide() прогоняет всю вселенную (≈300 бумаг из бывших индексных вкладок + позиции) и выдаёт ленту конкретных действий — Купить / Шорт / Продать / Держать / Ждать уровня — с одной строкой обоснования, ценой входа, стопом, целью, R/R и размером в кронах. Каждое решение — это сущность «план сделки» (TRADE_PLAN), которая живёт от идеи до закрытия и рисуется на свечном графике как зоны риска/прибыли. Всё, что не ведёт к решению (девять вкладок, 13 саб-вкладок, две системы скоринга, три «рейтинга», ui2-скин, редактор раскладки), убирается или сворачивается под «Почему». Телефон = 2-минутный утренний ритуал (лента + кнопки «Взвести/Сделка»), десктоп = та же лента слева и график с планом справа.",
+  "ia": [
+   {
+    "screen": "1. Сегодня (#/today) — лента решений",
+    "job": "«Что мне делать сегодня с деньгами и открытыми позициями?» — за 2 минуты увидеть все действия дня, взвести план или записать сделку, ничего не считая руками.",
+    "blocks": [
+     "Шапка дня: дата, до открытия US/SE, риск на сделку в kr (capital×riskPct из ⚙), scope портфеля",
+     "Рыночная строка (одна): VIX/TNX режим (btRegime), фьючерсы NQ/ES/OMXS30 (homeFutures), сектор-лидер/аутсайдер (sectors), ближайшие отчёты позиций",
+     "Группа «Действовать сейчас»: решения с R/R ≥ 1.5 и без блокеров + exit-сигналы по позициям (стоп пробит, цель, ухудшение фазы). Строка = глиф стороны ▲/▼/■ + глагол + тикер + цена + одна причина; вторая строка E/S/T · R/R · qty ≈ kr · уверенность",
+     "Группа «Ждать уровня»: планы со статусом armed/idea, где R/R 1.0–1.5 или цена ещё не в зоне: лимит-цена, расстояние, кнопка «Взвести» (создаёт TRADE_PLAN armed → браузерный Notification при касании)",
+     "Группа «Держать» (свёрнута): позиции без действия, с изменениями стопов за ночь (трейл → BE) и предупреждениями об отчётах",
+     "Строка «Без сделок»: счётчики отсева (ножи, окно отчёта, R/R < 1.5) — чтобы было видно, что движок работал",
+     "Раскрытие строки (тап/клик): план сделки инлайн (мобайл) или в правой панели (десктоп) — тот же компонент, что на экране Акция"
+    ],
+    "wireframe": "┌────────────────────────────────────────────────────────────────────────────────────┐\n│ СЕГОДНЯ · вт 9 сен · US открывается через 3ч12м     риск/сделку 0.75% = 3 750 kr   │\n│ VIX 17.2 risk-on · TNX ↓ · NQ +0.4% · OMXS30 −0.2% · лидер XLK · отчёты: MU 24.09  │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ ДЕЙСТВОВАТЬ СЕЙЧАС (3)                                                             │\n│ ▲ КУПИТЬ   MU     118.40  отскок от SMA50 в аптренде, объём 1.6×                   │\n│            E 118.40  S 111.20  T 133.00 · R/R 2.0 · 52 шт ≈ 66 000 kr · увер. 74  ›│\n│ ▼ ШОРТ     NVDA   1 212   перегрев +34% над SMA200, RSI 78, разворотная свеча      │\n│            E 1 212   S 1 268   T 1 090  · R/R 2.2 · 7 шт ≈ 91 000 kr · увер. 61   ›│\n│ ■ ПРОДАТЬ  EQT    312.5   стоп 318 пробит на закрытии · фаза: даунтренд            │\n│            позиция 120 шт · −4.1% от входа · закрыть полностью              [Сделка]│\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ ЖДАТЬ УРОВНЯ (4)                                                                   │\n│ ◇ AZN      лимит 1 318 (SMA100, −2.3%)   аптренд · betyg B · R/R 1.9    [Взвести] │\n│ ◇ INVE B   лимит 296 (поддержка, −1.1%)  коррекция · див 1.9% · R/R 1.6 [Взвести] │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ ДЕРЖАТЬ (6) · стоп MU подтянут → 112.0 (BE) · до отчёта MU 11 дн                 ▸ │\n│ БЕЗ СДЕЛОК: 231 бумага · 3 падающих ножа · 2 в окне отчёта · 9 R/R < 1.5         ▸ │\n└────────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Одна колонка, рыночная строка в один прокручиваемый ряд чипов, строки решений 2-строчные (глиф+глагол+тикер+цена / E·S·T·R/R·qty), «Держать» и «Без сделок» свёрнуты, тап по строке раскрывает план-карточку с двумя кнопками «Взвести» / «Сделка» — график не грузится, пока не нажато «График»."
+   },
+   {
+    "screen": "2. Акция (#/s/MU) — карта решения",
+    "job": "«Где входить, где стоп, где выход и сколько брать?» — один взгляд на свечи с зонами плана, редактируемый план сделки и свёрнутые доказательства.",
+    "blocks": [
+     "Заголовок: тикер · имя · сектор · betyg (буква+балл) · кнопки «▲ Купить» «▼ Шорт» (открывают план с выбранной стороной)",
+     "Строка состояния: цена, день %, vol×avg, ATR14 (abs и %), RSI14, фаза (pf3Criterion), дата отчёта, pre/post-market",
+     "График (см. chart_spec): свечи + объём + SMA + зоны S/R + слой плана (E/S/T) + маркеры сделок/инсайдеров + RSI-подпанель; таймфреймы 6М/1Г/3Г",
+     "Панель «План сделки»: сетап (L1…S3 или ручной), сторона, вход (рынок/лимит), стоп (с формулой-подписью), цель 1/2, R/R, риск kr, размер qty≈kr (% капитала), трейл-правило; поля редактируемы, R/R и размер пересчитываются на лету и перерисовывают слой плана; кнопки «Взвести» (armed), «Купить сейчас»/«Шорт сейчас» (pfTrade + план open), «Бумажно» (paper:true)",
+     "Строка «Почему»: 3–4 фактора decide().why с знаком, затем блокеры",
+     "Доказательства (аккордеон, лениво): Уровни и сценарии (scenarioMid, проекция ±1σ), Фундаментал (pf3Health + betyg 5 столпов + P/E·P/S к сектору + таргеты), Отчёт и опционы (pf3Earnings + implied move), Новости (pf3NewsLive), Инсайдеры, AI-мнение (AI_RECO/STOCKAI, кнопка запуска для admin), Тезис-монитор (cycleMonitor, только если есть)",
+     "Моя позиция (если qty>0 или открытый шорт): qty × avg, P/L, текущий стоп и его источник (BE/трейл/ручной), ссылка на план; форма сделки купить/продать/закрыть шорт (pfTrade с side)"
+    ],
+    "wireframe": "┌────────────────────────────────────────────────────────────────────────────────────┐\n│ ‹ Сегодня   MU · Micron · Полупроводники · betyg B (68)         [▲ Купить] [▼ Шорт] │\n│ 118.40 USD +1.8% · vol 1.6× · ATR 4.9 (4.1%) · RSI 58 · ▲ аптренд · отчёт 24.09     │\n├───────────────────────────────────────────────┬────────────────────────────────────┤\n│ 6М | 1Г | 3Г     свечи · объём · SMA · зоны   │ ПЛАН СДЕЛКИ         ▲ лонг · swing │\n│ 140 ┤                           ░░ T 133.00   │ Сетап   L1 отскок от SMA50         │\n│ 130 ┤             ▁▂▃▅▆▇▇█▇▆▅▆▇ ░░░░░░░░░░░   │ Вход    118.40  рынок (лимит 117.9)│\n│ 120 ┤  ▂▃▄▅▆▇█▆▅▄▃▂            ══ E 118.40 ══ │ Стоп    111.20  SMA50 − 1.0·ATR    │\n│ 110 ┤ ▁▂                        ▓▓ S 111.20   │ Цель    133.00  сопротивление 60д  │\n│ 100 ┤ ─SMA50 ─SMA100 ─SMA200  ● сделки ○ инс. │ R/R     1 : 2.0    риск 3 750 kr   │\n│ vol ▁▃▂▅▂▁▂▃▆▂▁▂▃▂▁▂▅▂▃▁▂▃▂▁▂▃▂▂▃▇▃            │ Размер  52 шт ≈ 66 000 kr (5.9%)   │\n│ RSI ─────────────────70────────────────────── │ Трейл   BE после +1R, затем 2.5·ATR│\n│     ▁▂▃▄▅▅▆▅▄▅▆▇▆▅▆▇▆▅ ──30──                 │ [Взвести] [Купить сейчас] [Бумажно]│\n├───────────────────────────────────────────────┴────────────────────────────────────┤\n│ ПОЧЕМУ  + у SMA50 (−0.4%) · + над SMA200 +12% · + объём 1.6× · − отчёт через 11 дн │\n│ ▸ Уровни и сценарии  ▸ Фундаментал (betyg B)  ▸ Отчёт и опционы (impl. ±9%)        │\n│ ▸ Новости (+2)  ▸ Инсайдеры (нетто +$1.2M)  ▸ AI-мнение (buy · 02.09)  ▸ Тезис     │\n│ МОЯ ПОЗИЦИЯ  120 шт × 104.10 · +13.7% · стоп 112.0 (BE) · план #p31       [Сделка] │\n└────────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Push-экран с «‹ назад»: заголовок → план сделки (первым, свёрнут до E/S/T/R/R/размер + кнопки) → график на всю ширину 260px высотой (пинч-зум, RSI-подпанель скрыта, включается тапом) → «Почему» → аккордеон доказательств → позиция; липкая нижняя кнопка «Взвести»/«Сделка»."
+   },
+   {
+    "screen": "3. Скринер (#/screen) — поиск по вселенной",
+    "job": "«Что ещё есть под мою стратегию прямо сейчас — лонг или шорт, в каком индексе, с каким R/R?» — фильтруемая таблица всех решений decide() по всем бумагам, а не только топ-10.",
+    "blocks": [
+     "Переключатель стороны ▲ лонг / ▼ шорт / оба; мультивыбор вселенной (бывшие индексные вкладки OMXS30, NDX, SPX, DAX, CAC, FTSE MIB, OBX, OMXSPI + позиции)",
+     "Пресеты (сохраняются в ledger_state.screens): «Отскок в аптренде» (L1), «Пробой на объёме» (L2), «Разворот» (L3), «Шорт: перегрев» (S3), «Шорт: пробой» (S2), «Дёшево + инсайдеры» (signalScore both), «Дивиденды к X-dag»",
+     "Фильтры-чипы: фаза, R/R ≥, до уровня ≤ %, betyg ≥, сектор, ☑ без отчёта N дней, ликвидность (для шорта обязательна), div %",
+     "Таблица (плотная, сортируемая): глиф стороны, тикер, цена, сетап, фаза, до уровня, R/R, уверенность, betyg, 6М-спарклайн (из c[] кэша, только на десктопе); строка → правая панель/экран Акция",
+     "Подвал: счётчик «N из M», сохранить пресет, экспорт CSV (exportCSV)"
+    ],
+    "wireframe": "┌────────────────────────────────────────────────────────────────────────────────────┐\n│ СКРИНЕР   [▲ лонг] [▼ шорт] [оба]     вселенная: все ▾ (OMXS30 · NDX · SPX · DAX)  │\n│ пресеты: • Отскок в аптренде • Пробой на объёме • Шорт: перегрев • Шорт: пробой    │\n│ фаза ▾ · R/R ≥ 1.5 · до уровня ≤ 2% · betyg ≥ C · сектор ▾ · ☑ без отчёта 5 дн     │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ Тикер    Цена     Сетап                 Фаза       До ур.  R/R  Увер.  betyg  6М   │\n│ ▲ MU     118.40   L1 отскок SMA50       аптренд    −0.4%   2.0   74     B   ▁▃▅▆▇  │\n│ ▲ AZN    1 349    L1 откат к SMA100     коррекция  −2.3%   1.9   66     B   ▇▆▅▅▆  │\n│ ▲ INVE B 299.4    L3 разворот от 296    разворот   −1.1%   1.6   58     A   ▃▂▂▃▅  │\n│ ▼ NVDA   1 212    S3 истощение, RSI 78  перегрев   +0.9%   2.2   61     A   ▅▆▇██  │\n│ ▼ EQT    312.5    S2 пробой поддержки   даунтренд  −0.6%   1.7   55     C   ▇▆▅▃▂  │\n│ 27 из 296 · сортировка: уверенность ▾                            [Сохранить пресет] │\n└────────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Пресеты — горизонтальный ряд чипов, фильтры за кнопкой «Фильтры (3)» в нижнем шите; таблица сжимается до 3 колонок (тикер+сетап / R/R / уверенность), спарклайн и betyg скрыты; сортировка тапом по заголовку."
+   },
+   {
+    "screen": "4. Позиции (#/pos) — открытый риск",
+    "job": "«Что у меня открыто, где стопы, что под угрозой и сколько я потеряю, если всё сработает?» — портфель как список планов с риском, а не как таблица стоимости.",
+    "blocks": [
+     "Scope: Мой / Anna / Sergei / Все (бывшие вкладки port='1'); капитал, кэш (cashFree), FX",
+     "Строка риска: открытый риск Σ(qty×|entry−stop|×FX) в kr и % капитала, доля лонг/шорт, ближайший стоп, позиции в окне отчёта",
+     "Таблица позиций: глиф стороны, qty, вход (genomsnitt для лонга / entry плана для шорта), цена, P/L %, стоп + источник (BE/трейл/✕ пробит), до стопа %, цель, статус-решение (держать/ПРОДАТЬ/сократить); взведённые планы (◇) в той же таблице снизу",
+     "Свёрнутые разделы (бывшие саб-вкладки): Структура (сектор/тип/валюта — pf3 alloc), Дивиденды и отчёты (cal), Сделки (pfTradesHTML), Налоги K4 (pfTaxLots + ветка blankning для шортов)",
+     "Действия строки: Сделка (купить/продать/закрыть шорт), Изменить стоп (ручной override плана), Открыть карту"
+    ],
+    "wireframe": "┌────────────────────────────────────────────────────────────────────────────────────┐\n│ ПОЗИЦИИ   [Мой] [Anna] [Sergei] [Все]      капитал 500 000 kr · кэш 61 200 (12%)   │\n│ открытый риск 9 400 kr (1.9%) · лонг 78% · шорт 9% · ближайший стоп: EQT (пробит)  │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ Тикер    Стор.  Шт    Вход     Цена     P/L      Стоп       До стопа  Цель   Статус│\n│ MU       ▲      120   104.10   118.40   +13.7%   112.0 BE   −5.4%     133    держать│\n│ AZN      ▲       40   1 290    1 349    +4.6%    1 258      −6.7%     1 420  держать│\n│ EQT      ▲      120   326.0    312.5    −4.1%    318 ✕      пробит    —      ПРОДАТЬ│\n│ NVDA     ▼        7   1 212    1 190    +1.8%    1 268      +6.6%     1 090  держать│\n│ INVE B   ◇ взв.   —   лимит 296  299.4  —        289        —         312    ждём   │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ ▸ Структура (сектор · тип · валюта)  ▸ Дивиденды и отчёты  ▸ Сделки  ▸ Налоги K4   │\n└────────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Строка риска как две крупные цифры (риск kr · % капитала); позиции — карточки-строки: тикер+сторона / P/L / стоп и «до стопа» с индикатором-полосой расстояния до стопа; свайп влево — «Сделка», scope — сегмент-контрол сверху."
+   },
+   {
+    "screen": "5. Журнал (#/journal) — работает ли система",
+    "job": "«Какие сетапы приносят деньги, а какие нет? Насколько верить уверенности движка?» — закрытые планы в R-мультипликаторах, статистика по сетапам и калибровка сигналов.",
+    "blocks": [
+     "Сводка периода: сделок, win-rate, средний R, expectancy, MaxDD (по закрытым TRADE_PLAN с result.R)",
+     "Разбивка по сетапам L1/L2/L3/S1/S2/S3 и по стороне: n, win %, средний R — источник для весов уверенности",
+     "Кривая R (накопленная) vs buy&hold бенчмарка (NDX/OMXS30) — тонкая линия, одна ось",
+     "Таблица закрытых планов: дата, тикер, сторона, сетап, вход→выход, R, причина выхода (стоп/цель/трейл/ручной/ухудшение фазы)",
+     "Свёрнуто: Калибровка (bt* по позициям и вселенной, hit-rate правил, overfit-флаг), AI-разборы (stkLog), AI paper (AI_PORT только чтение), Симуляция (планы paper:true)"
+    ],
+    "wireframe": "┌────────────────────────────────────────────────────────────────────────────────────┐\n│ ЖУРНАЛ  2026 ▾   сделок 41 · win 56% · ср. +0.8R · ожидание +0.31R · MaxDD 6.2%    │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ по сетапам   L1 отскок  n=14  win 64%  +1.1R  │  S3 истощение  n=6  win 50%  +0.4R │\n│              L2 пробой  n=9   win 44%  +0.2R  │  S2 пробой     n=3  win 33%  −0.3R │\n│ кривая R  ▁▂▂▃▃▂▃▄▄▅▅▄▅▆▆▅▆▇▇   vs B&H NDX  ▁▂▃▃▄▄▅▅▆▆▆▇▇                          │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ Дата    Тикер   Стор.  Сетап   Вход → Выход        R       Причина выхода          │\n│ 05.09   EQT     ▲      L1      326.0 → 312.5     −1.0R    стоп                     │\n│ 28.08   NVDA    ▼      S3      1 250 → 1 190     +1.9R    цель 1, остаток трейл    │\n│ 21.08   MU      ▲      L2      98.2 → 118.4      +2.4R    трейл 2.5·ATR (50%)      │\n├────────────────────────────────────────────────────────────────────────────────────┤\n│ ▸ Калибровка сигналов (бэктест 2y, hit-rate по правилам)  ▸ AI-разборы  ▸ AI paper │\n└────────────────────────────────────────────────────────────────────────────────────┘",
+    "mobile": "Сводка — 4 плитки 2×2, разбивка по сетапам — список, кривая R — спарклайн на всю ширину, таблица закрытых — 2-строчные строки (тикер·сетап·сторона / R · причина); калибровка и AI-разделы только по тапу."
+   }
+  ],
+  "navigation": "Хеш-роутер `route()` вместо renderAll+вкладок: #/today (по умолчанию), #/s/MU (карта акции; state pf3Sel уходит в URL), #/screen?side=short&preset=heat&u=NDX,OMXS30, #/pos?scope=anna, #/journal. Мобильный (≤900px): фиксированная нижняя панель из 4 пунктов — Сегодня · Скринер · Позиции · Журнал — и кнопка поиска тикера (⌕) справа; карта акции — push-экран с «‹ назад» (history.back). Десктоп ≥1200px: узкий левый рейл 56px с теми же 4 пунктами + ⌘K/«/» поиск; экраны Сегодня/Скринер/Позиции двухпанельные — список слева (5fr, min 360px), карта выбранной акции справа (7fr): клик по строке не уводит с экрана, стрелки ↑↓ листают выбор, Enter — «Взвести». 900–1200px — одна колонка, карта открывается роутом. Портфели Anna/Sergei (port='1') — не вкладки, а scope-сегмент на Позициях и селект «Портфель» в форме сделки. Индексные вкладки (OMXS30, NDX, SPX, DAX, CAC, FTSE MIB, OBX, OMXSPI) — вселенные скринера (мультивыбор), их «Таблица/Рейтинг» исчезают. Шапка: словесный логотип, scope, тема, язык, ⚙ (капитал/риск на сделку/maxPos, доступ RBAC, данные: AI-прогоны/инсайдеры/оценка/обновить всё), выход — 6 элементов вместо 9. RBAC canTab() маппится на роуты: view.positions, view.journal, view.ai_reco, action.trade.",
+  "chart_spec": {
+   "layers": [
+    "1. Свечи OHLC (1D; 3Г — недельные агрегируются на клиенте из дневных o/h/l/c/v): up = long-цвет с полым телом, down = short-цвет залитое тело; тонкие фитили 1px. Категориальные цвета SMA не пересекаются со статусными.",
+    "2. Объём — гистограмма overlay внизу (priceScaleId:'', scaleMargins top .82), окраска по направлению свечи с alpha .35; бары с vol ≥ 1.5×avgVol — полная непрозрачность (подтверждение пробоя читается формой/насыщенностью).",
+    "3. SMA 50/100/200 — линии 1px: SMA50 = accent (кобальт), SMA100 = teal #1C8C8C, SMA200 = violet #7B5CC9 (те же, что сейчас #2563eb/#f59e0b/#7c3aed, но без янтарного — он занят warning).",
+    "4. Зоны S/R — не пунктир, а полосы: level ± 0.35·ATR14 на последних 60 барах через ISeriesPrimitive (v4.1+ series.attachPrimitive, прямоугольник в координатах priceToCoordinate/timeToCoordinate); источники: support/resistance (60д min/max), pivot sup1/sup2/res1/res2 из ?levels=; fallback без примитива — createPriceLine dashed как сейчас. Уровни, слившиеся в ±1.5% (логика pf3BuySection), рисуются одной зоной с составной подписью «SMA100+SMA200».",
+    "5. Слой плана сделки (если есть TRADE_PLAN idea/armed/open): линия E (ink, solid 1.5px, метка на оси «E 118.40»), линия S (short-цвет, solid, «S 111.20»), линии T1/T2 (long-цвет, T2 пунктир); между E и S — штрихованная зона риска (short-цвет 12% alpha, hatch), между E и T1 — зона прибыли (long-цвет 10%); в левом верхнем углу текст «▲ L1 · R/R 1:2.0 · 52 шт». Для шорта зоны зеркальны (риск сверху). Редактирование полей плана перерисовывает слой без перезагрузки данных.",
+    "6. Маркеры (series.setMarkers, объединённый отсортированный массив): ● собственные сделки из PF_TRADES (buy belowBar ▲ long-цвет, sell aboveBar ▼ short-цвет, cover ▲ контур) с текстом qty; ○ инсайдеры (текущая логика агрегации P/S по ближайшему бару, вторичный muted-цвет, меньший размер); ◆ точки, где decide() дал бы вход за последние 120 баров (из btFiredAt — история сигналов, серые, показывают «как часто движок ошибался»); вертикальная линия предстоящего отчёта (earnings) — warning-цвет, dashed, подпись «отчёт 24.09».",
+    "7. Подпанель RSI (второй createChart 90px, timeScale синхронизирован через subscribeVisibleLogicalRangeChange в обе стороны): RSI14 Wilder линия 1px ink-muted, полосы 30/70 hairline, заливка над 70 short-цветом 8%, под 30 long-цветом 8%. ATR14 — не линия, а число в легенде «ATR 4.9 (4.1%)»; на мобильном подпанель скрыта по умолчанию.",
+    "8. Кроссхэйр + единый тултип (subscribeCrosshairMove): O/H/L/C, Δ%, vol ×avg, SMA50/100/200, RSI, и — если план есть — расстояние до E/S/T в % и в R; легенда всегда (≥2 серий), клик по элементу легенды скрывает серию. Hairline-сетка var(--line) 1px, одна ценовая ось справа, фон прозрачный, цвета из CSS-токенов (читаются через getComputedStyle, чтобы тёмная/светлая совпадали с UI)."
+   ],
+   "entry_exit_logic": "ВХОД. Данные на бумагу: p=close, OHLCV 1D, SMA50/100/200, S=min(Low,60д), R=max(High,60д), пивоты sup1/sup2/res1/res2 (?levels=), ATR14 по Wilder от True Range: TR=max(H−L, |H−C₋₁|, |L−C₋₁|), ATR=(ATR₋₁·13+TR)/14 (заменяет atrFromCloses по |ΔC|); RSI14 Wilder (btRsiSeries); фаза = pf3Criterion без изменений (knife/heat/imp/undr/up/down/corr/rev/flat); volR=vol/avgVol; near(L) ⇔ |p−L|/L ≤ 2% ИЛИ |p−L| ≤ 0.5·ATR (что шире); swingLo=min(Low,5), swingHi=max(High,5).\nБЛОКЕРЫ (обе стороны → action='wait' с причиной): earningsDays ≤ 3; фаза knife → лонг запрещён (только «ждать возврата выше ближайшего уровня», как в pf3BuySection); фаза imp с day ≥ 4% → «не гнаться», лимит на откат к SMA50; implied move из опционов > 2·ATR → уверенность −15; для шорта — ликвидность price×avgVol < $20M/день (US) или < 50 MSEK/день (Nordic) → запрещён.\nL1 «отскок от уровня»: фаза ∈ {up, corr, undr, rev} И p > SMA200 И near(L) для ближайшего снизу L ∈ {SMA50, SMA100, S, sup1, sup2}. entry = p (если p в зоне) иначе лимит = L + 0.25·ATR; stop = min(L − 1.0·ATR, swingLo − 0.25·ATR); target1 = ближайший из {R, res1, res2} в (entry, entry+2.5·ATR] (коридор scenarioShort), иначе entry + 1.5·ATR; target2 = min(следующее сопротивление, effTarget аналитиков (pf3EffTarget), entry + 3·ATR).\nL2 «пробой сопротивления»: close > R И volR ≥ 1.5 И RSI < 75 И p > SMA50. entry = R + 0.1·ATR (stop-buy); stop = R − 1.0·ATR (возврат в диапазон = ложный пробой); target1 = entry + max(2·(entry−stop), min(R−S, 3·ATR)) (измеренный ход).\nL3 «разворот»: фаза rev (p ≥ SMA50, p < SMA200) И RSI поднялся из < 35 за ≤ 5 баров И close > SMA50 два бара подряд. entry = p; stop = swingLo − 0.5·ATR; target1 = SMA200; target2 = R.\nS1 «отбой от сопротивления» (зеркало L1): фаза ∈ {down, heat} И (p < SMA200 ИЛИ heat) И near(L) для ближайшего сверху L ∈ {SMA50, R, res1, res2}. entry = p или лимит L − 0.25·ATR; stop = max(L + 1.0·ATR, swingHi + 0.25·ATR); target1 = ближайший из {S, sup1, sup2} в [entry−2.5·ATR, entry), иначе entry − 1.5·ATR.\nS2 «пробой поддержки»: close < S И volR ≥ 1.5 И RSI > 25 И p < SMA50. entry = S − 0.1·ATR; stop = S + 1.0·ATR; target1 = entry − max(2·(stop−entry), min(R−S, 3·ATR)).\nS3 «истощение/перегрев»: фаза heat (p > 1.3·SMA200 или ≥ 5% над effTarget — пороги pf3Criterion) И RSI > 75 И close < Low₋₁ (разворотная свеча). entry = p; stop = max(High,3) + 0.25·ATR; target1 = SMA50; target2 = SMA100.\nR/R = (target1−entry)/(entry−stop) для лонга, (entry−target1)/(stop−entry) для шорта. R/R ≥ 1.5 → «Купить/Шорт» (группа «Действовать»); 1.0 ≤ R/R < 1.5 → «Ждать уровня» с лимитом entry* = (target1 + 1.5·stop)/2.5 (лонг; для шорта (target1 + 1.5·stop)/2.5 симметрично), при котором R/R = 1.5; R/R < 1.0 → отсев в «Без сделок» со счётчиком.\nРАЗМЕР: risk_kr = capital_kr × riskPct (по умолчанию 0.75% swing / 1.5% mid / 2% long; ⚙); qty = floor(risk_kr / (|entry − stop| × FX[ccy])); ограничение qty×entry×FX ≤ maxPosPct × capital (12%); qty < 1 → «не проходит по риску» (в «Без сделок»); фактический R после закрытия считается с комиссиями tradeFeeNative.\nВЫХОД по открытой позиции (после close, при каждом обновлении цен — вместо planCheck): stop-hit: close ≤ stop (лонг) / ≥ stop (шорт) → «ПРОДАТЬ (стоп)»/«ЗАКРЫТЬ ШОРТ»; target1-hit → «Фиксировать 50%», остаток на трейле; трейл: после +1R stop = max(stop, entry) (BE), после +2R или касания target1 stop = max(stop, HH_с_входа − 2.5·ATR) (chandelier, swing) либо max(stop, SMA50 − 0.5·ATR) (mid) — для шорта min/LL зеркально; ухудшение: лонг И фаза ∈ {knife, down} → «ПРОДАТЬ»; шорт И фаза ∈ {up, imp} → «ЗАКРЫТЬ»; длинный горизонт: upside ≤ −5% (перегрев по таргету) ИЛИ betyg упал на 2 ступени → «СОКРАТИТЬ 30%»; отчёт через ≤ 3 дн и нереализованный P/L < 1R → «Сократить до 50% риска»; иначе «ДЕРЖАТЬ» с текущим стопом и датой следующего пересмотра.\nУВЕРЕННОСТЬ 0..100 (маппинг 50 + raw×4 из homeCompositeScore): raw = качество сетапа (до +3: расстояние до уровня ≤ 1% +1.5, volR ≥ 1.5 +1, RSI 40–65 +0.5) + фаза (PHASE_PTS) + фундаментал (лонг: betyg ≥ 60 +1.5, ≤ 40 −1.5; шорт наоборот) + новости (±1.5 при |sent| ≥ 2, newsSentiment) + инсайдеры (signalScore, ±1) + AI-вердикт (±1) + hit-rate bt по тикеру (≥ 60% +1, ≤ 40% −1) − штрафы блокеров.",
+   "short_mode": "Шорт — не «продажа наоборот», а отдельная сторона плана: side='short', те же 3 сетапа зеркально (S1 отбой от сопротивления, S2 пробой поддержки, S3 истощение), формулы стопа/цели/R/R инвертированы (стоп выше входа, цель ниже; трейл по LL_с_входа + 2.5·ATR). Отбор кандидатов: только ликвидные бумаги (price×avgVol ≥ $20M/день US, ≥ 50 MSEK/день Nordic), только члены индексов-вселенных, не type='Спекулятивная'; шорт запрещён в окне отчёта (±3 дн) и при фазе imp с day ≥ 4% (шорт-сквиз). Размер по тому же risk_kr/(stop−entry)·FX. Визуально: сторона читается формой — ▲ лонг (залитый треугольник), ▼ шорт (перевёрнутый, контурный), ■ закрыть, ◇ взведён — плюс цвет short (малиновый, не «красный минус»); P/L шорта = (entry − price)×qty×FX и в таблицах подписывается «шорт» словом, не только цветом; на графике зона риска штрихуется над линией входа. Данные: шорт НЕ пишется в r[6] (qty остаётся ≥ 0 — pf3Summary/recalcPF/налог не ломаются), а живёт как TRADE_PLAN{side:'short', status:'open', qty, entry}; закрытие пишет PF_TRADES{act:'cover', side:'short', plNative=(entry−cover)×qty−fees}. Налоги: blankning в K4 — прибыль на дату покрытия = выручка от продажи − стоимость покрытия − комиссии, без genomsnitt (каждый шорт закрывается как лот, частичное покрытие — пропорционально); отдельный подраздел в «Налоги K4» и пометка «уточните у брокера: доступность blankning/CFD (Avanza/Nordnet)» в плане.",
+   "data_changes": "1) ?history=SYM&range=2y|5y — добавить флаг &ohlcv=1 → {t[],o[],h[],l[],c[],v[]} из того же одного вызова yChart (Yahoo chart уже отдаёт open/high/low/close/volume — 0 дополнительных подзапросов); без флага — прежний {t,c} (btHistory/scenarioTech работают до миграции). 2) &interval=1wk passthrough для 3Г-вида (сейчас 5y×1d = 1260 баров; недельные — 260). 3) Кэш: Cloudflare Cache API (caches.default) для ?history/?levels/?symbols с ключом sym+range+флаги; TTL 15 мин в торговые часы (есть market-hours в воркере) и 6 ч вне их; сейчас кэша нет вообще (grep caches/Cache-Control пуст), а _levelsCache — только in-memory изолята. 4) ?symbols= — расширить ответ yahoo() полями из УЖЕ загруженного 1y-ряда: atr14 (по TR из high/low), rsi14, hi5/lo5 (свинги 5 баров), hi3, volR=vol/avgVol, res60/sup60 (есть), pivots (перенести indexLevels сюда, чтобы не дёргать ?levels= отдельно), earningsDays (из calendar, кэш 24 ч) — тогда decide() для ~300 бумаг считается без 300 запросов истории; бюджет подзапросов: сейчас 3 Yahoo-вызова на символ (chart + quoteSummary + weeklySMA) ⇒ ≤ 16 символов на вызов при лимите 50 — клиент батчит по 20, что уже на грани; сделать weeklySMA опциональным (&weekly=1, только для карты акции) и снизить батч до 15. 5) Новый ?decide=1 (cron 07:30 CET, admin): воркер прогоняет ту же чистую decide() (файл beslut-signals.js подключается в воркер как в tests/run-worker.js через конкатенацию) по позициям и присылает в Telegram утренний дайджест из 3–5 строк ленты «Действовать сейчас» — переиспользует существующую Telegram-обвязку. 6) ledger_state: новые ключи plans (TRADE_PLANS), risk {capital_kr, riskPct:{swing,mid,long}, maxPosPct}, screens (пресеты) — rev-инкремент как сейчас. 7) sw.js без изменений: новые beslut-*.js того же origin попадают в stale-while-revalidate автоматически, ?v= проставит pre-commit hook.",
+   "library": "lightweight-charts 4.2.0 (pin) с jsDelivr: https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js — cdnjs пакет не хостит, unpkg (текущий loadLWC) медленнее и без резервных зеркал; jsdelivr уже в preconnect index.html и обслуживает supabase-js. Почему остаёмся на v4, а не v5: (а) весь drawChart, маркеры инсайдеров и легенда написаны под v4 API (addLineSeries/addCandlestickSeries/addHistogramSeries/createPriceLine/series.setMarkers); в v5 серии создаются через addSeries(CandlestickSeries,…), маркеры вынесены в плагин createSeriesMarkers, что удваивает объём миграции без функциональной выгоды; (б) всё нужное есть в v4.2: свечи, гистограмма объёма на overlay-шкале, priceLine с меткой на оси, ISeriesPrimitive (с 4.1) для прямоугольных зон S/R и штриховки риск/прибыль, синхронизация двух чартов через timeScale для RSI-подпанели; (в) одиночный standalone-файл ~45 KB gz, без сборки. Единственный аргумент за v5 — нативные панели (panes) для RSI; он не перевешивает, и upgrade-путь остаётся открытым, т.к. слой графика будет изолирован в beslut-chart.js с одной точкой входа drawDecisionChart(box, data, plan, opts). Спарклайны в скринере — инлайн-SVG polyline без библиотеки."
+  },
+  "trade_model": "Сейчас: позиция = строка r[] в DATA[key].rows (r[6]=qty, r[9]=средняя покупка по genomsnittsmetoden, r[7]=цена, r[13]/r[11]/r[12] пересчитывает recalcPF), журнал PF_TRADES {id,tab,tk,name,ccy,act:'buy'|'sell',qty,price,plNative,feeNative,date}, правила PLAN_RULES {tk,act:'buy'|'sell'|'watch',level,qty,amount,deadline,note,hitAt,done}, тесты SIM {tab,tk,qty,buy,date}, AI-портфель AI_PORT (воркер). Ни стопа, ни стороны, ни риска нигде нет.\\n\\nНовая сущность TRADE_PLAN (ledger_state.plans[], синк через rev как всё остальное):\\n{ id:'p'+ts, tab:key (портфель-scope: PF3_KEY | Anna | Sergei), tk, name, ccy, side:'long'|'short', horizon:'swing'|'mid'|'long', setup:'L1'|'L2'|'L3'|'S1'|'S2'|'S3'|'manual', src:'engine'|'ai'|'manual', status:'idea'|'armed'|'open'|'closed'|'cancelled', entry:{type:'market'|'limit'|'stop', price}, stop, stopSrc:'formula'|'be'|'trail'|'manual', target1, target2, risk_kr, qty, paper:false, trail:{mode:'none'|'be'|'chandelier'|'sma50', k:2.5, hh:null, ll:null}, why:[…], blockers:[…], confidence, createdAt, armedAt, openedAt, closedAt, tradeIds:[…], result:{exit, pl_kr, R, reason:'stop'|'target'|'trail'|'manual'|'phase'} }.\\n\\nПравила связи с r[]: (1) Лонг: qty и средняя ПРОДОЛЖАЮТ жить в r[6]/r[9] — pfTrade/pfApplyBuy/genomsnittsmetoden/налог K4/pf3Summary не трогаем; план status='open' привязан к (tab, tk) и хранит только стоп/цель/трейл/риск. Один открытый план на (tab,tk); докупка (pfTrade buy при открытом плане) обновляет r[9] по средней и пересчитывает risk_kr плана от новой средней, стоп не двигается вниз автоматически. (2) Покупка без плана (старый путь «💸 Сделка»/«🛒 Купить в портфель») автоматически создаёт план open с stop = entry − 1.5·ATR, stopSrc='formula' и флагом «стоп по умолчанию — подтвердите» в ленте. (3) Шорт: НЕ пишется в r[] (qty ≥ 0 — инвариант для recalcPF, tax, alloc); открытый шорт = план {side:'short', status:'open', qty, entry.price}; его P/L = (entry − price)×qty×FX; кэш cashFree при открытии не уменьшается (обеспечение не моделируем), при покрытии cashFree += plNative×FX. Покрытие пишет PF_TRADES {act:'cover', side:'short', qty, price, plNative, feeNative}; открытие — {act:'short'}. (4) Налоги: pfTaxLots получает ветку для пар short/cover — прибыль = выручка short − стоимость cover − комиссии на дату покрытия, без усреднения (шведская blankning облагается при покрытии; genomsnitt применяется только к лонг-лотам); частичное покрытие — пропорционально. (5) PLAN_RULES мигрируют одноразово (migratePlanRules) в планы: act buy → side long, status armed, entry.limit=level, stop = level − 1.5·ATR (ATR на момент миграции или 2% fallback), target1 = null (дорассчитает decide при первом рендере), qty/amount → risk_kr = qty×(entry−stop)×FX или amount×0.1; act sell → план на существующую позицию с target1=level (фиксация); watch → idea. planStatus/planCheck/planNotify заменяются проверкой armed-планов внутри decide (entry достигнут → Notification «взведённый план MU: цена в зоне»). (6) SIM → планы с paper:true (открытие без pfTrade, результат считается по тем же правилам выхода) — экран Журнал › Симуляция. (7) AI_PORT остаётся воркерной сущностью, показывается в Журнале как read-only «AI paper»; при желании его trades импортируются как планы src='ai'. (8) Семейные портфели: тот же план с tab=ключ портфеля; scope на Позициях фильтрует по tab. (9) Открытый риск портфеля = Σ по open-планам qty×|entry−stop|×FX (шорт — с текущим стопом), «тепло» = риск/capital; capital_kr и riskPct в ledger_state.risk (по умолчанию capital = Σ стоимость + cashFree).",
+  "signal_layer": "Один файл beslut-signals.js (чистые функции, без DOM, подключается и в tests/run-app.js, и в воркер), три функции вместо девяти движков:\\n\\n1) techSnapshot(q, hist?) → snap\\n   q = ответ ?symbols= для тикера {price, pct, vol, avgVol, sma50/100/200, support, resistance, atr14, rsi14, hi5, lo5, hi3, volR, pivots:{sup1,sup2,res1,res2}, earningsDays} (после расширения воркера); hist = {o,h,l,c,v} опционально — если есть, ATR/RSI/свинги пересчитываются локально по TR (иначе берутся из q).\\n   Возвращает { price, day, atr, atrPct, rsi, volR, phase:{cls,rank,label} (= логика pf3Criterion 1:1), levels:[{name,v,dist%,kind:'sup'|'res',src:'sma'|'sr'|'pivot'}] отсортированные по |dist|, nearBelow, nearAbove (с флагом near по правилу ≤2% ∨ ≤0.5·ATR — бывший pf3SignalInfo), swing:{hi5,lo5,hi3}, breakout:{up:close>R&&volR≥1.5, down:close<S&&volR≥1.5}, earningsDays }.\\n   Поглощает: pf3SignalInfo, pf3Criterion (фаза), scenarioTech (ATR/RSI из кэша), btFeatures (rolling S/R), часть pf3BuySection (слияние уровней в зоны ±1.5%).\\n\\n2) decide(snap, fund, ctx, horizon='swing') → decision\\n   fund = { betyg:{score,grade} (pf3Betyg полный либо pf3RowBetyg lite), upside (pf3EffUpside), pe, ps, roe, revg, de, beta, spec, sectorAvg } ; ctx = { position:{qty,avg,plan}|null, risk:{capital_kr,riskPct,maxPosPct}, fx, news:{sent}, insider:{n,cluster,netUSD} (signalScore), val, aiVerdict, optionsMove, regime:{risk,rates}, btHit, liquidityOk, allowShort }.\\n   Возвращает { action:'buy'|'short'|'sell'|'cover'|'trim'|'hold'|'wait'|'avoid', side, setup, entry:{type,price}, stop, stopSrc, target1, target2, rr, size:{qty,kr,riskKr,pctCap}, confidence:0..100, why:[≤4 строк с знаком], blockers:[…], next:{limitPrice, condition} , horizon }.\\n   Внутри — таблица сетапов L1–L3/S1–S3 и правила выхода из chart_spec.entry_exit_logic; для horizon='mid' цель2 берётся из scenarioMid (таргеты + событийный bear), для 'long' — из betyg+upside (бывший sLong/pf3RecoHorizons.long).\\n   Поглощает: pf3Reco, pf3RecoHorizons (now/mid/long → параметр horizon), scenarioShort (цель в коридоре ±2.5·ATR), homeCompositeScore (маппинг уверенности 50+raw·4 и PHASE_PTS), homeBestPicks.sShort/sMed/sLong, planStatus (armed-план: entry достигнут ⇒ action='buy' с флагом armedHit), лестница pf3BuySection (становится next.ladder только для horizon long).\\n\\n3) rank(decisions, opts={side:'both', horizon, scope, universe, filters, sort:'confidence'}) → { act:[…], wait:[…], hold:[…], skipped:{knife,earnings,lowRR,size,illiquid} }\\n   Дедуп по тикеру между вселенными (как seen в homeBestPicks), сортировка: сначала exit-решения по открытым позициям (sell/cover/trim), затем buy/short по confidence·min(rr,3), затем wait по расстоянию до лимита; фильтры скринера применяются здесь же.\\n   Поглощает: homeBestComposite/homeBestList/HOME_BEST_SORTS, homeSignalHTML (пресет «дёшево + инсайдеры» = фильтр), pf3ListHTML-сортировки, планBadge/planReadyCount.\\n\\nОстаются как есть (входы): pf3Betyg/pf3RowBetyg, pf3EffTarget/pf3EffUpside, scenarioMid, scenarioProjection, newsSentiment/newsPolarity, signalScore/signalLevel, valCmp/valSectorMedians, bt* (btFeatures переходит на TR-ATR; btRun даёт btHit по тикеру и веса BT_DEFAULTS.rules для confidence — калибровка в Журнале), btRegime, AI-вердикты (AI_RECO/STOCK_AI_LOG как ctx.aiVerdict). Удаляются после миграции: pf3SignalInfo, pf3RowSignal, pf3Criterion (обёртка B() с html), pf3Reco, pf3RecoHorizons, pf3HorizonsHTML, scenarioShort, atrFromCloses, homeBestPicks, bpWhy*, homeCompositeScore, homeBestComposite, homeBestList, planStatus/planCheck/planReadyCount/planBadge, pf3BuySection. Тесты: 170 существующих __eq/__ok — кейсы для pf3Reco/scenarioShort/planStatus переписываются на decide() с теми же фикстурами (ожидаемый вердикт совпадает на buy/sell/wait), плюс новые: TR-ATR на синтетическом OHLC, зеркальность short, размер позиции при FX, R/R-порог 1.5, трейл BE/chandelier.",
+  "tokens": {
+   "palette": [
+    {
+     "name": "surface",
+     "hex_light": "#EEF0EC",
+     "hex_dark": "#0E1214",
+     "role": "фон приложения (минеральный серо-зелёный, не кремовый и не чистый чёрный); строки/панели = color-mix(surface, ink 4%) в light и #161B1F в dark; hairline = ink 12%"
+    },
+    {
+     "name": "ink",
+     "hex_light": "#14181B",
+     "hex_dark": "#E6E9E4",
+     "role": "текст, оси, линия входа E, свечи up (контур); muted = ink 55% для подписей, 35% для сетки"
+    },
+    {
+     "name": "accent",
+     "hex_light": "#2F5BEA",
+     "hex_dark": "#8FB0FF",
+     "role": "интерактив: фокус, активный пункт навигации, ссылки, SMA50, взведённый план ◇ — никогда не для статуса сделки"
+    },
+    {
+     "name": "long",
+     "hex_light": "#1B8A5A",
+     "hex_dark": "#3FCF8E",
+     "role": "сторона лонг / купить / цель / зона прибыли / положительный R; форма — ▲ залитый"
+    },
+    {
+     "name": "short",
+     "hex_light": "#B9345A",
+     "hex_dark": "#FF6B8A",
+     "role": "сторона шорт / стоп / зона риска / отрицательный R; малиновый, намеренно не «красный минус» — вниз-свечи используют его на 70%; форма — ▼ контур"
+    },
+    {
+     "name": "wait",
+     "hex_light": "#7A7267",
+     "hex_dark": "#A39B8F",
+     "role": "нейтральное решение: держать/ждать уровня/без данных, отсеянные строки, серые маркеры истории сигналов; форма — ◇ / ■"
+    },
+    {
+     "name": "warning",
+     "hex_light": "#C7791A",
+     "hex_dark": "#F2B24A",
+     "role": "блокеры и предупреждения: окно отчёта, стоп по умолчанию не подтверждён, устаревший таргет, implied move > 2·ATR, пробитый стоп ✕ на строке"
+    }
+   ],
+   "type_display": "«Golos Text» 700/800 (Google Fonts) для глаголов решений («КУПИТЬ MU»), заголовков экранов и крупных цифр риска: русский по происхождению гротеск с узкими пропорциями и табличными цифрами, полная кириллица + å/ä/ö, плотный набор в капсе не разваливается — характер биржевого тикера, а не стартап-лендинга; не Inter/Space Grotesk. Fallback: -apple-system, 'Segoe UI', Roboto, sans-serif.",
+   "type_body": "«IBM Plex Sans» 400/500/600 — технический гуманистический гротеск с честной кириллицей и шведскими диакритиками; хорошо держит 12–13px в плотных строках, отличим от Inter более открытыми формами; font-feature-settings 'tnum' включён глобально. Fallback: 'Helvetica Neue', Arial, sans-serif.",
+   "type_data": "«IBM Plex Mono» 400/600 для всех чисел в таблицах, ценах E/S/T, легенде графика и осях: та же суперсемья, что body — совпадают x-height и ширины, поэтому число и подпись в одной ячейке выравниваются по базовой линии; перечёркнутый ноль, 12.5px в строках, 11px в осях. JetBrains Mono (текущий) выше по x-height и «тяжелее» в смешанных строках — заменяется. Fallback: ui-monospace, 'SF Mono', Menlo, Consolas, monospace.",
+   "layout": "«Лента + карта»: на десктопе ≥1200px — левый рейл 56px, затем сетка grid-template-columns: minmax(360px,5fr) minmax(0,7fr) — список решений слева, карта акции с графиком справа, max-width 1440px; ниже 1200px — одна колонка, ≤900px — нижняя навигация. Строки вместо карточек: списки разделены hairline (1px ink 12%), скругление 4px только у чипов и кнопок, карточка (с рамкой, без тени) — только «План сделки»; сетка 4px, ритм 8/12/16, текст и числа выровнены по левому краю колонки, числа — по правому.",
+   "density": "Плотно, как торговый терминал, но с воздухом между группами: строка таблицы 32px (десктоп) / 44px (тач), двухстрочная строка решения 56px / 68px, кегль данных 12.5px, подписи 11px в капсе с трекингом .04em, заголовки экранов 18px; никаких эмодзи-маркеров разделов — статусы читаются глифами ▲▼■◇✕ и словом; максимум 3 фактора в «Почему», всё остальное свёрнуто."
+  },
+  "reuse_map": [
+   {
+    "existing": "renderAll (app.js:1410) + tabs/sub-tabs DOM",
+    "fate": "merge",
+    "into": "route() хеш-роутер в beslut-app.js; ключи HOME_KEY/PF3_KEY/AIP_KEY остаются как scope-константы"
+   },
+   {
+    "existing": "homeHTML / homeBestBoardInner / homeBestHTML / homeForecastHTML (app-4.js:266, app-3.js)",
+    "fate": "remove",
+    "into": "экран Сегодня (todayHTML на rank(decide()))"
+   },
+   {
+    "existing": "homeFuturesHTML + homeBaroHTML + sectHTML (Сектора) + btRegime",
+    "fate": "merge",
+    "into": "одна рыночная строка marketStripHTML на Сегодня; полный сектор-трекер — фильтр «сектор» в скринере"
+   },
+   {
+    "existing": "pf3DetailHTML (app-4.js:454)",
+    "fate": "merge",
+    "into": "stockHTML: заголовок + график + план + «Почему» + аккордеон; секции переносятся, порядок меняется"
+   },
+   {
+    "existing": "pf3RecoHTML / pf3HorizonsHTML / pf3Reco / pf3RecoHorizons (app-2.js:302…)",
+    "fate": "merge",
+    "into": "decide() + строка «Почему»"
+   },
+   {
+    "existing": "pf3SignalInfo / pf3RowSignal / pf3Criterion (app-2.js:225–296)",
+    "fate": "merge",
+    "into": "techSnapshot().levels / .phase (правила 1:1)"
+   },
+   {
+    "existing": "scenarioShort (app-3.js:395) / scenarioTech / atrFromCloses",
+    "fate": "merge",
+    "into": "decide() цель-коридор ±2.5·ATR; ATR по True Range в techSnapshot"
+   },
+   {
+    "existing": "scenarioMid / scenarioProjection / pf3ScenarioHTML",
+    "fate": "keep",
+    "into": "scenarioMid = target2 для horizon mid; HTML → аккордеон «Уровни и сценарии»"
+   },
+   {
+    "existing": "homeCompositeScore / homeBestPicks / homeBestComposite / homeBestList",
+    "fate": "merge",
+    "into": "rank() + confidence в decide()"
+   },
+   {
+    "existing": "planStatus / planCheck / planNotify / planAdd / PLAN_RULES (app-5.js:300…)",
+    "fate": "merge",
+    "into": "TRADE_PLAN status armed + проверка внутри decide(); Notification сохраняется; migratePlanRules"
+   },
+   {
+    "existing": "pf3BuySection (лестница докупки, app.js:2460)",
+    "fate": "remove",
+    "into": "next.ladder в decide() только для horizon long (свёрнуто в аккордеоне)"
+   },
+   {
+    "existing": "drawChart (app.js:2161) + инсайдер-маркеры + легенда",
+    "fate": "merge",
+    "into": "beslut-chart.js: drawDecisionChart(box, ohlcv, snap, plan, opts) — свечи/объём/зоны/план; код маркеров и paint-легенды переиспользуется"
+   },
+   {
+    "existing": "loadLWC (app.js:2140, unpkg 4.2.0)",
+    "fate": "keep",
+    "into": "URL → cdn.jsdelivr.net/npm/lightweight-charts@4.2.0"
+   },
+   {
+    "existing": "pfTrade / pfCardBuy / pfApplyBuy / tradeFeeNative (app-5.js:11–95)",
+    "fate": "keep",
+    "into": "расширяются side ('short'/'cover') и привязкой к плану; genomsnitt для лонга без изменений"
+   },
+   {
+    "existing": "pfTradesHTML / pfTaxLots / tax tab (app-5.js:96–280)",
+    "fate": "move",
+    "into": "Позиции › Сделки и › Налоги K4 (+ ветка blankning)"
+   },
+   {
+    "existing": "pf3Summary / pf3ListHTML / pf3ListHead / PF3_XDEF / pf3Sort (app-2.js:102, 812)",
+    "fate": "merge",
+    "into": "Позиции (строка риска + таблица планов) и Скринер (рендер строки, сортировки)"
+   },
+   {
+    "existing": "pf3Health / pf3Betyg / pf3RowBetyg / pf3ValCard / pf3Earnings / targetsBlockHTML / valHTML / insiderHTML / pf3NewsLiveHTML",
+    "fate": "move",
+    "into": "аккордеон «Доказательства» на карте акции (лениво); betyg — вход fund в decide()"
+   },
+   {
+    "existing": "cycleMonitorHTML / CYCLE_MONITORS (тезис-монитор)",
+    "fate": "move",
+    "into": "аккордеон «Тезис» на карте акции (только если есть модель)"
+   },
+   {
+    "existing": "aiRecoHTML / stockAiHTML / AI_RECO / stkLogHTML (AI-разборы) / aiDashHTML",
+    "fate": "move",
+    "into": "AI-мнение в аккордеоне (verdict → ctx.aiVerdict); история — Журнал › AI-разборы; AI-Dashboard удаляется"
+   },
+   {
+    "existing": "aipSyncTab / AI_PORT (🤖 AI Портфель)",
+    "fate": "move",
+    "into": "Журнал › AI paper (read-only) — вкладка исчезает, воркерный cron остаётся"
+   },
+   {
+    "existing": "bt* (btFeatures/btFiredAt/btSignalAt/btRun/btCalibrate/btRegime, app.js:3480+)",
+    "fate": "keep",
+    "into": "Журнал › Калибровка; btFeatures на TR-ATR; btHit и BT_DEFAULTS.rules — входы confidence; btFiredAt — исторические маркеры ◆ на графике"
+   },
+   {
+    "existing": "simSection / simTabHTML / SIM",
+    "fate": "merge",
+    "into": "планы paper:true; Журнал › Симуляция"
+   },
+   {
+    "existing": "dupHTML (🔁 Дубли)",
+    "fate": "remove",
+    "into": "дедуп по тикеру встроен в rank()"
+   },
+   {
+    "existing": "классическая таблица индексов (renderTable/thead/tbody, toolbar, statsBar, smaBanner/renderSMA, rankingArea, RANK)",
+    "fate": "remove",
+    "into": "вселенные скринера; статус индекса vs SMA — рыночная строка"
+   },
+   {
+    "existing": "erow / eapply / toggleEdit / LAYOUT (редактор раскладки ✏️)",
+    "fate": "remove"
+   },
+   {
+    "existing": "html.ui2 скин / toggleUI2 / dash_ui2 (styles.css:736–800)",
+    "fate": "remove",
+    "into": "единая дизайн-система beslut.css с токенами из tokens"
+   },
+   {
+    "existing": "TAB_GROUPS / TAB_ORDER / grpAssign / renderGroupsEditor",
+    "fate": "remove",
+    "into": "фиксированная навигация из 4 пунктов"
+   },
+   {
+    "existing": "RT()/T() двуязычие, RBAC can()/canTab(), Supabase save/load/rev/realtime, FX, exSymbol, pf3Fmt/pf3Money, toast, sw.js",
+    "fate": "keep",
+    "into": "без изменений; canTab маппится на роуты, save получает ключи plans/risk/screens"
+   },
+   {
+    "existing": "newsSentiment / newsPolarity / pf3NewsEnsure / signalScore / valCmp / valSectorMedians",
+    "fate": "keep",
+    "into": "входы ctx.news / ctx.insider / ctx.val для decide()"
+   }
+  ],
+  "removed": [
+   "Вкладки верхнего уровня: 🏠 Home (заменён экраном Сегодня), все 8 индексных вкладок как экраны (OMXS30, Nasdaq 100, OMXSPI, S&P 500, DAX 40, CAC 40, FTSE MIB, OBX 25 → вселенные скринера), 🔁 Дубли, 🤖 AI Портфель (→ Журнал read-only), 🔬 AI-разборы (→ Журнал), 📊 AI-Dashboard (удалён), 🧪 Симуляция (→ paper-планы в Журнале), 🔄 Сектора (→ рыночная строка + фильтр)",
+   "Саб-вкладки портфеля: Статистика, Прогноз (→ horizon mid/long в decide), План (→ планы armed в ленте), AI Proto (→ ⚙ › Данные), Предложение (→ импорт совета AI как планы src='ai'), Анализ, Бэктест (→ Журнал › Калибровка); остаются свёрнутыми на Позициях только Структура, Дивиденды и отчёты, Сделки, Налоги",
+   "Классический табличный режим индексов: таблица с 18 колонками, «🏆 Рейтинг», sma-banner, toolbar (поиск/колонки/CSV → в скринер), statsBar",
+   "Секции карты акции: «💡 Рекомендация» с тремя горизонтами F/T/R, «🛒 Уровни покупки/докупки» с лестницей 25/35/40%, «🛒 Купить в портфель» и «💸 Сделка» как две разные формы (одна форма сделки со стороной и портфелем), «🧪 Симуляция» на карточке (кнопка «Бумажно» в плане), «🎯 Технические уровни» как список (уровни — зоны на графике + тултип), «✏️ Моя позиция» как редактор qty/avg (остаётся только в форме сделки)",
+   "Home-виджеты: 🏆 общий рейтинг с 5 сортировками, 🥇🥈🥉 «Лучшие по горизонтам», 🔮 «Прогноз топ-10», 🧭 «Инсайдеры × Недооценка» (→ пресет скринера), 📐 «Оценка» и 🕵 «Инсайдер» списки (→ аккордеон карты и ⚙ › Данные), барометр как отдельная панель",
+   "Три системы скоринга (pf3Reco, homeCompositeScore, homeBestPicks.sShort/sMed/sLong) и два сигнал-бейджа (pf3RowSignal, signalBadgeHTML) — остаётся один confidence и один «Почему»",
+   "Шапка: 9 иконок-кнопок → 6 (Hub, scope, тема, язык, ⚙, выход); ✨ ui2-скин и ✏️ редактор раскладки удалены; 📜 AI-промпты и ⚙ доступ уезжают внутрь ⚙",
+   "Эмодзи как маркеры разделов и статусов (🟢🔴🟡⛔🔪🌡🚀💎) → глифы ▲▼■◇✕ + слова; PLAN_RULES как отдельная сущность; SIM как отдельная сущность; SMA_TF (переключатель дневных/недельных SMA в таблице)"
+  ],
+  "migration": [
+   "Этап 0 — план и фикстуры (1 сессия): plans/beslut.md по процессу CLAUDE.md; снять фикстуры реальных ответов ?symbols/?history/?levels для MU, NVDA, AZN, INVE B, EQT в tests/fixtures; зафиксировать ожидаемые вердикты текущих pf3Reco/scenarioShort на них как регрессионный якорь.",
+   "Этап 1 — воркер (без изменения клиента): ?history &ohlcv=1 и &interval=1wk, расширение ?symbols= (atr14/rsi14/hi5/lo5/volR/pivots/earningsDays, weeklySMA под флагом), Cache API с TTL по market-hours, бамп WORKER_BUILD, ручной деплой + verify-worker; старые формы ответов сохраняются — сайт работает как прежде.",
+   "Этап 2 — слой сигналов (параллельно старому): новый файл beslut-signals.js (techSnapshot/decide/rank) подключается в index.html после app-5.js; тесты в tests/cases-app.js: паритет с pf3Reco на фикстурах (buy/sell/wait совпадают), TR-ATR, зеркальность шорта, размер позиции, R/R-порог; колонка «Рекомендация» в PF3_XDEF временно переключается на decide() для сверки вживую; миграция PLAN_RULES/SIM → TRADE_PLANS (с бэкапом ключей в ledger_state как aiPortBak сейчас).",
+   "Этап 3 — график: beslut-chart.js с drawDecisionChart на OHLCV (свечи/объём/зоны/план/маркеры/RSI-подпанель), jsdelivr-URL в loadLWC; сначала подменяет pf3ChartBox внутри старой карточки (флаг localStorage beslut_chart=1), затем становится единственным; старый drawChart остаётся для popup классических таблиц до этапа 5.",
+   "Этап 4 — экраны и дизайн-система: beslut.css (токены из tokens, шрифты Golos Text / Plex Sans / Plex Mono в index.html), route(), экраны Сегодня → Акция → Скринер → Позиции → Журнал в этом порядке, каждый за флагом «beslut» в localStorage/⚙ и доступный параллельно старым вкладкам (кнопка «Новый интерфейс» вместо ✨); формы сделки получают side и привязку к плану; K4 ветка blankning; Telegram-дайджест ?decide=1 в cron.",
+   "Этап 5 — переключение по умолчанию и чистка: beslut становится дефолтом, старые вкладки скрыты за ⚙ › «Старый интерфейс» на 2–4 недели; затем удаление homeHTML/homeBest*/pf3Reco*/scenarioShort/planStatus/pf3BuySection/dupHTML/aiDashHTML/erow/ui2-CSS/классических таблиц, styles.css ужимается, тесты чистятся; CLAUDE.md и memory обновляются (новые файлы, порядок загрузки, инварианты qty ≥ 0 и «шорт = план»).",
+   "Этап 6 — калибровка (постоянный): Журнал накапливает закрытые планы с R; раз в месяц btCalibrate + статистика по сетапам корректируют веса confidence и пороги (R/R 1.5, коридор 2.5·ATR, стоп 1.0·ATR) через SIGNAL_CFG в ledger_state, а не в коде."
+  ],
+  "risks": [
+   "Лимит 50 подзапросов воркера: расширенный ?symbols= для ~300 бумаг всё ещё требует ~20 вызовов по 15 символов; при добавлении earningsDays/pivots в тот же вызов бюджет держится только благодаря Cache API — без кэша утренний прогон ленты упрётся в лимит/скорость Yahoo (rate-limit 429). Смягчение: cron прогревает кэш до открытия, клиент читает кэш.",
+   "ATR по True Range меняет числа стопов/целей относительно текущих (ATR по |ΔC| систематически меньше на 20–40% у гэповых бумаг вроде MU/NVDA): пользователь увидит «более широкие» стопы и меньший размер позиции — это правильно, но нужно объяснить в «Почему» и в справке, иначе будет ощущение поломки.",
+   "Шорт вне r[] ломает привычку «всё в одной таблице»: pf3Summary/alloc/структура не видят шорты — открытый риск и экспозиция считаются в новом слое, а старые сводки будут занижать риск, пока не удалены (этап 5). Также обеспечение и стоимость заимствования не моделируются — P/L шорта оптимистичен.",
+   "Genomsnittsmetoden и K4: ветка blankning — новая логика без референсной сверки с реальной декларацией; пометить «оценка», не давать экспортировать в CSV как готовый K4 без явного предупреждения.",
+   "Ложная точность уверенности 0..100: маппинг 50+raw·4 унаследован, веса не калиброваны на реальных исходах; первые месяцы confidence — порядковая шкала, не вероятность. Смягчение: показывать n и win% по сетапу рядом с уверенностью, когда в Журнале ≥ 10 закрытых планов.",
+   "Разрыв двух сессий Planning/Implementation и «без остановки работы»: параллельная жизнь старых вкладок и новых экранов 2–4 недели удваивает поверхность багов в общем глобальном scope (коллизии имён функций app*.js ↔ beslut-*.js). Смягчение: префикс b_ / объект window.B для всех новых функций, no-DOM в signals.js, тесты на паритет.",
+   "Мобильный график: lightweight-charts на телефоне с примитивами зон и вторым чартом RSI тяжёл (два canvas, resize/pinch); лента должна оставаться быстрой без графика — график только по запросу; иначе утренний ритуал перестанет быть 2-минутным.",
+   "Яндекс/Google-шрифты: три новые семьи (+1 запрос css2) при офлайн-режиме SW не кэшируются (чужой origin) — обязательны честные fallback-стеки, иначе на телефоне без сети таблицы «прыгают».",
+   "Реалтайм Supabase и планы: два устройства редактируют один план (стоп) — rev-конфликт сейчас решается «последний победил»; для стопов это опасно. Смягчение: план хранит updatedAt и stopSrc, при конфликте берётся более консервативный стоп (выше для лонга, ниже для шорта).",
+   "Юридический/поведенческий: лента «Купить/Шорт» с размером в кронах читается как совет; текущий INFO_DISCLAIM должен остаться на Сегодня и в плане, а Telegram-дайджест — помечен «оценка, не рекомендация»."
+  ]
+ },
+ {
+  "key": "book",
+  "name": "Bok — книга позиций лонг/шорт",
+  "thesis": "Портфель перестаёт быть «таблицей акций с восемью мнениями» и становится книгой сделок трейдера: каждая позиция — сделка со стороной (▲/▼), входом, стопом, целью и риском в кронах; книга всегда показывает нетто/брутто-экспозицию и суммарный открытый риск против лимита. Всё, что сегодня разбросано по 13 саб-вкладкам, 7 сигнальным движкам и 10 секциям карточки, сводится к трём вопросам и трём объектам: «что делать сегодня» (Сегодня), «что у меня в книге и сколько я рискую» (Книга + Журнал), «что добавить в лонг или в шорт» (Скринер → Карта сделки → в книгу). Один слой сигналов (sigContext → sigSetups → sigTrade) питает скринер, график, строку книги, бэктест и Telegram-алерты — одна и та же формула входа/стопа/цели рисуется на свечах и считается в кронах. Характер — бухгалтерская книга, не витрина: табличные цифры, хайрлайны, семантика long/short (teal/coral + форма ▲▼◆✕), никаких градиентов и пилюль.",
+  "ia": [
+   {
+    "screen": "Сегодня (#today)",
+    "job": "Телефон утром: что требует моего действия прямо сейчас — по открытым позициям (стоп/цель/вход сработали) и какие сетапы готовы к входу; плюс режим рынка одной строкой.",
+    "blocks": [
+     "Полоса режима: фьючерсы ES/NQ, OMXS30, VIX с направлением, «риск-он/офф» (homeBaroInner), 2 сектора-лидера/аутсайдера (sectorTracker)",
+     "Требуют действия: строки sigTrade с action ≠ hold, сортировка по срочности (stop-hit → target-hit → entry-hit → trail-up → без стопа), каждая → Карта",
+     "Сетапы на сегодня: топ-3 лонг + топ-3 шорт из sigSetups по книге-умолчанию (grade A/B, R/R ≥ 1.5, не в книге), кнопка ⊕ в план",
+     "Строка книги: нетто/брутто/открытый риск/кэш + ближайшие отчёты позиций (calendar)",
+     "Кнопка «Обновить» (?symbols= + ?bars= для книги и наблюдения) со штампом времени цен"
+    ],
+    "wireframe": "СЕГОДНЯ · ср 9 сен · цены 14:32                                   книга: Dima ▾   ⌘K\nES +0.4 · NQ +0.7 · OMXS30 −0.2 · VIX 15.1 ▽ · режим: риск-он · сектора: Tech ↑ Energy ↓\n── ТРЕБУЮТ ДЕЙСТВИЯ (3) ─────────────────────────────────────────────────────────\n▲ MU     трейл-стоп 158.20 · цена 159.05 · до стопа −0.5% · R +0.9          ▸ карта\n▲ NVDA   цель 189.00 достигнута · R +2.9 · правило: 50% зафиксировать       ▸ карта\n▼ EQT    вход 312.00 сработал (шорт) · стоп 324.50 не выставлен ⚠            ▸ карта\n── СЕТАПЫ НА СЕГОДНЯ (скринер, R/R ≥ 1.5, не в книге) ───────────────────────────\n▲ AZN    откат к SMA50 · вход 1 690 · стоп 1 612 · цель 1 810 · R/R 1.5 · A   ⊕ план\n▲ INVE B у поддержки 305 · вход 306.5 · стоп 296 · цель 324 · R/R 1.7 · B     ⊕ план\n▼ —      шорт-сетапов нет (ни одного с R/R ≥ 1.5)\n── КНИГА Dima ────────────────────────────────────────────────────────────────────\nнетто +65% · брутто 81% · риск 10 800 kr = 1.8% из 6% · кэш 27% · отчёт MU 24.09",
+    "mobile": "Одна колонка: полоса режима (горизонтальный скролл) → карточки «требуют действия» (тап → Карта на весь экран) → 3 сетапа с ⊕ → строка книги; нижний таббар."
+   },
+   {
+    "screen": "Книга (#book/dima)",
+    "job": "Сколько я держу в лонг и шорт, сколько потеряю, если все стопы сработают, какая позиция ближе всего к стопу/цели, и что запланировано ко входу.",
+    "blocks": [
+     "Переключатель книг: Dima · Anna · Sergei · AI (read-only) · Бумажная (бывш. SIM); настройки книги ⚙: риск/сделку %, лимит открытого риска %, лимит позиции %, shortable",
+     "Шапка экспозиции (bookExposure): капитал, лонг kr/%, шорт kr/%, нетто, брутто, открытый риск kr/% с полосой до лимита, кэш, плечо, штамп цен",
+     "Сегменты: Открытые · План (status planned/armed) · Наблюдение (watch) · Экспозиция (сектор/валюта/рынок как нетто-доли — бывш. Структура)",
+     "Таблица позиций: сторона (▲/▼), тикер, кол-во, вход (средняя K4), цена, стоп, цель, тепловая полоса стоп◆цель, R сейчас, риск kr, дней; строка без стопа помечена ⚠ и не входит в риск",
+     "План: строки planned с расстоянием до входа и грейдом; armed = цена в 0.3·ATR от входа; ⌫ снять",
+     "Строка → Карта (drawer справа); множественный выбор → «закрыть 50%», «выставить трейл 2·ATR»"
+    ],
+    "wireframe": "КНИГА  [Dima] Anna  Sergei  AI  Бумажная            риск/сделку 0.5% · лимит книги 6%  ⚙\nкапитал 600 000 kr │ лонг 437 000 (73%) │ шорт 46 000 (8%) │ нетто +65% │ брутто 81%\nоткрытый риск 10 800 kr = 1.8%  ▓▓▓░░░░░░░ 6%   кэш 163 000 (27%)   плечо 0   цены 14:32\nОТКРЫТЫЕ (5)   ПЛАН (1)   НАБЛЮДЕНИЕ (4)   ЭКСПОЗИЦИЯ                   сорт: риск ▾\nстор тикер    кол-во   вход    цена    стоп    цель  стоп ◆ цель        R   риск kr  дн\n▲    MU          120  152.10  159.05  158.20  189.0  [◆         ]    +0.9      900  14\n▲    NVDA         40  151.00  189.30  181.00  189.0  [         ◆]    +2.9    2 970  61\n▲    AZN          60  1612.0  1718.0  1650.0  1950   [  ◆       ]    +1.7    4 080 112\n▲    INVE B      300   291.0   320.2      —      —   [ нет стопа ⚠]     —        — 240\n▼    EQT         150   312.0   305.4   324.5   281   [ ◆        ]    +0.5    2 870   3\nПЛАН\n▲    SAAB B    41 шт   480.0   498.2   455.0   560   ждёт отката −3.7% · B · ⌫ снять",
+    "mobile": "Шапка сжимается до двух чисел (нетто, открытый риск/лимит); строка = ▲/▼ тикер, тепловая полоса, R; стоп/цель/риск раскрываются тапом; свайп влево → «закрыть 50% / трейл»."
+   },
+   {
+    "screen": "Скринер (#screen?side=long)",
+    "job": "Что во всей вселенной (все индексные вкладки + книги) сейчас даёт сетап на лонг или на шорт с приемлемым R/R, и как это отправить в книгу одним действием.",
+    "blocks": [
+     "Вселенная: чекбоксы рынков = бывшие вкладки OMXS30/Nasdaq 100/S&P 500/DAX/Small cap…; дедуп по тикеру (замена 🔁 Дубли)",
+     "Сегмент стороны: ▲ лонг-сетапы / ▼ шорт-сетапы / все; фильтры: фаза (pf3Criterion), ≤2% к уровню, R/R ≥ 1.5, betyg ≥ C, сектор, отчёт > 5 дн, не в книге, объём ≥ 1.5× ср., инсайдеры нетто-покупка, недооценка vs сектор (бывш. Инсайдеры × Недооценка)",
+     "Таблица (виртуализированная): сторона, тикер, сетап, цена, вход, стоп, цель, R/R, ATR%, фаза, betyg, балл (score) — сортировка по любому столбцу; сохранённые наборы фильтров (в ledger_state.book.screens)",
+     "Действия строки: ▸ Карта (drawer), ⊕ в план книги (создаёт trade status=planned с entry/stop/target из сетапа), ◇ наблюдать, ⇩ CSV",
+     "Подвал: штамп данных, число бумаг без баров (ATR-прокси), кнопка «Обновить вселенную» (чанки ?bars= по 45)"
+    ],
+    "wireframe": "СКРИНЕР · 248 бумаг · рынки: OMXS30 ✓ Nasdaq 100 ✓ S&P 500 ✓ DAX ✓ Small cap ☐    14:32\n[▲ лонг-сетапы] [▼ шорт-сетапы] [все]  фаза ▾  ≤2% к уровню ☑  R/R ≥1.5 ☑  betyg ≥C ☐\nсектор ▾  отчёт >5 дн ☑  не в книге ☑  объём ≥1.5× ☐          колонки ▾ · сохранить набор\nстор тикер    сетап         цена    вход    стоп    цель  R/R  ATR%  фаза       betyg  балл\n▲    AZN      откат SMA50  1718.0  1690.0  1612.0  1810   1.5   1.9  аптренд      B    74 ▸\n▲    INVE B   у поддержки   320.2   306.5   296.0   324   1.7   1.4  коррекция    A    71 ▸\n▲    NVDA     пробой 60д    189.3   190.0   178.0   208   1.6   2.8  импульс      A    69 ▸\n▼    EQT      ралли-фейд    305.4   312.0   324.5   281   2.5   2.1  даунтренд    C    66 ▸\n▼    ERIC B   истощение      90.3    90.3    96.1    80.5  1.7   2.6  перегрев     C    44 ▸\n… 243 строки (виртуальный список)\n▸ карта сделки   ⊕ в план книги   ◇ наблюдать   ⇩ CSV",
+    "mobile": "Фильтры в нижней шторке; строка = ▲/▼ тикер · сетап · R/R · балл; тап → Карта; свайп вправо ⊕ в план."
+   },
+   {
+    "screen": "Карта сделки (#card/MU?book=dima)",
+    "job": "Где именно входить, где стоп и цель, сколько штук при моём риске, и какие доказательства за/против — на одном экране с графиком; для уже открытой позиции — где я относительно стопа/цели и что делать (добавить/трейл/закрыть часть).",
+    "blocks": [
+     "Шапка: тикер, биржа, валюта, цена, день%, pre/post, статус в книге (▲ 120 шт / нет)",
+     "График (chartMount): свечи + объём + SMA + зоны S/R + линии план (вход/стоп/цель) + маркеры моих сделок/инсайдеров/отчётов + RSI-панель; тумблеры слоёв; диапазоны 3М…5Г",
+     "План сделки (левая колонка): сторона ▲/▼, сетап и грейд, средняя K4 vs вход сделки, стоп (✎, старт, трейл ☑), цель/цель-2, риск % → kr → штук, R/R, ATR; для открытой: R сейчас, риск сейчас, «добавить», «закрыть 50%»; кнопки: Исполнить в книгу (pfTrade/pfCardBuy с side), В план, Бумажная",
+     "Доказательства (правая колонка, вкладки): Фундаментал (pf3Health + betyg), Аналитики (targetsBlockHTML/valHTML), Новости (pf3NewsLiveHTML), Инсайдеры (insiderHTML), Опционы/отчёт (implied move, дата), AI (aiRecoHTML/stockAiHTML/cycleMonitorHTML — по требованию, admin)",
+     "Почему: список факторов sigSetups.why со знаками ▲▼• (заменяет три горизонта и Bull/Base/Bear)",
+     "Журнал по бумаге: сделки и исходы (pfTradesHTML(tk))"
+    ],
+    "wireframe": "MU · Micron Technology · NASDAQ · USD           159.05  −1.2%   ▲ в книге Dima: 120 шт\n[1D ▾]  3М  6М  1Г  2Г  5Г     ☑ SMA 50/100/200  ☑ зоны S/R  ☑ план  ☑ сделки  ☐ инсайдеры\n189.00 ◆ цель ──────────────────────────────────────────────────────────── +18.8% ─\n▒▒▒▒▒▒▒ зона сопротивления 186–189 ▒▒▒▒▒▒▒                    ╷    ╷╷\n                                                  ╷  ▌▌ ▐  ▐  ▌ ▐▌ ▐▌ ▐\n   ▌▐▌ ▐▌▐▌ ▐   ▌▐ ▐▌  ▐▌▌ ▐ ▌▐▌   ▌▐▌ ▐▌ ▐▌▐▌▐ ▌▐ ▌       ▌  ▐   ▐\n158.20 ✕ стоп (трейл 2·ATR) ──────────────────────────────────────────────── −0.5% ─\n152.10 ▸ вход ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ ▲120 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n▒▒▒▒▒▒▒ зона поддержки 151–154 ▒▒▒▒▒▒▒                                Q┆ отчёт 24.09\nобъём ▁▂▁▃▂▁▁▅▂▁▂▃▁▁▂▇▂▁▁▂▃▂▁▁▂▁▃▂▂▁▁▂▁▂▃▂▁▂▁▁▂▂▁▂▃▁▂▁▂▁▁▂▃▁▂▂▁▂▇▂▁▂▃  ×1.6 ср\nRSI 14  ─30───────────────────────────────────────────────────────70─  58\n── ПЛАН СДЕЛКИ ────────────────────────┬── ДОКАЗАТЕЛЬСТВА ─────────────────────────\nсторона  [▲ лонг]  ▼ шорт              │ Фундаментал B (betyg 71) · Аналитики 3м 205 +29%\nсредняя (K4) 152.10 · вход сделки 152.10│ Новости +2 · Инсайдеры нетто +$1.2M (кластер)\nстоп  158.20 ✎  старт 144.00 · трейл ☑ │ Опционы: ход на отчёт ±9.4% · отчёт 24.09 ⚠\nцель  189.00 ✎  цель-2 205 (аналитики) │ [Фундаментал] [Аналитики] [Новости] [Инсайд.] [AI]\nсейчас R +0.9 · риск 900 kr (0.15%)    │ AI-мнение: «держать, добавлять ниже 150» · 3 дн\nдобавить 0.5% = 3 000 kr → 41 шт @159  │ почему: ▲ аптренд ▲ у SMA50 ▲ объём ▼ отчёт 15 дн\n[Исполнить: Dima ▾]  [В план]  [Бумажная]  [Закрыть 50%]",
+    "mobile": "Полноэкранный маршрут: график 45vh (пинч-зум, тап по линии стопа/цели → перетаскивание), под ним план сделки; доказательства — аккордеон; «Исполнить» — липкая кнопка внизу."
+   },
+   {
+    "screen": "Журнал (#journal/dima/2026)",
+    "job": "Работает ли моя торговля: win-rate, ожидание в R, profit factor по сетапам и сторонам; реализованный P&L по средней (K4) и черновик декларации.",
+    "blocks": [
+     "Шапка статистики: закрытых сделок, win-rate, expectancy (R), P&L kr, profit factor, средний выигрыш/проигрыш в R, макс. серия убытков; разрез по сетапам и сторонам, «трейл спас N»",
+     "Таблица закрытых сделок (BOOK.trades status=closed + PF_TRADES): дата закрытия, сторона, тикер, сетап, вход, выход, R, P&L kr, причина (стоп/цель/ручная/время/сигнал), дней, заметка ✎",
+     "Кривая эквити книги (реализ. + нереализ.) vs OMXS30 — одна панель, две линии",
+     "Налоги: движок pfTaxLots (Средняя K4 / FIFO для сверки), CSV импорт/экспорт (pfParseTradesCSV/exportCSV), итог по году"
+    ],
+    "wireframe": "ЖУРНАЛ · Dima ▾ · 2026 ▾                      23 закрытых · win 57% · ожидание +0.42R\nP&L +48 300 kr │ profit factor 1.9 │ ср. выигрыш +1.6R │ ср. проигрыш −0.8R │ серия −3\nпо сетапам: откат 9 (67%) · пробой 6 (50%) · шорт 5 (40%) · ручные 3 (33%) · трейл спас 4\nзакрыто   стор тикер   сетап        вход    выход    R     P&L kr   причина       дн\n04.09     ▲    NVDA    пробой 60д   151.0   189.3   +2.9  +13 700   цель          61 ✎\n28.08     ▼    EQT     ралли-фейд   318.0   326.2   −1.0   −1 230   стоп           6\n12.08     ▲    AZN     откат SMA50  1585    1560    −0.6   −1 500   стоп (гэп)     4 ✎\n30.07     ▲    INVE B  ручная       282.0   301.5   —      +5 850   продажа 50%   58\n…\n[Средняя (K4) ▾ / FIFO]  [CSV импорт]  [CSV экспорт]   реализ. 2026 +41 200 kr · K4 черновик",
+    "mobile": "Список закрытых по датам с R и причиной; статистика — три плитки сверху; таблица K4 — только десктоп (ссылка «открыть на компьютере»)."
+   },
+   {
+    "screen": "Лаб (admin, #lab/backtest)",
+    "job": "Админский стол: AI-книга под управлением Claude, бэктест и калибровка того же sigSetups, база AI-разборов, промпты и RBAC — всё, что не нужно для ежедневных решений, в одном месте вместо четырёх вкладок.",
+    "blocks": [
+     "AI-книга (AI_PORT через aipSyncTab): позиции, альфа vs индексы, «цикл сейчас»/пауза, импорт предложения AI в план книги (bookImportFromAi ← planImportFromAi)",
+     "Бэктест сетапов: btRun поверх sigSetups(ctxAt(i)) по книге/вселенной: сигналов, hit-rate, средний R, val-hit, флаг переобучения; калибровка весов → SIG_CFG (btCalibrate)",
+     "AI-разборы (stkLogHTML), AI-Dashboard карточки (aiDashHTML) как история; промпты (togglePrompts); доступ (toggleSettings)"
+    ],
+    "wireframe": "ЛАБ (админ)   [AI-книга]  [Бэктест сетапов]  [AI-разборы]  [Промпты]  [Доступ/RBAC]\nAI-книга · Claude · капитал 300 000 kr · альфа vs OMXS30 +2.1%   [цикл сейчас] [пауза]\n▲ NVDA 30 шт · ▲ SAAB B 80 шт · кэш 41%                    → импортировать план в книгу Dima\nБЭКТЕСТ (та же sigSetups, 2 года, 1D, train/val 70/30, H=20 баров)\nсетап            сигналов  hit-rate  ср. R   val-hit  переобучение\nоткат SMA50 ▲       142      58%      +0.5     54%     нет\nпробой 60д ▲         88      49%      +0.7     46%     нет\nралли-фейд ▼         51      44%      +0.3     39%     ⚠ train−val ≥ 20\n[калибровать веса]  [применить в SIG_CFG]  [сброс]",
+    "mobile": "Только десктоп; на телефоне — карточка AI-книги без бэктеста."
+   }
+  ],
+  "navigation": "Десктоп: левая рейка 56px с пятью пунктами — Сегодня · Книга · Скринер · Журнал · Лаб (admin) — бейджи: у «Сегодня» число действий, у «Книги» мини-полоса открытого риска. Верхняя полоса: переключатель книги (Dima / Anna / Sergei / AI / Бумажная — заменяет вкладки портфелей и уважает RBAC canTab/tabAllowed), ⌘K поиск тикера → Карта, «Обновить» со штампом времени, язык, тема, выход. Карта сделки — не вкладка: правый drawer 640px поверх Книги/Скринера (десктоп) и полноэкранный маршрут на мобильном, всегда адресуема хэшем. Хэш-роутер вместо curIdx/pf3Tab: #today · #book/dima/(open|plan|watch|exposure) · #screen?side=short&phase=down&market=omx · #card/MU?book=dima · #journal/dima/2026 · #lab/(ai|backtest|log|prompts|access). Мобильный: нижний таббар из 4 пунктов (Сегодня, Книга, Скринер, Журнал), Лаб через «…». Индексные вкладки исчезают — рынок становится фильтром скринера; сектора — полосой режима и фильтром.",
+  "chart_spec": {
+   "layers": [
+    "1. Свечи 1D (панель 0, единственная ценовая ось справа): монохром — рост = полая свеча с обводкой ink, падение = залитая ink; статус-цвета (long/short) свечам не даются, чтобы линии плана читались; недельная агрегация клиентом для 5Г",
+    "2. Объём (панель 1, 16% высоты, ось скрыта кроме max): гистограмма ink@30%, бар ≥ 1.5×avgVol — ink@80% с подписью «×1.6 ср»; пунктир среднего объёма",
+    "3. SMA 50/100/200 (панель 0, 1px): SMA50 accent сплошная, SMA100 accent пунктир, SMA200 ink 1.5px; легенда всегда (≥2 серий)",
+    "4. Зоны S/R (custom ISeriesPrimitive v5): поддержка = полоса [support, support×1.02] long@8% с хайрлайном, сопротивление = [res×0.98, res] short@8%; пивоты S1/S2/R1/R2 из ?levels= — тонкие точечные хайрлайны с подписью на оси",
+    "5. Линии плана (createPriceLine на свечной серии): вход ▸ пунктир accent «вход 152.10»; стоп ✕ сплошная short «стоп 158.20 · −0.5%»; цель ◆ сплошная long «цель 189.00 · +18.8%»; цель-2 (аналитики) ◆ пунктир long; для открытой позиции — лента P&L от даты входа (accent@10% между entry и текущей ценой); линии стопа/цели перетаскиваются (drag → sigTrade пересчёт → ✎ в плане)",
+    "6. Маркеры (createSeriesMarkers): мои сделки ▲ под баром / ▼ над баром с qty (PF_TRADES); инсайдеры ○ покупка / ● продажа (INSIDER.tx, только P/S); отчёты — вертикальный хайрлайн «Q» внизу (?earnings/?calendar); срабатывания плана ◇ (trade.log); форма различает источник, цвет — только сторону",
+    "7. RSI 14 (панель 2, 14% высоты; тумблер RSI/ATR%): линия ink, хайрлайны 30/70 wait-цветом, зона >70 short@6%, <30 long@6%; ATR% = ATR14/close",
+    "8. Кроссхейр + один плавающий тултип на все серии: O/H/L/C, Δ%, объём ×ср, SMA50/100/200, RSI, «до стопа −0.5% · до цели +18.8% · R +0.9»; тач — long-press"
+   ],
+   "entry_exit_logic": "Обозначения: P=цена, dir=+1 лонг / −1 шорт, ATR=ATR14 Уилдера по истинному диапазону TR=max(H−L,|H−Cprev|,|L−Cprev|) из OHLCV (при отсутствии H/L — atrFromCloses с флагом atrProxy), L={SMA50,SMA100,SMA200,support=min(L,60д),resistance=max(H,60д),S1,S2,R1,R2}. near(l)=|P−l|/l≤2% (порог pf3SignalInfo). Тренд up: P>SMA200 ∧ SMA50>SMA100; down: P<SMA200 ∧ SMA50<SMA100 (правила btFiredAt). Фаза = pf3Criterion.cls (knife/heat/imp/undr/up/down/corr/rev/flat, пороги ≥25% апсайд, >30% над SMA200, day≥2.5%). Коридор целей ±2.5·ATR, запас ATR 1.5 (SCENARIO_CFG).\nЛОНГ-СЕТАПЫ (sigSetups, side=long): (a) pullback: тренд up ∧ near(SMA50|SMA100|support) ∧ RSI<60 ∧ фаза∉{heat,knife} → entry=level×1.005 (лимит), grade A если фаза∈{up,undr} и объём дня ≤ ср.; (b) breakout: C>resistance ∧ vol≥1.5·avgVol ∧ RSI<75 ∧ фаза∈{up,imp} → entry=resistance×1.003 (стоп-бай); (c) reversal: фаза=rev ∧ bounceSup (P в 2% над support ∧ ATR растёт) → entry=P, grade ≤ B.\nСТОП (лонг): levelBelow = max{l∈L: l<entry ∧ entry−l≤2.5·ATR}; stop = levelBelow−0.5·ATR, иначе entry−1.5·ATR; если (entry−stop)/entry>8% → флаг wideStop, grade−1. ЦЕЛЬ: T1 = min{l∈L: l>entry ∧ l−entry≤2.5·ATR} иначе entry+1.5·ATR; T2 = pf3EffTarget (свежий консенсус, stale-guard TG_STALE_PCT=10) для horizon=position; horizon=swing → цель T1.\nR/R = (T−entry)/(entry−stop); отклонить если <1.5; B если 1.5–2.5; A если ≥2.5 и нет флагов. Штрафы: отчёт ≤5 дн → grade−1; newsSent≤−2 → лонг не A; earnings-гэп-риск в why.\nРАЗМЕР: risk_kr = equity_kr×riskPct (книга: 0.5% по умолчанию, Dima 1% core); shares = floor((risk_kr − fee_buy − fee_sell) / (|entry−stop|×FX[ccy])), fee по tradeFeeNative; ограничения: notional ≤ maxPosPct (10%) капитала; открытый риск книги + risk_kr ≤ maxHeatPct (6%) — иначе «в план», не «исполнить».\nВЫХОД (sigTrade, для открытых): stop-hit: dir·(C−stop)≤0 (при OHLCV — по L/H дня); target-hit: dir·(C−T1)≥0 → правило tp1Half (закрыть 50%, стоп→entry) при horizon=position, полный выход при swing; трейл (если trail.atr): stop=max(stop, C−2·ATR) для лонга; time-stop: swing, прошло ≥15 баров и R<+0.5 → «истёк»; invalidated: фаза стала knife или close<SMA200 при сетапе pullback → «сократить»; гистерезис алертов 0.3·ATR и не чаще раза в день на состояние (паттерн hitAt). Метрики строки: R_now=dir·(P−entry)/|entry−stop0|, toStop=dir·(P−stop)/P, toTarget=dir·(T1−P)/P, heat=(dir·(P−stop))/(dir·(T1−stop)) ∈[0,1], riskNowKr=max(0,dir·(P−stop))×qty×FX.\nБАЛЛ 0..100 (заменяет homeCompositeScore/pf3Reco): raw = PHASE_PTS[фаза] + вклады апсайда/ROE/роста/P/E/входа/инсайдеров/новостей (веса homeCompositeScore без изменений) + grade(A +2, B +1) + (R/R>2: +1, <1: −1); score=clamp(0,100,50+raw·4).",
+   "short_mode": "Все формулы через dir=−1: stop=entry+буфер, target=entry−награда, pnl=dir·(P−entry)·qty, R_now/heat/toStop без изменений формы. ШОРТ-СЕТАПЫ: (a) breakdown: C<support ∧ vol≥1.5·avgVol ∧ фаза∈{down,knife-после-отскока} ∧ RSI>25 → entry=support×0.997 (стоп-селл), stop=min{l∈L: l>entry, l−entry≤2.5·ATR}+0.5·ATR (обычно SMA50 или пробитая поддержка), target=max{l<entry в коридоре} (S1/S2) иначе entry−1.5·ATR; (b) rally-fade: тренд down ∧ near(SMA50|SMA100|resistance снизу) ∧ RSI>40 ∧ day≤+1% → entry=level×0.995, stop=level+0.5·ATR; (c) exhaustion: фаза=heat ∧ RSI>70 ∧ rejectRes (у 60д-максимума) ∧ day≤+1% → entry=P, stop=max(H,5 баров)+0.5·ATR, target=SMA50, grade≤B. Фазовая таблица для шорта PHASE_PTS_SHORT={heat:+2,down:+1.5,corr:+0.5,flat:0,knife:−1 (не догонять),rev:−1,imp:−1.5,undr:−1,up:−2}; фундаментал зеркален (ROE<0, выручка↓, P/E≥45, цена выше таргета ≥10% — плюсы), новости зеркальны. Ограничители: shortable книги ('us' по умолчанию для Dima — US large cap; семейные 'none'); экс-дивиденд внутри горизонта (?calendar=) → флаг и grade−1; отчёт ≤5 дн → grade−1; стоимость заимствования не моделируется (в why «borrow n/a»). В книге: qty хранится положительным, side='short' в BOOK.trades; recalcPF получает dir → r[11]=dir·(P−avg)·qty·FX, r[13] остаётся брутто-стоимостью; экспозиция: long=Σval(long), short=Σval(short), net=long−short, gross=long+short. На графике линии стопа/цели меняются местами автоматически; тепловая полоса всегда читается слева стоп → справа цель; журнал: причина/R те же; K4 — зеркальные лоты (открытие=выручка, покрытие=себестоимость) с пометкой «оценка».",
+   "data_changes": "1) telegram-notify.js dailyHistory (стр. 451): вернуть {t,o,h,l,c,v} из того же yChart (0 доп. подзапросов); бар отбрасывать только если close null, o/h/l null → подставить close с флагом; поддержать &interval=1wk для 5y; оставить c для старых клиентов. 2) Новый ?bars=SYM,…&range=6mo — батч компактного OHLCV (последние 130 баров) ≤45 символов на вызов (лимит 50 подзапросов, yChart = 1 подзапрос) — для скринера (ATR/hi20/lo20/объём считаются клиентом). 3) ?symbols= (yahoo() стр. 223): добавить atr14 (истинный диапазон по 1y-чарту), hi20/lo20, hi5/lo5, volRatio=vol/avgVol — бесплатно, чарт уже загружен. 4) ?levels= (levelsFor): открыть для акций (пивоты S1/S2/R1/R2 + свинги), ≤20 за вызов. 5) Кэш: обёртка cachedJson(url, ttl) на Cloudflare Cache API (caches.default) для ?history/?bars/?levels — TTL 15 мин в торговые часы, 6 ч вне; сейчас только in-memory _levelsCache/_newsCache, умирающие с изолятом. 6) Новый cron-таск action=bookcheck (одна задача за тик, паттерн стр. 1846): читает BOOK.trades из ledger_state, yahooLite по ≤45 тикерам, сравнивает цену со stop/target/entry (только компараторы — «мозг» остаётся на клиенте, чтобы не дублировать sigSetups в воркере) и шлёт Telegram «▲ MU: стоп 158.20 пробит, close 156.9»; дедуп по trade.lastAlert. 7) Бамп WORKER_BUILD, проверка ?action=version, кейсы в tests/cases-worker.js (dailyHistory OHLCV alignment, bars chunking).",
+   "library": "lightweight-charts 5.0.x через jsdelivr: https://cdn.jsdelivr.net/npm/lightweight-charts@5.0.x/dist/lightweight-charts.standalone.production.js (точный патч зафиксировать в loadLWC, app.js:2143; сейчас unpkg 4.2.0 — index.html уже preconnect'ит cdn.jsdelivr.net, cdnjs пакета не имеет). Почему v5, а не v4: нативные панели (addSeries(HistogramSeries, opts, paneIndex)) для объёма и RSI с общей шкалой времени — в v4 пришлось бы держать 3 чарта и синхронизировать их вручную; плагин createSeriesMarkers и ISeriesPrimitive для зон S/R и ленты P&L; бандл меньше (~35KB gz) и tree-shaking не нужен в standalone. Цена миграции мала: 7 вызовов v4-API (addLineSeries → addSeries(LineSeries), setMarkers → createSeriesMarkers, createPriceLine без изменений), всё в drawChart. Один модуль chart.js экспортирует chartMount(box,{bars,plan,trades,insiders,earnings,layers,theme}) и chartUpdatePlan(handle,plan) — карта и Лаб используют один и тот же рендер."
+  },
+  "trade_model": "Источник истины для количества и средней остаётся r[] (r[6]=qty, r[9]=средняя по genomsnittsmetoden, r[7]=цена, r[8]=валюта, r[11]/r[12]/r[13] пересчёт recalcPF) и журнал PF_TRADES {id,tab,tk,name,ccy,act,qty,price,plNative,feeNative,date} — налоговый движок pfTaxLots и «Реализованный P&L» не трогаем. Поверх добавляется BOOK в ledger_state (snapshotState: book:BOOK): BOOK={settings:{[tab]:{riskPct:0.5,maxPosPct:10,maxHeatPct:6,shortable:'us'|'all'|'none',trailDefault:null|2}}, screens:{[name]:filters}, trades:{[id]:{id,tab,tk,name,ccy, side:'long'|'short', horizon:'swing'|'position'|'core', setup:'pullback'|'breakout'|'reversal'|'breakdown'|'rally-fade'|'exhaustion'|'manual', grade:'A'|'B'|'C'|null, status:'watch'|'planned'|'armed'|'open'|'closed', entry, entryKind:'limit'|'stop'|'market', stop, stop0, target, target2, trail:{atr:2}|null, riskKr, qtyPlan, openedAt, closedAt, exit:{price,reason:'stop'|'target'|'manual'|'time'|'signal'}|null, rMult, plKr, fees, notes, src:'screener'|'card'|'ai'|'migrated', log:[{at,ev}], lastAlert}}}. Инвариант: не более одной сделки status∈{open} на (tab,tk,side); qty открытой лонг-сделки = r[6] той же строки (читается, не дублируется), avg = r[9]; докупка (pfApplyBuy) обновляет среднюю, а entry сделки по умолчанию = новая средняя («объединить», совпадает с K4) — либо отдельная сделка «пирамида» со своим стопом (advanced). Для riskKr/R используется stop0 (стартовый стоп) — так R-мультипликатор отражает решение, а не налоговую среднюю; в карте показываем оба числа: «средняя (K4) 152.10 · вход сделки 152.10». Шорт: qty хранится положительным в r[6] + side в BOOK; recalcPF(i,idx,dir) добавляет знак к прибыли; все фильтры вида parseFloat(r[6])>0 (btTickers, pf3PullHoldingsNews, scnAlertCheck, snapshot воркера для AI-портфеля) продолжают работать, но получают колонку 'Сторона' через ensurePFCol. Свинг = horizon:'swing' (цель T1, time-stop 15 баров), позиция = 'position' (T1 → 50% и стоп на вход, T2 = консенсус), core = без time-stop и с трейлом по SMA200/2·ATR. Миграция: migrateBook() создаёт open-сделки из всех строк qty>0 (side long, entry=avg, stop=null → ⚠ «нет стопа», не в риске), planned из PLAN_RULES (act buy → side long, level → entry; act sell на открытой → target, если пуст; watch → status watch), Бумажная книга tab='paper' из SIM. Genomsnittsmetoden сохраняется как есть для K4 и журнала; для шортов pfTaxLots получает side и считает зеркальные лоты (открытие — выручка, покрытие — себестоимость по средней), с той же оговоркой «оценка, не готовая K4».",
+  "signal_layer": "Новый файл signal.js (грузится после data.js, до app.js; глобальные имена с префиксом sig*/book*; чистые функции без DOM — покрываются tests/cases-app.js). Три функции + один свёрток:\\n1) sigContext(d, r, opt={bars, levels, cal, book}) → Ctx {tk,ccy,price,day,vol,avgVol,sma50,sma100,sma200,support,resistance,piv:{s1,s2,r1,r2},atr,atrProxy,rsi,rsiW,hi20,lo20,hi5,lo5,trend:'up'|'down'|'flat',phase (pf3Criterion.cls),upside/targetFresh/stale (pf3EffTarget),fund:{roe,revg,pe,ps,de,beta,betyg} (pf3TypeMetrics+pf3BetygRow),news:{sent,n} (NEWS_LIVE),insider:{net,cluster} (INSIDER/signalScore),ai:{verdict} (AI_RECO),earningsInDays,exDivInDays,spec,inBook:{side,qty}}. Поглощает: pf3Items (сбор метрик), scenarioTech (bars → ATR/RSI), homeBestComposite (сбор входов балла).\\n2) sigSetups(ctx, opt={side:'both'|'long'|'short', horizon:'swing'|'position'|'core', cfg:SIG_CFG}) → {long:Setup|null, short:Setup|null, score:{long,short}, phase, why:[{pts,txt}], proj:{low,high,n}}; Setup={side,type,grade,entry,entryKind,stop,target,target2,rr,riskPct,atr,trigger,invalidation,flags[]}. Это ЕДИНСТВЕННОЕ место, где считаются вход/стоп/цель/R/R/балл. Поглощает: pf3SignalInfo (near-level), scenarioShort/scenarioMid/scenarioProjection (коридор ±2.5·ATR, T2 по свежему консенсусу, ±ATR√N), pf3Reco + pf3RecoHorizons (F/T/R-очки → why и score; horizon-параметр вместо трёх функций), homeBestPicks sShort/sMed/sLong и homeCompositeScore (те же веса PHASE_PTS и 50+raw·4 — тесты переносятся), btFiredAt (breakUp/bounceSup/rejectRes/downtrend/uptrend/overheat становятся детекторами сетапов), pf3BuySection (лестница докупок → target2/пирамида). Бэктест btRun вызывает sigSetups(sigContextAt(bars,i)) — живой сигнал и бэктест перестают расходиться.\\n3) sigTrade(trade, ctx, book={equityKr,fx,cfg}) → TradeState {status,dir,qty,pnlKr,pnlPct,rNow,toStop,toTarget,heat,riskNowKr,action:'hold'|'stop-hit'|'target-hit'|'trim'|'trail-up'|'entry-armed'|'entry-hit'|'expired'|'invalidated'|'no-stop',trailStop,reasons[]}. Поглощает: planStatus/planCheck (armed/hit по входу), scnAlertCheck/scnAlertEvents (события = diff action между вызовами, с гистерезисом 0.3·ATR), planNotify остаётся транспортом (браузер) + Telegram через worker bookcheck.\\n4) bookExposure(trades, ctxByTk, book) → {equityKr,longKr,shortKr,grossKr,netKr,grossPct,netPct,openRiskKr,heatPct,cashKr,marginKr,byRisk[],noStop[],bySector{},byCcy{}} — тонкий fold над sigTrade; заменяет pf3Summary и «Структуру».\\nSIG_CFG = слияние SCENARIO_CFG + BT_DEFAULTS.rules + новых порогов: {near:2,corridorAtr:2.5,atrMult:1.5,stopBufAtr:0.5,trailAtr:2,volBreak:1.5,rsiHot:70,rsiCold:30,rrMin:1.5,rrA:2.5,earningsGuardDays:5,maxStopPct:8,timeStopBars:15,hysteresisAtr:0.3,projDays:10,staleTargetPct:10}; калибруется из Лаба (btCalibrate → d.sigCfg).\\nОстаются как есть (входы слоя): pf3Criterion (только данные, html — в рендер), pf3EffTarget/pf3EffUpside, pf3TypeMetrics, pf3Betyg/pf3BetygRow, signalScore, newsSentiment/newsRecencyWeight, atrFromCloses/rsiFromCloses (фолбэк), tradeFeeNative, pfApplyBuy, pfTaxLots. Совместимость: pf3WriteReco (колонка «Реком. скоринг» для воркера AI-портфеля) пишет buy если score.long≥65 ∧ setup.long, sell если sigTrade.action∈{trim,invalidated}, avoid если phase=knife, иначе wait.",
+  "tokens": {
+   "palette": [
+    {
+     "name": "surface",
+     "hex_light": "#EEF0F2",
+     "hex_dark": "#101317",
+     "role": "фон страницы (бумага книги); поднятые панели: #FFFFFF / #171B20; хайрлайны = ink@12%"
+    },
+    {
+     "name": "ink",
+     "hex_light": "#14181D",
+     "hex_dark": "#E6E9EC",
+     "role": "текст, свечи (полая/залитая), SMA200, объём (в прозрачности), оси"
+    },
+    {
+     "name": "accent",
+     "hex_light": "#1F5F8B",
+     "hex_dark": "#6FA8DC",
+     "role": "интерактив: ссылки, активный сегмент, линия входа ▸, SMA50/100, фокус"
+    },
+    {
+     "name": "long",
+     "hex_light": "#0E8A6A",
+     "hex_dark": "#3FC1A0",
+     "role": "сторона лонг ▲, цель ◆, прибыль, зона поддержки (@8%), RSI<30"
+    },
+    {
+     "name": "short",
+     "hex_light": "#C8384B",
+     "hex_dark": "#F2707F",
+     "role": "сторона шорт ▼, стоп ✕, убыток, зона сопротивления (@8%), RSI>70"
+    },
+    {
+     "name": "wait",
+     "hex_light": "#6B7A88",
+     "hex_dark": "#8B98A5",
+     "role": "нейтрально/ждать, вторичный текст, план (planned) и наблюдение, хайрлайны RSI 30/70, отключённые слои"
+    },
+    {
+     "name": "warn",
+     "hex_light": "#B7791F",
+     "hex_dark": "#E2A83B",
+     "role": "предупреждения: нет стопа, отчёт ≤5 дн, устаревший таргет, риск книги у лимита, ATR-прокси — только заливки/иконки, текст поверх всегда ink"
+    }
+   ],
+   "type_display": "IBM Plex Sans Condensed 600/700 (Google Fonts, есть кириллица) — заголовки экранов, названия секций капителью с трекингом .06em, крупные суммы шапки; сжатая ширина даёт характер финансовой полосы и экономит место в плотных шапках таблиц. Fallback: 'Arial Narrow', 'Helvetica Neue', system-ui с font-stretch:condensed.",
+   "type_body": "IBM Plex Sans 400/500 — подписи, why-списки, заметки, формы; нейтральный инженерный гротеск с полной кириллицей, одна суперсемья с display и data = единый ритм и один запрос шрифтов. Fallback: -apple-system, 'Segoe UI', Roboto, sans-serif.",
+   "type_data": "IBM Plex Mono 400/600 с font-variant-numeric: tabular-nums slashed-zero — все числа таблиц, оси графика, тепловые полосы, тикеры; заменяет JetBrains Mono, чтобы сменить характер, сохранив кириллицу. Fallback: 'SF Mono', Menlo, Consolas, monospace.",
+   "layout": "Десктоп: фиксированная рейка 56px + контент до 1440px на 12-колоночной сетке; таблицы — CSS grid с явными шаблонами колонок (как pf3GridTpl), числа выровнены вправо, липкие шапки; Карта — правый drawer 640px (≤900px — полноэкранный маршрут). Радиусы 4px, хайрлайны 1px ink@12%, теней нет (кроме drawer), без пилюль и градиентов; ui2/v3-градиенты и radial-фоны удаляются.",
+   "density": "Плотно: тело 12.5px, данные 13px, шапки 10.5px капителью; строка таблицы 32px (компакт 28px) на десктопе, 44px на мобильном; отступы по сетке 4px (8/12/16); в строке позиции 11 колонок без переносов; сигнал читается формой (▲▼ сторона, ◆ цель, ✕ стоп, ▸ вход, ⚠ без стопа, буквенный грейд A/B/C) — цвет дублирует, а не заменяет."
+  },
+  "reuse_map": [
+   {
+    "existing": "renderAll (app.js:1410) + init() строитель вкладок (app.js:1073)",
+    "fate": "merge",
+    "into": "route() хэш-роутер в ui.js: экраны вместо curIdx/pf3Tab, RBAC canTab/tabAllowed сохраняется; drag&drop вкладок и TAB_GROUPS не переносятся"
+   },
+   {
+    "existing": "homeHTML / homeFuturesHTML / homeBaroHTML (app-4.js:266,154,190)",
+    "fate": "merge",
+    "into": "deskHTML (Сегодня): полоса режима из homeMktInner+homeBaroInner; homeFutStart поллинг остаётся"
+   },
+   {
+    "existing": "homeBestBoardHTML / homeBestHTML / homeForecastHTML / homeSignalHTML / homeValHTML / homeInsiderHTML",
+    "fate": "remove",
+    "into": "скринер (колонки/фильтры) и sigSetups.score"
+   },
+   {
+    "existing": "pf3DetailHTML (app-4.js:454)",
+    "fate": "merge",
+    "into": "cardHTML: шапка + chartMount + planPanelHTML + evidenceTabsHTML; 3 формы (Купить в портфель / Сделка / Моя позиция) → одна панель плана"
+   },
+   {
+    "existing": "drawChart / openStockChart / loadLWC (app.js:2140–2260)",
+    "fate": "merge",
+    "into": "chart.js chartMount() на lightweight-charts v5 (jsdelivr); попап classic-таблицы удаляется"
+   },
+   {
+    "existing": "pf3Summary (app-2.js:102)",
+    "fate": "merge",
+    "into": "bookExposure + bookHeaderHTML (экспозиция, открытый риск, кэш, плечо)"
+   },
+   {
+    "existing": "pf3Items / pf3ListHTML / pf3RowHTML / pf3ListHead / PF3_XDEF (app-2.js:748–1019)",
+    "fate": "merge",
+    "into": "bookTableHTML (позиции) и screenTableHTML (вселенная); pf3Items → sigContext; XDEF → набор колонок скринера"
+   },
+   {
+    "existing": "pf3SignalInfo / pf3RowSignal (app-2.js:225)",
+    "fate": "remove",
+    "into": "sigSetups (near-level ≤2%)"
+   },
+   {
+    "existing": "pf3Criterion (app-2.js:256)",
+    "fate": "keep",
+    "into": "классификатор фазы для sigContext; html-часть выносится в рендер фазы"
+   },
+   {
+    "existing": "pf3Reco / pf3RecoHorizons / pf3HorizonsHTML / pf3RecoHTML / recoInfoHTML (app-2.js:302–650)",
+    "fate": "remove",
+    "into": "sigSetups(horizon) + why-список в карте"
+   },
+   {
+    "existing": "scenarioShort / scenarioMid / scenarioProjection / scenarioTech / pf3ScenarioHTML / SCENARIO_CFG (app-3.js:365–620)",
+    "fate": "merge",
+    "into": "sigSetups (коридор целей, T2, проекция) и SIG_CFG; Bull/Base/Bear-сетка исчезает"
+   },
+   {
+    "existing": "atrFromCloses / rsiFromCloses / weeklyFromCloses (app-3.js:367)",
+    "fate": "keep",
+    "into": "фолбэк при отсутствии OHLC (флаг atrProxy); основной ATR — по истинному диапазону в signal.js"
+   },
+   {
+    "existing": "homeBestPicks / bpWhy* (app-3.js:1041)",
+    "fate": "remove",
+    "into": "скринер"
+   },
+   {
+    "existing": "homeCompositeScore / homeBestComposite / homeBestList (app-3.js:1111)",
+    "fate": "merge",
+    "into": "sigSetups.score с теми же весами; тест-группа homeCompositeScore переносится"
+   },
+   {
+    "existing": "planStatus / planCheck / planReadyCount / planRulesHTML / planImportFromAi / PLAN_RULES (app-5.js:300–560)",
+    "fate": "merge",
+    "into": "sigTrade (entry-armed/hit) + сегмент План в Книге + bookImportFromAi; PLAN_RULES мигрируют в BOOK.trades"
+   },
+   {
+    "existing": "planNotify / scnAlertCheck / scnAlertEvents / SCN_ALERT_STATE (app-5.js, app-3.js:621)",
+    "fate": "merge",
+    "into": "bookAlerts(): diff TradeState.action с гистерезисом → браузер + Telegram bookcheck"
+   },
+   {
+    "existing": "pfTrade / pfCardBuy / pfApplyBuy / pfTrPreview / pfCardBuyPreview (app-5.js:11–90)",
+    "fate": "keep",
+    "into": "математика без изменений + параметр side; UI — кнопки «Исполнить/В план/Бумажная» панели плана"
+   },
+   {
+    "existing": "pfTradesHTML / pfTradeAddRecord / pfTradeDel (app-5.js:96–190)",
+    "fate": "move",
+    "into": "Журнал (+ колонки R, причина, сетап) и вкладка «сделки по бумаге» в Карте"
+   },
+   {
+    "existing": "pfTaxLots / pfTaxTrades / pfRecalcRealized / pfParseTradesCSV (app-5.js:191+)",
+    "fate": "keep",
+    "into": "Журнал/K4; расширение полем side для шортов"
+   },
+   {
+    "existing": "recalcPF (app.js:764)",
+    "fate": "keep",
+    "into": "добавляется dir из BOOK для знака прибыли шорта"
+   },
+   {
+    "existing": "btFeatures / btFiredAt / btSignalAt / btRun / btCalibrate / btHistory (app.js:3470+)",
+    "fate": "merge",
+    "into": "Лаб/Бэктест: btFiredAt → sigSetups(sigContextAt); btRun/btCalibrate остаются харнессом и калибратором SIG_CFG"
+   },
+   {
+    "existing": "pf3Betyg / pf3BetygRow / pf3Health / pf3HealthTab (app.js:2318–2500, app-2.js:1)",
+    "fate": "keep",
+    "into": "вкладка «Фундаментал» в Карте, колонка betyg скринера; «Состояние портфеля» → шапка Книги"
+   },
+   {
+    "existing": "signalScore / signalBadgeHTML / valHTML / insiderHTML / targetsBlockHTML (app-3.js)",
+    "fate": "keep",
+    "into": "данные → sigContext; UI → вкладки «Аналитики»/«Инсайдеры» в Карте"
+   },
+   {
+    "existing": "pf3NewsLiveHTML / newsSentiment / newsRecencyWeight (app-3.js)",
+    "fate": "keep",
+    "into": "вкладка «Новости»; sent → sigContext.news"
+   },
+   {
+    "existing": "aiRecoHTML / stockAiHTML / stockReportHTML / cycleMonitorHTML (app.js:2895+, app-4.js)",
+    "fate": "move",
+    "into": "вкладка «AI» Карты (по требованию, admin); cycleMonitor — тезис-монитор для core-позиций"
+   },
+   {
+    "existing": "pf3AiHTML / pf3PropHTML / pf3AnalysisHTML / aipSyncTab / aiDashHTML / stkLogHTML / dupHTML (app.js:3358+, app-3.js:14,994, app-2.js:1570)",
+    "fate": "move",
+    "into": "Лаб (AI-книга, AI-разборы, AI-Dashboard как история); dupHTML удаляется — скринер дедуплицирует сам"
+   },
+   {
+    "existing": "simSection / simTabHTML / SIM (app-2.js:1471)",
+    "fate": "merge",
+    "into": "Бумажная книга (tab='paper') с теми же стопами/целями"
+   },
+   {
+    "existing": "sectHTML / sectStart / sectorTracker (app-4.js:76)",
+    "fate": "move",
+    "into": "полоса режима на Сегодня + фильтр сектора в скринере"
+   },
+   {
+    "existing": "renderTable / renderSMA / renderRanking / exportCSV / classic index tabs (app.js:1500+)",
+    "fate": "remove",
+    "into": "скринер (рынок = фильтр); exportCSV остаётся только в Журнале/Скринере"
+   },
+   {
+    "existing": "toggleUI2 + html.ui2 CSS (styles.css:736–800) + body.v3 градиенты (styles.css:195) + erow/eapply редактор раскладки",
+    "fate": "remove",
+    "into": "новые токены styles-2.css; раскладка фиксированная"
+   }
+  ],
+  "removed": [
+   "Верхние вкладки: 🔁 Дубли, 📊 AI-Dashboard, 🔬 AI-разборы, 🔄 Сектора, 🧪 Симуляция (как вкладки; содержимое уезжает в Лаб/Сегодня/Бумажную книгу)",
+   "Все индексные вкладки как экраны (OMXS30, Nasdaq 100, S&P 500, DAX, …) вместе с классическим режимом таблицы, саб-вкладками «Таблица/Рейтинг», SMA-баннером, stats-баром, тулбаром (поиск, ↕ Сброс, ⚙ Колонки, 🔄 Цены, 📥 CSV) — вселенная живёт в Скринере",
+   "Группы вкладок, drag&drop вкладок, редактор групп (grpAssign/grpOverlay), редактор раскладки ✏️ (erow/eapply), тумблер ✨ ui2",
+   "Home-виджеты: 🏆 общий рейтинг, 🏅 горизонты 1–3/3–6/6–12, 🔮 прогноз топ-10, 🧭 Инсайдеры × Недооценка, 📐 Оценка, 🕵 Инсайдер как отдельные списки",
+   "Саб-вкладки портфеля: Статистика (→ Журнал), Структура (→ Книга/Экспозиция), Прогноз (удаляется — 12-мес потенциал = колонка цель-2), План (→ Книга/План), Сделки (→ Журнал), Налоги (→ Журнал/K4), Дивиденды и отчёты (→ чипы дат в строках и Карте), Состояние (→ шапка Книги), AI Proto, Предложение, Анализ, Бэктест (→ Лаб)",
+   "Секции карточки: 🛒 Купить в портфель + 💸 Сделка + ✏️ Моя позиция (три формы → одна панель плана), 🛒 Уровни покупки/докупки (лестница 25/35/40%), сценарии Bull/Base/Bear + проекция как отдельный блок, 💡 Рекомендация с тремя горизонтами и разбором F/T/R, 🎯 Технические уровни как список (уровни — на графике), 🧪 Симуляция как секция (→ кнопка «Бумажная»), бейдж 🧭 Сигнал",
+   "Движки: pf3SignalInfo, pf3Reco, pf3RecoHorizons, scenarioShort/Mid, homeBestPicks, homeCompositeScore/homeBestComposite, planStatus/planCheck, scnAlertCheck — заменены sigSetups/sigTrade",
+   "Только-браузерные Notification как единственный канал алертов (остаются как дублирующий; основной — Telegram bookcheck)",
+   "Сидовые колонки «Уровень покупки», «Рейтинг ⭐», «Комментарий» из data.js как UI-сущности (остаются в данных, не показываются)",
+   "Эмодзи как маркеры разделов/вкладок и пилюли-градиенты; шрифты JetBrains Mono / DM Sans / Space Grotesk"
+  ],
+  "migration": [
+   "Этап 1 — Воркер (без изменений UI): dailyHistory отдаёт {t,o,h,l,c,v}; новый ?bars= (чанки ≤45); atr14/hi20/lo20/volRatio в ?symbols=; ?levels= для акций; Cache API для history/bars/levels; бамп WORKER_BUILD, кейсы в cases-worker.js, ручной деплой и ?action=version. Клиент новые поля игнорирует.",
+   "Этап 2 — signal.js в теневом режиме: sigContext/sigSetups/sigTrade/bookExposure + SIG_CFG как чистые функции; перенос тест-групп (signal score, scenario v1.4, homeCompositeScore, plan triggers, pf3RecoHorizons.now) на новый API; скрытая колонка «сетап v2» в pf3ListHTML и консольный отчёт паритета вердиктов старый/новый; btRun переключается на sigSetups (бэктест становится регрессией слоя).",
+   "Этап 3 — chart.js: lightweight-charts v5 с jsdelivr, свечи/объём/SMA/зоны/линии плана/маркеры/RSI-панель; chartMount встраивается в существующий #pf3ChartBox вместо drawChart — видимое улучшение без смены IA; попап графика classic-таблиц переводится на тот же модуль.",
+   "Этап 4 — Модель BOOK: migrateBook() (позиции qty>0 → open без стопа ⚠, PLAN_RULES → planned/watch, SIM → paper), snapshotState.book, recalcPF с dir; в старой карточке появляется панель плана (стоп/цель/риск/размер, кнопки Исполнить/В план/Бумажная) и в саб-вкладке «Портфель» — колонки стоп/цель/R/риск; шорты пока только в Бумажной книге.",
+   "Этап 5 — Экраны и роутер: styles-2.css с новыми токенами/шрифтами (грузится после styles.css, затем заменяет его), рейка + хэш-роутер, экраны Сегодня/Книга/Скринер/Журнал/Лаб, drawer Карты, мобильный таббар; старые вкладки доступны через #legacy один релиз; Telegram bookcheck в cron; включение шортов для книг с shortable≠'none'.",
+   "Этап 6 — Чистка: удаление pf3SignalInfo/pf3Reco/pf3RecoHorizons/scenario*/homeBest*/homeComposite*/plan*/scnAlert*/dupHTML/classic renderTable/ui2-CSS/erow; удаление тестов удалённых функций; обновление CLAUDE.md (BOOK, signal.js, chart.js, экраны), плана в plans/bok.md, FAQ-справки; pre-commit проставляет ?v= новым файлам, sw.js правок не требует."
+  ],
+  "risks": [
+   "Шорты ломают инварианты qty>0: recalcPF/pf3Summary/pfTaxLots/btTickers/pf3PullHoldingsNews/scnAlertCheck и снапшот воркера для AI-портфеля читают r[6] как лонг — держим qty положительным + side в BOOK и делаем аудит всех parseFloat(r[6])>0 перед включением шортов; налог по blankning помечаем «оценка».",
+   "Качество OHLCV Yahoo: null high/low на сегодняшнем баре у US, пропуски дней у .ST/^OMX — истинный ATR должен пропускать неполные бары, иначе стопы «прыгают»; фолбэк atrFromCloses с флагом atrProxy и предупреждением в карте.",
+   "Лимит 50 подзапросов на вызов воркера: скринер на ~250 бумаг = 6 вызовов ?bars= по 45; без Cache API это удвоит нагрузку на Yahoo и упрётся в rate-limit — кэш обязателен до запуска скринера; cron bookcheck чанкуется по тикам.",
+   "Грубые уровни: support/resistance = 60-дневные min/max дают ложные «пробои»; фильтр объёма ≥1.5× и пивоты из ?levels= смягчают, а бэктест в Лабе измеряет hit-rate до/после — не обещать точность до измерения.",
+   "Смена вердиктов: один слой вместо семи движков изменит часть рекомендаций (особенно «Ждать» ↔ «Покупать» у уровня без тренда) — теневой режим с отчётом паритета и сохранение весов PHASE_PTS/homeCompositeScore; пользователь должен ожидать расхождений.",
+   "Ломающее изменение lightweight-charts v5 (addLineSeries/setMarkers удалены) и смена CDN unpkg → jsdelivr: пиновать точную версию, обернуть loadLWC фолбэком на v4-URL при ошибке загрузки.",
+   "Глобальная область vanilla JS: новые файлы signal.js/chart.js/ui.js делят scope с app*.js — риск коллизий имён и порядка загрузки; префиксы sig*/book*/chart*, тесты конкатенируют все файлы — обновить tests/run-app.js.",
+   "Производительность мобильного скринера: sigContext на 250 строк при каждом рендере — мемоизация по (tk, priceAt), виртуализация списка >100 строк, пересчёт только после «Обновить».",
+   "Шум алертов при цене у стопа/цели: гистерезис 0.3·ATR и не более одного алерта на состояние в день (паттерн hitAt); иначе Telegram превратится в спам.",
+   "Свежесть цен: риск книги считается по последнему ?symbols= — штамп времени в шапке и warn-оттенок при давности >30 мин, иначе ложное чувство контроля.",
+   "RBAC и семейные книги: настройки риска и shortable — на книгу; Anna/Sergei по умолчанию без шортов и без AI; права canTab должны маппиться на экраны, а не на исчезнувшие саб-вкладки.",
+   "Объём ledger_state: BOOK.trades накапливает закрытые сделки с логами — ограничить log до 50 событий и notes до 500 символов; Supabase-триггер rev остаётся защитой от затирания.",
+   "Процесс проекта: по CLAUDE.md планирование и реализация — в разных сессиях; концепцию нужно зафиксировать в plans/bok.md с этапами 1–6 как отдельными фичами, иначе этап 4–5 не влезет в один цикл."
+  ]
+ }
+]

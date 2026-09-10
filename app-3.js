@@ -809,22 +809,6 @@ function signalBadgeHTML(tk){
   const tip=s.items.map(it=>(it.d>0?'+ ':'− ')+it.t).join(' · ')+' · '+RT('справочный сигнал, не рекомендация','reference signal, not advice');
   return`<span class="sig-badge ${lvl.c}" title="${tip}">🧭 ${RT('Сигнал','Signal')} ${lvl.i} ${s.n>0?'+':''}${s.n}</span>`;
 }
-// Контекст-строки для скрещивания в Telegram-алертах (3.2): к инсайдерскому
-// алерту добавляем оценку, к алерту оценки — инсайдеров. Клиент знает оба модуля.
-function valContextLine(tk){
-  const v=VAL[tk]; if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))return '';
-  const c=valCmp(v,(_valSecCache||valSectorMedians())[v.sector],'fwd'); if(!c)return '';
-  const cheap=c.dims.filter(d=>d.belowSec&&d.secPct!=null).map(d=>`${d.label} ${Math.round(d.secPct)}% к сектору`);
-  if(!cheap.length)return '';
-  const eps=valEpsTrend(v.pe,v.fwdPe);
-  return `📐 ${cheap.join(', ')}${eps==='up'?' · EPS↑':eps==='down'?' · ⚠ EPS↓':''}`;
-}
-function insiderContextLine(tk){
-  const v=INSIDER[tk]; if(!v)return '';
-  if(v.cluster)return `🕵 кластер: ${v.cluster.uniqueBuyers} инсайд. купили${v.cluster.sumUSD?' ≈ '+insiderFmtUSD(v.cluster.sumUSD,v.valCcy):''}`;
-  if(v.netUSD>0)return `🕵 нетто-покупка инсайдеров +${insiderFmtUSD(v.netUSD,v.valCcy)}`;
-  return '';
-}
 // Home: «инсайдерская покупка × недооценка» (раздел 4) — ключевое отличие: связка
 // двух модулей, разнесённых по вкладкам в готовых платформах.
 function homeSignalHTML(){

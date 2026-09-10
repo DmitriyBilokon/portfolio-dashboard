@@ -19,18 +19,18 @@
 <link rel="preconnect" href="https://images.financialmodelingprep.com">
 <link rel="preconnect" href="https://assets.parqet.com">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('dash_theme')||'dark';if(localStorage.getItem('dash_ui2')!=='0')document.documentElement.classList.add('ui2')}catch(e){document.documentElement.dataset.theme='dark';document.documentElement.classList.add('ui2')}</script>
-<link rel="stylesheet" href="styles.css?v=9d15c6c6">
+<link rel="stylesheet" href="styles.css?v=0844ff7b-hub">
 </head>
 <body>
 <a class="skip-link" href="#contentArea">К содержимому / Skip to content</a>
-<div class="header" role="banner"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="ui2Btn" onclick="toggleUI2()" title="Новый интерфейс (2026)" aria-label="Новый интерфейс / New UI">✨</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="editBtn" onclick="toggleEdit()" title="Редактор раскладки / Layout editor" aria-label="Редактор раскладки / Layout editor" style="display:none">✏️</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
-<div class="tabs" id="tabs" role="navigation" aria-label="Вкладки / Tabs"></div>
+<div class="header" role="banner"><h1>📈 <span>Index</span> Portfolio Dashboard</h1><div class="header-sub">8 индексов + портфель • FX калькуляция • Ребалансировка</div><a class="theme-toggle hub-home" id="hubHome" href="../hub/index.html" title="Назад в Hub" aria-label="Назад в Hub">Hub</a><button class="theme-toggle" id="langBtn" onclick="toggleLang()" title="Язык / Language" aria-label="Язык / Language" style="font-size:11px;font-weight:700">EN</button><button class="theme-toggle" id="ui2Btn" onclick="toggleUI2()" title="Новый интерфейс (2026)" aria-label="Новый интерфейс / New UI">✨</button><button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Переключить тему" aria-label="Переключить тему / Toggle theme">🌙</button><button class="theme-toggle" id="editBtn" onclick="toggleEdit()" title="Редактор раскладки / Layout editor" aria-label="Редактор раскладки / Layout editor" style="display:none">✏️</button><button class="theme-toggle" id="settingsBtn" onclick="toggleSettings()" title="Настройки доступа" aria-label="Настройки доступа / Access settings" style="display:none">⚙️</button><button class="theme-toggle" id="promptBtn" onclick="togglePrompts()" title="AI-промпты" aria-label="AI-промпты / AI prompts" style="display:none">📜</button><button class="theme-toggle" id="faqBtn" onclick="toggleFaq()" title="Справка по обозначениям" aria-label="Справка / Help">❓</button><button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Выйти" aria-label="Выйти / Log out" style="display:none">⏻</button></div>
+<div class="tabs" id="tabs" role="navigation" aria-label="Вкладки / Tabs"><span style="padding:8px 12px;font-size:12px;opacity:.6">Загрузка… / Loading…</span></div>
 <div class="edit-bar hidden" id="editBar"></div>
 <div class="sub-tabs" id="subTabs"></div>
 <div class="sma-banner" id="smaBanner"></div>
 <div class="toolbar" id="toolbarEl"><div class="index-info" id="indexInfo"></div><input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..."><button class="btn" onclick="resetSort()">↕ Сброс</button><button class="btn" id="colsBtn" onclick="toggleColsMenu()" title="Показать/скрыть колонки">⚙ Колонки</button><button class="btn btn-del" id="delBtn" onclick="deleteSelected()" title="Удалить выбранное / Delete selected" aria-label="Удалить выбранное" style="display:none">🗑</button><button class="btn" id="refreshPricesBtn" onclick="refreshLivePrices()" title="Обновить цены и технические уровни (Yahoo) / Refresh prices & levels (Yahoo)" aria-label="Обновить цены">🔄 Цены</button><button class="btn btn-export" onclick="exportCSV()">📥 CSV</button></div>
 <div class="stats" id="statsBar"></div>
-<div id="contentArea" role="main" tabindex="-1"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
+<div id="contentArea" role="main" tabindex="-1"><div class="table-wrap" id="tableArea"><table><thead id="thead"></thead><tbody id="tbody"><tr><td style="padding:14px;font-size:12px;opacity:.6">Загрузка… / Loading…</td></tr></tbody></table></div><div id="rankingArea" style="display:none;padding-bottom:24px"></div><div id="pf3Area" style="display:none"></div></div>
 <div class="faq-overlay hidden" id="faqOverlay" onclick="if(event.target===this)toggleFaq()"><div class="faq-card" id="faqCard" role="dialog" aria-modal="true" aria-label="Справка / Help"></div></div>
 <div class="faq-overlay hidden" id="setOverlay" onclick="if(event.target===this)toggleSettings()"><div class="faq-card" id="setCard" role="dialog" aria-modal="true" aria-label="Настройки доступа / Access settings"></div></div>
 <div class="faq-overlay hidden" id="grpOverlay" onclick="if(event.target===this)toggleGroupsEditor()"><div class="faq-card" id="grpCard" role="dialog" aria-modal="true" aria-label="Группы вкладок / Tab groups"></div></div>
@@ -46,13 +46,14 @@
     <div class="auth-error" id="authError"></div>
   </form>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="data.js?v=a3375401"></script>
-<script src="app.js?v=2a4df3e4"></script>
-<script src="app-2.js?v=9844d3db"></script>
-<script src="app-3.js?v=e4a16c6c"></script>
-<script src="app-4.js?v=aa4ff9e0"></script>
-<script src="app-5.js?v=dd5754cb"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js" integrity="sha384-iLddHTLokph6Omwoyid4XKxHaWa6w41BnoEj0q5oOrzmYPpHIKt1wyjReA7s//pP" crossorigin="anonymous" defer></script>
+<script src="data.js?v=b1c7bc89" defer></script>
+<script src="app.js?v=6598ae66" defer></script>
+<script src="app-2.js?v=e4ccdaad" defer></script>
+<script src="app-3.js?v=4c5827ff" defer></script>
+<script src="app-4.js?v=bdd572aa" defer></script>
+<script src="app-5.js?v=ee1558fe" defer></script>
+<script>if(location.protocol!=='file:'){var h=document.getElementById('hubHome');if(h)h.href='../hub/'}</script>
 <script>if('serviceWorker' in navigator)addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})});</script>
 </body>
 </html>

@@ -110,6 +110,26 @@ grp('snapshotState keys', function(){
   var s = snapshotState();
   ['data','pfTrades','planRules','aiPort','aiPlaybook','aiPlaybookSeedV','layout','aiPrefs','sim','tabOrder','val','aiDash','aiReco','smaTf','hiddenCols','colOrders']
     .forEach(function(k){ __ok('snapshot has '+k, Object.prototype.hasOwnProperty.call(s,k)); });
+  __ok('snapshot has no apiKey (Finnhub removed)', !Object.prototype.hasOwnProperty.call(s,'apiKey'));
+});
+
+// 🔄 Синк: детект отклонённой триггером записи по вернувшемуся rev (data-model-sync#1)
+grp('syncCommitted', function(){
+  __ok('rev match → true', syncCommitted([{rev:6}],6)===true);
+  __ok('string rev → true', syncCommitted([{rev:'6'}],6)===true);
+  __ok('nested data.rev → true', syncCommitted([{data:{rev:6}}],6)===true);
+  __ok('old rev → false (trigger returned OLD)', syncCommitted([{rev:5}],6)===false);
+  __ok('empty rows → false', syncCommitted([],6)===false);
+  __ok('null → false', syncCommitted(null,6)===false);
+  __ok('undefined → false', syncCommitted(undefined,6)===false);
+});
+
+// 🔄 Живые котировки: чанкование под лимит подзапросов воркера (solo#1)
+grp('chunkList', function(){
+  __eq('7 by 3', chunkList([1,2,3,4,5,6,7],3), [[1,2,3],[4,5,6],[7]]);
+  __eq('empty', chunkList([],5), []);
+  __eq('smaller than n', chunkList([1,2],5), [[1,2]]);
+  __ok('QUOTE_CHUNK*3+4 <= 50', QUOTE_CHUNK*3+4<=50);
 });
 
 // 9b) 🎯 План действий: planStatus — направление триггера (buy ≤ / sell ≥) и дедлайн

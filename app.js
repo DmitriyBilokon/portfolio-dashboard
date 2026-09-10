@@ -8,15 +8,17 @@ let DATA=ALL.data,RANK=ALL.rankings,SMA_IDX=ALL.sma;
 // in frontend code — your data is protected by login + Row-Level Security.
 const SUPABASE_URL = 'https://fvrebkwczqmeorytujbn.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_9CIG7HU54hfBcexS4qr3rQ_HQygVVJC';
-const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20;
+// Библиотека supabase-js грузится с CDN (пин версии + SRI, см. index.html); если она не
+// загрузилась — работаем в локальном режиме на встроенных данных (путь `!SYNC_ENABLED`).
+const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20 && !!(window.supabase && window.supabase.createClient);
 const sb = SYNC_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-let currentUser=null, realtimeChannel=null, pushTimer=null, applyingRemote=false, finnhubKey='', lastPushTs=0;
+let currentUser=null, realtimeChannel=null, pushTimer=null, applyingRemote=false, lastPushTs=0;
 let manualPriceRows=new Set();   // portfolio row indices the last refresh couldn't price live
 
 // The entire editable state, stored as one JSONB row per user.
 function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
-           theme:(document.documentElement.dataset.theme||'light'), apiKey:finnhubKey,
+           theme:(document.documentElement.dataset.theme||'light'),
            hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR };
 }
 // Call after any edit: debounce-push to the cloud.
@@ -62,10 +64,29 @@ async function pushState(){
   lastPushTs=Date.parse(ts);   // remember so the realtime echo of this push can be ignored
   const snap=snapshotState();
   snap.rev=(stateRev||0)+1;    // растущая ревизия — БД-триггер отклонит устаревшую запись
-  const { error } = await sb.from('ledger_state')
-    .upsert({ user_id:currentUser.id, data:snap, updated_at:ts });
-  if(error) console.warn('Sync push failed', error);
-  else { stateRev=snap.rev; pfBackupSave(); }   // приняли — запоминаем rev + локальный бэкап
+  const { data:ret, error } = await sb.from('ledger_state')
+    .upsert({ user_id:currentUser.id, data:snap, updated_at:ts }).select('data->rev');
+  if(error){ console.warn('Sync push failed', error); return; }
+  // Триггер молчит: при rev-конфликте (в облаке уже rev ≥ нашего — другая вкладка/воркер
+  // успели записать) он делает `return OLD` без ошибки, строка остаётся со старым rev.
+  // Проверяем по вернувшейся строке. Отклонили → перечитываем облако (pullState →
+  // applyRemoteState берёт stateRev из облака, следующий push пройдёт). Теряются
+  // локальные правки после последнего успешного push — об этом и говорит тост.
+  if(!syncCommitted(ret, snap.rev)){
+    console.warn('Sync push rejected (rev conflict)', ret);
+    toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true);
+    await pullState();
+    return;
+  }
+  stateRev=snap.rev; pfBackupSave();   // приняли — запоминаем rev + локальный бэкап
+}
+// Детект коммита по вернувшейся строке (.select('data->rev')): БД-триггер при
+// rev-конфликте делает `return OLD` без ошибки — строка остаётся со СТАРЫМ rev.
+// Коммит прошёл ⇔ rev вернувшейся строки равен тому, что мы записали.
+function syncCommitted(rows, expectedRev){
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  const rev = row && (row.rev !== undefined ? row.rev : (row.data && row.data.rev));
+  return Number(rev) === expectedRev;
 }
 // 🛡 Локальный бэкап (localStorage) журнала сделок и позиций семейных портфелей —
 // переживает обнуление облака устаревшим клиентом. Сохраняем только непустое.
@@ -170,7 +191,6 @@ function applyRemoteState(s){
   if(Array.isArray(s.tabGroups)) TAB_GROUPS=s.tabGroups;
   if(Array.isArray(s.tabOrder)) TAB_ORDER=s.tabOrder;
   if(s.layout&&typeof s.layout==='object') LAYOUT=Object.assign({sub:{},cards:[],home:[],dash:[]},s.layout);
-  if(typeof s.apiKey==='string') finnhubKey=s.apiKey;
   if(typeof s.rev==='number') stateRev=s.rev;   // приняли облачную ревизию → наш след. push = rev+1
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -282,7 +302,11 @@ function onbHTML(){
 async function boot(){
   initTheme();
   init();                         // paint with bundled data first
-  if(!SYNC_ENABLED){ refreshFX(); maybeOnboard(); return; }
+  if(!SYNC_ENABLED){
+    // Синк сконфигурирован, но supabase-js с CDN не загрузился — предупреждаем и живём офлайн.
+    if(SUPABASE_URL.startsWith('http')) toast(RT('Библиотека Supabase не загрузилась — офлайн-режим на встроенных данных','Supabase library failed to load — offline mode on bundled data'), true);
+    refreshFX(); maybeOnboard(); return;
+  }
   const { data:{ session } } = await sb.auth.getSession();
   if(session){ currentUser=session.user; await startApp(); }
   else { document.getElementById('authOverlay').classList.remove('hidden'); }
@@ -801,9 +825,10 @@ function migratePortfolio(){
     if(!applyingRemote) scheduleSave();
   }
 }
-// Seed the Портфель 3.0 tab and keep its holdings list in sync with Портфель 2.0:
-// every PF2 ticker missing here is imported (qty / buy price carry over). Rows become
-// PF3's own copies — later edits in 3.0 don't touch 2.0.
+// Сид вкладки Портфель 3.0. В бандле (data.js) «💼 Портфель 2.0» больше нет — при первом
+// входе сид 3.0 = одна строка MU. Импорт из PF2 (тикеры, qty / цена покупки) остаётся
+// только для старых облачных состояний, где эта вкладка ещё есть; строки становятся
+// собственными копиями 3.0 — правки в 3.0 не трогают 2.0.
 function migratePortfolio3(){
   const pf2=DATA['💼 Портфель 2.0'];
   if(!DATA[PF3_KEY])
@@ -1035,12 +1060,13 @@ function migrateIndexV3(KEY,flag,ccy,sfx){
   if(!applyingRemote)scheduleSave();
 }
 // Портфель 2.0 is retired — Портфель 3.0 owns the holdings now. Runs after
-// migratePortfolio3 so a fresh state still seeds 3.0 from the bundled 2.0 data.
+// migratePortfolio3, чтобы старое облачное состояние с PF2 успело импортироваться в 3.0
+// (в бандле data.js вкладки PF2 больше нет).
 function migrateRemovePF2(){
-  if(DATA['💼 Портфель 2.0']){
-    delete DATA['💼 Портфель 2.0'];
-    if(!applyingRemote)scheduleSave();
-  }
+  let touched=false;
+  if(DATA['💼 Портфель 2.0']){ delete DATA['💼 Портфель 2.0']; touched=true; }
+  if(RANK&&RANK['💼 Портфель 2.0']){ delete RANK['💼 Портфель 2.0']; touched=true; }   // рейтинги ушедшей вкладки продолжали синкаться
+  if(touched&&!applyingRemote)scheduleSave();
 }
 
 // Одноразово: AI-отчёты индексов, сохранённые до фикса во вкладку Портфель,
@@ -2049,13 +2075,28 @@ function toggleUI2(){
 }
 
 /* ===== Live prices =====
-   Preferred: a tiny price proxy (Cloudflare Worker — see price-proxy.js) that
-   reads Yahoo Finance server-side, covering US + Nordic/EU (.ST/.OL/.DE/.CO).
-   Paste your deployed Worker URL into PRICE_PROXY below.
-   Fallback (PRICE_PROXY blank): Finnhub free tier — US tickers only. */
+   Котировки отдаёт воркер telegram-notify.js (Cloudflare Worker): читает Yahoo
+   Finance server-side, покрывает US + Nordic/EU (.ST/.OL/.DE/.CO/.PA/.MI).
+   Единственный источник цен — другого пути нет. */
 const PRICE_PROXY = 'https://telegram-notify-abc.dmitriy-bilokon.workers.dev';   // Worker serves live prices (US + Nordic/EU via Yahoo)
+// Разбить список на чанки по n (чистая; тест в cases-app.js).
+function chunkList(list, n){ const out=[]; for(let i=0;i<list.length;i+=n) out.push(list.slice(i,i+n)); return out; }
+// Единая точка живых котировок (?symbols=). Воркер тратит 3 подзапроса на символ
+// (chart 1y + quoteSummary + weekly) и до 4 на yAuth за вызов, лимит Cloudflare free —
+// 50 подзапросов/вызов → чанк 15 (15×3+4 = 49). Все чанки параллельно; упавший чанк
+// пропускается; если не ответил НИ ОДИН (а символы были) — throw (прокси недоступен).
+const QUOTE_CHUNK = 15;
+async function fetchQuotes(symbols){
+  const syms=[...new Set((symbols||[]).filter(Boolean))];
+  if(!syms.length) return {};
+  const parts=await Promise.all(chunkList(syms,QUOTE_CHUNK).map(c=>
+    fetch(PRICE_PROXY+'?symbols='+encodeURIComponent(c.join(','))).then(r=>r.ok?r.json():null).catch(()=>null)));
+  const ok=parts.filter(p=>p&&typeof p==='object'&&!p.error);
+  if(!ok.length) throw new Error('quotes proxy unavailable');
+  return Object.assign({},...ok);
+}
 
-// Map a dashboard ticker + currency to a Yahoo/Finnhub exchange symbol.
+// Map a dashboard ticker + currency to a Yahoo exchange symbol.
 // Overrides handle tickers whose dashboard form differs from the exchange symbol.
 const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 function exSymbol(ticker, ccy){
@@ -2079,13 +2120,6 @@ function toast(msg, isErr){
   t.textContent = msg;
   t.className = 'toast show' + (isErr ? ' err' : '');
   clearTimeout(t._hide); t._hide = setTimeout(() => { t.className = 'toast'; }, 3400);
-}
-
-async function fetchFinnhub(symbol){
-  const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(finnhubKey)}`);
-  if(!r.ok) return null;
-  const d = await r.json();
-  return (d && typeof d.c === 'number' && d.c > 0) ? { price: d.c, pct: (typeof d.dp === 'number' ? d.dp : null) } : null;
 }
 
 // Ensure a column named `name` exists on tab `d`; append + pad rows if missing. Returns its index.
@@ -2933,15 +2967,6 @@ function aiRecoHTML(d,r){
 // Уникальные тикеры портфельных вкладок → worker (Finnhub) → сводки в INSIDER;
 // для новых кластерных покупок шлём Telegram-алерт.
 let _insiderBusy=false;
-// Только портфельные вкладки (для Valuation Check — секторные медианы по портфелю).
-function insiderPortTickers(){
-  const seen=new Set(),out=[];
-  v3Tabs().filter(k=>pf3IsPort(k)).forEach(k=>{
-    (DATA[k].rows||[]).forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();
-      if(tk&&!seen.has(tk)){seen.add(tk);out.push({tk,name:r[1],ccy:r[8]||'USD'})}});
-  });
-  return out;
-}
 // ВСЕ вкладки с бумагами (портфели + индексные watchlist + AI-портфель) —
 // для кнопки «🕵 AI Insider»: проходим по US (Finnhub) и SE (Finansinspektionen).
 function insiderAllTickers(){
@@ -3294,14 +3319,6 @@ async function aiChatSend(){
   if(isV3())renderPF3();
 }
 function aiChatClear(){if(confirm('Очистить диалог с ассистентом? Память (правила) сохранится.')){AI_CHAT=[];scheduleSave();renderPF3()}}
-function aiPrefAdd(){
-  const inp=document.getElementById('aiPrefInp');
-  const t=(inp&&inp.value||'').trim();
-  if(!t)return;
-  if(!AI_PREFS.includes(t))AI_PREFS.push(t);
-  inp.value='';scheduleSave();renderPF3();
-}
-function aiPrefDel(i){AI_PREFS.splice(i,1);scheduleSave();renderPF3()}
 function aiPlaybookAdd(){const inp=document.getElementById('aiPbInp');const t=(inp&&inp.value||'').trim();if(!t)return;aiPlaybookEnsure();if(!AI_PLAYBOOK.includes(t))AI_PLAYBOOK.push(t);inp.value='';scheduleSave();renderPF3()}
 function aiPlaybookDel(i){aiPlaybookEnsure();AI_PLAYBOOK.splice(i,1);scheduleSave();renderPF3()}
 function aiPlaybookReset(){if(confirm(RT('Вернуть плейбук к стандартному набору принципов?','Reset the playbook to the default principles?'))){AI_PLAYBOOK=DEFAULT_PLAYBOOK.slice();scheduleSave();renderPF3()}}

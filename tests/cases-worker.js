@@ -171,3 +171,35 @@ grp('pickCronTask', function(){
   __eq('граница 39', pickCronTask(39), 'pf3');
   __eq('нормализация >59', pickCronTask(65), 'cycle');   // 65%60=5
 });
+
+// 10) 🔒 parseSyms — разбор ?param=A,B,C на публичных батч-роутах (trim/дедуп/лимит)
+grp('parseSyms', function(){
+  var p = parseSyms('A, B ,,A', 10);
+  __eq('trim+дедуп → [A,B]', p.syms, ['A','B']);
+  __eq('over=false', p.over, false);
+  __eq('total=2', p.total, 2);
+  var many = []; for(var i = 0; i < 25; i++) many.push('S' + i);
+  var p2 = parseSyms(many.join(','), 20);
+  __eq('25 при max 20 → 20', p2.syms.length, 20);
+  __eq('25 при max 20 → over=true', p2.over, true);
+  __eq('25 при max 20 → total=25', p2.total, 25);
+  var p3 = parseSyms('', 10);
+  __eq('пусто → []', p3.syms, []);
+  __eq('пусто → over=false', p3.over, false);
+  __eq('null → []', parseSyms(null, 10).syms, []);
+  __eq('символ длиной 30 отброшен', parseSyms('AAPL,' + 'X'.repeat(30), 10).syms, ['AAPL']);
+});
+
+// 11) 💰 SYM_LIMITS — бюджет Cloudflare free = 50 подзапросов/вызов (+ yAuth ≤ 4)
+grp('SYM_LIMITS budget', function(){
+  __ok('symbols ×3 + 4 ≤ 50', SYM_LIMITS.symbols * 3 + 4 <= 50);
+  __ok('targets ×2 + 4 ≤ 50', SYM_LIMITS.targets * 2 + 4 <= 50);
+  __ok('calendar + 4 ≤ 50', SYM_LIMITS.calendar + 4 <= 50);
+  __ok('prepost + 4 ≤ 50', SYM_LIMITS.prepost + 4 <= 50);
+  __ok('levels + 4 ≤ 50', SYM_LIMITS.levels + 4 <= 50);
+});
+
+// 12) 🏗 worker build — бампается при каждой правке воркера
+grp('worker build', function(){
+  __ok('WORKER_BUILD bumped', WORKER_BUILD !== '2026-06-30subreq-split');
+});

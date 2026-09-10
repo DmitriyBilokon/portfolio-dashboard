@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10b-lse-pence';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10c-err-dedup';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2124,6 +2124,73 @@ async function portfolioAnalyze(env, key, snap){
   if(!parsed) throw new Error('Пустой/некорректный ответ анализа (stop_reason ' + (j.stop_reason || '—') + ')');
   return { summary: String(parsed.summary || ''), report: String(parsed.report || ''), actions: parsed.actions, cost: aiCost(j), at: new Date().toISOString() };
 }
+// ── Дедуп ошибок анализа в Telegram ──
+// Неудачный анализ не ставит гейт (блок A) и повторяется каждый час — без дедупа одна и та же
+// ошибка (например, «credit balance is too low») приходила бы в Telegram ежечасно по каждому
+// портфелю. Одинаковая ошибка (портфель + вид) — не чаще раза в ERR_ALERT_MS; после восстановления —
+// одно сообщение «снова работает». Состояние — ai_state.alerts (клиент его не видит и не затрёт);
+// без колонки (ai-state.sql не выполнен) шлём как раньше. Чистые aiErrKind/errAlertEval — под тестом.
+const ERR_ALERT_MS = 12 * 3600e3;
+// Вид ошибки: без request_id и цифр-идентификаторов, чтобы повтор той же ошибки совпадал.
+function aiErrKind(msg){
+  const s = String(msg || '');
+  if(/credit balance is too low/i.test(s)) return 'billing';
+  return s.replace(/"?request_id"?\s*:\s*"?[\w-]+"?/gi, '').replace(/req_[\w-]+/gi, '').replace(/\d{4,}/g, '#').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+// state = { errs: { [key]: { kind, at, n } } } | null. Ошибка: send, если вида ещё не было, он сменился
+// или прошло ≥ ms с последней отправки; иначе n++ (сколько раз промолчали). Успех: снять запись
+// и сообщить о восстановлении, если она была. Возвращает { send, recovered, n, state, changed }.
+function errAlertEval(state, key, kind, now, ms){
+  ms = ms || ERR_ALERT_MS;
+  const errs = Object.assign({}, (state && state.errs && typeof state.errs === 'object') ? state.errs : {});
+  const prev = errs[key];
+  if(kind == null){
+    if(!prev) return { send: false, recovered: false, n: 0, state: { errs }, changed: false };
+    delete errs[key];
+    return { send: false, recovered: true, n: 0, state: { errs }, changed: true };
+  }
+  if(!prev || prev.kind !== kind || !(now - prev.at < ms)){
+    errs[key] = { kind, at: now, n: 0 };
+    return { send: true, recovered: false, n: prev && prev.kind === kind ? (prev.n || 0) : 0, state: { errs }, changed: true };
+  }
+  errs[key] = { kind, at: prev.at, n: (prev.n || 0) + 1 };
+  return { send: false, recovered: false, n: errs[key].n, state: { errs }, changed: true };
+}
+async function loadAlertState(env, userId){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state?user_id=eq.${userId}&select=alerts`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+    if(!r.ok) return { err: 'HTTP ' + r.status };
+    const rows = await r.json();
+    return { alerts: (rows && rows[0] && rows[0].alerts) || null };
+  }catch(e){ return { err: String((e && e.message) || e) }; }
+}
+// Upsert только колонки alerts (merge-duplicates — port/book не трогаются).
+async function saveAlertState(env, userId, alerts){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_state`, {
+      method: 'POST',
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: userId, alerts }),
+    });
+    return !!(r && r.ok);
+  }catch(e){ return false; }
+}
+// Ошибка анализа → Telegram с дедупом. Порядок «сохранить состояние → Telegram» (как bookcheck);
+// не сохранилось (нет колонки/сети) — шлём без дедупа, как до этой правки.
+async function analyzeErrAlert(env, userId, key, msg){
+  const st = await loadAlertState(env, userId);
+  const ev = errAlertEval(st.err ? null : st.alerts, key, aiErrKind(msg), Date.now());
+  const durable = !st.err && await saveAlertState(env, userId, ev.state);
+  if(durable && !ev.send) return `повтор той же ошибки (${ev.n}) — Telegram не отправлен`;
+  if(!durable) console.error('analyze ' + key + ': состояние дедупа ошибок не сохранено (ai-state.sql → колонка alerts?)', st.err || '');
+  const hint = aiErrKind(msg) === 'billing' ? '\n💳 Пополните баланс: console.anthropic.com → Plans &amp; Billing' : '';
+  const rep = ev.n ? `\n(за ${Math.round(ERR_ALERT_MS / 3600e3)} ч повторилась ещё ${ev.n} раз)` : '';
+  const quiet = durable ? `\nПовторы этой ошибки — не чаще раза в ${Math.round(ERR_ALERT_MS / 3600e3)} ч.` : '';
+  try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(msg.slice(0, 400))}${hint}${rep}${quiet}`); }catch(_){}
+  return 'Telegram отправлен';
+}
 // Анализ ОДНОГО реального портфеля (отдельный вызов воркера — экономим бюджет
 // подзапросов Cloudflare free=50). Гейт per-portfolio по data[key].pfAnalysisAt
 // (cron — не чаще раза в час); force=true (ручной запуск) считает сейчас.
@@ -2142,8 +2209,8 @@ async function analyzeOnePortfolio(env, key, force){
   try{ a = await portfolioAnalyze(env, key, snap); }
   catch(e){
     const msg = String((e && e.message) || e);
-    try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(msg)}`); }catch(_){}
-    return `Анализ ${key}: ошибка — ${msg}`;
+    const tg = await analyzeErrAlert(env, row.userId, key, msg);
+    return `Анализ ${key}: ошибка — ${msg} · ${tg}`;
   }
   if(!a) return `Анализ ${key}: пусто`;
   // Пишем анализ в СВЕЖИЙ снапшот с повтором при rev-конфликте (клиент автосохраняет); Telegram — только после коммита.
@@ -2158,7 +2225,11 @@ async function analyzeOnePortfolio(env, key, force){
   if(!saved){ console.error('analyze ' + key + ': запись не закоммичена'); return `Анализ ${key}: не удалось сохранить (конфликт записи) — Telegram не отправлен`; }
   const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
     .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
-  try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
+  // Была ошибка с дедупом — снять её запись (следующая ошибка придёт сразу) и отметить восстановление.
+  const st = await loadAlertState(env, row.userId);
+  const ev = st.err ? null : errAlertEval(st.alerts, key, null, now);
+  const back = ev && ev.recovered && await saveAlertState(env, row.userId, ev.state) ? '✅ снова работает\n' : '';
+  try{ await sendTelegram(env, `📈 <b>Анализ портфеля — ${esc(key)}</b>\n${back}${esc((a.summary || '').slice(0, 300))}${top ? '\n\n' + top : ''}`); }catch(e){}
   return `Анализ ${key}: ${(a.actions || []).length} реком.`;
 }
 // Выбор задачи cron по минуте — одна задача за тик (отдельный вызов = свой бюджет
@@ -3168,7 +3239,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry · lse-pence · err-dedup\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.

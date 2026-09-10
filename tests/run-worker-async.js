@@ -84,7 +84,12 @@ function mkWorld(snap){
     if(url.includes('/rest/v1/user_access')) return new Response('[{"role":"admin"}]', { status: 200 });
     if(url.includes('/rest/v1/ai_jobs')){ w.jobs.push(JSON.parse(init.body).status); return new Response('', { status: 201 }); }
     if(url.includes('/rest/v1/ai_state')){
-      if(method === 'POST'){ w.bakPosts++; w.bak = JSON.parse(init.body).port; return new Response('', { status: 201 }); }
+      if(method === 'POST'){
+        const b = JSON.parse(init.body);
+        if('alerts' in b){ if(w.noAlertsCol) return httpErr(400, '{"message":"column alerts does not exist"}'); w.alerts = b.alerts; return new Response('', { status: 201 }); }
+        w.bakPosts++; w.bak = b.port; return new Response('', { status: 201 });
+      }
+      if(url.includes('select=alerts')) return w.noAlertsCol ? httpErr(400, '{"message":"column alerts does not exist"}') : new Response(JSON.stringify([{ alerts: w.alerts || null }]), { status: 200 });
       return new Response(JSON.stringify(w.bak ? [{ port: w.bak }] : []), { status: 200 });
     }
     if(url.includes('/rest/v1/ledger_state')){
@@ -184,6 +189,26 @@ const decisions = d => JSON.stringify({ decisions: d, note: 'n' });
     const w2 = mkWorld(mkSnap()); ctx.__fetch = w2.fetch; anthQ = [httpErr(529), anth(JSON.stringify({ summary: 's', report: 'r', actions: [{ action: 'Держать', name: 'Micron', ticker: 'MU', details: 'd', amountSEK: null }] }), 'end_turn')];
     const out2 = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, true);
     eq('529 → повтор → анализ записан', [/1 реком/.test(out2), w2.snap.data[W.PF3_KEY].pfAnalysisAt > 0, w2.snap.data[W.PF3_KEY].analysis.summary], [true, true, 's']);
+  });
+
+  await grp('analyzeOnePortfolio: дедуп ошибок в Telegram', async () => {
+    const bill = () => httpErr(400, '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."},"request_id":"req_' + Math.random().toString(36).slice(2) + '"}');
+    const w = mkWorld(mkSnap()); ctx.__fetch = w.fetch;
+    anthQ = [bill()];
+    let out = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('1-я ошибка: Telegram с подсказкой про баланс', [w.tg.length, /credit balance/.test(w.tg[0] || ''), /Plans &amp; Billing/.test(w.tg[0] || ''), /Telegram отправлен/.test(out)], [1, true, true, true]);
+    anthQ = [bill()];
+    out = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('2-я та же (другой request_id): молчим', [w.tg.length, /повтор той же ошибки \(1\)/.test(out), w.alerts.errs[W.PF3_KEY].n], [1, true, 1]);
+    eq('гейт анализа не записан — повтор через час сохраняется', [w.patches, w.snap.data[W.PF3_KEY].pfAnalysisAt], [0, undefined]);
+    anthQ = [anth(JSON.stringify({ summary: 's', report: 'r', actions: [] }), 'end_turn')];
+    await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('успех: «снова работает», запись дедупа снята', [w.tg.length, /снова работает/.test(w.tg[1] || ''), W.PF3_KEY in w.alerts.errs], [2, true, false]);
+    // Без колонки alerts (SQL не выполнен) — шлём каждый раз, как раньше.
+    const w2 = mkWorld(mkSnap()); w2.noAlertsCol = true; ctx.__fetch = w2.fetch;
+    anthQ = [bill()]; await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    anthQ = [bill()]; await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('нет колонки → без дедупа (2 сообщения)', w2.tg.length, 2);
   });
 
   await grp('роуты aiport/pfanalyze: работа в waitUntil', async () => {

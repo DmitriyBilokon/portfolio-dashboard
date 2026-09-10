@@ -19,3 +19,8 @@ alter table public.ai_state enable row level security;
 -- в Telegram (гистерезис 0.3·ATR). Без этой колонки bookcheck НЕ шлёт уведомления
 -- (иначе повторял бы их каждые 20 минут). Можно выполнить отдельно — идемпотентно.
 alter table public.ai_state add column if not exists book jsonb;
+
+-- 2026-09-10: дедуп ошибок анализа портфелей в Telegram — одна и та же ошибка
+-- (например, закончились кредиты Anthropic) не чаще раза в 12 ч. Без колонки worker
+-- шлёт ошибку каждый час, как раньше. Идемпотентно.
+alter table public.ai_state add column if not exists alerts jsonb;

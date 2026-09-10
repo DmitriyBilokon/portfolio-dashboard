@@ -434,6 +434,26 @@ grp('exSymbol worker', function(){
   __eq('FX_DEFAULT знает GBP', FX_DEFAULT.GBP, 12.6);
 });
 
+// Дедуп ошибок анализа в Telegram (ai_state.alerts).
+grp('err alert dedup', function(){
+  var bill = 'Claude API 400: {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."},"request_id":"req_011CX"}';
+  __eq('кредиты → billing', aiErrKind(bill), 'billing');
+  __eq('request_id и длинные числа не влияют на вид', aiErrKind('Claude API 500 req_abc123 at 1757520000'), aiErrKind('Claude API 500 req_zzz999 at 1757523600'));
+  var H = 3600e3, K = 'Portfolio (Anna)';
+  var a = errAlertEval(null, K, 'billing', 0);
+  __eq('первая ошибка — шлём', [a.send, a.changed, a.state.errs[K].kind], [true, true, 'billing']);
+  var b = errAlertEval(a.state, K, 'billing', 1 * H);
+  __eq('та же через час — молчим, счётчик', [b.send, b.n, b.state.errs[K].at], [false, 1, 0]);
+  var c = errAlertEval(b.state, K, 'billing', 12 * H);
+  __eq('через 12 ч — снова шлём с числом повторов', [c.send, c.n, c.state.errs[K].at, c.state.errs[K].n], [true, 1, 12 * H, 0]);
+  __eq('другой вид ошибки — сразу', errAlertEval(b.state, K, 'Claude API 500', 2 * H).send, true);
+  __eq('другой портфель — независимо', errAlertEval(b.state, '🚀 Портфель 3.0', 'billing', 2 * H).send, true);
+  var ok = errAlertEval(b.state, K, null, 3 * H);
+  __eq('успех после ошибки — восстановление, запись снята', [ok.recovered, ok.changed, K in ok.state.errs], [true, true, false]);
+  __eq('успех без ошибки — ничего', [errAlertEval(null, K, null, 0).recovered, errAlertEval(null, K, null, 0).changed], [false, false]);
+  __eq('вход не мутируется', b.state.errs[K].n, 1);
+});
+
 // LSE: пенсы Yahoo (GBp) → фунты в точках входа yChart/yQuoteSummary (plans/lse-pence.md).
 grp('LSE pence', function(){
   function ch(ccy){

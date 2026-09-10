@@ -20,7 +20,7 @@ function snapshotState(){
   return { data:DATA, rankings:RANK, sma:SMA_IDX, fx:FX, colOrders:colOrders,
            theme:(document.documentElement.dataset.theme||'light'),
            hiddenCols:hiddenCols, smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPrefs:AI_PREFS, tgAlerts:TG_ALERTS, tabGroups:TAB_GROUPS, tabOrder:TAB_ORDER, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, layout:LAYOUT, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
-           posMeta:POS_META, desk:DESK, schemaV:STATE_V };
+           posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -98,9 +98,9 @@ function pfBackupSave(){
     const hasTrades=Array.isArray(PF_TRADES)&&PF_TRADES.length;
     const ports={};let hasPos=false;
     Object.keys(DATA).forEach(key=>{ if(!pf3MyPort(key))return; const d=DATA[key]; const pos=(d.rows||[]).some(r=>(parseFloat(r[6])||0)>0); if(pos)hasPos=true; ports[key]={rows:d.rows,cashFree:d.cashFree}; });
-    const hasMeta=posMetaCount(POS_META)>0;
-    if(!hasTrades&&!hasPos&&!hasMeta)return;   // нечего бэкапить — не затираем хороший бэкап пустым
-    localStorage.setItem(k, JSON.stringify({at:Date.now(),pfTrades:PF_TRADES,ports,posMeta:hasMeta?POS_META:undefined}));
+    const hasMeta=posMetaCount(POS_META)>0,hasWatch=!!(DESK_WATCH&&DESK_WATCH.items&&DESK_WATCH.items.length);
+    if(!hasTrades&&!hasPos&&!hasMeta&&!hasWatch)return;   // нечего бэкапить — не затираем хороший бэкап пустым
+    localStorage.setItem(k, JSON.stringify({at:Date.now(),pfTrades:PF_TRADES,ports,posMeta:hasMeta?POS_META:undefined,deskWatch:hasWatch?DESK_WATCH:undefined}));
   }catch(e){}
 }
 function pfBackupRestore(){
@@ -123,6 +123,14 @@ function posMetaBackupRestore(){
   let bak=null; try{ bak=JSON.parse(localStorage.getItem(k)||'null'); }catch(e){}
   if(!bak||!bak.posMeta||!posMetaCount(bak.posMeta))return false;
   POS_META=bak.posMeta; return true;
+}
+// Список покупок из локального бэкапа — облачный снапшот без ключа deskWatch (записал клиент до I1).
+function deskWatchBackupRestore(){
+  const k=pfBackupKey(); if(!k)return false;
+  let bak=null; try{ bak=JSON.parse(localStorage.getItem(k)||'null'); }catch(e){}
+  const w=bak&&bak.deskWatch?deskWatchNorm(bak.deskWatch):null;
+  if(!w||!w.items.length)return false;
+  DESK_WATCH=w; return true;
 }
 async function pullState(){
   if(!currentUser) return;
@@ -185,7 +193,12 @@ function applyRemoteState(s){
   let restoreMeta=false;
   if(s.posMeta&&typeof s.posMeta==='object') POS_META=s.posMeta;
   else restoreMeta=posMetaCount(POS_META)>0||posMetaBackupRestore();
-  if(s.desk&&typeof s.desk==='object') DESK=deskNorm(s.desk);
+  // desk.whatIf (I2): клиент до I2 выбрасывает поле при deskNorm — локальные настройки «Что если?» не сбрасываем.
+  if(s.desk&&typeof s.desk==='object') DESK=deskNorm(Object.assign({},s.desk,s.desk.whatIf?{}:{whatIf:DESK&&DESK.whatIf}));
+  // deskWatch (I1): та же защита — снапшот без ключа записал клиент до I1, локальный список не затираем.
+  let restoreWatch=false;
+  if(s.deskWatch&&typeof s.deskWatch==='object') DESK_WATCH=deskWatchNorm(s.deskWatch);
+  else restoreWatch=(DESK_WATCH&&DESK_WATCH.items&&DESK_WATCH.items.length>0)||deskWatchBackupRestore();
   if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   AI_PREFS=[];   // 🤖 автономия: личные правила инвестора отменены — не восстанавливаем из снапшота
@@ -217,7 +230,7 @@ function applyRemoteState(s){
     toast(RT('Восстановлены сделки и позиции из локальной копии (облако было обнулено)','Restored trades & positions from local backup (cloud was wiped)'),true);
     scheduleSave();
   }
-  if(restoreMeta) scheduleSave();   // стоп/цель позиций пережили запись старым клиентом — вернуть их в облако
+  if(restoreMeta||restoreWatch) scheduleSave();   // мета позиций / список покупок пережили запись старым клиентом — вернуть в облако
   init();   // rebuild tabs (idempotent) + re-render with synced data
 }
 function subscribeRealtime(){
@@ -346,6 +359,9 @@ let POS_META={};
 // ⚙ Настройки риска новой оболочки: riskPct — % капитала портфеля на сделку, riskCapPct — лимит
 // суммарного открытого риска книги (решение §10#6); shortOk[SYM] — ручной флаг «шорт доступен» (§10#7).
 let DESK={riskPct:1,riskCapPct:6,shortOk:{}};
+// 🛒 Список покупок Trade Desk (I1, plans/reference-features-implementation.md §2.1): идеи «хочу купить и почему» —
+// зона покупки, тезис, сценарии справедливой стоимости. Нормализация и мутаторы — deskWatch* в app-5.js.
+let DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};
 // Версия схемы снапшота (schemaV): одноразовые шаги migrateSchema не повторяются после применения.
 const SCHEMA_V=1;
 let STATE_V=0;

@@ -107,7 +107,7 @@ grp('pfRecentTrades', function(){
 
 // 9) Покрытие ключей синка: ПОЛНЫЙ список ключей snapshotState (tests-quality#5) —
 // новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
-var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','aiPrefs','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','layout','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','schemaV'];
+var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','aiPrefs','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','layout','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -610,7 +610,8 @@ grp('sync round-trip', function(){
     var v=orig[k];
     if(k==='aiPrefs') mk[k]=[];                          // по дизайну не восстанавливается (правила отменены)
     else if(k==='theme') mk[k]='dark';
-    else if(k==='desk') mk[k]={riskPct:2,riskCapPct:8,shortOk:{'MU':true}};
+    else if(k==='desk') mk[k]=deskNorm({riskPct:2,riskCapPct:8,shortOk:{'MU':true},whatIf:{mode:'weight',amountSEK:25000,weightPct:3,port:'TP'}});
+    else if(k==='deskWatch') mk[k]=deskWatchNorm({items:[{key:'MU|USD',tk:'MU',name:'Micron',buyLo:90,buyHi:100,thesis:{title:'HBM',text:'t'},createdAt:1,updatedAt:2}]});
     else if(Array.isArray(v)||k==='tabGroups') mk[k]=['__'+k];   // tabGroups по умолчанию null, но хранится массивом
     else if(typeof v==='number') mk[k]=7;
     else if(typeof v==='boolean') mk[k]=!v;
@@ -628,13 +629,20 @@ grp('sync round-trip', function(){
   });
   // Снапшот старого клиента (до S3): нет posMeta/desk → локальные не затираются, push назад
   POS_META={'TP':{'MU':{side:'long',stop:90}}}; DESK=deskNorm({riskPct:2});
+  DESK_WATCH=deskWatchNorm({items:[{key:'AAPL|USD',buyHi:180}]});
   saves=0;
-  var old=JSON.parse(JSON.stringify(mk)); delete old.posMeta; delete old.desk; delete old.schemaV;
+  var old=JSON.parse(JSON.stringify(mk)); delete old.posMeta; delete old.desk; delete old.deskWatch; delete old.schemaV;
   applyRemoteState(old);
   __eq('old-client snapshot keeps local posMeta', POS_META.TP.MU.stop, 90);
+  __eq('old-client snapshot keeps local deskWatch', DESK_WATCH.items.map(function(x){return x.key;}), ['AAPL|USD']);
   __eq('old-client snapshot keeps local desk', DESK.riskPct, 2);
   __eq('old-client snapshot → schemaV 0', STATE_V, 0);
   __ok('old-client snapshot schedules push-back', saves>0);
+  // Клиент до I2: desk без whatIf → локальные настройки «Что если?» остаются, остальное — из снапшота
+  DESK=deskNorm({whatIf:{mode:'weight',weightPct:4}});
+  var pre=JSON.parse(JSON.stringify(mk)); pre.desk={riskPct:3,riskCapPct:6,shortOk:{}};
+  applyRemoteState(pre);
+  __eq('pre-I2 desk keeps local whatIf', [DESK.riskPct,DESK.whatIf.mode,DESK.whatIf.weightPct], [3,'weight',4]);
   applyRemoteState(orig);
   init=_init; scheduleSave=_save;
 });
@@ -722,6 +730,10 @@ grp('bookRiskState', function(){
   __ok('under cap', !st.overCap);
   __eq('deskNorm clamps', deskNorm({riskPct:50,riskCapPct:0}).riskPct, 5);
   __eq('deskNorm default cap', deskNorm({riskCapPct:0}).riskCapPct, 6);
+  __eq('deskNorm whatIf defaults', deskNorm({}).whatIf, {mode:'amount',amountSEK:5000,weightPct:2,port:null});
+  __eq('deskNorm whatIf clamps', deskNorm({whatIf:{mode:'x',amountSEK:50,weightPct:80,port:'TP'}}).whatIf, {mode:'amount',amountSEK:100,weightPct:50,port:'TP'});
+  __eq('deskNorm whatIf clamps high/low', [deskNorm({whatIf:{amountSEK:2e7,weightPct:0.01,mode:'weight'}}).whatIf.amountSEK,deskNorm({whatIf:{weightPct:0.01}}).whatIf.weightPct,deskNorm({whatIf:{mode:'weight'}}).whatIf.mode], [1e7,0.1,'weight']);
+  __eq('deskNorm keeps risk fields with whatIf', [deskNorm({riskPct:2,whatIf:{amountSEK:10000}}).riskPct,deskNorm({riskPct:2,whatIf:{amountSEK:10000}}).whatIf.amountSEK], [2,10000]);
   DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;
 });
 
@@ -1320,4 +1332,178 @@ grp('desk universe src', function(){
   __eq('src: first row with a price', U.bySym['MU|USD'].src, {tab:'Nasdaq 100',i:1});
   __eq('src: own row', U.bySym['AAPL|USD'].src, {tab:'Nasdaq 100',i:0});
   DATA=_D;userRole=_role;
+});
+
+// ── I1: список покупок, справедливая стоимость, уровень риска (plans/reference-features-implementation.md §2.1–2.3) ──
+grp('deskWatch', function(){
+  var _w=DESK_WATCH;
+  var n=deskWatchNorm({lists:[{id:'x',name:'  Дип  '}],junk:1,items:[
+    {key:'mu|usd',name:'  Micron  ',buyLo:'110',buyHi:100,tag:'SEMICONDUCTORS-AI',status:'final',order:5,riskOvr:9,fv:{base:'120',wBase:'x'},extra:1,createdAt:1,updatedAt:5},
+    {key:'MU|USD',buyHi:1,updatedAt:3},
+    {sym:'aapl',ccy:'usd',buyHi:180,order:2,createdAt:2},
+    {sym:'',ccy:'USD'},null,'x',
+    {key:'AZN.ST|SEK',tk:'azn',list:'nope',riskOvr:3,thesis:{title:'',text:''},whatBuy:{title:'Онкология'}}]});
+  __eq('lists: main first, names trimmed', n.lists.map(function(l){return l.id+':'+l.name+':'+l.order;}), ['main::0','x:Дип:1']);
+  __eq('dedup by key keeps the fresher edit', n.items.filter(function(x){return x.key==='MU|USD';}).length, 1);
+  var mu=n.items.find(function(x){return x.key==='MU|USD';});
+  __eq('numbers, swapped zone, trimmed strings', [mu.buyLo,mu.buyHi,mu.name,mu.tag,mu.status], [100,110,'Micron','SEMICONDUCTORS-A','final']);
+  __eq('riskOvr out of range → null; fv weights default', [mu.riskOvr,mu.fv.base,mu.fv.wBase,mu.fv.wBear], [null,120,50,25]);
+  __ok('unknown fields dropped', !('extra' in mu) && !('junk' in n));
+  var aapl=n.items.find(function(x){return x.key==='AAPL|USD';});
+  __eq('single price → lo = hi, sym/ccy upper', [aapl.buyLo,aapl.buyHi,aapl.sym,aapl.ccy,aapl.tk], [180,180,'AAPL','USD','AAPL']);
+  var az=n.items.find(function(x){return x.key==='AZN.ST|SEK';});
+  __eq('unknown list → main; empty thesis → null; card kept', [az.list,az.thesis,az.whatBuy&&az.whatBuy.title,az.tk,az.riskOvr], ['main',null,'Онкология','AZN',3]);
+  __eq('invalid items dropped', n.items.length, 3);
+  __eq('order renumbered 1…N', n.items.map(function(x){return x.tk+':'+x.order;}), ['AZN:1','AAPL:2','MU:3']);
+  __eq('norm is idempotent', JSON.stringify(deskWatchNorm(JSON.parse(JSON.stringify(n)))), JSON.stringify(n));
+  __eq('empty input → main list, no items', deskWatchNorm(null), {v:1,lists:[{id:'main',name:'',order:0}],items:[]});
+
+  DESK_WATCH=deskWatchNorm({});
+  var sec=function(tk,px){return {key:tk+'|USD',sym:tk,tk:tk,ccy:'USD',name:tk+' Inc',price:px};};
+  var a=deskWatchAdd(sec('AAA',50),{buyLo:40,buyHi:45,buySrc:'signal'},Date.UTC(2026,8,10));
+  __eq('add: ref price/date, zone, status', [a.refPx,a.refAt,a.buyLo,a.buySrc,a.status,a.order], [50,'2026-09-10',40,'signal','watch',1]);
+  deskWatchAdd(sec('BBB',10));deskWatchAdd(sec('CCC',20));
+  __eq('add existing returns it unchanged', deskWatchAdd(sec('AAA',99),{buyHi:1}).buyHi, 45);
+  __eq('order after adds', deskWatchItems('watch').map(function(x){return x.tk;}), ['AAA','BBB','CCC']);
+  __ok('move down', deskWatchMove('AAA|USD',1));
+  __eq('after move down', deskWatchItems('watch').map(function(x){return x.tk;}), ['BBB','AAA','CCC']);
+  __ok('move past the end refused', !deskWatchMove('CCC|USD',1));
+  __ok('drag CCC before BBB', deskWatchMove('CCC|USD','BBB|USD'));
+  __eq('after drag', deskWatchItems('watch').map(function(x){return x.tk;}), ['CCC','BBB','AAA']);
+  __ok('drag to the end (null)', deskWatchMove('CCC|USD',null));
+  __eq('after drag to end', deskWatchItems('watch').map(function(x){return x.tk;}), ['BBB','AAA','CCC']);
+  deskWatchSetStatus('AAA|USD','final');
+  __eq('final split from watch', [deskWatchItems('watch').map(function(x){return x.tk;}),deskWatchItems('final').map(function(x){return x.tk;})], [['BBB','CCC'],['AAA']]);
+  __ok('move within final only (single → refused)', !deskWatchMove('AAA|USD',-1));
+  var u=deskWatchUpdate('bbb|usd',{buyLo:12,buyHi:null,key:'ZZZ|USD',thesis:{title:'Тезис',text:'Почему'},fv:{bear:8,base:12,bull:20}},123);
+  __eq('update: merge, null clears, key immutable', [u.key,u.buyLo,u.buyHi,u.thesis.title,u.fv.bull,u.updatedAt], ['BBB|USD',12,12,'Тезис',20,123]);
+  __eq('update missing → null', deskWatchUpdate('NOPE|USD',{tag:'x'}), null);
+  var rm=deskWatchRemove('BBB|USD');
+  __eq('remove returns item, renumbers', [rm.tk,DESK_WATCH.items.map(function(x){return x.tk+':'+x.order;})], ['BBB',['AAA:1','CCC:2']]);
+  __eq('remove missing → null', deskWatchRemove('BBB|USD'), null);
+  DESK_WATCH=_w;
+});
+grp('deskWatchZone', function(){
+  var z=deskWatchZone({buyLo:540,buyHi:540},611);
+  __approx('single price: correction to zone', z.dHi, -11.62, 0.01);
+  __eq('far above → not hot', [z.state,z.hot,z.range], ['far',false,false]);
+  var r=deskWatchZone({buyLo:100,buyHi:110},141);
+  __eq('range: −22…−29 %', [Math.round(r.dHi),Math.round(r.dLo),r.range], [-22,-29,true]);
+  __eq('near: ≤ 3 % over the top', deskWatchZone({buyLo:100,buyHi:100},103).state, 'near');
+  __eq('in zone', deskWatchZone({buyLo:100,buyHi:110},105).state, 'in');
+  __eq('below zone is hot', [deskWatchZone({buyLo:100,buyHi:110},95).state,deskWatchZone({buyLo:100,buyHi:110},95).hot], ['below',true]);
+  __eq('no zone / no price → null', [deskWatchZone({},100),deskWatchZone({buyLo:1,buyHi:1},0)], [null,null]);
+});
+grp('deskFairValue', function(){
+  var s=deskFairValue({fv:{bear:80,base:100,bull:140,wBear:25,wBase:50,wBull:25}},{consensus:500},90);
+  __eq('scenarios win over analysts', s.src, 'scenarios');
+  __approx('scenarios 25/50/25', s.value, 105);
+  __approx('upside from current price', s.upsidePct, 16.667, 0.01);
+  var b=deskFairValue({fv:{base:100,bull:160,wBear:25,wBase:50,wBull:25}},null,100);
+  __approx('missing bear → weights renormalised (50/25)', b.value, 120);
+  __eq('without base → analysts fallback', deskFairValue({fv:{bear:80,bull:140}},{low:90,consensus:120,high:150,count:31,lastDate:'2026-09-01'},100).src, 'analysts');
+  var a=deskFairValue(null,{low:90,consensus:120,high:150,count:31,lastDate:'2026-09-01T10:00'},100);
+  __eq('analysts: 25/50/25, count, date', [a.value,a.n,a.at,a.parts.map(function(p){return p.k;})], [120,31,'2026-09-01',['low','consensus','high']]);
+  __approx('analysts: only consensus', deskFairValue(null,{consensus:130},100).value, 130);
+  __eq('nothing → null value and src', [deskFairValue(null,null,100).value,deskFairValue(null,{},100).src], [null,null]);
+  __eq('no price → no upside', deskFairValue(null,{consensus:130},0).upsidePct, null);
+});
+grp('deskRiskLevel', function(){
+  var mu=SIG.snapshot(sigFixBars('MU'),{riskKr:5000,fx:1}),az=SIG.snapshot(sigFixBars('AZN.ST'),{riskKr:5000,fx:1}),ap=SIG.snapshot(sigFixBars('AAPL'),{riskKr:5000,fx:1});
+  __eq('MU: ATR 5.4 % → 5', [deskRiskLevel(mu).level,deskRiskLevel(mu).parts[0].add], [5,5]);
+  __eq('AZN: ATR 2.4 % → 2', deskRiskLevel(az).level, 2);
+  __eq('AAPL: ATR 2.4 % → 2', deskRiskLevel(ap).level, 2);
+  var azs=SIG.snapshot(sigFixBars('AZN.ST'),{riskKr:5000,fx:1,staleTarget:true});
+  __eq('stale-target +1', [deskRiskLevel(azs).level,deskRiskLevel(azs).parts.map(function(p){return p.k;})], [3,['atr','stale-target']]);
+  __eq('beta > 1.5 +1', deskRiskLevel(ap,{beta:1.8}).level, 3);
+  __eq('beta 1.5 is not high', deskRiskLevel(ap,{beta:1.5}).level, 2);
+  __eq('capped at 5', deskRiskLevel(mu,{beta:2}).level, 5);
+  var f={atrPct:1.5,flags:['earnings','knife'],plan:{flags:['wide']}};
+  __eq('thresholds inclusive + flags', [deskRiskLevel({atrPct:1.5,flags:[]}).level,deskRiskLevel({atrPct:1.51,flags:[]}).level,deskRiskLevel(f).level], [1,2,4]);
+  __eq('wide only from the chosen side plan', deskRiskLevel(f,{plan:{flags:[]}}).level, 3);
+  var o=deskRiskLevel(ap,{riskOvr:4});
+  __eq('manual override keeps auto', [o.level,o.auto,o.ovr], [4,2,4]);
+  __eq('words', [deskRiskWord(1),deskRiskWord(5)], ['Низкий','Очень высокий']);
+  __eq('no snapshot → null unless override', [deskRiskLevel(null).level,deskRiskLevel(null,{riskOvr:2}).level], [null,2]);
+});
+grp('deskBuyDefault', function(){
+  var az=SIG.snapshot(sigFixBars('AZN.ST'),{riskKr:5000,fx:1}),ap=SIG.snapshot(sigFixBars('AAPL'),{riskKr:5000,fx:1});
+  var z=deskBuyDefault(az);
+  __eq('limit of the long plan', [z.lo,z.hi], [Math.round(az.plans.long.entry*100)/100,Math.round(az.plans.long.entry*100)/100]);
+  __ok('note names the level', /S60/.test(z.note));
+  var m={price:100,plans:{long:{mode:'market',entry:100}},levels:{sup:[{v:98,src:'S1',kind:'pivot'},{v:95,src:'S20+SMA50',kind:'sr'}]}};
+  __eq('market → nearest structural support (no pivots)', [deskBuyDefault(m).lo,/S20 · SMA50/.test(deskBuyDefault(m).note)], [95,true]);
+  __eq('no support → market entry', deskBuyDefault({price:100,plans:{long:{mode:'market',entry:100}},levels:{sup:[]}}).lo, 100);
+  __eq('no snapshot → null', deskBuyDefault(null), null);
+  __ok('AAPL limit', deskBuyDefault(ap).lo>0);
+});
+
+// ── I2: «Что если?» (plans/reference-features-implementation.md §2.4) ──
+grp('deskWhatIf', function(){
+  var _D=DATA,_pm=POS_META,_desk=DESK,_fx=FX,_tr=PF_TRADES,_pr=PLAN_RULES;
+  FX={SEK:1,USD:10,EUR:11};DESK=deskNorm({riskPct:1,riskCapPct:6});PF_TRADES=[];PLAN_RULES=[];
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  var mkD=function(cash){var d={headers:h,v3:'1',port:'1',rows:[[1,'Acme','ACME','🇺🇸','Tech','Рост',10,110,'USD',100,0],[2,'Volvo','VOLV','🇸🇪','Industri','Рост',100,250,'SEK',200,0]]};if(cash!==undefined)d.cashFree=cash;return d;};
+  DATA={'BK':mkD(50000)};POS_META={'BK':{'ACME':{side:'long',stop:90}}};
+  var NOW=Date.UTC(2026,8,10,12),sec=function(tk,ccy,sector,px){return {tk:tk,sym:tk,ccy:ccy,sector:sector,price:px,pxAt:NOW};};
+  var wi=function(o){return deskWhatIf(Object.assign({tab:'BK',side:'long',mode:'amount',amountSEK:5000,now:NOW},o));};
+  var codes=function(r){return r.warnings.map(function(w){return w.code+(w.blocking?'!':'');});};
+  // equity = 11000 (ACME) + 25000 (VOLV) + 50000 кэш = 86000; открытый риск (110−90)·10·10 = 2000; лимит 6 % = 5160
+  var L=wi({sec:sec('NEW','USD','Tech',100),plan:{mode:'market',entry:100,stop:95}});
+  var f=tradeFeeNative('USD',500,true);
+  __eq('long USD: 5000 kr → 5 sh at 100 USD × 10', [L.qty,L.notional,L.notionalSEK], [5,500,5000]);
+  __approx('long: fee via tradeFeeNative (courtage min 6 + fx 0.25 %)', L.feeSEK, f.total*10);
+  __approx('long: cash − (amount + fee)', L.cashAfter, 50000-5000-f.total*10);
+  __approx('long: equity after = before − fee', L.equityAfter, 86000-f.total*10);
+  __approx('long: new weight', L.weightAfter, 5000/(86000-72.5)*100, 0.001);
+  __approx('long: sector Tech before/after', L.sectorAfter-L.sectorBefore, 16000/(86000-72.5)*100-11000/86000*100, 0.001);
+  __approx('long: trade risk qty·|entry − stop|·fx', L.tradeRiskSEK, 250);
+  __eq('long: book risk before/after, cap', [L.bookRiskBefore,L.bookRiskAfter,Math.round(L.capSEK)], [2000,2250,5160]);
+  __eq('long: all clear → ok', [L.status,L.warnings.length], ['ok',0]);
+  __eq('weight mode: 2 % of equity → 1 sh', wi({mode:'weight',weightPct:2,sec:sec('NEW','USD','Tech',100),plan:{stop:95}}).qty, 1);
+  __eq('limit plan price used when no price', wi({sec:sec('NEW','USD','Tech',100),plan:{mode:'limit',entry:90,stop:85}}).price, 90);
+  // Шорт: кэш — только комиссия, вес по модулю, риск — до стопа сверху
+  var S=wi({side:'short',sec:sec('SHRT','USD','Energy',50),plan:{mode:'market',entry:50,stop:55}}),fs=tradeFeeNative('USD',500,false);
+  __eq('short: 10 sh, sell fee', [S.qty,S.feeNative], [10,fs.total]);
+  __approx('short: cash changes only by the fee', S.cashAfter, 50000-fs.total*10);
+  __approx('short: weight by modulus', S.weightAfter, 5000/(86000-fs.total*10)*100, 0.001);
+  __approx('short: risk to the stop above', S.tradeRiskSEK, 500);
+  __eq('short: unconfirmed → attention', [S.status,codes(S)], ['attention',['noshort']]);
+  DESK=deskNorm({riskPct:1,riskCapPct:6,shortOk:{SHRT:1}});
+  __eq('short confirmed → ok', wi({side:'short',sec:sec('SHRT','USD','Energy',50),plan:{stop:55}}).status, 'ok');
+  // SEK и EUR: курс и валютная надбавка
+  var V=wi({sec:sec('VOLV','SEK','Industri',250),plan:{stop:240}});
+  __eq('SEK: 20 sh, no fx fee, add to held (avg by genomsnittsmetoden)', [V.qty,V.fee.fx,V.qtyBefore,V.qtyAfter,Math.round(V.avgAfter*100)/100], [20,0,100,120,208.33]);
+  __eq('SEK: weight 29 % → 35 % warns, SEK share never warns', codes(V), ['weight']);
+  var E=wi({sec:sec('SAP','EUR','Tech',20),plan:{stop:19}}),fe=tradeFeeNative('EUR',440,true);
+  __eq('EUR: floor(5000 / (20·11)) = 22 sh', [E.qty,E.fx], [22,11]);
+  __approx('EUR: fee in kr', E.feeSEK, fe.total*11);
+  // Предупреждения
+  __eq('budget below one share → blocked', [wi({amountSEK:100,sec:sec('NEW','USD','Tech',100),plan:{stop:95}}).status,codes(wi({amountSEK:100,sec:sec('NEW','USD','Tech',100),plan:{stop:95}}))], ['blocked',['qty!']]);
+  var cap=wi({amountSEK:40000,sec:sec('BIG','USD','Energy',100),plan:{stop:50}});
+  __ok('cap blocks like deskCapCheck', cap.status==='blocked'&&codes(cap).indexOf('cap!')>=0&&!deskCapCheck(bookRiskState('BK'),cap.tradeRiskSEK).ok);
+  var conc=wi({amountSEK:25000,sec:sec('NEW','USD','Tech',100),plan:{stop:99}});
+  __eq('concentration: weight + sector (Tech 42 %), USD < 60 %', codes(conc), ['weight','sector']);
+  __eq('currency > 60 % (not SEK)', codes(wi({amountSEK:45000,sec:sec('US2','USD','Energy',100),plan:{stop:99.9}})).indexOf('ccy')>=0, true);
+  __eq('no stop → attention, risk 0', [codes(wi({sec:sec('NEW','USD','Tech',100),plan:null})),wi({sec:sec('NEW','USD','Tech',100)}).tradeRiskSEK], [['nostop'],0]);
+  var st=sec('NEW','USD','Tech',100);st.pxAt=NOW-31*60e3;
+  __eq('price older than 30 min → stale', codes(wi({sec:st,plan:{stop:95}})), ['stale']);
+  POS_META.BK.ACME.side='short';
+  __eq('opposite side held → blocked', codes(wi({sec:sec('ACME','USD','Tech',110),plan:{stop:100}})).indexOf('side!')>=0, true);
+  POS_META.BK.ACME.side='long';
+  DATA.BK.rows[1][7]='';
+  __eq('held row without price → equity understated, said so', codes(wi({amountSEK:1000,sec:sec('NEW','USD','Energy',100),plan:{stop:95}})), ['nopx']);
+  DATA={'BK':mkD(0)};
+  // без кэша капитал 36000, лимит 2160 — сумма 1000 kr держит риск и доли в пределах
+  __eq('zero cash: long blocked', codes(wi({amountSEK:1000,sec:sec('NEW','USD','Energy',100),plan:{stop:95}})), ['cash!']);
+  __eq('zero cash: short only warns (fee)', codes(wi({amountSEK:1000,side:'short',sec:sec('SHRT','USD','Energy',50),plan:{stop:55}})), ['cash']);
+  DATA={'BK':mkD()};
+  var nc=wi({amountSEK:1000,sec:sec('NEW','USD','Energy',100),plan:{stop:95}});
+  __eq('no cash field → cash not simulated, no warning', [nc.cashBefore,nc.cashAfter,nc.status], [null,null,'ok']);
+  __eq('errors: no portfolio / no price', [deskWhatIf({tab:'NOPE'}).err,wi({sec:{tk:'X',ccy:'USD'}}).err], ['port','price']);
+  DATA={'BK':mkD(50000)};DESK=deskNorm({riskPct:1,riskCapPct:6});
+  var before=JSON.stringify([DATA,POS_META,PLAN_RULES,PF_TRADES,DESK]);
+  wi({sec:sec('NEW','USD','Tech',100),plan:{stop:95}});wi({side:'short',sec:sec('SHRT','USD','Energy',50),plan:{stop:55}});wi({sec:sec('VOLV','SEK','Industri',250)});
+  __eq('simulation writes nothing (DATA/POS_META/PLAN_RULES/PF_TRADES/DESK)', JSON.stringify([DATA,POS_META,PLAN_RULES,PF_TRADES,DESK]), before);
+  DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;PF_TRADES=_tr;PLAN_RULES=_pr;
 });

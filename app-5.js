@@ -683,7 +683,100 @@ function qtyByRisk(riskKr,entry,stop,fx){
 function deskNorm(x){
   x=(x&&typeof x==='object')?x:{};
   const clamp=(v,lo,hi,def)=>{const n=parseFloat(v);return isFinite(n)&&n>0?Math.min(hi,Math.max(lo,n)):def;};
-  return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{}};
+  // I2: настройки «Что если?» (сумма в kr или доля капитала на сделку, портфель симуляции) — лимиты в DESK_IDEA_CFG.whatIf.
+  const W=DESK_IDEA_CFG.whatIf,w=(x.whatIf&&typeof x.whatIf==='object')?x.whatIf:{};
+  return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{},
+    whatIf:{mode:w.mode==='weight'?'weight':'amount',amountSEK:Math.round(clamp(w.amountSEK,W.amount[0],W.amount[1],W.def.amountSEK)),
+      weightPct:Math.round(clamp(w.weightPct,W.weight[0],W.weight[1],W.def.weightPct)*10)/10,port:w.port?String(w.port).slice(0,80):null}};
+}
+
+// 🛒 Список покупок (I1, plans/reference-features-implementation.md §2.1–2.3). Все пороги и лимиты новых функций
+// (зона, справедливая стоимость, уровень риска, длины полей) — только в DESK_IDEA_CFG; правила входа — в SIG.CFG.
+const DESK_IDEA_CFG={
+  nearZonePct:3,                                // ● зелёная точка: цена в зоне, ниже неё или не дальше 3 % над верхом
+  fvW:{bear:25,base:50,bull:25},                // веса сценариев и таргетов аналитиков (решение §6#2)
+  risk:{atrPct:[1.5,2.5,3.5,5],betaHi:1.5,bump:['wide','earnings','knife','stale-target']},   // §2.3, решение §6#1
+  len:{name:80,list:60,tag:16,title:120,text:600,cardTitle:60,cardText:160,note:160},
+  // I2 «Что если?» (§2.4): предупреждения концентрации (решение §6#3) — не блокировка; цена не live дольше staleMin → stale.
+  whatIf:{weightPct:10,sectorPct:35,ccyPct:60,staleMin:30,amount:[100,1e7],weight:[0.1,50],quick:[5000,10000,25000,50000],
+    def:{amountSEK:5000,weightPct:2},debounceMs:250}
+};
+// Нормализация DESK_WATCH: дедуп по key (остаётся более свежая правка), числа > 0 или null, строки обрезаются,
+// неизвестные поля отбрасываются, order перенумеровывается 1…N внутри списка. Идемпотентна.
+function deskWatchNorm(x){
+  x=(x&&typeof x==='object')?x:{};
+  const L=DESK_IDEA_CFG.len,W=DESK_IDEA_CFG.fvW;
+  const str=(v,n)=>String(v==null?'':v).trim().slice(0,n),ts=v=>{const n=+v;return isFinite(n)&&n>0?Math.round(n):0;};
+  const wt=(v,d)=>{const n=parseFloat(v);return isFinite(n)&&n>=0&&n<=100?n:d;};
+  const card=(c,nt,nx)=>{c=(c&&typeof c==='object')?c:{};const title=str(c.title,nt),text=str(c.text,nx);return title||text?{title,text}:null;};
+  const lists=[],seenL={};
+  (Array.isArray(x.lists)?x.lists:[]).forEach(l=>{const id=str(l&&l.id,40);if(!id||seenL[id])return;seenL[id]=1;lists.push({id,name:str(l.name,L.list),order:+l.order||0});});
+  if(!seenL.main)lists.unshift({id:'main',name:'',order:-1});
+  lists.sort((a,b)=>a.order-b.order).forEach((l,i)=>{l.order=i;});
+  const by={};
+  (Array.isArray(x.items)?x.items:[]).forEach(it=>{
+    if(!it||typeof it!=='object')return;
+    const kp=str(it.key,40).toUpperCase().split('|'),sym=str(it.sym,24).toUpperCase()||kp[0]||'',ccy=str(it.ccy,6).toUpperCase()||kp[1]||'';
+    if(!sym||!ccy)return;
+    const key=sym+'|'+ccy;
+    let lo=_pnum(it.buyLo),hi=_pnum(it.buyHi);if(lo==null)lo=hi;if(hi==null)hi=lo;if(lo!=null&&lo>hi){const t=lo;lo=hi;hi=t;}
+    const f=(it.fv&&typeof it.fv==='object')?it.fv:{},fv={bear:_pnum(f.bear),base:_pnum(f.base),bull:_pnum(f.bull),wBear:wt(f.wBear,W.bear),wBase:wt(f.wBase,W.base),wBull:wt(f.wBull,W.bull)};
+    const ro=Math.round(+it.riskOvr),th=card(it.thesis,L.title,L.text);
+    const o={id:str(it.id,40)||('w_'+key),key,sym,tk:posTk(it.tk)||sym,ccy,name:str(it.name,L.name)||sym,
+      list:seenL[str(it.list,40)]?str(it.list,40):'main',status:it.status==='final'?'final':'watch',order:+it.order||0,
+      tag:str(it.tag,L.tag),buyLo:lo,buyHi:hi,buySrc:it.buySrc==='signal'?'signal':'manual',buyNote:str(it.buyNote,L.note),
+      thesis:th,whatBuy:card(it.whatBuy,L.cardTitle,L.cardText),mainRisk:card(it.mainRisk,L.cardTitle,L.cardText),
+      fv:fv.bear||fv.base||fv.bull?fv:null,riskOvr:ro>=1&&ro<=5?ro:null,
+      refPx:_pnum(it.refPx),refAt:_pday(it.refAt),planId:str(it.planId,60),createdAt:ts(it.createdAt),updatedAt:ts(it.updatedAt)};
+    const cur=by[key];if(!cur||o.updatedAt>cur.updatedAt)by[key]=o;
+  });
+  const items=Object.values(by).sort((a,b)=>(a.order-b.order)||(a.createdAt-b.createdAt));
+  const n={};items.forEach(it=>{n[it.list]=(n[it.list]||0)+1;it.order=n[it.list];});
+  return {v:1,lists,items};
+}
+function deskWatchGet(key){const k=String(key||'').toUpperCase();return ((DESK_WATCH&&DESK_WATCH.items)||[]).find(x=>x.key===k)||null;}
+// Идеи списка в ручном порядке; status — 'watch' | 'final' | пусто (все).
+function deskWatchItems(status,list){return ((DESK_WATCH&&DESK_WATCH.items)||[]).filter(x=>(!list||x.list===list)&&(!status||x.status===status)).sort((a,b)=>a.order-b.order);}
+// Мутаторы списка не сохраняют — вызывающий зовёт scheduleSave() (как posMetaSet).
+// Добавить бумагу sec (из deskUniverse) в конец списка; уже есть — вернуть существующую идею без изменений.
+function deskWatchAdd(sec,patch,now){
+  if(!sec||!sec.key)return null;
+  const cur=deskWatchGet(sec.key);if(cur)return cur;
+  const t=now||Date.now(),W=deskWatchNorm(DESK_WATCH),list=(patch&&patch.list)||'main';
+  const last=W.items.filter(x=>x.list===list).reduce((m,x)=>Math.max(m,x.order),0);
+  W.items.push(Object.assign({id:'w'+t+'_'+Math.floor(Math.random()*1e4),key:sec.key,sym:sec.sym,tk:sec.tk,ccy:sec.ccy,name:sec.name,list,status:'watch',order:last+1,
+    refPx:sec.price,refAt:new Date(t).toISOString().slice(0,10),createdAt:t,updatedAt:t},patch||{}));
+  DESK_WATCH=deskWatchNorm(W);
+  return deskWatchGet(sec.key);
+}
+// Слить patch в идею (null стирает поле); id/key/sym/ccy/createdAt не меняются.
+function deskWatchUpdate(key,patch,now){
+  const cur=deskWatchGet(key);if(!cur)return null;
+  const p=Object.assign({},patch||{});['id','key','sym','ccy','createdAt'].forEach(f=>{delete p[f];});
+  const next=Object.assign({},cur,p,{updatedAt:now||Date.now()});
+  DESK_WATCH=deskWatchNorm({v:1,lists:DESK_WATCH.lists,items:DESK_WATCH.items.map(x=>x===cur?next:x)});
+  return deskWatchGet(key);
+}
+function deskWatchSetStatus(key,status,now){return deskWatchUpdate(key,{status:status==='final'?'final':'watch'},now);}
+// Порядок внутри своего списка и статуса: to = ±1 (соседняя позиция) или ключ идеи, перед которой поставить
+// (перетаскивание; неизвестный ключ/null — в конец). Номера order других статусов не трогаются. true — сдвинули.
+function deskWatchMove(key,to){
+  const cur=deskWatchGet(key);if(!cur)return false;
+  const seq=deskWatchItems(cur.status,cur.list),i=seq.indexOf(cur),rest=seq.filter(x=>x!==cur);
+  let j;
+  if(typeof to==='number'){j=i+to;if(j<0||j>rest.length)return false;}
+  else{j=to==null?-1:rest.findIndex(x=>x.key===String(to).toUpperCase());if(j<0)j=rest.length;}
+  rest.splice(j,0,cur);
+  if(rest.every((x,k)=>x===seq[k]))return false;
+  const slots=seq.map(x=>x.order).sort((a,b)=>a-b);
+  rest.forEach((x,k)=>{x.order=slots[k];});
+  return true;
+}
+// Удалить идею (строка исходной вкладки и правило плана не трогаются). → удалённая идея | null.
+function deskWatchRemove(key){
+  const cur=deskWatchGet(key);if(!cur)return null;
+  DESK_WATCH=deskWatchNorm({v:1,lists:DESK_WATCH.lists,items:DESK_WATCH.items.filter(x=>x!==cur)});
+  return cur;
 }
 // Капитал портфеля в kr: акции по текущей цене + свободный кэш (d.cashFree — в базовой валюте вкладки).
 // Плечо не входит (решение §10#6: капитал = акции + кэш). Шорт (S6) входит результатом (средняя − цена)·qty:

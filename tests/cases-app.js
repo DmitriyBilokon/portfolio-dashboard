@@ -442,6 +442,41 @@ grp('plan shares & level parse', function(){
   __eq('buy zone 358–366 → 366', planParseLevel('докупить ~10 000 kr лимитом в зоне 358–366','buy'), 366);
   __eq('support €1099 → 1099', planParseLevel('лимит ~8 000 kr у поддержки €1099','buy'), 1099);
   __eq('sell at 130 → 130', planParseLevel('сократить у сопротивления 130','sell'), 130);
+  // 2026-09-10: таргет из совета AI больше не становится лимитом покупки
+  var TTE='recoVerdict buy, +17% к 85.41, у поддержки 71.55, нефть растёт; добавляет EUR. Лимит 71.5–72';
+  __eq('TTE: «к 85.41» — таргет, берётся зона входа 71.5–72', planParseLevel(TTE,'buy'), 72);
+  __eq('старый разбор брал таргет (для миграции)', planParseLevelV1(TTE,'buy'), 85.41);
+  __eq('CEVI: SMA50/SMA100 и «к 179» пропущены', planParseLevel('recoVerdict buy, +27% к 179, выше SMA50; шведское здравоохранение (SEK). Добор в зоне SMA100 155–160','buy'), 160);
+  __eq('откат к 72 — вход, цель 90 — нет', planParseLevel('Докупить на откате к 72, цель 90','buy'), 72);
+  __eq('стоп и таргет не вход', planParseLevel('Купить 120, стоп 110, таргет 150','buy'), 120);
+  __eq('только таргет → 0 (уровень вручную)', planParseLevel('Купить: апсайд +25% до таргета 200','buy'), 0);
+  __eq('одно число без подсказки → оно', planParseLevel('MU 120','buy'), 120);
+  __eq('несколько чисел без подсказки → 0', planParseLevel('между 100 и 130','buy'), 0);
+  __eq('P/E 25 и RSI 30 — не цена', planParseLevel('P/E 25, RSI 30, вход у 64','buy'), 64);
+  __eq('sell: проценты пропущены', planParseLevel('Сократить на 30% при цене выше 150','sell'), 150);
+  __eq('sell: у таргета, стоп пропущен', planParseLevel('фиксировать у таргета 95, стоп 80','sell'), 95);
+  __eq('пусто → 0', [planParseLevel('','buy'), planParseLevel('держать','buy')], [0, 0]);
+});
+grp('plan ticker match & AI rule fix (v2)', function(){
+  var _D=DATA; DATA={}; var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка'];
+  DATA['Portfolio (Anna)']={headers:h,v3:'1',rows:[['','Investor B','INVE B','','','',5,300,'SEK',250],['','TotalEnergies','TTE','','','',3,78.31,'EUR',70]]};
+  __eq('planTkKey: пробел = дефис', [planTkKey(' inve b '), planTkKey('INVE-B'), planTkKey('VOLV_B')], ['INVE-B','INVE-B','VOLV-B']);
+  __eq('planRowFor находит «INVE B» по «INVE-B»', (planRowFor('INVE-B','Portfolio (Anna)')||[])[8], 'SEK');
+  __eq('planRowFor ищет и в других вкладках', (planRowFor('inve-b','нет такой')||[])[2], 'INVE B');
+  __eq('planCurPrice по «INVE-B»', planCurPrice('INVE-B'), 300);
+  var TTE='recoVerdict buy, +17% к 85.41, у поддержки 71.55. Лимит 71.5–72';
+  var r1={id:'pl1',tab:'Portfolio (Anna)',tk:'TTE',ccy:'EUR',act:'buy',level:85.41,note:TTE,fromAi:1,done:false,hitAt:5};
+  __eq('нетронутое правило из AI → новый уровень, hitAt сброшен', [planFixAiRule(r1), r1.level, r1.hitAt], [true, 72, 0]);
+  var r2={id:'pl2',tab:'Portfolio (Anna)',tk:'TTE',ccy:'EUR',act:'buy',level:73,note:TTE,fromAi:1,done:false};
+  __eq('уровень правили руками — не трогаем', [planFixAiRule(r2), r2.level], [false, 73]);
+  var r3={id:'pl3',tab:'Portfolio (Anna)',tk:'INVE-B',ccy:'USD',act:'buy',level:0,note:'держать ядро',fromAi:1,done:false};
+  __eq('валюта из строки бумаги: USD → SEK', [planFixAiRule(r3), r3.ccy], [true, 'SEK']);
+  var r4={id:'pl4',tk:'TTE',ccy:'EUR',act:'buy',level:85.41,note:TTE,done:false};
+  __eq('правило не из AI — не трогаем', [planFixAiRule(r4), r4.level], [false, 85.41]);
+  var r5={id:'pl5',tk:'TTE',ccy:'EUR',act:'buy',level:85.41,note:TTE,fromAi:1,done:true};
+  __eq('исполненное — не трогаем', planFixAiRule(r5), false);
+  __eq('второй проход ничего не меняет', planFixAiRule(r1), false);
+  DATA=_D;
 });
 
 // 10) Рекомендация «сейчас»: вердикт — валидная строка, не падает
@@ -848,6 +883,9 @@ grp('migrateState', function(){
   __ok('v0: PF3 title not personal', !DATA[PF3_KEY].title);
   __eq('migrateSchema → SCHEMA_V', STATE_V, SCHEMA_V);
   __eq('migrateSchema normalizes plans', PLAN_RULES[0].status, 'armed');
+  STATE_V=1; PLAN_RULES=[{id:'ply',tk:'MU',ccy:'USD',act:'buy',level:130,note:'+20% к 130, вход у 105',fromAi:1,done:false}];
+  migrateState();
+  __eq('v1→v2: уровень правила из AI пересчитан', [PLAN_RULES[0].level, STATE_V], [105, SCHEMA_V]);
   var n=DATA[PF3_KEY].rows.length; migrateState();
   __eq('migrateState idempotent', DATA[PF3_KEY].rows.length, n);
   // Классический индекс из бандла → v3 (схема колонок PF3)

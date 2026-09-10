@@ -366,7 +366,7 @@ let DESK={riskPct:1,riskCapPct:6,shortOk:{}};
 // зона покупки, тезис, сценарии справедливой стоимости. Нормализация и мутаторы — deskWatch* в app-5.js.
 let DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};
 // Версия схемы снапшота (schemaV): одноразовые шаги migrateSchema не повторяются после применения.
-const SCHEMA_V=1;
+const SCHEMA_V=2;
 let STATE_V=0;
 let SCN_ALERT_STATE={};   // 📊 Блок D: последнее наблюдаемое состояние сценариев по тикеру (дедуп алертов)
 // Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
@@ -1078,6 +1078,9 @@ function migrateSchema(){
   if(STATE_V>=SCHEMA_V)return;
   if(STATE_V<1){   // v1 (S3 редизайна): сиды отработали; правила плана → v2
     PLAN_RULES=(PLAN_RULES||[]).map(planRuleNorm);
+  }
+  if(STATE_V<2){   // v2 (2026-09-10): правила из совета AI — уровень входа вместо таргета, валюта из строки бумаги
+    (PLAN_RULES||[]).forEach(planFixAiRule);
   }
   STATE_V=SCHEMA_V;
   if(!applyingRemote)scheduleSave();

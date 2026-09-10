@@ -374,6 +374,9 @@ grp('bookcheck', function(){
   __eq('stop0 из меты (R от стопа входа)', by['pos|🚀 Портфель 3.0|MU|stop|95'].stop0, 90);
   __eq('v1-правило: tab PF3, валюта из строки, продажа ge', [by['rule|pl2|level|128'].tab, by['rule|pl2|level|128'].ccy, by['rule|pl2|level|128'].cross], ['🚀 Портфель 3.0', 'USD', 'ge']);
   __eq('вход в шорт: лимит ge, стоп выше → invalid ge', [by['rule|pl5|level|90'].cross, by['rule|pl5|invalid|97'].cross], ['ge', 'ge']);
+  var inv = bookItems({ data: { 'Portfolio (Anna)': { rows: [['', 'Investor B', 'INVE B', '', '', '', 5, 300, 'SEK', 250]] } },
+    planRules: [{ id: 'pli', tab: 'Portfolio (Anna)', tk: 'INVE-B', ccy: 'USD', act: 'buy', level: 290, done: false }] });
+  __eq('правило «INVE-B» с ошибочным USD → валюта из строки «INVE B», символ .ST', [inv[0].ccy, inv[0].sym], ['SEK', 'INVE-B.ST']);
   __eq('битый снапшот → []', [bookItems(null).length, bookItems({ data: { x: null }, planRules: [null, 5] }).length], [0, 0]);
 
   // Символы: стопы первыми, только открытые рынки, лимит

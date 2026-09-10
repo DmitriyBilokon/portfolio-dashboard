@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10s8-bookcheck';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10s8b-rule-ccy';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -2075,9 +2075,15 @@ const BOOK_CFG = { hystAtr: 0.3, hystPct: 1, maxSyms: 20, maxLines: 15, noteLen:
 const BOOK_SKIP_TABS = ['🤖 AI Портфель'];   // виртуальный счёт — у него свои Telegram-уведомления
 const bkNum = v => { const x = parseFloat(v); return isFinite(x) && x > 0 ? x : 0; };
 const bkTk = tk => String(tk || '').trim().toUpperCase();
-function bkRowCcy(data, tk){
-  for(const k of Object.keys(data || {})){
-    const r = ((data[k] && data[k].rows) || []).find(r => bkTk(r[2]) === tk);
+const bkKey = tk => bkTk(tk).replace(/[\s_-]+/g, '-');   // «INVE B» в строке = «INVE-B» в правиле из совета AI
+// Валюта бумаги по строкам: сначала вкладка правила, затем любая. Строка — источник правды (в правилах из AI
+// раньше записывался USD, если тикер писался иначе, → Yahoo «INVE-B» вместо «INVE-B.ST»).
+function bkRowCcy(data, tk, tab){
+  const k = bkKey(tk), find = d => ((d && d.rows) || []).find(r => bkKey(r[2]) === k);
+  const own = find(data && data[tab]);
+  if(own && own[8]) return String(own[8]);
+  for(const key of Object.keys(data || {})){
+    const r = find(data[key]);
     if(r && r[8]) return String(r[8]);
   }
   return '';
@@ -2114,7 +2120,7 @@ function bookItems(snap){
     const tab = r.tab || PF3_KEY, side = r.side === 'short' ? 'short' : 'long', dir = side === 'short' ? -1 : 1;
     const act = r.act === 'sell' ? 'sell' : r.act === 'watch' ? 'watch' : 'buy';
     const entryRule = act === 'watch' || (side === 'short' ? act === 'sell' : act === 'buy');
-    const ccy = String(r.ccy || bkRowCcy(data, tk) || 'USD').toUpperCase();
+    const ccy = String(bkRowCcy(data, tk, tab) || r.ccy || 'USD').toUpperCase();
     const lvl = bkNum(r.level), stop = bkNum(r.stop), target = bkNum(r.target);
     const base = { src: 'rule', ruleId: String(r.id), tab, tk, name: String(r.name || tk), ccy, sym: exSymbol(tk, ccy), side, act,
       qty: bkNum(r.qty), amount: bkNum(r.amount), lvl, stop, target, note: String(r.note || '') };

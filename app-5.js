@@ -299,11 +299,11 @@ function pfTaxExportCSV(){
 // «сократить TK до даты Y». При каждом обновлении цен дашборд сверяет живую цену
 // с уровнем и уведомляет (тост + браузерный push), когда условие достигнуто.
 function planCurPrice(tk){
-  tk=String(tk||'').trim().toUpperCase(); if(!tk)return null;
+  tk=planTkKey(tk); if(!tk)return null;
   const keys=Object.keys(DATA||{});
   for(const k of keys){
     const d=DATA[k]; if(!d||!d.rows||!(d.v3==='1'||k===PF3_KEY||k===AIP_KEY))continue;
-    for(const r of d.rows){ if(String(r[2]||'').trim().toUpperCase()===tk){ const p=parseFloat(r[7]); if(isFinite(p)&&p>0)return p; } }
+    for(const r of d.rows){ if(planTkKey(r[2])===tk){ const p=parseFloat(r[7]); if(isFinite(p)&&p>0)return p; } }
   }
   return null;
 }
@@ -411,14 +411,72 @@ function planQtyBit(r, price){
 }
 // Достать ценовой уровень из текста совета («зоне 358–366», «у поддержки €1099»).
 // Денежные суммы (kr/крон) отбрасываем, чтобы не спутать с ценой акции.
+// Тикер для сравнения: регистр, пробел/подчёркивание/дефис — одно («INVE B» в строке = «INVE-B» у AI).
+const planTkKey=tk=>String(tk||'').trim().toUpperCase().replace(/[\s_-]+/g,'-');
+// Строка бумаги: сначала во вкладке правила, затем в любой v3-вкладке (валюта/имя для правил из совета AI).
+function planRowFor(tk,tab){
+  const k=planTkKey(tk);if(!k)return null;
+  const find=d=>d&&Array.isArray(d.rows)?d.rows.find(r=>planTkKey(r[2])===k):null;
+  let r=find(DATA[tab]);if(r)return r;
+  for(const key of Object.keys(DATA||{})){const d=DATA[key];if(d&&(d.v3==='1'||key===PF3_KEY)&&(r=find(d)))return r;}
+  return null;
+}
+// Уровень из текста совета AI. Для buy — только цена ВХОДА: числа после «к / таргет / цель / потенциал /
+// до / стоп», индикаторы (SMA50, RSI 30, P/E 25), проценты и суммы в kr пропускаются. Раньше бралось самое
+// большое число — у «+17% к 85.41, у поддержки 71.55» это был таргет 85.41, и лимит «срабатывал» сразу.
+// Приоритет — числа во фрагменте (до , ; . !) с явным входом (вход/лимит/зона/поддержка/откат к/докупить/у/от/на);
+// нет таких — единственное оставшееся число; иначе 0 (уровень ставится вручную). buy → верх зоны, sell → низ.
+const PLAN_LVL_RE={
+  after:/^\s*(?:%|kr\b|kr\.|крон|sek\b|x\b|×|мес|дн|нед|лет|год|шт|млрд|млн|bn\b|-\d\d-)/i,
+  // индикаторы вместе с их числом вырезаются до разбора: иначе «SMA100 155» склеивается в 100 155
+  ind:/(^|[^a-zа-яё])(?:(?:sma|ema|ma|rsi|atr|p\/e|p\/s|pe|ps|peg|ev\/ebitda)\s*-?\s*|(?:q|fy|h|x|×))\d+(?:[.,]\d+)?/gi,
+  range:/\d\s*[–—-]\s*$/,
+  pull:/откат\S*\s+к\s*[:~≈]?\s*[$€£]?\s*$/i,
+  tgt:/(?:таргет\S*|цел[ьиюе]\S*|target|tp|потенциал\S*|апсайд\S*|upside|стоп\S*|stop|sl|(?:^|[^a-zа-яё])(?:к|до))\s*[:~≈]?\s*[$€£]?\s*$/i,
+  stop:/(?:стоп\S*|stop|sl)\s*[:~≈]?\s*[$€£]?\s*$/i,
+  cue:/вход|лимит|limit|entry|зон|поддерж|support|откат|куп|добор|buy|около|(?:^|[^a-zа-яё])(?:у|от|на|по)(?:[^a-zа-яё]|$)/i,
+  sellCue:/сопротив|resist|фикс|выше|прода|сократ|trim|sell|лимит|limit|таргет|цел|target|(?:^|[^a-zа-яё])(?:у|от|на|по|до|при)(?:[^a-zа-яё]|$)/i,
+};
 function planParseLevel(text, act){
   if(!text)return 0;
-  const t=String(text).replace(/\d[\d  .,]*\s*(kr|крон|kr\.|sek)\b/gi,' ');
-  const m=t.match(/\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?/g);
+  const R=PLAN_LVL_RE,t=String(text).replace(R.ind,'$1 ◦ '),sell=act==='sell',re=/\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?/g;
+  const cued=[],plain=[];let m,prev=null;
+  while((m=re.exec(t))){
+    const n=parseFloat(m[0].replace(/[  ]/g,'').replace(',','.')),pre=t.slice(0,m.index),post=t.slice(m.index+m[0].length);
+    const seg=pre.split(/[,;!?\n]|\.\s/).pop();
+    let c;
+    if(!(n>0)||R.after.test(post))c='skip';
+    else if(R.range.test(pre)&&prev)c=prev;
+    else if(sell)c=R.stop.test(pre)?'skip':R.sellCue.test(seg)?'cue':'plain';
+    else c=R.pull.test(pre)?'cue':R.tgt.test(pre)?'skip':R.cue.test(seg)?'cue':'plain';
+    prev=c;
+    if(c==='cue')cued.push(n);else if(c==='plain')plain.push(n);
+  }
+  const pick=a=>sell?Math.min.apply(null,a):Math.max.apply(null,a);
+  return cued.length?pick(cued):plain.length===1?plain[0]:0;
+}
+// Разбор до 2026-09-10 (самое большое число для buy) — только чтобы миграция v2 узнала нетронутые правила из AI.
+function planParseLevelV1(text, act){
+  if(!text)return 0;
+  const t=String(text).replace(/\d[\d  .,]*\s*(kr|крон|kr\.|sek)\b/gi,' ');
+  const m=t.match(/\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?/g);
   if(!m)return 0;
-  const nums=m.map(s=>parseFloat(s.replace(/[  ]/g,'').replace(',','.'))).filter(n=>isFinite(n)&&n>0);
+  const nums=m.map(s=>parseFloat(s.replace(/[  ]/g,'').replace(',','.'))).filter(n=>isFinite(n)&&n>0);
   if(!nums.length)return 0;
-  return act==='sell'?Math.min.apply(null,nums):Math.max.apply(null,nums);   // buy→верх зоны, sell→уровень
+  return act==='sell'?Math.min.apply(null,nums):Math.max.apply(null,nums);
+}
+// Миграция v2: правило из совета AI, чей уровень не меняли после переноса (= старому разбору), получает
+// уровень по новому разбору; валюта — из строки бумаги (раньше «INVE-B» не находил «INVE B» → USD).
+function planFixAiRule(r){
+  if(!r||!r.fromAi||r.done||r.status==='open')return false;
+  let ch=false;
+  const row=planRowFor(r.tk,r.tab||PF3_KEY),ccy=row&&row[8]?String(row[8]).toUpperCase():'';
+  if(ccy&&ccy!==String(r.ccy||'').toUpperCase()){r.ccy=ccy;ch=true;}
+  if((r.act==='buy'||r.act==='sell')&&r.note){
+    const lv=parseFloat(r.level)||0,old=planParseLevelV1(r.note,r.act);
+    if(lv>0&&Math.abs(lv-old)<1e-9){const nl=planParseLevel(r.note,r.act);if(nl!==lv){r.level=nl;r.hitAt=0;ch=true;}}
+  }
+  return ch;
 }
 // Перенести структурированный совет AI-Proto («⚖️ Предложение») в правила плана.
 function planImportFromAi(){
@@ -435,7 +493,7 @@ function planImportFromAi(){
     if(replace){ PLAN_RULES=PLAN_RULES.filter(r=>!(r.fromAi&&!r.done&&(r.tab||PF3_KEY)===v3Key)); ver='1.0'; }
     else ver=(maxV+0.1).toFixed(1);
   }
-  const d=pf3D(); let added=0;
+  let added=0;
   acts.forEach((a,i)=>{
     const isSell=/прода|сократ|уменьш|fix|sell|trim|reduce/i.test(a.action||'');
     const isBuy=/куп|докуп|добав|нарасти|buy|add|increase/i.test(a.action||'');
@@ -444,7 +502,7 @@ function planImportFromAi(){
     const tk=String(a.ticker||'').trim().toUpperCase(); if(!tk)return;
     if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act===act))return;   // дедуп
     const level=planParseLevel(a.details||'',act);
-    const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
+    const row=planRowFor(tk,v3Key);
     let ccy='USD';
     if(row&&row[8])ccy=String(row[8]).toUpperCase();
     else if(/€|eur/i.test(a.details||''))ccy='EUR';
@@ -457,7 +515,7 @@ function planImportFromAi(){
   wl.forEach((w,i)=>{
     const tk=String(w&&w.ticker||'').trim().toUpperCase(); if(!tk)return;
     if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act==='watch'))return;   // дедуп
-    const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
+    const row=planRowFor(tk,v3Key);
     const ccy=row&&row[8]?String(row[8]).toUpperCase():'USD';
     const note=[w.condition?RT('Условие','When')+': '+w.condition:'',w.rationale||''].filter(Boolean).join(' · ');
     PLAN_RULES.push(planRuleNorm({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[1])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));

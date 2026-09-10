@@ -699,7 +699,12 @@ const DESK_IDEA_CFG={
   len:{name:80,list:60,tag:16,title:120,text:600,cardTitle:60,cardText:160,note:160},
   // I2 «Что если?» (§2.4): предупреждения концентрации (решение §6#3) — не блокировка; цена не live дольше staleMin → stale.
   whatIf:{weightPct:10,sectorPct:35,ccyPct:60,staleMin:30,amount:[100,1e7],weight:[0.1,50],quick:[5000,10000,25000,50000],
-    def:{amountSEK:5000,weightPct:2},debounceMs:250}
+    def:{amountSEK:5000,weightPct:2},debounceMs:250},
+  // I3 «Рост бизнеса» (§3.4): ряд старше staleDays — «устарели»; кэш клиента cacheMin, ошибка — errMin.
+  fin:{staleDays:7,cacheMin:30,errMin:5},
+  // I3 «Аналитики и оценка» (§3.5): пиры для P/E (5–8 бумаг сектора, меньше peersMin — не сравниваем);
+  // мультипликатор красится, только если отличается от медианы сектора больше чем на devPct %.
+  ana:{peersMax:8,peersMin:3,devPct:10}
 };
 // Нормализация DESK_WATCH: дедуп по key (остаётся более свежая правка), числа > 0 или null, строки обрезаются,
 // неизвестные поля отбрасываются, order перенумеровывается 1…N внутри списка. Идемпотентна.

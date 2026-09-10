@@ -227,6 +227,87 @@ function deskWhatIf(o){
   R.status=R.warnings.some(w=>w.blocking)?'blocked':R.warnings.length?'attention':'ok';
   return R;
 }
+// «Рост бизнеса» (I3, §3.4): модель столбцов по ответу ?financials= (§2.5). metric — revenue|eps|fcf (у FCF только факт).
+// Факт — годы annual со значением; прогноз — estimates позже последнего факта. Рост г/г — к соседнему году с базой > 0.
+// CAGR = (последний ÷ первый)^(1/лет) − 1: исторический — по факту (≥ 2 точки, обе > 0); прогнозный — от последнего
+// факта до последнего прогноза и только при ≥ 2 точках прогноза (решение §6#4).
+function deskFinCagr(a,b){
+  if(!a||!b)return null;const n=b.year-a.year;
+  return n>0&&a.v>0&&b.v>0?{pct:(Math.pow(b.v/a.v,1/n)-1)*100,from:a,to:b,years:n}:null;
+}
+function deskFinModel(fin,metric,now){
+  const m=['revenue','eps','fcf'].includes(metric)?metric:'revenue',num=v=>v!=null&&isFinite(v);
+  const M={metric:m,bars:[],act:0,est:0,cagrHist:null,cagrFcst:null,excluded:[],stale:false,notes:[],ccy:null,source:null,fetchedAt:null};
+  if(!fin||typeof fin!=='object')return Object.assign(M,{state:'loading'});
+  if(fin.status==='error')return Object.assign(M,{state:'error',notes:fin.notes||[]});
+  const A=Array.isArray(fin.annual)?fin.annual:[];
+  const act=A.filter(x=>x&&num(x[m])).map(x=>({year:+x.year,v:+x[m],est:false})),last=act[act.length-1];
+  const est=m==='fcf'||!last?[]:(Array.isArray(fin.estimates)?fin.estimates:[]).filter(x=>x&&num(x[m])&&+x.year>last.year).map(x=>({year:+x.year,v:+x[m],est:true,n:x.n||null}));
+  const bars=act.concat(est),at=Date.parse(fin.fetchedAt||'');
+  bars.forEach((b,i)=>{const p=bars[i-1];b.yoy=p&&p.v>0&&b.year-p.year===1?(b.v/p.v-1)*100:null;});
+  Object.assign(M,{bars,act:act.length,est:est.length,cagrHist:act.length>=2?deskFinCagr(act[0],last):null,
+    cagrFcst:est.length>=2?deskFinCagr(last,est[est.length-1]):null,excluded:A.filter(x=>x&&!num(x[m])).map(x=>+x.year),
+    stale:isFinite(at)&&(now||Date.now())-at>DESK_IDEA_CFG.fin.staleDays*864e5,
+    notes:Array.isArray(fin.notes)?fin.notes:[],ccy:fin.ccy||null,source:fin.source||null,fetchedAt:fin.fetchedAt||null});
+  M.state=!bars.length?'nodata':act.length>=2&&est.length?'ok':'partial';
+  return M;
+}
+// Значение ряда: выручка/FCF — трлн/млрд/млн, EPS — 2 знака.
+function deskFinFmt(v,metric){
+  if(v==null||!isFinite(v))return '—';
+  if(metric==='eps')return dkN(v,2);
+  const a=Math.abs(v);
+  return a>=1e12?dkN(v/1e12,2)+RT(' трлн',' T'):a>=1e9?dkN(v/1e9,a>=1e11?0:1)+RT(' млрд',' B'):a>=1e6?dkN(v/1e6,0)+RT(' млн',' M'):dkN(v,0);
+}
+// Inline-SVG «Роста бизнеса»: столбцы (факт — сплошные, прогноз — полупрозрачные с пунктиром) на левой оси,
+// линия роста г/г на правой. Цвета — классы desk.css. Каждый столбец фокусируем, подсказка — data-tip.
+// narrow — телефон: узкий viewBox (текст не мельчает при масштабировании) и годы в две цифры.
+function deskFinSvg(M,ccy,narrow){
+  const W=narrow?340:640,H=narrow?210:230,pl=narrow?50:58,pr=narrow?38:46,pt=14,pb=26,iw=W-pl-pr,ih=H-pt-pb,B=M.bars,n=B.length;
+  if(!n)return '';
+  const vs=B.map(b=>b.v),hi=Math.max(0,...vs),lo=Math.min(0,...vs),sp=(hi-lo)||1,y=v=>pt+(hi-v)/sp*ih;
+  const Y=B.map(b=>b.yoy).filter(v=>v!=null),yh=Math.max(0,...Y)*1.1,yl=Math.min(0,...Y)*1.1,ys=(yh-yl)||1,yy=v=>pt+(yh-v)/ys*ih;
+  const slot=iw/n,bw=Math.min(56,slot*.62),cx=i=>pl+slot*(i+.5),f=v=>Math.round(v*10)/10,src=M.source==='fmp'?'FMP':M.source==='yahoo'?'Yahoo':'';
+  const kind=b=>b.est?RT('прогноз','forecast')+(b.n?RT(` · ${b.n} аналит.`,` · ${b.n} analysts`):''):RT('факт','actual');
+  let s=`<svg class="dk-fin-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="group" aria-label="${dkEsc(RT('Столбцы по годам, линия — рост г/г','Bars by year, line — YoY growth'))}">`;
+  [0,1,2,3,4].forEach(i=>{const v=lo+sp*i/4,yv=f(y(v));s+=`<line class="dk-fin-grid" x1="${pl}" x2="${W-pr}" y1="${yv}" y2="${yv}"/><text class="dk-fin-ax" x="${pl-6}" y="${yv+3}" text-anchor="end">${dkEsc(deskFinFmt(v,M.metric))}</text>`;});
+  if(Y.length)[yl,0,yh].forEach(v=>{s+=`<text class="dk-fin-ax yoy" x="${W-pr+6}" y="${f(yy(v))+3}">${dkEsc(dkPct(v,0))}</text>`;});
+  s+=`<line class="dk-fin-zero" x1="${pl}" x2="${W-pr}" y1="${f(y(0))}" y2="${f(y(0))}"/>`;
+  B.forEach((b,i)=>{
+    const top=f(Math.min(y(b.v),y(0))),h=Math.max(1,f(Math.abs(y(b.v)-y(0)))),tip=`${b.year} · ${deskFinFmt(b.v,M.metric)} ${ccy||''} · ${kind(b)}${b.yoy!=null?' · '+RT('г/г ','YoY ')+dkPct(b.yoy,1):''}${src?' · '+src:''}`;
+    s+=`<g class="dk-fb${b.est?' est':''}${b.v<0?' neg':''}" tabindex="0" role="img" aria-label="${dkEsc(tip)}" data-tip="${dkEsc(tip)}"><rect x="${f(cx(i)-bw/2)}" y="${top}" width="${f(bw)}" height="${h}" rx="3"/><text class="dk-fin-yr" x="${f(cx(i))}" y="${H-8}" text-anchor="middle">${narrow?'’'+String(b.year).slice(2):b.year}${b.est?`<tspan class="dk-fin-f">${narrow?RT('П','F'):RT(' П',' F')}</tspan>`:''}</text></g>`;
+  });
+  // Линия г/г рвётся на годах без роста (нет базы или пропуск года).
+  let seg=[];const segs=[];B.forEach((b,i)=>{if(b.yoy==null){if(seg.length)segs.push(seg);seg=[];}else seg.push([f(cx(i)),f(yy(b.yoy)),b.est]);});if(seg.length)segs.push(seg);
+  segs.forEach(g=>{if(g.length>1)s+=`<polyline class="dk-fin-yoy" points="${g.map(p=>p[0]+','+p[1]).join(' ')}"/>`;g.forEach(p=>{s+=`<circle class="dk-fin-dot${p[2]?' est':''}" cx="${p[0]}" cy="${p[1]}" r="3"/>`;});});
+  return s+'</svg>';
+}
+// Пиры для P/E (§3.5): бумаги того же сектора VAL с P/E > 0, кроме самой; при избытке — крупнейшие по капитализации
+// caps (тикер → кап-я), затем по тикеру. Меньше peersMin — сравнения нет (reason 'few').
+function deskPeers(tk,val,caps){
+  const C=DESK_IDEA_CFG.ana,V=val||{},me=V[tk],sector=me&&me.sector;
+  if(!sector)return {sector:null,peers:[],median:null,reason:'nosector',n:0};
+  const all=Object.keys(V).filter(t=>t!==tk&&V[t]&&V[t].sector===sector&&V[t].pe>0).map(t=>({tk:t,pe:+V[t].pe,cap:+((caps||{})[t])||0}));
+  all.sort((a,b)=>(b.cap-a.cap)||(a.tk<b.tk?-1:a.tk>b.tk?1:0));
+  const peers=all.slice(0,C.peersMax);
+  if(peers.length<C.peersMin)return {sector,peers:[],median:null,reason:'few',n:peers.length};
+  return {sector,peers,median:valMedian(peers.map(p=>p.pe)),reason:null,n:peers.length};
+}
+// Отклонение мультипликатора от ориентира (медиана сектора/своя история), % и класс: дешевле/дороже больше devPct — цвет.
+function deskMultDev(v,ref){
+  if(!(v>0)||!(ref>0))return {dev:null,cls:''};
+  const dev=(v/ref-1)*100,t=DESK_IDEA_CFG.ana.devPct;
+  return {dev,cls:dev<=-t?'cheap':dev>=t?'rich':''};
+}
+// Распределение рекомендаций TG_FULL.ratings → доли Strong Buy…Strong Sell (пустые отброшены).
+function deskRatings(r){
+  if(!r||typeof r!=='object')return null;
+  const segs=[['strongBuy','Strong Buy'],['buy','Buy'],['hold','Hold'],['sell','Sell'],['strongSell','Strong Sell']].map(([k,l])=>({k,l,n:Math.max(0,Math.round(+r[k]||0))}));
+  const total=segs.reduce((a,x)=>a+x.n,0);
+  if(!total)return null;
+  segs.forEach(x=>{x.pct=x.n/total*100;});
+  return {segs:segs.filter(x=>x.n),total,consensus:r.consensus||null};
+}
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const DESK_LS='dash_desk';
@@ -234,7 +315,9 @@ let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},year
   f:{v:'all',side:'all',phase:'all',tab:'all',near:false,rr:false,held:false,q:''},sort:{k:'verdict',d:-1},
   riskOvr:{},exec:null,edit:null,menu:false,load:{busy:false,done:0,total:0,at:0},calAt:0,qAt:0,_t:0,_pending:false,_timer:null,
   iv:'all',wmenu:null,wedit:null,drag:null,   // I1: вид «Идей» (all|watch|final), меню карточки списка, форма идеи, перетаскивание
-  wiRaw:null};   // I2: вводимое в «Что если?» значение до подтверждения (change) — пересчёт на месте
+  wiRaw:null,   // I2: вводимое в «Что если?» значение до подтверждения (change) — пересчёт на месте
+  finOpen:null,finM:'revenue'};   // I3: у какой бумаги раскрыт «Рост бизнеса» (сессия, не localStorage — открытие desk не шлёт запросов), ряд
+let _deskFan=null;   // I3: веер цели {key, ch}
 let _deskChart=null,_deskMini=null;   // состояния stockChartDraw: {key,tab,row,ccy,years,side,ch}
 const deskActive=()=>!!(DESK_UI.on&&!DESK_UI.classic);
 const dkEsc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -280,7 +363,7 @@ function dkRiskHow(R,s){
     <p class="dk-mut">${RT('Снимок v2 от','v2 snapshot of')} ${dkEsc(s&&s.d||'—')} · SIG ${dkEsc(SIG.VER)}</p>`;
 }
 // Бета из строки-источника бумаги (колонка «Beta», если есть).
-function deskBeta(it){const h=it&&it.d&&it.d.headers,i=h?h.indexOf('Beta'):-1,v=i>=0&&it.r?parseFloat(it.r[i]):NaN;return isFinite(v)?v:null;}
+function deskBeta(it){return deskRowNum(it,'Beta');}
 // Открытый риск книги выбранного портфеля (или всех моих при «Все портфели»): сумма bookRiskState.
 function deskOpenRisk(){
   const port=deskPort(),tabs=port==='all'?deskPorts():(port?[port]:[]),rs=tabs.map(t=>bookRiskState(t));
@@ -347,13 +430,24 @@ function deskMount(){
   el.addEventListener('change',deskOnChange);
   el.addEventListener('input',deskOnInput);
   el.addEventListener('keydown',deskOnInputKey);
-  el.addEventListener('toggle',e=>{const d=e.target;if(d&&d.dataset&&d.dataset.det)deskDetSave(d.dataset.det,d.open);},true);   // toggle не всплывает
+  el.addEventListener('toggle',e=>{const d=e.target;if(!d||!d.dataset)return;   // toggle не всплывает
+    if(d.dataset.det)deskDetSave(d.dataset.det,d.open);
+    if(d.dataset.det==='st-ana'&&d.open)deskFanAttach();
+    // «Рост бизнеса»: запрос — только по раскрытию; перерисовка — лишь при смене состояния (иначе toggle от
+    // перерисованного open-блока зациклил бы рендер).
+    const fk=d.dataset.fin;if(fk==null)return;
+    if(d.open&&DESK_UI.finOpen!==fk){DESK_UI.finOpen=fk;deskFinLoad(d.dataset.sym);deskRender(true);}
+    else if(!d.open&&DESK_UI.finOpen===fk){DESK_UI.finOpen=null;deskRender(true);}
+  },true);
+  el.addEventListener('mouseover',e=>{const g=e.target.closest&&e.target.closest('.dk-fb');if(g)deskFinTip(g,true);});
+  el.addEventListener('mouseout',e=>{const g=e.target.closest&&e.target.closest('.dk-fb');if(g&&!g.contains(e.relatedTarget)&&document.activeElement!==g)deskFinTip(g,false);});
+  el.addEventListener('focusin',e=>{const g=e.target.closest&&e.target.closest('.dk-fb');if(g)deskFinTip(g,true);});
   // Порядок списка покупок перетаскиванием — только мышь (draggable ставится при pointer:fine); клавиатура — кнопки меню.
   el.addEventListener('dragstart',e=>{const c=e.target.closest&&e.target.closest('[data-wk]');if(!c)return;DESK_UI.drag=c.dataset.wk;try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',c.dataset.wk);}catch(x){}c.classList.add('drag');});
   el.addEventListener('dragover',e=>{if(!DESK_UI.drag)return;const c=e.target.closest&&e.target.closest('[data-wk]');if(!c)return;e.preventDefault();el.querySelectorAll('.dk-wcard.over').forEach(x=>{if(x!==c)x.classList.remove('over');});if(c.dataset.wk!==DESK_UI.drag)c.classList.add('over');});
   el.addEventListener('drop',e=>{const from=DESK_UI.drag;if(!from)return;e.preventDefault();DESK_UI.drag=null;const c=e.target.closest&&e.target.closest('[data-wk]');if(c&&c.dataset.wk!==from)deskWatchDrop(from,c.dataset.wk);else deskRender(true);});
   el.addEventListener('dragend',()=>{if(DESK_UI.drag){DESK_UI.drag=null;deskRender(true);}});
-  el.addEventListener('focusout',e=>{if(e.target&&e.target.id==='dkQ')setTimeout(()=>{const sg=document.getElementById('dkSugg');if(sg&&document.activeElement!==e.target)sg.hidden=true;},200);if(DESK_UI._pending)setTimeout(()=>{if(DESK_UI._pending&&!deskTyping())deskRender();},120);});
+  el.addEventListener('focusout',e=>{const g=e.target.closest&&e.target.closest('.dk-fb');if(g)deskFinTip(g,false);if(e.target&&e.target.id==='dkQ')setTimeout(()=>{const sg=document.getElementById('dkSugg');if(sg&&document.activeElement!==e.target)sg.hidden=true;},200);if(DESK_UI._pending)setTimeout(()=>{if(DESK_UI._pending&&!deskTyping())deskRender();},120);});
   return el;
 }
 const deskTyping=()=>{const a=document.activeElement,el=document.getElementById('desk');return !!(a&&el&&el.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));};
@@ -380,13 +474,13 @@ function deskGo(r,key){
   const m=document.getElementById('dkMain');if(m)try{window.scrollTo(0,0);}catch(e){}
 }
 // Графики: при перерисовке того же экрана канвас переносится в новый контейнер (без перерисовки и мигания).
-function deskChartsDrop(){[_deskChart,_deskMini].forEach(st=>{if(st&&st.ch){try{st.ch.destroy();}catch(e){}st.ch=null;}});_deskChart=null;_deskMini=null;}
+function deskChartsDrop(){[_deskChart,_deskMini,_deskFan].forEach(st=>{if(st&&st.ch){try{st.ch.destroy();}catch(e){}st.ch=null;}});_deskChart=null;_deskMini=null;_deskFan=null;}
 function deskPaint(){
   if(!deskActive())return;
   DESK_UI._pending=false;_deskItems=null;
   const root=deskMount(),main=document.getElementById('dkMain'),rail=document.getElementById('dkRail');
   rail.innerHTML=deskRailHTML();
-  const keep={};['dkChart','dkMini'].forEach(id=>{const e=document.getElementById(id);if(e&&e.firstChild)keep[id]=e;});
+  const keep={};['dkChart','dkMini','dkFan'].forEach(id=>{const e=document.getElementById(id);if(e&&e.firstChild)keep[id]=e;});
   const scr=window.scrollY||0;
   // Фокус клавиатуры переживает перерисовку (фоновые догрузки свечей/котировок перерисовывают экран): тот же id
   // или тот же data-a/data-k/data-v в новом DOM.
@@ -428,9 +522,11 @@ function deskChartsAttach(keep){
   });
   if(!used._deskChart&&_deskChart){if(_deskChart.ch)try{_deskChart.ch.destroy();}catch(e){}_deskChart=null;}
   if(!used._deskMini&&_deskMini){if(_deskMini.ch)try{_deskMini.ch.destroy();}catch(e){}_deskMini=null;}
+  deskFanAttach(keep.dkFan);
 }
 function deskRetheme(){
   [_deskChart,_deskMini].forEach(st=>{if(st&&st.ch){const id=st===_deskChart?'dkChart':'dkMini';stockChartDraw(st,id).catch(()=>{});}});
+  if(_deskFan){if(_deskFan.ch)_deskFan.ch.destroy();_deskFan=null;deskFanAttach();}
 }
 // Сторона плана бумаги: выбранная вручную → сторона открытой позиции → сторона вердикта.
 function deskSideFor(it){
@@ -803,6 +899,7 @@ function deskStockHTML(){
     <div class="dk-cols">
       <div>
         <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${held&&held.stop?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}</div></div>
+        ${deskFinHTML(it)}${deskAnaHTML(it,px)}
         <details class="dk-panel dk-mt14"${held?'':' open'}><summary class="dk-ph"><h2>${RT('История сигналов','Signal history')}</h2><span class="dk-cnt">${hc&&hc.rep?hc.rep.trades.length:0}</span><span class="dk-note dk-ml">${st?dkEsc(chartStatsText(st)):RT('реплей вердикта v2 по свечам','verdict v2 replayed over candles')}</span></summary>
           ${trades.length?`<div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Вход','Entry')}</th><th>${RT('Сторона','Side')}</th><th class="r">${RT('Цена','Price')}</th><th class="r">${RT('Стоп','Stop')}</th><th class="r">${RT('Цель','Target')}</th><th>${RT('Выход','Exit')}</th><th class="r">R</th><th>${RT('Причина','Reason')}</th></tr></thead><tbody>${trades.map(t=>{const x=t.exits[t.exits.length-1];return `<tr><td class="dk-num">${t.d}</td><td>${dkSide(t.side)}</td><td class="r dk-num">${dkPx(t.entry)}</td><td class="r dk-num dk-dn">${dkPx(t.stop0)}</td><td class="r dk-num dk-up">${dkPx(t.target)}</td><td class="dk-num">${t.open?RT('открыта','open'):(x?x.d+' · '+dkEsc(x.why):'')}</td><td class="r dk-num dk-b ${t.R>=0?'dk-up':'dk-dn'}">${dkR(t.R)}</td><td class="dk-ink2">${dkEsc(t.why||'')}</td></tr>`;}).join('')}</tbody></table></div>`:`<div class="dk-empty">${RT('Входов по правилам v2 на истории не было (или свечи ещё грузятся).','No v2 entries over the history (or candles are loading).')}</div>`}</details>
         <details class="dk-panel dk-mt14"><summary class="dk-ph"><h2>🤖 ${RT('AI-разбор','AI analysis')}</h2><span class="dk-note dk-ml">${AI_RECO[sec.tk]&&AI_RECO[sec.tk].at?RT('есть от ','from ')+dkEsc(String(AI_RECO[sec.tk].at).slice(0,10)):RT('свёрнут','collapsed')}</span></summary><div class="dk-ai">${it.r&&can('view.ai_reco')?aiRecoHTML(it.d,it.r):`<div class="dk-empty">${RT('Нет доступа к AI-разбору.','No access to AI analysis.')}</div>`}</div></details>
@@ -868,6 +965,126 @@ function deskThesisHTML(it,w,plan,side,px){
   const card2=(l,c)=>c?`<div class="dk-panel dk-stat dk-card2"><div class="dk-lbl">${l}</div><div class="dk-b">${dkEsc(c.title||'')}</div>${c.text?`<div class="dk-note">${dkEsc(c.text)}</div>`:''}</div>`:'';
   const two=w&&(w.whatBuy||w.mainRisk)?`<div class="dk-two dk-mt14">${card2(RT('Что покупаю','What I buy'),w.whatBuy)}${card2(RT('Главный риск','Main risk'),w.mainRisk)}</div>`:'';
   return `<section class="dk-stock-focus dk-mb">${thesis}${side2}</section><div class="dk-mb">${tiles}${two}</div>`;
+}
+// ── «Рост бизнеса» (I3, §3.4): ленивый ?financials= одной бумаги — только по раскрытию блока (критерий §5#7).
+// Кэш клиента в памяти (в снапшот не пишется): ответ живёт fin.cacheMin, ошибка — fin.errMin.
+const _deskFin={};
+function deskFinLoad(sym){
+  if(!sym||!PRICE_PROXY)return;
+  const C=DESK_IDEA_CFG.fin,c=_deskFin[sym];
+  if(c&&(c.loading||Date.now()-c.at<(c.data&&c.data.status!=='error'?C.cacheMin:C.errMin)*60e3))return;
+  _deskFin[sym]={loading:true,at:Date.now(),data:(c&&c.data)||null};
+  fetch(PRICE_PROXY+'?financials='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null).then(j=>{
+    const ok=j&&typeof j==='object'&&Array.isArray(j.annual);
+    _deskFin[sym]={loading:false,at:Date.now(),data:ok?j:{sym,status:'error',annual:[],estimates:[],notes:['network']}};
+    deskRender();
+  });
+}
+const DK_FIN_NOTE={'no-estimates':()=>RT('провайдер не дал прогноза','the provider gave no forecast'),'est-scale':()=>RT('прогноз отброшен: его масштаб не совпадает с отчётностью (другая валюта?)','forecast dropped: its scale does not match the reports (another currency?)'),
+  'short-history':()=>RT('меньше 3 лет истории','under 3 years of history'),'no-fcf':()=>RT('FCF у провайдера нет','no FCF at the provider'),'no-eps':()=>RT('EPS у провайдера нет','no EPS at the provider'),
+  'provider-error':()=>RT('провайдеры не ответили','providers did not respond'),network:()=>RT('воркер недоступен','worker unreachable')};
+const dkFinMetric=m=>({revenue:RT('Выручка','Revenue'),eps:'EPS',fcf:'FCF'})[m]||m;
+function dkFinHead(M){
+  const yrs=n=>RT(`${n} ${n===1?'год':n<5?'года':'лет'}`,`${n} yr${n===1?'':'s'}`);
+  return [M.cagrHist?`${RT('Исторический CAGR','Historical CAGR')} <b class="dk-num">${dkPct(M.cagrHist.pct,1)}</b>`:(M.act>=2?RT('исторический CAGR не считается (база ≤ 0)','historical CAGR n/a (base ≤ 0)'):''),
+    M.cagrFcst?`${RT('Прогнозный CAGR','Forecast CAGR')} <b class="dk-num">${dkPct(M.cagrFcst.pct,1)}</b>`:M.metric==='fcf'?RT('FCF — только факт','FCF — actuals only'):M.est?RT('прогноз на ','forecast for ')+yrs(M.est):RT('прогноз недоступен','forecast unavailable')].filter(Boolean).join(' · ');
+}
+function deskFinHTML(it){
+  const sec=it.sec,sym=sec.sym,open=DESK_UI.finOpen===it.key,c=_deskFin[sym],fin=c&&c.data;
+  const M=deskFinModel(fin,DESK_UI.finM,Date.now()),ccy=M.ccy||sec.ccy;
+  const sum=!fin?RT('история и прогноз · загрузка по раскрытию','history and forecast · loads on open'):M.state==='error'?RT('ошибка провайдера','provider error'):M.state==='nodata'?RT('нет отчётности','no reports'):dkFinHead(M);
+  let body='';
+  if(open){
+    const seg=`<div class="dk-seg" role="group" aria-label="${RT('Ряд','Series')}">${['revenue','eps','fcf'].map(m=>`<button class="${M.metric===m?'on':''}" data-a="finm" data-v="${m}" aria-pressed="${M.metric===m}">${dkFinMetric(m)}</button>`).join('')}</div>`;
+    if(!fin)body=`<div class="dk-empty">${RT('Загрузка отчётности…','Loading reports…')}</div>`;
+    else if(M.state==='error')body=`<div class="dk-warn">⚠ ${RT('Провайдеры отчётности не ответили','Report providers did not respond')}${M.notes.length?' ('+M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():n).join(', ')+')':''}. <button class="dk-btn dk-sm" data-a="finre" data-k="${dkEsc(sym)}">${RT('Повторить','Retry')}</button></div>`;
+    else if(M.state==='nodata')body=`<div class="dk-row">${seg}</div><div class="dk-empty">${!(fin.annual||[]).length?RT(`Годовой отчётности ${dkEsc(sec.tk)} у провайдеров нет (для Nordic/EU истории часто нет) — показывать нечего.`,`Providers have no annual reports for ${dkEsc(sec.tk)} (often none for Nordic/EU) — nothing to show.`):RT(`Ряда «${dkFinMetric(M.metric)}» у провайдера нет.`,`The provider has no “${dkFinMetric(M.metric)}” series.`)}</div>`;
+    else{
+      const rows=(fin.annual||[]).map(x=>({y:x.year,r:x.revenue,e:x.eps,f:x.fcf,k:RT('факт','actual')})).concat((fin.estimates||[]).map(x=>({y:x.year,r:x.revenue,e:x.eps,f:null,k:RT('прогноз','forecast')+(x.n?` · ${x.n}`:'')})));
+      const cg=(C,l)=>C?`<p>${l}: (${deskFinFmt(C.to.v,M.metric)} ÷ ${deskFinFmt(C.from.v,M.metric)})^(1/${C.years}) − 1 = <b>${dkPct(C.pct,1)}</b> (${C.from.year}→${C.to.year}).</p>`:'';
+      const how=`<div class="dk-wrap"><table class="dk-tbl dk-fin-tbl"><thead><tr><th>${RT('Год','Year')}</th><th class="r">${RT('Выручка','Revenue')}</th><th class="r">EPS</th><th class="r">FCF</th><th>${RT('Тип','Type')}</th></tr></thead><tbody>${rows.map(x=>`<tr><td class="dk-num">${x.y}</td><td class="r dk-num">${deskFinFmt(x.r,'revenue')}</td><td class="r dk-num">${deskFinFmt(x.e,'eps')}</td><td class="r dk-num">${deskFinFmt(x.f,'fcf')}</td><td>${x.k}</td></tr>`).join('')}</tbody></table></div>
+        <p>${RT('CAGR = (последний ÷ первый)^(1/лет) − 1; не считается, если база или итог ≤ 0. Рост г/г — к предыдущему году. Прогнозный CAGR — от последнего факта до последнего прогноза, только при ≥ 2 годах прогноза.','CAGR = (last ÷ first)^(1/years) − 1; n/a when the base or the end is ≤ 0. YoY — vs the previous year. Forecast CAGR — from the last actual to the last forecast, only with ≥ 2 forecast years.')}</p>
+        ${cg(M.cagrHist,RT('Исторический','Historical'))}${cg(M.cagrFcst,RT('Прогнозный','Forecast'))}
+        <p>${RT('Источник','Source')}: ${M.source==='fmp'?RT('FMP (отчётность US)','FMP (US reports)'):'Yahoo'}${fin.estimates&&fin.estimates.length?RT(' · прогноз — консенсус Yahoo (earningsTrend)',' · forecast — Yahoo consensus (earningsTrend)'):''} · ${RT('получено','fetched')} ${dkEsc(String(M.fetchedAt||'').slice(0,16).replace('T',' '))} UTC · ${RT('валюта отчётности','reporting currency')} ${dkEsc(ccy||'—')}${fin.fiscalYearEnd?` · ${RT('конец фин. года','fiscal year end')} ${dkEsc(fin.fiscalYearEnd)}`:''}.</p>
+        ${M.excluded.length?`<p>${RT(`Годы без значения «${dkFinMetric(M.metric)}» исключены`,`Years without “${dkFinMetric(M.metric)}” excluded`)}: ${M.excluded.join(', ')}.</p>`:''}
+        ${M.notes.length?`<p>${M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():n).join(' · ')}.</p>`:''}`;
+      body=`<div class="dk-row">${seg}</div>
+        ${M.stale?`<div class="dk-warn">${RT(`Данные от ${String(M.fetchedAt).slice(0,10)} — устарели (> ${DESK_IDEA_CFG.fin.staleDays} дн)`,`Data from ${String(M.fetchedAt).slice(0,10)} — stale (> ${DESK_IDEA_CFG.fin.staleDays} d)`)}</div>`:''}
+        <figure class="dk-fin-fig">${deskFinSvg(M,ccy,(window.innerWidth||1440)<600)}<div class="dk-fin-tip" hidden></div></figure>
+        <div class="dk-fin-lg"><span><i class="a"></i>${RT('факт','actual')}</span>${M.est?`<span><i class="e"></i>${RT('прогноз (П)','forecast (F)')}</span>`:''}<span><i class="l"></i>${RT('рост г/г, правая ось','YoY growth, right axis')}</span><span class="dk-mut">${dkEsc(ccy||'')}${M.metric==='eps'?RT(' на акцию',' per share'):''}</span></div>
+        ${M.state==='partial'&&M.metric!=='fcf'&&!M.est?`<div class="dk-note">${RT('Частичные данные: прогноза нет — показан только факт.','Partial data: no forecast — actuals only.')}</div>`:''}
+        ${dkHow('fin',how,RT('Данные и методика','Data & method'))}`;
+    }
+  }
+  return `<details class="dk-panel dk-mt14 dk-fin" data-fin="${dkEsc(it.key)}" data-sym="${dkEsc(sym)}"${open?' open':''}><summary class="dk-ph" id="dkFinSum"><h2>${RT('Рост бизнеса','Business growth')}</h2><span class="dk-note dk-ml">${sum}</span></summary>${open?`<div class="dk-padx dk-fin-b">${body}</div>`:''}</details>`;
+}
+// ── «Аналитики и оценка» (I3, §3.5): данные уже в клиенте (VAL, TG_FULL, колонка «Кап-я»), воркер не нужен.
+const dkCssPct=v=>Math.round(Math.max(0,Math.min(100,+v||0))*10)/10;   // % для style (без локали)
+function deskRowNum(it,h){const H=it&&it.d&&it.d.headers,i=H?H.indexOf(h):-1,v=i>=0&&it.r?parseFloat(it.r[i]):NaN;return isFinite(v)?v:null;}
+function deskAnaHTML(it,px){
+  const sec=it.sec,tk=String(sec.tk||'').toUpperCase(),ptk=posTk(tk),vk=VAL[tk]?tk:ptk,V=VAL[vk]||null,tg=TG_FULL[tk]||TG_FULL[ptk]||null,F=pf3FundFor(sec.sym),ccy=dkCcy(sec.ccy);
+  const et=it.r&&it.d?pf3EffTarget(it.d,it.r):null,tgt=et&&et.target>0?et.target:(tg&&tg.consensus>0?tg.consensus:null),up=tgt&&px?(tgt/px-1)*100:null;
+  const cap=deskRowNum(it,'Кап-я'),pick=k=>V&&V[k]>0?+V[k]:(F&&F[k]>0?+F[k]:null),pe=pick('pe'),fpe=pick('fwdPe'),ps=pick('ps');
+  const med=V&&V.sector?((_valSecCache||valSectorMedians())[V.sector]||null):null,medOk=!!(med&&med.n>=2);
+  const fin=(_deskFin[sec.sym]||{}).data,fl=fin&&Array.isArray(fin.annual)?fin.annual.filter(x=>x.fcf!=null).slice(-1)[0]:null;
+  const pfcf=cap>0&&fl&&fl.fcf>0&&fin.ccy===sec.ccy?cap/fl.fcf:null;
+  const cell=(l,v,d,cls)=>`<div class="dk-mcell"><div class="dk-lbl">${l}</div><div class="dk-b dk-num ${cls||''}">${v}</div>${d?`<div class="dk-note">${d}</div>`:''}</div>`;
+  const mult=(l,v,k)=>{const D=medOk?deskMultDev(v,med[k]):{dev:null,cls:''};return cell(l,v>0?dkN(v,1):'—',D.dev!=null?RT('сектор ','sector ')+dkN(med[k],1)+' · '+dkPct(D.dev,0):'',D.cls==='cheap'?'dk-up':D.cls==='rich'?'dk-dn':'');};
+  const metrics=`<div class="dk-mrow">${cell(RT('Капитализация','Market cap'),cap>0?deskFinFmt(cap,'revenue')+' '+ccy:'—',cap>0?'':RT('обновите таргеты','refresh targets'))}
+    ${cell(RT('Цель аналитиков','Analyst target'),tgt?dkPx(tgt)+' '+ccy:'—',up!=null?`<span class="${up>=0?'dk-up':'dk-dn'}">${dkPct(up,1)}</span>`:'')}
+    ${mult('P/E',pe,'pe')}${mult('Forward P/E',fpe,'fwdPe')}${mult('P/S',ps,'ps')}${pfcf?cell('P/FCF',dkN(pfcf,1),fl.year+' FY'):''}</div>`;
+  const R=deskRatings(tg&&tg.ratings);
+  const ratings=R?`<div class="dk-sub-h">${RT('Рекомендации аналитиков','Analyst ratings')} <span class="dk-mut dk-num">${R.total}</span>${R.consensus?` · <b>${dkEsc(R.consensus)}</b>`:''}</div>
+    <div class="dk-rbar" role="img" aria-label="${dkEsc(R.segs.map(x=>x.l+' '+x.n).join(', '))}">${R.segs.map(x=>`<span class="r-${x.k}" style="width:${dkCssPct(x.pct)}%" title="${x.l}: ${x.n}"></span>`).join('')}</div>
+    <div class="dk-rbar-l">${R.segs.map(x=>`<span><i class="r-${x.k}"></i>${x.l} <b class="dk-num">${x.n}</b></span>`).join('')}</div>`:`<div class="dk-note">${RT('Распределения рекомендаций нет (FMP даёт его только для US).','No rating distribution (FMP has it for US only).')}</div>`;
+  const fanL=tg&&tg.consensus>0?[['high',tg.high,RT('максимум','high'),'dk-up'],['consensus',tg.consensus,RT('консенсус','consensus'),'dk-accent-text'],['low',tg.low,RT('минимум','low'),'dk-dn']].filter(x=>x[1]>0):[];
+  const fan=fanL.length?`<div class="dk-sub-h">${RT('Цель на 12 мес','12-month target')}</div><div id="dkFan" class="dk-fan"></div>
+    <div class="dk-fin-lg">${fanL.map(x=>`<span class="${x[3]}">${x[2]} <b class="dk-num">${dkPx(x[1])}</b>${px?` <span class="dk-num">${dkPct((x[1]/px-1)*100,0)}</span>`:''}</span>`).join('')}</div>`:`<div class="dk-note">${RT('Таргетов аналитиков нет — веер не строится.','No analyst targets — no fan.')}</div>`;
+  // P/E против пиров сектора и против своей медианы 3/5 лет.
+  const caps={};deskItems().items.forEach(x=>{const c=deskRowNum(x,'Кап-я');if(c>0)caps[String(x.sec.tk||'').toUpperCase()]=c;});
+  const P=deskPeers(vk,VAL,caps);
+  let peers='';
+  if(!(pe>0))peers=`<div class="dk-note">${RT('P/E нет (компания убыточна или мультипликаторы не загружены — «📐 Оценка» на Home).','No P/E (loss-making or multiples not loaded — “📐 Valuation” on Home).')}</div>`;
+  else if(P.reason)peers=`<div class="dk-note">${P.reason==='nosector'?RT('Сектор бумаги неизвестен — пиров нет.','Sector unknown — no peers.'):RT(`В секторе «${dkEsc(P.sector)}» с P/E только ${P.n} бум. (нужно ≥ ${DESK_IDEA_CFG.ana.peersMin}).`,`Only ${P.n} peer(s) with P/E in “${dkEsc(P.sector)}” (need ≥ ${DESK_IDEA_CFG.ana.peersMin}).`)}</div>`;
+  else{
+    const all=P.peers.map(p=>p.pe).concat(pe),lo=Math.min(...all),hi=Math.max(...all),pos=v=>hi>lo?(v-lo)/(hi-lo)*100:50,D=deskMultDev(pe,P.median);
+    peers=`<div class="dk-pe" role="img" aria-label="${dkEsc(RT(`P/E ${dkN(pe,1)} против медианы пиров ${dkN(P.median,1)}`,`P/E ${dkN(pe,1)} vs peer median ${dkN(P.median,1)}`))}">
+      ${P.peers.map(p=>`<span class="dk-pe-dot" style="left:${dkCssPct(pos(p.pe))}%" title="${dkEsc(p.tk)} · P/E ${dkN(p.pe,1)}"></span>`).join('')}
+      <span class="dk-pe-med" style="left:${dkCssPct(pos(P.median))}%" title="${RT('медиана пиров','peer median')} ${dkN(P.median,1)}"></span>
+      <span class="dk-pe-me" style="left:${dkCssPct(pos(pe))}%"><b>${dkEsc(sec.tk)} ${dkN(pe,1)}</b></span></div>
+      <div class="dk-pe-ax dk-num"><span>${dkN(lo,1)}</span><span>${dkN(hi,1)}</span></div>
+      <div class="dk-note">${RT('Медиана пиров','Peer median')} <b class="dk-num">${dkN(P.median,1)}</b> · ${RT('бумага','stock')} <b class="dk-num ${D.cls==='cheap'?'dk-up':D.cls==='rich'?'dk-dn':''}">${dkPct(D.dev,0)}</b> · ${P.peers.map(p=>dkEsc(p.tk)).join(', ')}</div>`;
+  }
+  const own=pe>0&&V&&V.hist?[['pe3',RT('медиана 3 лет','3-yr median')],['pe5',RT('медиана 5 лет','5-yr median')]].filter(([k])=>V.hist[k]>0).map(([k,l])=>{const D=deskMultDev(pe,V.hist[k]);return `<span>${l} <b class="dk-num">${dkN(V.hist[k],1)}</b> → <b class="dk-num ${D.cls==='cheap'?'dk-up':D.cls==='rich'?'dk-dn':''}">${dkPct(D.dev,0)}</b></span>`;}):[];
+  const how=`<p>${RT('Мультипликаторы','Multiples')}: ${V?RT('«📐 Оценка» (Yahoo)','“📐 Valuation” (Yahoo)')+(V.at?' · '+dkEsc(String(V.at).slice(0,10)):''):F?RT('фундаментал карточки (Yahoo summaryDetail)','card fundamentals (Yahoo summaryDetail)'):'—'}. ${RT('Цвет — только при отклонении от медианы сектора больше','Colour only when the gap to the sector median exceeds')} ${DESK_IDEA_CFG.ana.devPct} %${medOk?RT(` (медиана по ${med.n} бум. дашборда)`,` (median over ${med.n} dashboard stocks)`):RT(' — медианы сектора нет, цвет нейтральный',' — no sector median, neutral colour')}.</p>
+    <p>${RT('Цель аналитиков — эффективный таргет строки (при устаревшем среднем — свежий «Таргет 3м»), апсайд — от текущей цены.','Analyst target — the row’s effective target (fresh 3m target when the average is stale), upside from the current price.')}${tg?` ${RT('Таргеты','Targets')}: ${tg.src==='yahoo'?'Yahoo':'FMP'}${tg.count?` · ${tg.count} ${RT('аналит.','analysts')}`:''}${tg.lastDate?` · ${RT('посл.','last')} ${dkEsc(tg.lastDate)}`:''}.`:''}</p>
+    <p>${RT('Капитализация — колонка «Кап-я» (Yahoo, обновление таргетов). P/FCF = капитализация ÷ FCF последнего фин. года, только если валюта отчётности совпадает с валютой торгов и «Рост бизнеса» загружен.','Market cap — the “Кап-я” column (Yahoo, targets refresh). P/FCF = market cap ÷ last fiscal-year FCF, only when reporting and trading currencies match and “Business growth” is loaded.')}</p>
+    <p>${RT(`Пиры — до ${DESK_IDEA_CFG.ana.peersMax} бумаг того же сектора с P/E > 0, крупнейшие по капитализации; веер — последний год цены и линии к минимуму/консенсусу/максимуму через 12 мес.`,`Peers — up to ${DESK_IDEA_CFG.ana.peersMax} same-sector stocks with P/E > 0, largest by market cap; fan — the last year of price and lines to low/consensus/high in 12 months.`)}</p>`;
+  const sum=tgt?`${RT('цель','target')} ${dkPx(tgt)} ${ccy}${up!=null?` <span class="${up>=0?'dk-up':'dk-dn'}">${dkPct(up,0)}</span>`:''}${pe>0?' · P/E '+dkN(pe,1):''}`:pe>0?'P/E '+dkN(pe,1):RT('нет таргетов и мультипликаторов','no targets or multiples');
+  return `<details class="dk-panel dk-mt14 dk-ana"${dkDetAttr('st-ana')}><summary class="dk-ph" id="dkAnaSum"><h2>${RT('Аналитики и оценка','Analysts & valuation')}</h2><span class="dk-note dk-ml">${sum}</span></summary>
+    <div class="dk-padx dk-ana-b">${metrics}${ratings}${fan}<div class="dk-sub-h">${RT('P/E против пиров','P/E vs peers')}${P.sector?` <span class="dk-mut">· ${dkEsc(P.sector)}</span>`:''}</div>${peers}${own.length?`<div class="dk-pe-own">${RT('Против своей истории','Vs own history')}: ${own.join(' · ')}</div>`:''}${dkHow('ana',how)}</div></details>`;
+}
+function deskFanAttach(kept){
+  const box=document.getElementById('dkFan'),det=box&&box.closest('details'),it=DESK_UI.route==='stock'?deskSecOf(DESK_UI.key):null;
+  if(!box||!it){if(_deskFan){if(_deskFan.ch)_deskFan.ch.destroy();_deskFan=null;}return;}
+  const tk=String(it.sec.tk||'').toUpperCase(),tg=TG_FULL[tk]||TG_FULL[posTk(tk)]||null,hc=_histCache[sigHistKey(it.sec.sym)];
+  const M=hc&&hc.bars?chartFanModel(hc.bars,tg):null,key=it.key+'|'+(tg&&[tg.low,tg.consensus,tg.high].join('/'))+'|'+(M?M.last.time:'');
+  if(_deskFan&&_deskFan.key===key&&_deskFan.ch){if(kept){box.replaceWith(kept);return;}if(_deskFan.box===box)return;}
+  if(!det||!det.open)return;   // закрыт: autoSize в скрытом блоке дал бы нулевой размер — рисуем при раскрытии
+  if(!M){box.textContent=hc?RT('Нет таргетов для веера.','No targets for the fan.'):RT('Свечи грузятся…','Loading candles…');return;}
+  if(!(window.LightweightCharts&&window.LightweightCharts.createSeriesMarkers)){box.textContent=RT('Загрузка графика…','Loading chart…');loadLWC().then(()=>deskFanAttach()).catch(e=>{const b=document.getElementById('dkFan');if(b)b.textContent=RT('Ошибка загрузки: ','Load error: ')+(e.message||e);});return;}
+  if(_deskFan&&_deskFan.ch)_deskFan.ch.destroy();
+  _deskFan={key,ch:null,box};
+  try{_deskFan.ch=renderTargetFan(box,M,{ccy:it.sec.ccy});}catch(e){box.textContent=RT('Ошибка графика: ','Chart error: ')+(e.message||e);}
+}
+// Подсказка столбца «Роста бизнеса» — по наведению и по фокусу клавиатуры.
+function deskFinTip(g,show){
+  const fig=g&&g.closest('.dk-fin-fig'),tip=fig&&fig.querySelector('.dk-fin-tip');if(!tip)return;
+  if(!show){tip.hidden=true;return;}
+  tip.textContent=g.dataset.tip||'';tip.hidden=false;
+  const fr=fig.getBoundingClientRect(),gr=g.getBoundingClientRect();
+  tip.style.left=Math.max(0,Math.min(fr.width-tip.offsetWidth,gr.left-fr.left+gr.width/2-tip.offsetWidth/2))+'px';
+  tip.style.top=Math.max(0,gr.top-fr.top-tip.offsetHeight-6)+'px';
 }
 function deskPosPanel(p,it){
   const c=p.calc,s=it.s;if(!c)return '';
@@ -1249,6 +1466,8 @@ function deskOnClick(e){
     case 'planx':if(confirm(RT('Удалить правило плана?','Delete this plan rule?'))){PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==el.dataset.id);scheduleSave();deskRender(true);}break;
     case 'plandone':{const r=(PLAN_RULES||[]).find(x=>x.id===el.dataset.id);if(r){r.done=true;r.hitAt=0;planRuleNorm(r);scheduleSave();deskRender(true);}break;}
     case 'jt':DESK_UI.jt=el.dataset.v;deskRender(true);break;
+    case 'finm':DESK_UI.finM=el.dataset.v;deskRender(true);break;
+    case 'finre':if(_deskFin[k])_deskFin[k].at=0;deskFinLoad(k);deskRender(true);break;
     case 'fund':pf3FundFetch([k]).then(()=>deskRender(true));toast(RT('Загружаю фундаментал…','Loading fundamentals…'));break;
     case 'refresh':DESK_UI.load.at=0;deskQuotes(true);deskLoad(true);break;
     case 'menu':DESK_UI.menu=!DESK_UI.menu;deskRender(true);break;

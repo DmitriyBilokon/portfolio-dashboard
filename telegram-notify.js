@@ -27,7 +27,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10s2-ohlcv-cache';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10i3b-est-check';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -967,6 +967,124 @@ async function fundamentals(sym, env, period){
     revenueYears: years > 0 ? years : null,
     revenueYoY,
   };
+}
+
+// ── 📊 Финансовые ряды (I3, plans/reference-features-implementation.md §2.5) ──
+// «Рост бизнеса» в Trade Desk: годовые факты выручки/EPS/FCF + прогноз аналитиков.
+// Источники (проверено 2026-09-10): US — FMP income-statement (ключ кэша тот же, что у
+// ?fundamentals annual → повтор бесплатен) + cash-flow-statement, до 6 лет; EU/Nordic и фолбэк —
+// Yahoo fundamentals-timeseries (выручка/EPS/FCF одним запросом без авторизации, ~4 года);
+// прогноз — Yahoo earningsTrend (0y/+1y, число аналитиков). FMP analyst-estimates не используем
+// (доступность на бесплатном тарифе не подтверждена, а квоту бережём). Подзапросов ≤ 4 + общий yAuth.
+// Кэш: память изолята 30 мин, Cache API 12 ч (нет данных — 1 ч); ошибка провайдеров не кэшируется.
+// estMatch — допуск «выручка год назад» из прогноза Yahoo ÷ наш факт того же года (одна валюта/масштаб);
+// estStep — запасная проверка без yearAgo: каждый год прогноза к предыдущему (факт → 0y → +1y).
+const FIN_CFG = { years: 6, memMs: 30 * 60e3, edgeS: 12 * 3600, edgeNoDataS: 3600, estMatch: [0.8, 1.25], estStep: [0.2, 5] };
+const FIN_TS_TYPES = ['annualTotalRevenue', 'annualDilutedEPS', 'annualFreeCashFlow'];
+const finNum = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+// Год = год даты конца периода (как endDate/asOfDate у Yahoo — факт и прогноз на одной оси); без даты — fiscalYear.
+const finYear = r => { const y = parseInt(r && (/^\d{4}-/.test(String(r.date || '')) ? String(r.date).slice(0, 4) : (r.fiscalYear || r.calendarYear)), 10); return y > 1900 && y < 2200 ? y : null; };
+// FMP income (+ cash-flow) → [{year, revenue, eps, fcf}] по возрастанию года; только годовые строки.
+function finAnnualFmp(inc, cf){
+  const by = {};
+  const put = (y, k, v) => { if(y == null || v == null) return; (by[y] = by[y] || { year: y, revenue: null, eps: null, fcf: null })[k] = v; };
+  (Array.isArray(inc) ? inc : []).forEach(r => { if(!r || (r.period && r.period !== 'FY')) return; const y = finYear(r);
+    put(y, 'revenue', finNum(r.revenue)); put(y, 'eps', finNum(r.epsDiluted ?? r.epsdiluted ?? r.eps)); });
+  (Array.isArray(cf) ? cf : []).forEach(r => { if(!r || (r.period && r.period !== 'FY')) return; put(finYear(r), 'fcf', finNum(r.freeCashFlow)); });
+  return Object.values(by).filter(x => x.revenue != null).sort((a, b) => a.year - b.year).slice(-FIN_CFG.years);
+}
+// Yahoo timeseries (массив result) → те же строки; валюта отчётности — currencyCode.
+function finAnnualYahoo(res){
+  const by = {}; let ccy = null, fye = null;
+  const key = { annualTotalRevenue: 'revenue', annualDilutedEPS: 'eps', annualFreeCashFlow: 'fcf' };
+  (Array.isArray(res) ? res : []).forEach(r => {
+    const t = r && r.meta && r.meta.type && r.meta.type[0], k = key[t]; if(!k) return;
+    (r[t] || []).forEach(x => {
+      const v = x && x.reportedValue && finNum(x.reportedValue.raw), d = x && String(x.asOfDate || ''); if(v == null || !/^\d{4}-/.test(d)) return;
+      const y = +d.slice(0, 4); (by[y] = by[y] || { year: y, revenue: null, eps: null, fcf: null })[k] = v;
+      if(k === 'revenue'){ ccy = x.currencyCode || ccy; fye = d.slice(5, 10); }
+    });
+  });
+  return { annual: Object.values(by).filter(x => x.revenue != null).sort((a, b) => a.year - b.year).slice(-FIN_CFG.years), ccy, fye };
+}
+// Yahoo earningsTrend → [{year, revenue, eps, n}] для 0y/+1y; годы, по которым уже есть факт, отбрасываются.
+function finEstimatesYahoo(trend, lastYear){
+  const out = [];
+  ((trend && trend.trend) || []).forEach(t => {
+    if(!t || (t.period !== '0y' && t.period !== '+1y')) return;
+    const y = parseInt(String(t.endDate || '').slice(0, 4), 10); if(!(y > 1900) || (lastYear != null && y <= lastYear)) return;
+    const rev = t.revenueEstimate && yRaw(t.revenueEstimate.avg), eps = t.earningsEstimate && yRaw(t.earningsEstimate.avg);
+    if(rev == null && eps == null) return;
+    const n = Math.max(yRaw(t.revenueEstimate && t.revenueEstimate.numberOfAnalysts) || 0, yRaw(t.earningsEstimate && t.earningsEstimate.numberOfAnalysts) || 0);
+    out.push({ year: y, revenue: rev, eps, n: n || null, yearAgo: (t.revenueEstimate && yRaw(t.revenueEstimate.yearAgoRevenue)) || null });
+  });
+  return out.sort((a, b) => a.year - b.year);
+}
+// Прогноз в другой валюте/масштабе, чем факт (напр. ADR): главная проверка — «выручка год назад»
+// из самого прогноза Yahoo против нашего факта того же года; без неё — шаги год к году. Реальный
+// взрывной рост (MU FY26 ×3.5, FY27 ×6.5 к FY25) проходит: yearAgo совпадает с отчётностью.
+function finEstBad(annual, est){
+  const by = {}; annual.forEach(x => { by[x.year] = x.revenue; });
+  const lo = FIN_CFG.estMatch[0], hi = FIN_CFG.estMatch[1], out = r => !(r >= FIN_CFG.estStep[0] && r <= FIN_CFG.estStep[1]);
+  let checked = false;
+  for(const e of est){
+    const act = by[e.year - 1];
+    if(e.yearAgo > 0 && act > 0){ checked = true; const r = e.yearAgo / act; if(r < lo || r > hi) return true; }
+  }
+  if(checked) return false;
+  let prev = annual.length ? annual[annual.length - 1].revenue : null;
+  for(const e of est){ if(e.revenue == null) continue; if(prev > 0 && out(e.revenue / prev)) return true; prev = e.revenue; }
+  return false;
+}
+// Итоговый ответ §2.5. Прогноз в чужой валюте/масштабе отбрасывается целиком — лучше «прогноза нет»,
+// чем выдуманный рост. yearAgo — служебное поле проверки, в ответ не попадает.
+function finBuild(o){
+  const annual = o.annual || [], notes = [];
+  let est = o.estimates || [];
+  if(est.length && annual.length && finEstBad(annual, est)){ est = []; notes.push('est-scale'); }
+  est = est.map(e => ({ year: e.year, revenue: e.revenue, eps: e.eps, n: e.n }));
+  if(!est.length && !notes.includes('est-scale')) notes.push('no-estimates');
+  if(annual.length && annual.length < 3) notes.push('short-history');
+  if(annual.length && !annual.some(x => x.fcf != null)) notes.push('no-fcf');
+  if(annual.length && !annual.some(x => x.eps != null)) notes.push('no-eps');
+  const status = !annual.length ? 'nodata' : (annual.length >= 2 && est.length ? 'ok' : 'partial');
+  return { sym: o.sym, ccy: o.ccy || null, fetchedAt: o.now || new Date().toISOString(), source: o.source || null,
+    fiscalYearEnd: o.fye || null, annual, estimates: annual.length ? est : [], status, notes };
+}
+async function yFinTimeseries(sym){
+  return memo('yts|' + sym, FMP_TTL_MS, async () => {
+    try{
+      const now = Math.floor(Date.now() / 1000);
+      const r = await fetch(`https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(sym)}?type=${FIN_TS_TYPES.join(',')}&period1=${now - 8 * 365 * 86400}&period2=${now}`, { headers: Y_UA });
+      if(!r.ok) return null;
+      return (await r.json())?.timeseries?.result || [];
+    }catch(e){ return null; }
+  });
+}
+// null — все провайдеры ответили ошибкой (не кэшируется); иначе ответ finBuild (в т.ч. status 'nodata').
+async function financials(sym, env){
+  return memo('fin|' + sym, FIN_CFG.memMs, async () => {
+    const covered = fmpCovered(sym), s = encodeURIComponent(sym);
+    if(!covered) fmpStat('skipped');
+    const [inc, cf, qs] = await Promise.all([
+      covered ? fmpJson(env, `income-statement?symbol=${s}&limit=${FIN_CFG.years}`) : null,
+      covered ? fmpJson(env, `cash-flow-statement?symbol=${s}&limit=${FIN_CFG.years}`) : null,
+      yQuoteSummary(sym, 'earningsTrend'),
+    ]);
+    let annual = finAnnualFmp(inc, cf), source = 'fmp', ccy = null, fye = null, failed = false;
+    if(annual.length){
+      const r0 = (Array.isArray(inc) ? inc : [])[0] || {};
+      ccy = r0.reportedCurrency || null; fye = String(r0.date || '').slice(5, 10) || null;
+    }else{
+      const ts = await yFinTimeseries(sym);
+      if(ts == null) failed = true;
+      const y = finAnnualYahoo(ts); annual = y.annual; ccy = y.ccy; fye = y.fye; source = 'yahoo';
+    }
+    if(!annual.length && failed && qs == null) return null;
+    const last = annual[annual.length - 1];
+    return finBuild({ sym, ccy, source: annual.length ? source : null, fye, annual,
+      estimates: finEstimatesYahoo(qs && qs.earningsTrend, last ? last.year : null), now: new Date().toISOString() });
+  });
 }
 
 // ── Earnings calendar (FMP): next report date + market expectations ────────
@@ -2707,6 +2825,7 @@ export default {
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
   // GET ?history=MU               → 2y дневные свечи {t,o,h,l,c,v} (график, бэктест); &range=, &interval=1d|1wk|1mo; кэш 10 мин.
   // GET ?symbols=…&lite=1         → только цена/день%/SMA/уровни через yahooLite (1 подзапрос/символ, до 40) — для скринера.
+  // GET ?financials=MU            → годовые выручка/EPS/FCF + прогноз earningsTrend («Рост бизнеса», I3); кэш 30 мин / 12 ч.
   // Публичные батч-роуты (?symbols/?targets/?calendar/?prepost/?levels) ограничены SYM_LIMITS (413 при превышении).
   // Админ-роуты (?action=chart / targets / ydebug и все AI-эндпоинты) требуют заголовок
   //   Authorization: Bearer <Supabase access token> — «manual test» из адресной строки не работает.
@@ -2721,7 +2840,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
@@ -2998,6 +3117,21 @@ export default {
         f.ps = yRaw(sd.priceToSalesTrailing12Months);
       }
       return json(f);
+    }
+    if(url.searchParams.has('financials')){
+      // 📊 Годовые ряды выручки/EPS/FCF + прогноз (I3) → «Рост бизнеса» в Trade Desk. Публичные данные.
+      // Кэш: память изолята (financials) → Cache API (12 ч; нет данных — 1 ч) → браузер. X-Cache: mem|edge|miss.
+      const sym = String(url.searchParams.get('financials') || '').trim().toUpperCase();
+      if(!sym || sym.length > 24) return json({ sym, status: 'nodata', annual: [], estimates: [], notes: ['bad-symbol'] });
+      const cacheKey = new Request(`${url.origin}/?financials=${encodeURIComponent(sym)}&b=${encodeURIComponent(WORKER_BUILD)}`);   // деплой сбрасывает кэш нормализации
+      const edge = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+      if(edge){ try{ const hit = await edge.match(cacheKey); if(hit) return new Response(hit.body, { status: 200, headers: { ...CORS, 'Cache-Control': hit.headers.get('Cache-Control') || 'no-store', 'X-Cache': 'edge' } }); }catch(e){} }
+      const memHit = memoFresh('fin|' + sym, FIN_CFG.memMs);
+      const f = await financials(sym, env);
+      if(!f) return new Response(JSON.stringify({ sym, status: 'error', annual: [], estimates: [], notes: ['provider-error'] }), { status: 200, headers: { ...CORS, 'Cache-Control': 'no-store', 'X-Cache': 'miss' } });
+      const body = JSON.stringify(f), cc = `public, max-age=${f.status === 'nodata' ? FIN_CFG.edgeNoDataS : FIN_CFG.edgeS}`;
+      if(edge) ctx.waitUntil(edge.put(cacheKey, new Response(body, { headers: { ...CORS, 'Cache-Control': cc } })).catch(() => {}));
+      return new Response(body, { status: 200, headers: { ...CORS, 'Cache-Control': cc, 'X-Cache': memHit ? 'mem' : 'miss' } });
     }
     if(url.searchParams.has('profile')){
       // Company profile (name + sector) → auto-fill when adding a stock in Портфель 3.0.

@@ -204,6 +204,52 @@
     chart.timeScale().fitContent();
     return { chart, setSide(sd) { o.side = sd; M = chartModel(bars, snap, rep, o); drawLines(); }, destroy() { try { chart.remove(); } catch (e) {} } };
   }
+  // ── Веер цели на 12 мес (I3, §3.5): последний год цены + пунктиры от последнего закрытия к low/consensus/high
+  // через год. Шкала времени lightweight-charts — по индексу точек, поэтому и история, и будущее — недельные
+  // слоты (каждый 5-й бар от последнего; 52 пустых слота вперёд), иначе год вперёд занял бы один слот.
+  // chartFanModel(bars [{d,c}], tg {low,consensus,high}) → null без свечей или без консенсуса.
+  const isoAdd = (d, days) => new Date(Date.parse(String(d).slice(0, 10) + 'T00:00:00Z') + days * 864e5).toISOString().slice(0, 10);
+  function chartFanModel(bars, tg) {
+    const B = (bars || []).filter(b => b && b.d && b.c > 0);
+    if (!B.length || !tg || !(tg.consensus > 0)) return null;
+    const hist = [];
+    for (let i = B.length - 1; i >= Math.max(0, B.length - 253); i -= 5) hist.unshift({ time: String(B[i].d).slice(0, 10), value: B[i].c });
+    const last = hist[hist.length - 1], future = [];
+    for (let k = 1; k <= 52; k++) future.push({ time: isoAdd(last.time, 7 * k) });
+    const end = future[future.length - 1].time;
+    const lines = [['high', tg.high], ['consensus', tg.consensus], ['low', tg.low]].filter(x => x[1] > 0)
+      .map(([kind, v]) => ({ kind, value: v, pct: (v / last.value - 1) * 100, data: [{ time: last.time, value: last.value }, { time: end, value: v }] }));
+    return { hist, future, last, end, lines };
+  }
+  // renderTargetFan(el, model, opts {theme, ccy}) → {destroy()}.
+  function renderTargetFan(el, M, opts) {
+    const L = root.LightweightCharts, T = (opts && opts.theme) || chartTheme();
+    el.innerHTML = '';
+    const wrap = document.createElement('div'); wrap.className = 'sc-wrap'; el.appendChild(wrap);
+    const dec = M.last.value >= 1000 ? 0 : M.last.value >= 20 ? 1 : 2;
+    const chart = L.createChart(wrap, {
+      autoSize: true,
+      layout: { background: { type: 'solid', color: 'transparent' }, textColor: T.muted, fontFamily: T.font, fontSize: 11 },
+      grid: { vertLines: { visible: false }, horzLines: { color: T.grid } },
+      rightPriceScale: { borderColor: T.grid, scaleMargins: { top: 0.1, bottom: 0.08 }, minimumWidth: 56 },
+      timeScale: { borderColor: T.grid, fixLeftEdge: true, fixRightEdge: true },
+      crosshair: { mode: L.CrosshairMode.Magnet, vertLine: { color: T.muted, labelBackgroundColor: T.ink }, horzLine: { color: T.muted, labelBackgroundColor: T.ink } },
+      localization: { priceFormatter: p => fmtN(p, dec) },
+      handleScale: false, handleScroll: false,
+    });
+    const px = chart.addSeries(L.LineSeries, { color: T.ink, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
+    px.setData(M.hist.concat(M.future));
+    const col = { high: T.long, consensus: T.me, low: T.short };
+    M.lines.forEach(l => {
+      const s = chart.addSeries(L.LineSeries, { color: col[l.kind], lineWidth: 2, lineStyle: l.kind === 'consensus' ? L.LineStyle.Dashed : L.LineStyle.SparseDotted, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, pointMarkersVisible: true });
+      s.setData(l.data);
+    });
+    chart.timeScale().fitContent();
+    // Прокрутка/масштаб выключены — при смене ширины заново вписываем год истории и год вперёд.
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { try { chart.timeScale().fitContent(); } catch (e) {} }) : null;
+    if (ro) ro.observe(wrap);
+    return { chart, destroy() { if (ro) ro.disconnect(); try { chart.remove(); } catch (e) {} } };
+  }
   root.chartModel = chartModel; root.chartTheme = chartTheme; root.renderStockChart = renderStockChart;
-  root.chartStatsText = statsText; root.chartBarAt = barAt;
+  root.chartStatsText = statsText; root.chartBarAt = barAt; root.chartFanModel = chartFanModel; root.renderTargetFan = renderTargetFan;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

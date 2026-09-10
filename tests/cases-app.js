@@ -1507,3 +1507,82 @@ grp('deskWhatIf', function(){
   __eq('simulation writes nothing (DATA/POS_META/PLAN_RULES/PF_TRADES/DESK)', JSON.stringify([DATA,POS_META,PLAN_RULES,PF_TRADES,DESK]), before);
   DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;PF_TRADES=_tr;PLAN_RULES=_pr;
 });
+// ── I3: «Рост бизнеса» (deskFinModel/deskFinSvg), «Аналитики и оценка» (deskPeers/deskMultDev/deskRatings), веер цели (chartFanModel)
+grp('deskFinModel', function(){
+  var fin={sym:'MU',ccy:'USD',source:'fmp',status:'ok',fetchedAt:'2026-09-10T10:00:00Z',notes:[],
+    annual:[{year:2021,revenue:100,eps:2,fcf:10},{year:2022,revenue:121,eps:-1,fcf:null},{year:2023,revenue:110,eps:1,fcf:12},{year:2024,revenue:133.1,eps:3,fcf:15}],
+    estimates:[{year:2024,revenue:999,eps:9,n:3},{year:2025,revenue:146.41,eps:4,n:20},{year:2026,revenue:161.051,eps:null,n:18}]};
+  var now=Date.parse('2026-09-11T10:00:00Z'),M=deskFinModel(fin,'revenue',now);
+  __eq('факт + прогноз позже последнего факта (2024 из прогноза отброшен)', M.bars.map(function(b){return b.year+(b.est?'П':'');}), ['2021','2022','2023','2024','2025П','2026П']);
+  __eq('state ok, 4 факта, 2 прогноза', [M.state,M.act,M.est], ['ok',4,2]);
+  __approx('исторический CAGR 2021→2024 = 10 %', M.cagrHist.pct, 10, 1e-6);
+  __eq('исторический CAGR: годы', [M.cagrHist.from.year,M.cagrHist.to.year,M.cagrHist.years], [2021,2024,3]);
+  __approx('прогнозный CAGR 2024→2026 = 10 %', M.cagrFcst.pct, 10, 1e-6);
+  __approx('г/г 2022', M.bars[1].yoy, 21, 1e-6);
+  __eq('г/г первого года нет', M.bars[0].yoy, null);
+  __eq('прогноз несёт число аналитиков', M.bars[4].n, 20);
+  __eq('не устарел через сутки', M.stale, false);
+  __eq('устарел через 8 дней', deskFinModel(fin,'revenue',Date.parse('2026-09-18T11:00:00Z')).stale, true);
+  var E=deskFinModel(fin,'eps',now);
+  __eq('EPS: прогноз только 2025 (у 2026 EPS нет)', E.bars.map(function(b){return b.year;}), [2021,2022,2023,2024,2025]);
+  __eq('EPS: 1 точка прогноза → прогнозного CAGR нет (решение §6#4)', [E.est,E.cagrFcst], [1,null]);
+  __eq('EPS: г/г от отрицательной базы не считается', E.bars[2].yoy, null);
+  __approx('EPS: исторический CAGR 2→3 за 3 года', E.cagrHist.pct, (Math.pow(1.5,1/3)-1)*100, 1e-6);
+  var F=deskFinModel(fin,'fcf',now);
+  __eq('FCF: только факт, год без значения исключён', [F.bars.map(function(b){return b.year;}),F.est,F.excluded,F.state], [[2021,2023,2024],0,[2022],'partial']);
+  __eq('FCF: г/г через пропущенный год не считается', F.bars[1].yoy, null);
+  __eq('отрицательный последний EPS → CAGR нет', deskFinModel({status:'partial',annual:[{year:2023,eps:1},{year:2024,eps:-2}],estimates:[]},'eps',now).cagrHist, null);
+  __eq('нет ответа → loading', deskFinModel(null,'revenue',now).state, 'loading');
+  __eq('ошибка провайдера → error', deskFinModel({status:'error',annual:[],notes:['provider-error']},'revenue',now).state, 'error');
+  __eq('nodata', deskFinModel({status:'nodata',annual:[],estimates:[]},'revenue',now).state, 'nodata');
+  __eq('1 год факта + прогноз → partial', deskFinModel({status:'partial',annual:[{year:2025,revenue:10}],estimates:[{year:2026,revenue:11}]},'revenue',now).state, 'partial');
+  __eq('чужой ряд → revenue', deskFinModel(fin,'zzz',now).metric, 'revenue');
+  __eq('прогноз без факта не показывается', deskFinModel({status:'nodata',annual:[],estimates:[{year:2026,revenue:5}]},'revenue',now).bars, []);
+  __eq('deskFinCagr: нулевой период → null', deskFinCagr({year:2024,v:1},{year:2024,v:2}), null);
+});
+grp('deskFinSvg', function(){
+  var fin={status:'ok',source:'yahoo',annual:[{year:2023,revenue:5e9},{year:2024,revenue:-1e9}],estimates:[{year:2025,revenue:6e9,n:4}],fetchedAt:'2026-09-10T00:00:00Z'};
+  var svg=deskFinSvg(deskFinModel(fin,'revenue',Date.parse('2026-09-10T01:00:00Z')),'SEK');
+  __eq('три столбца, все фокусируемы', (svg.match(/<g class="dk-fb/g)||[]).length, 3);
+  __ok('прогноз помечен классом est', /class="dk-fb est"/.test(svg));
+  __ok('отрицательный факт помечен neg', /class="dk-fb neg"/.test(svg));
+  __ok('подсказка: значение, валюта, «прогноз», аналитики, источник; г/г от отрицательной базы нет', /2025 · 6[,.]0 млрд SEK · прогноз · 4 аналит\. · Yahoo/.test(svg) && !/2025[^"]*г\/г/.test(svg));
+  __ok('линия г/г рвётся на годе без базы', (svg.match(/<polyline/g)||[]).length===0 && (svg.match(/<circle/g)||[]).length===1);
+  __eq('пустая модель → пустая строка', deskFinSvg({bars:[]},'USD'), '');
+  __eq('единицы', [deskFinFmt(1.5e12,'revenue'),deskFinFmt(37378e6,'revenue'),deskFinFmt(-4e6,'fcf'),deskFinFmt(7.594,'eps'),deskFinFmt(null,'eps')], ['1,50 трлн','37,4 млрд','-4 млн','7,59','—']);
+});
+grp('deskPeers', function(){
+  var V={ME:{sector:'Tech',pe:30},A:{sector:'Tech',pe:20},B:{sector:'Tech',pe:40},C:{sector:'Tech',pe:25},D:{sector:'Tech',pe:0},E:{sector:'Energy',pe:8},F:{sector:'Tech',pe:35}};
+  var P=deskPeers('ME',V,{A:5e9,B:9e9,C:1e9});
+  __eq('пиры: тот же сектор, P/E > 0, без себя; крупнейшие по кап-и, затем по тикеру', P.peers.map(function(p){return p.tk;}), ['B','A','C','F']);
+  __eq('медиана пиров', P.median, 30);
+  __eq('reason null', P.reason, null);
+  var many={ME:{sector:'S',pe:10}};for(var i=0;i<12;i++)many['T'+(i<10?'0':'')+i]={sector:'S',pe:10+i};
+  __eq('не больше peersMax', deskPeers('ME',many,{}).peers.length, DESK_IDEA_CFG.ana.peersMax);
+  __eq('мало пиров → few', [deskPeers('E',V,{}).reason,deskPeers('E',V,{}).peers], ['few',[]]);
+  __eq('нет сектора → nosector', deskPeers('ZZ',V,{}).reason, 'nosector');
+});
+grp('deskMultDev/deskRatings', function(){
+  __eq('на 20 % дешевле медианы → cheap', deskMultDev(16,20).cls, 'cheap');
+  __approx('отклонение %', deskMultDev(16,20).dev, -20, 1e-9);
+  __eq('в пределах devPct → нейтрально', deskMultDev(21,20).cls, '');
+  __eq('дороже → rich', deskMultDev(30,20).cls, 'rich');
+  __eq('нет ориентира → null', deskMultDev(16,null), {dev:null,cls:''});
+  var R=deskRatings({strongBuy:6,buy:10,hold:4,sell:0,strongSell:0,consensus:'Buy'});
+  __eq('рейтинги: пустые сегменты отброшены', R.segs.map(function(x){return x.k;}), ['strongBuy','buy','hold']);
+  __eq('итого и консенсус', [R.total,R.consensus], [20,'Buy']);
+  __approx('доля Buy', R.segs[1].pct, 50, 1e-9);
+  __eq('нет рейтингов → null', [deskRatings(null),deskRatings({buy:0})], [null,null]);
+});
+grp('chartFanModel', function(){
+  var bars=[];for(var i=0;i<300;i++){var d=new Date(Date.UTC(2025,0,1)+i*864e5).toISOString().slice(0,10);bars.push({d:d,c:100+i*0.1});}
+  var M=chartFanModel(bars,{low:90,consensus:150,high:200});
+  __eq('история заканчивается последним баром', M.last, {time:bars[299].d,value:bars[299].c});
+  __ok('история — недельные слоты за последний год', M.hist.length===51 && M.hist[0].time===bars[299-250].d);
+  __eq('будущее — 52 пустых недельных слота до конца веера', [M.future.length,M.future[0].time,M.end], [52,'2025-11-03',M.future[51].time]);
+  __eq('линии high/consensus/low, по 2 точки от последнего закрытия', M.lines.map(function(l){return [l.kind,l.data.length,l.data[0].value,l.data[1].time];}), [['high',2,bars[299].c,M.end],['consensus',2,bars[299].c,M.end],['low',2,bars[299].c,M.end]]);
+  __approx('апсайд консенсуса', M.lines[1].pct, (150/bars[299].c-1)*100, 1e-9);
+  __eq('только консенсус → одна линия', chartFanModel(bars,{consensus:150}).lines.length, 1);
+  __eq('без консенсуса или свечей → null', [chartFanModel(bars,{low:1,high:2}),chartFanModel([],{consensus:1}),chartFanModel(bars,null)], [null,null,null]);
+  __ok('время строго возрастает', M.hist.concat(M.future).every(function(p,i,a){return !i||a[i-1].time<p.time;}));
+});

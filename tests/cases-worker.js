@@ -248,6 +248,80 @@ grp('fmpCovered', function(){
   __ok('не пусто', !fmpCovered(''));
 });
 
+// 16) 📊 financials (I3) — нормализация FMP / Yahoo timeseries / earningsTrend без сети
+grp('financials', function(){
+  // FMP stable: новые сначала; quarter-строка и строка без выручки отбрасываются; EPS — разводнённый.
+  var inc = [
+    { date:'2025-08-28', fiscalYear:'2025', period:'FY', reportedCurrency:'USD', revenue:37378e6, eps:7.65, epsDiluted:7.59 },
+    { date:'2024-08-29', fiscalYear:'2024', period:'FY', reportedCurrency:'USD', revenue:25111e6, eps:0.7, epsDiluted:0.7 },
+    { date:'2023-08-31', fiscalYear:'2023', period:'FY', reportedCurrency:'USD', revenue:15540e6, eps:-5.34, epsDiluted:-5.34 },
+    { date:'2023-06-01', fiscalYear:'2023', period:'Q3', revenue:1 },
+    { date:'2022-09-01', fiscalYear:'2022', period:'FY', revenue:null, eps:7.75 }
+  ];
+  var cf = [{ date:'2025-08-28', period:'FY', freeCashFlow:1668e6 }, { date:'2024-08-29', period:'FY', freeCashFlow:-4e6 }];
+  var a = finAnnualFmp(inc, cf);
+  __eq('FMP: годы по возрастанию, без квартала и без выручки', a.map(function(x){ return x.year; }), [2023, 2024, 2025]);
+  __eq('FMP: строка 2025', a[2], { year:2025, revenue:37378e6, eps:7.59, fcf:1668e6 });
+  __eq('FMP: отрицательный EPS и FCF сохраняются', [a[0].eps, a[1].fcf], [-5.34, -4e6]);
+  __eq('FMP: FCF нет → null', a[0].fcf, null);
+  __eq('FMP: мусор → []', finAnnualFmp(null, { error:1 }), []);
+  __eq('год из даты, а не fiscalYear', finYear({ date:'2026-01-25', fiscalYear:'2025' }), 2026);
+  __eq('без даты — fiscalYear', finYear({ fiscalYear:'2024' }), 2024);
+  var many = []; for(var y = 2015; y <= 2025; y++) many.push({ date:y + '-12-31', revenue:y });
+  __eq('не больше FIN_CFG.years лет', finAnnualFmp(many, null).length, FIN_CFG.years);
+
+  // Yahoo timeseries (VOLV-B.ST, формат ответа 2026-09-10): порядок типов произвольный, null-дырки.
+  var ts = [
+    { meta:{ type:['annualFreeCashFlow'] }, annualFreeCashFlow:[{ asOfDate:'2024-12-31', currencyCode:'SEK', reportedValue:{ raw:28059e6 } }, null] },
+    { meta:{ type:['annualTotalRevenue'] }, annualTotalRevenue:[null, { asOfDate:'2023-12-31', currencyCode:'SEK', reportedValue:{ raw:552252e6 } }, { asOfDate:'2024-12-31', currencyCode:'SEK', reportedValue:{ raw:526816e6 } }, { asOfDate:'2025-12-31', currencyCode:'SEK', reportedValue:{ raw:479183e6 } }] },
+    { meta:{ type:['annualDilutedEPS'] }, annualDilutedEPS:[{ asOfDate:'2025-12-31', currencyCode:'SEK', reportedValue:{ raw:16.94 } }] },
+    { meta:{ type:['annualSomethingElse'] } }
+  ];
+  var yv = finAnnualYahoo(ts);
+  __eq('Yahoo: годы', yv.annual.map(function(x){ return x.year; }), [2023, 2024, 2025]);
+  __eq('Yahoo: слияние типов по году', yv.annual[1], { year:2024, revenue:526816e6, eps:null, fcf:28059e6 });
+  __eq('Yahoo: EPS 2025', yv.annual[2].eps, 16.94);
+  __eq('Yahoo: валюта и конец фин. года', [yv.ccy, yv.fye], ['SEK', '12-31']);
+  __eq('Yahoo: пусто', finAnnualYahoo(null).annual, []);
+
+  // earningsTrend: только 0y/+1y; год, по которому уже есть факт, отбрасывается.
+  var trend = { trend:[
+    { period:'0q', endDate:'2026-11-30', revenueEstimate:{ avg:{ raw:1 } } },
+    { period:'0y', endDate:'2026-08-31', revenueEstimate:{ avg:{ raw:52e9 }, numberOfAnalysts:{ raw:28 } }, earningsEstimate:{ avg:{ raw:17.1 }, numberOfAnalysts:{ raw:30 } } },
+    { period:'+1y', endDate:'2027-08-31', revenueEstimate:{ avg:{ raw:61e9 } }, earningsEstimate:{ avg:{} } },
+    { period:'+5y', endDate:null }
+  ] };
+  var e = finEstimatesYahoo(trend, 2025);
+  __eq('прогноз: 2026 и 2027', e.map(function(x){ return x.year; }), [2026, 2027]);
+  __eq('прогноз 2026 (+ служебный yearAgo)', e[0], { year:2026, revenue:52e9, eps:17.1, n:30, yearAgo:null });
+  __eq('прогноз без EPS → null, без числа аналитиков → null', [e[1].eps, e[1].n], [null, null]);
+  __eq('год с фактом отброшен', finEstimatesYahoo(trend, 2026).map(function(x){ return x.year; }), [2027]);
+  __eq('нет earningsTrend → []', finEstimatesYahoo(null, 2025), []);
+
+  // finBuild: статусы и честные пометки
+  var ok = finBuild({ sym:'MU', ccy:'USD', source:'fmp', fye:'08-28', annual:a, estimates:e, now:'T' });
+  __eq('ok: ≥2 лет факта и есть прогноз', [ok.status, ok.notes], ['ok', []]);
+  __eq('ok: форма ответа', Object.keys(ok).sort(), ['annual','ccy','estimates','fetchedAt','fiscalYearEnd','notes','source','status','sym']);
+  var p = finBuild({ sym:'VOLV-B.ST', ccy:'SEK', source:'yahoo', annual:yv.annual, estimates:[] });
+  __eq('partial: нет прогноза', [p.status, p.notes.indexOf('no-estimates') >= 0], ['partial', true]);
+  var sc = finBuild({ sym:'ADR', annual:a, estimates:[{ year:2026, revenue:37378e6 * 9, eps:1, n:3 }] });
+  __eq('без yearAgo: скачок ×9 за год отброшен', [sc.estimates, sc.notes.indexOf('est-scale') >= 0, sc.status], [[], true, 'partial']);
+  // MU 2026-09-10 (живой ответ): FY26 ×3.5, FY27 ×6.5 к FY25 — настоящий рост, yearAgo = отчётности.
+  var mu = finBuild({ sym:'MU', annual:a, estimates:[{ year:2026, revenue:129.74e9, eps:73.4, n:41, yearAgo:37.38e9 }, { year:2027, revenue:241.08e9, eps:155.03, n:44, yearAgo:129.74e9 }] });
+  __eq('MU: взрывной рост с совпавшим yearAgo не отбрасывается', [mu.status, mu.estimates.length, mu.notes], ['ok', 2, []]);
+  __eq('служебный yearAgo не попадает в ответ', Object.keys(mu.estimates[0]).sort(), ['eps','n','revenue','year']);
+  var mu2 = finBuild({ sym:'MU', annual:a, estimates:[{ year:2026, revenue:129.74e9, n:41 }, { year:2027, revenue:241.08e9, n:44 }] });
+  __eq('MU без yearAgo: шаги ×3.5 и ×1.9 проходят', mu2.estimates.length, 2);
+  var adr = finBuild({ sym:'TSM', annual:a, estimates:[{ year:2026, revenue:40e9 * 32, eps:1, n:20, yearAgo:37.38e9 * 32 }] });
+  __eq('yearAgo в другой валюте (×32) → прогноз отброшен', [adr.estimates, adr.notes.indexOf('est-scale') >= 0], [[], true]);
+  var one = finBuild({ sym:'X', annual:[{ year:2025, revenue:10, eps:null, fcf:null }], estimates:[{ year:2026, revenue:11, eps:null, n:2 }] });
+  __eq('1 год факта → partial, короткая история, нет EPS/FCF', [one.status, one.notes.indexOf('short-history') >= 0, one.notes.indexOf('no-fcf') >= 0, one.notes.indexOf('no-eps') >= 0], ['partial', true, true, true]);
+  var nd = finBuild({ sym:'Z', annual:[], estimates:e });
+  __eq('nodata: прогноз без факта не отдаётся', [nd.status, nd.estimates], ['nodata', []]);
+  __ok('подзапросов ≤ 4: FMP×2 + earningsTrend + фолбэк timeseries', 2 + 1 + 1 <= 4);
+  __eq('TTL: память 30 мин, edge 12 ч, нет данных 1 ч', [FIN_CFG.memMs, FIN_CFG.edgeS, FIN_CFG.edgeNoDataS], [1800000, 43200, 3600]);
+});
+
 // 12) 🏗 worker build — бампается при каждой правке воркера
 grp('worker build', function(){
   __ok('WORKER_BUILD bumped', WORKER_BUILD !== '2026-06-30subreq-split');

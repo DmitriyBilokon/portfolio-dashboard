@@ -2169,7 +2169,7 @@ function lvlPctColor(absPct, ord){
 // ===== Stock chart popup (test mode) =====
 // Rolling simple moving average series; out[i] is null until enough history.
 function smaSeries(arr,n){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=n)sum-=arr[i-n];if(i>=n-1)out[i]=sum/n}return out}
-let _chartState=null,_lwcPromise=null,_histCache={};   // history cached 5 min per symbol+range — re-renders redraw instantly
+let _chartState=null,_lwcPromise=null,_histCache={};   // history cached 10 min per symbol+range (как кэш ?history= воркера) — re-renders redraw instantly
 // Load TradingView Lightweight Charts from CDN once.
 function loadLWC(){
   if(window.LightweightCharts) return Promise.resolve();
@@ -2200,17 +2200,14 @@ async function drawChart(state=_chartState, boxId='chartBox', legendId='chartLeg
   if(!PRICE_PROXY){box.textContent='PRICE_PROXY не задан';return}
   const histKey=exSymbol(row[2],ccy)+':'+(years===3?'5y':'2y');
   const hc=_histCache[histKey];
-  const fromCache=hc&&Date.now()-hc.t<5*60*1000;
+  const fromCache=hc&&Date.now()-hc.t<10*60*1000;
   if(!fromCache)box.textContent='Загрузка графика…';
   let j;
   try{
-    await loadLWC();
-    if(fromCache)j=hc.j;
-    else{
-      const r=await fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y'));
-      j=await r.json();
-      if(j&&Array.isArray(j.c)&&j.c.length)_histCache[histKey]={j,t:Date.now()};
-    }
+    // Библиотека и история грузятся параллельно — два сетевых ожидания не складываются.
+    const hist=fromCache?Promise.resolve(hc.j):fetch(PRICE_PROXY+'?history='+encodeURIComponent(exSymbol(row[2],ccy))+'&range='+(years===3?'5y':'2y')).then(r=>r.json());
+    [,j]=await Promise.all([loadLWC(),hist]);
+    if(!fromCache&&j&&Array.isArray(j.c)&&j.c.length)_histCache[histKey]={j,t:Date.now()};
   }catch(e){box.textContent='Ошибка загрузки: '+(e.message||e);return}
   if(!j||!Array.isArray(j.c)||!j.c.length){box.textContent='Нет исторических данных';return}
   if(state.chart){try{state.chart.remove()}catch(e){}state.chart=null}
@@ -2843,11 +2840,15 @@ function stockAiSnapshot(d,r){
         if(typeof cv.day==='number'&&Math.abs(cv.day)>=1.5)volume.confirmsMove=m>=1.5?true:(m<0.7?false:null);}
     }
   }catch(e){}
+  const tgE=pf3EffTarget(d,r);
   return{
     ticker:tk,name:r[1],sector:r[4],type:(tf&&tf.primary)||r[5],ccy:r[8]||'USD',
     price,dayPct:num(10),
     sma50:s50>=0?num(s50):null,sma100:s100>=0?num(s100):null,sma200:s200>=0?num(s200):null,
-    support:g('Поддержка'),resistance:g('Сопротивление'),analystTarget:g('Аналит. таргет'),
+    support:g('Поддержка'),resistance:g('Сопротивление'),
+    // Таргет — эффективный (свежий срез, если среднее «за всё время» устарело на ≥ TG_STALE_PCT%),
+    // как в карточке и скоринге; устаревшее среднее — справочно, чтобы AI не видел ложный «потенциал».
+    analystTarget:tgE.target||null,analystTargetAllTimeStale:tgE.stale?(tgE.main||null):null,
     pe:g('P/E'),ps:g('P/S'),roe:g('ROE'),de:g('D/E'),revGrowthPct:g('Рост выручки'),
     revenueTTM:g('Выручка TTM'),marketCap:g('Кап-я'),dividendPct:g('Дивид. %'),
     // revSeries — история отчётности (выручка по годам/кварталам с ростом г/г),

@@ -197,6 +197,55 @@ grp('SYM_LIMITS budget', function(){
   __ok('calendar + 4 ≤ 50', SYM_LIMITS.calendar + 4 <= 50);
   __ok('prepost + 4 ≤ 50', SYM_LIMITS.prepost + 4 <= 50);
   __ok('levels + 4 ≤ 50', SYM_LIMITS.levels + 4 <= 50);
+  __ok('symbolsLite + 4 ≤ 50', SYM_LIMITS.symbolsLite + 4 <= 50);
+});
+
+// 13) 🕯 ohlcvFromChart — свечи ?history= {t,o,h,l,c,v}, обратная совместимость t/c
+grp('ohlcvFromChart', function(){
+  var res = { timestamp: [100, 200, 300, 400, 500], indicators: { quote: [{
+    open:   [10,    null,  12,    13,   14.123],
+    high:   [11,    11.5,  11.9,  14,   null],
+    low:    [9,     10.2,  11.5,  12.5, 13.9],
+    close:  [10.5,  11.1,  12.2,  null, 14.0],
+    volume: [1000,  null,  2500.6, 900, -5],
+  }] } };
+  var h = ohlcvFromChart(res);
+  __eq('ключи', Object.keys(h).sort(), ['c','h','l','o','t','v']);
+  __eq('бар без close выброшен (t/c выровнены как раньше)', h.t, [100, 200, 300, 500]);
+  __eq('c', h.c, [10.5, 11.1, 12.2, 14]);
+  __eq('open null → close', h.o[1], 11.1);
+  __eq('high < close расширен до тела', h.h[2], 12.2);
+  __eq('high null → max(o,c)', h.h[3], 14.12);
+  __eq('low ≤ min(o,c)', h.l[2], 11.5);
+  __eq('объём: null/отрицательный → 0, округлён', h.v, [1000, 0, 2501, 0]);
+  var n = h.t.length;
+  __ok('все массивы одной длины', [h.o, h.h, h.l, h.c, h.v].every(function(a){ return a.length === n; }));
+  __ok('h ≥ max(o,c) и l ≤ min(o,c) на каждом баре', h.t.every(function(_, i){ return h.h[i] >= Math.max(h.o[i], h.c[i]) && h.l[i] <= Math.min(h.o[i], h.c[i]); }));
+  __eq('пустой ответ → null', ohlcvFromChart({ timestamp: [], indicators: { quote: [{}] } }), null);
+  __eq('null → null', ohlcvFromChart(null), null);
+  __eq('без timestamp бар выброшен', ohlcvFromChart({ timestamp: [0], indicators: { quote: [{ close: [5] }] } }), null);
+});
+
+// 14) 🕯 histParams — белый список interval, формат range (ключ кэша не разрастается)
+grp('histParams', function(){
+  __eq('дефолт', histParams(null, null), { range: '2y', interval: '1d' });
+  __eq('5y/1wk', histParams('5y', '1wk'), { range: '5y', interval: '1wk' });
+  __eq('6mo, регистр', histParams(' 6MO ', '1D'), { range: '6mo', interval: '1d' });
+  __eq('ytd/max', [histParams('ytd').range, histParams('max').range], ['ytd', 'max']);
+  __eq('мусор range → 2y', histParams('2y;drop', '1d').range, '2y');
+  __eq('чужой interval → 1d', histParams('1y', '1m').interval, '1d');
+  __eq('TTL истории 10 мин', HIST_TTL_MS, 600000);
+});
+
+// 15) 💸 fmpCovered — FMP free только US: суффиксы бирж, индексы, фьючерсы → в Yahoo без квоты
+grp('fmpCovered', function(){
+  __ok('MU', fmpCovered('MU'));
+  __ok('BRK-B', fmpCovered('BRK-B'));
+  __ok('не INVE-B.ST', !fmpCovered('INVE-B.ST'));
+  __ok('не RHM.DE', !fmpCovered('RHM.DE'));
+  __ok('не ^OMX', !fmpCovered('^OMX'));
+  __ok('не ES=F', !fmpCovered('ES=F'));
+  __ok('не пусто', !fmpCovered(''));
 });
 
 // 12) 🏗 worker build — бампается при каждой правке воркера

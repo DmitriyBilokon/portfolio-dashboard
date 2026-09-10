@@ -27,7 +27,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10s1-quickwins';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10s2-ohlcv-cache';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -84,9 +84,11 @@ const json = (x, status = 200) => new Response(JSON.stringify(x), { status, head
 const txt = (s, status = 200) => new Response(s, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 // Публичные батч-роуты: лимит числа символов за вызов. Бюджет Cloudflare free —
 // 50 подзапросов/вызов; на символ: symbols = 3 (chart 1y + quoteSummary + weekly),
-// targets = 2 (quoteSummary + FMP), calendar/prepost/levels = 1; плюс yAuth ≤ 4 за вызов.
+// targets = 2 (quoteSummary + FMP), calendar/prepost/levels = 1, symbolsLite (?symbols=…&lite=1) = 1;
+// плюс yAuth ≤ 4 за вызов. Повтор quoteSummary после 401 (редко: протух crumb) может
+// выйти за бюджет — тогда хвост батча вернёт null, как до повтора.
 // Клиент чанкует под эти же лимиты (fetchQuotes 15, ?targets= 20, ?calendar= 40).
-const SYM_LIMITS = { symbols: 15, targets: 20, calendar: 40, prepost: 40, levels: 20 };
+const SYM_LIMITS = { symbols: 15, symbolsLite: 40, targets: 20, calendar: 40, prepost: 40, levels: 20 };
 // Разбор ?param=A,B,C: trim, дедуп, отброс пустых и слишком длинных; over = превышен лимит.
 function parseSyms(raw, max){
   const syms = [...new Set(String(raw || '').split(',').map(s => s.trim()).filter(s => s && s.length <= 24))];
@@ -214,14 +216,49 @@ async function anthropicRun(env, body){
   return { content, usage };
 }
 
+// ── In-memory кэш изолята с TTL + дедуп параллельных запросов ────────────────
+// Ноль подзапросов при попадании. Живёт, пока жив изолят (на free-плане —
+// минуты–часы); это не общий кэш, а защита от повторов: одинаковый chart-URL
+// дёргают yahoo()/yahooLite()/levelsFor()/sectorMetrics()/dailyHistory(), а
+// HOME/карточка опрашивают одно и то же каждые 20–30 с. TTL задаёт вызывающий:
+// запись свежее его TTL — отдаём, иначе идём в сеть. null не кэшируется.
+const MEMO_MAX = 250;   // ~250 chart-ответов по 20–60 КБ — с запасом в 128 МБ изолята
+const _memo = new Map(), _memoP = new Map();
+async function memo(key, ttlMs, fn){
+  const hit = _memo.get(key);
+  if(hit && Date.now() - hit.at < ttlMs) return hit.v;
+  if(_memoP.has(key)) return _memoP.get(key);
+  const p = (async () => {
+    const v = await fn();
+    if(v != null){
+      _memo.delete(key);   // переставить в конец — Map хранит порядок вставки (LRU-вытеснение)
+      _memo.set(key, { v, at: Date.now() });
+      while(_memo.size > MEMO_MAX) _memo.delete(_memo.keys().next().value);
+    }
+    return v;
+  })().finally(() => _memoP.delete(key));
+  _memoP.set(key, p);
+  return p;
+}
+// TTL chart-ответов по умолчанию: дневные свечи несут живую цену (meta) — 20 с;
+// недельные (weeklySMA) меняются раз в неделю — 6 ч.
+const YCHART_TTL = { '1d': 20e3, '1wk': 6 * 3600e3, '1mo': 6 * 3600e3 };
 // Fetch a Yahoo Finance chart and return chart.result[0] (or null on any failure).
+// ttlMs — насколько свежий ответ из кэша изолята устраивает вызывающего.
 const YH_HEADERS = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
-async function yChart(sym, interval, range){
-  try{
-    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${interval}&range=${range}`, { headers: YH_HEADERS });
-    if(!r.ok) return null;
-    return (await r.json())?.chart?.result?.[0] || null;
-  }catch(e){ return null; }
+const yChartKey = (sym, interval, range) => `yc|${sym}|${interval}|${range}`;
+// Есть ли в кэше изолята запись моложе ttlMs (для диагностики X-Cache).
+const memoFresh = (key, ttlMs) => { const h = _memo.get(key); return !!(h && Date.now() - h.at < ttlMs); };
+async function yChart(sym, interval, range, ttlMs){
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${interval}&range=${range}`;
+  const ttl = ttlMs != null ? ttlMs : (YCHART_TTL[interval] || 20e3);
+  return memo(yChartKey(sym, interval, range), ttl, async () => {
+    try{
+      const r = await fetch(url, { headers: YH_HEADERS });
+      if(!r.ok) return null;
+      return (await r.json())?.chart?.result?.[0] || null;
+    }catch(e){ return null; }
+  });
 }
 // Simple moving averages over a close series.
 const smaLast = (closes, n) => { if(closes.length < n) return null; let s = 0; for(let i = closes.length - n; i < closes.length; i++) s += closes[i]; return round2(s / n); };                                    // average of the last n
@@ -350,7 +387,7 @@ async function optionsImplied(symbol){
     const a = await yAuth(); if(!a) return null;
     const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}?crumb=${encodeURIComponent(a.crumb)}`,
       { headers: { ...Y_UA, Cookie: a.cookie } });
-    if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
+    if(!r.ok){ if(r.status === 401 || r.status === 403) yAuthDrop(a); return null; }
     const j = await r.json();
     const res = j && j.optionChain && j.optionChain.result && j.optionChain.result[0];
     if(!res) return null;
@@ -433,7 +470,7 @@ async function stockNews(symbol){
   const a = await yAuth();   // search иногда требует cookie/crumb
   const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false`;
   const r = await fetch(url, { headers: a ? { ...Y_UA, Cookie: a.cookie } : Y_UA });
-  if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
+  if(!r.ok){ if(r.status === 401 || r.status === 403) yAuthDrop(a); return null; }
   let j = null; try{ j = await r.json(); }catch(e){ return null; }
   const data = { items: newsItemsFromYahoo(j), at: new Date().toISOString() };
   _newsCache[symbol] = { data, at: Date.now() };
@@ -459,13 +496,36 @@ async function levelsFor(sym){
   _levelsCache[sym] = { data, at: Date.now() };
   return data;
 }
-async function dailyHistory(sym, range = '2y'){
-  const res = await yChart(sym, '1d', range);
-  if(!res) return null;
-  const ts = res.timestamp || [], cl = res.indicators?.quote?.[0]?.close || [];
-  const t = [], c = [];
-  for(let i = 0; i < cl.length; i++){ if(typeof cl[i] === 'number' && cl[i] > 0){ t.push(ts[i]); c.push(round2(cl[i])); } }
-  return c.length ? { t, c } : null;
+// Свечи из chart.result[0] → { t, o, h, l, c, v } (массивы одной длины, oldest→newest).
+// Бар берём, только если есть валидное закрытие (как раньше для {t,c} — индексы
+// t/c у старых клиентов совпадают). Пропуски o/h/l → закрытие; h/l расширяются
+// до тела свечи (у Yahoo бывают h < c на неполном дне); объём без данных → 0
+// (у индексов ^OMX/^GSPC он всегда 0). Чистая функция, покрыта тестом.
+function ohlcvFromChart(res){
+  const ts = (res && res.timestamp) || [], q = (res && res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+  const cl = q.close || [], op = q.open || [], hi = q.high || [], lo = q.low || [], vo = q.volume || [];
+  const ok = v => typeof v === 'number' && isFinite(v) && v > 0;
+  const t = [], o = [], h = [], l = [], c = [], v = [];
+  for(let i = 0; i < cl.length; i++){
+    if(!ok(cl[i]) || !ts[i]) continue;
+    const C = cl[i], O = ok(op[i]) ? op[i] : C;
+    const H = Math.max(ok(hi[i]) ? hi[i] : C, O, C), L = Math.min(ok(lo[i]) ? lo[i] : C, O, C);
+    t.push(ts[i]); o.push(round2(O)); h.push(round2(H)); l.push(round2(L)); c.push(round2(C));
+    v.push((typeof vo[i] === 'number' && isFinite(vo[i]) && vo[i] > 0) ? Math.round(vo[i]) : 0);
+  }
+  return c.length ? { t, o, h, l, c, v } : null;
+}
+// Параметры ?history=: интервал из белого списка, range — формат Yahoo (1y, 6mo, 30d, ytd, max).
+const HIST_INTERVALS = ['1d', '1wk', '1mo'];
+const HIST_TTL_MS = 10 * 60e3;   // свечи истории: кэш изолята + Cache API + браузер
+function histParams(range, interval){
+  const rg = String(range || '2y').trim().toLowerCase();
+  const iv = String(interval || '1d').trim().toLowerCase();
+  return { range: /^(\d{1,2}(d|mo|y)|ytd|max)$/.test(rg) ? rg : '2y', interval: HIST_INTERVALS.includes(iv) ? iv : '1d' };
+}
+async function dailyHistory(sym, range = '2y', interval = '1d'){
+  const res = await yChart(sym, interval, range, HIST_TTL_MS);
+  return res ? ohlcvFromChart(res) : null;
 }
 
 // ── 🔄 Live Sector Tracker: 11 GICS-секторов через SPDR ETF + бенчмарк SPY ──
@@ -671,14 +731,28 @@ async function yAuthRound(log){
     return null;
   }catch(e){ dbg('yAuth exception: ' + (e.message || e)); return null; }
 }
+// Сбросить протухшую пару cookie+crumb — только если это ТА ЖЕ пара, с которой
+// получили 401/403: параллельный вызов мог уже переавторизоваться, и его свежую
+// пару затирать нельзя (иначе батч из 15 символов устраивает 15 раундов подряд).
+function yAuthDrop(a){ if(!a || _yAuth === a) _yAuth = null; }
+// quoteSummary с кэшем изолята 20 с (HOME/карточка опрашивают одно и то же) и
+// ОДНИМ повтором после переавторизации при 401/403 (раньше весь батч отдавал null).
+// Повтор стоит 1 подзапрос + общий раунд yAuth (≤ 4, дедуп) — в бюджет SYM_LIMITS
+// заложен запас; если бюджет вызова исчерпан, fetch бросит и вернётся null, как раньше.
 async function yQuoteSummary(sym, modules){
-  const a = await yAuth(); if(!a) return null;
-  try{
-    const r = await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}&crumb=${encodeURIComponent(a.crumb)}`,
-      { headers: { ...Y_UA, Cookie: a.cookie } });
-    if(!r.ok){ if(r.status === 401 || r.status === 403) _yAuth = null; return null; }
-    return (await r.json())?.quoteSummary?.result?.[0] || null;
-  }catch(e){ return null; }
+  return memo('qs|' + sym + '|' + modules, 20e3, async () => {
+    for(let attempt = 0; attempt < 2; attempt++){
+      const a = await yAuth(); if(!a) return null;
+      try{
+        const r = await fetch(`https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}&crumb=${encodeURIComponent(a.crumb)}`,
+          { headers: { ...Y_UA, Cookie: a.cookie } });
+        if(r.status === 401 || r.status === 403){ yAuthDrop(a); continue; }
+        if(!r.ok) return null;
+        return (await r.json())?.quoteSummary?.result?.[0] || null;
+      }catch(e){ return null; }
+    }
+    return null;
+  });
 }
 const yRaw = v => (v && typeof v === 'object') ? (typeof v.raw === 'number' ? v.raw : null) : (typeof v === 'number' ? v : null);
 // Annual or quarterly total-revenue history (oldest → newest), no auth needed.
@@ -798,15 +872,39 @@ async function prePost(sym){
 // period 'quarter': balance = latest quarterly snapshot, cash flow = TTM (sum of
 // the last 4 quarters), revenue = TTM, YoY = latest quarter vs the same quarter a
 // year ago. Revenue CAGR always comes from annual statements.
-async function fundamentals(sym, env, period){
-  const get = async (path) => {
+// ── FMP: квота free ~250 запросов/день ─────────────────────────────────────
+// (1) бесплатный FMP покрывает только US-листинги — символы с биржевым суффиксом
+// (.ST/.DE/.OL…), индексы (^) и фьючерсы (=F) идут сразу в Yahoo, не тратя квоту;
+// (2) ответы кэшируются в памяти изолята на 12 ч (отчётность — раз в квартал,
+// таргеты — раз в сутки), пустой ответ [] тоже кэшируется (негативный кэш);
+// (3) счётчик за UTC-сутки — в ?action=version (на изолят, не глобальный).
+const FMP_TTL_MS = 12 * 3600e3;
+const fmpCovered = sym => /^[A-Z0-9][A-Z0-9-]{0,9}$/i.test(String(sym || '').trim());
+const FMP_STATS = { day: '', calls: 0, cached: 0, skipped: 0 };
+function fmpStat(k){
+  const d = new Date().toISOString().slice(0, 10);
+  if(FMP_STATS.day !== d){ FMP_STATS.day = d; FMP_STATS.calls = FMP_STATS.cached = FMP_STATS.skipped = 0; }
+  FMP_STATS[k]++;
+}
+// GET к FMP stable-API: path = 'endpoint?symbol=X&…' (без apikey). JSON или null.
+async function fmpJson(env, path){
+  if(!env.FMP_KEY) return null;
+  const key = 'fmp|' + path;
+  if(memoFresh(key, FMP_TTL_MS)) fmpStat('cached');
+  return memo(key, FMP_TTL_MS, async () => {
+    fmpStat('calls');
     try{
       const r = await fetch(`https://financialmodelingprep.com/stable/${path}&apikey=${env.FMP_KEY}`);
       if(!r.ok) return null;
-      const j = await r.json();
-      return Array.isArray(j) ? j : null;
+      return await r.json();
     }catch(e){ return null; }
-  };
+  });
+}
+async function fundamentals(sym, env, period){
+  // Не-US символ → FMP не зовём: все ответы пустые, ниже сработает фолбэк на Yahoo (тот же путь, что раньше).
+  const covered = fmpCovered(sym);
+  if(!covered) fmpStat('skipped');
+  const get = async (path) => { if(!covered) return null; const j = await fmpJson(env, path); return Array.isArray(j) ? j : null; };
   const s = encodeURIComponent(sym);
   const qtr = period === 'quarter';
   const per = qtr ? '&period=quarter' : '';
@@ -878,8 +976,8 @@ async function fundamentals(sym, env, period){
 async function earningsInfo(sym, env){
   let out = null;
   try{
-    const r = await fetch(`https://financialmodelingprep.com/stable/earnings?symbol=${encodeURIComponent(sym)}&limit=12&apikey=${env.FMP_KEY}`);
-    const arr = r.ok ? await r.json() : null;
+    if(!fmpCovered(sym)){ fmpStat('skipped'); return await yahooEarnings(sym); }
+    const arr = await fmpJson(env, `earnings?symbol=${encodeURIComponent(sym)}&limit=12`);
     if(Array.isArray(arr)){
       const today = new Date().toISOString().slice(0, 10);
       const future = arr.filter(e => e.date && e.date >= today).sort((a, b) => a.date < b.date ? -1 : 1);
@@ -2287,9 +2385,8 @@ const sleep = ms => new Promise(res => setTimeout(res, ms));
 async function fmpTargetFull(symbol, env){
   try{
     if(!env.FMP_KEY) return null;
-    const r = await fetch(`https://financialmodelingprep.com/stable/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${env.FMP_KEY}`);
-    if(!r.ok) return null;
-    const arr = await r.json();
+    if(!fmpCovered(symbol)){ fmpStat('skipped'); return null; }
+    const arr = await fmpJson(env, `price-target-summary?symbol=${encodeURIComponent(symbol)}`);
     const d = Array.isArray(arr) ? arr[0] : arr;
     if(!d) return null;
     const pos = v => (typeof v === 'number' && v > 0) ? v : null;
@@ -2358,13 +2455,13 @@ async function targetsYahoo(symbol){
 async function targetsFull(symbol, env){
   // 1) FMP (US — диапазон + изменения за 30д + рейтинги)
   let agg = null;
-  if(env.FMP_KEY){
-    const k = env.FMP_KEY, s = encodeURIComponent(symbol), base = 'https://financialmodelingprep.com/stable';
-    const get = async u => { try{ const r = await fetch(u); if(!r.ok) return null; return await r.json(); }catch(e){ return null; } };
+  if(env.FMP_KEY && !fmpCovered(symbol)) fmpStat('skipped');
+  else if(env.FMP_KEY){
+    const s = encodeURIComponent(symbol);
     const [sm, news, gc] = await Promise.all([
-      get(`${base}/price-target-summary?symbol=${s}&apikey=${k}`).then(a => Array.isArray(a) ? a[0] : a),
-      get(`${base}/price-target-news?symbol=${s}&page=0&limit=50&apikey=${k}`),
-      get(`${base}/grades-consensus?symbol=${s}&apikey=${k}`),
+      fmpJson(env, `price-target-summary?symbol=${s}`).then(a => Array.isArray(a) ? a[0] : a),
+      fmpJson(env, `price-target-news?symbol=${s}&page=0&limit=50`),
+      fmpJson(env, `grades-consensus?symbol=${s}`),
     ]);
     try{ agg = aggTargets(sm, news, gc, Date.now()); }catch(e){ agg = null; }
   }
@@ -2397,9 +2494,8 @@ async function yValuation(sym){
 async function fmpRatiosHist(sym, env){
   try{
     if(!env.FMP_KEY) return null;
-    const r = await fetch(`https://financialmodelingprep.com/stable/ratios?symbol=${encodeURIComponent(sym)}&period=annual&limit=5&apikey=${env.FMP_KEY}`);
-    if(!r.ok) return null;
-    const arr = await r.json();
+    if(!fmpCovered(sym)){ fmpStat('skipped'); return null; }
+    const arr = await fmpJson(env, `ratios?symbol=${encodeURIComponent(sym)}&period=annual&limit=5`);
     if(!Array.isArray(arr) || !arr.length) return null;   // newest first
     const pick = (row, keys) => { for(const k of keys){ const v = row[k]; if(typeof v === 'number' && isFinite(v) && v > 0) return v; } return null; };
     const series = keys => arr.map(row => pick(row, keys)).filter(v => v != null);
@@ -2609,7 +2705,8 @@ export default {
     })());
   },
   // GET ?symbols=AAPL,INVE-B.ST  → live prices (powers the dashboard's 🔄 Цены, US + Nordic/EU).
-  // GET ?history=MU               → 2y daily closes (powers the dashboard's chart popup).
+  // GET ?history=MU               → 2y дневные свечи {t,o,h,l,c,v} (график, бэктест); &range=, &interval=1d|1wk|1mo; кэш 10 мин.
+  // GET ?symbols=…&lite=1         → только цена/день%/SMA/уровни через yahooLite (1 подзапрос/символ, до 40) — для скринера.
   // Публичные батч-роуты (?symbols/?targets/?calendar/?prepost/?levels) ограничены SYM_LIMITS (413 при превышении).
   // Админ-роуты (?action=chart / targets / ydebug и все AI-эндпоинты) требуют заголовок
   //   Authorization: Bearer <Supabase access token> — «manual test» из адресной строки не работает.
@@ -2624,7 +2721,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature)\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
@@ -2989,11 +3086,24 @@ export default {
       return json(out);
     }
     if(url.searchParams.has('history')){
-      // Daily close series for one symbol → powers the dashboard's stock chart popup.
-      // Optional &range= (e.g. 2y, 5y); defaults to 2y.
-      const range = (url.searchParams.get('range') || '2y').trim();
-      const h = await dailyHistory(url.searchParams.get('history').trim(), range);
-      return json(h || { t: [], c: [] });
+      // Свечи OHLCV одной бумаги {t,o,h,l,c,v} → график карточки, бэктест, альфа.
+      // Старые клиенты читают только t/c — формат обратно совместим.
+      // &range= (2y по умолчанию), &interval=1d|1wk|1mo. Кэш 10 мин в три слоя:
+      // память изолята (yChart) → Cache API (работает на custom-домене; на
+      // *.workers.dev — no-op) → браузер (Cache-Control max-age). X-Cache: mem|edge|miss.
+      const sym = String(url.searchParams.get('history') || '').trim();
+      const hp = histParams(url.searchParams.get('range'), url.searchParams.get('interval'));
+      if(!sym || sym.length > 24) return json({ t: [], c: [] });
+      const hdr = src => ({ ...CORS, 'Cache-Control': `public, max-age=${HIST_TTL_MS / 1000}`, 'X-Cache': src });
+      const cacheKey = new Request(`${url.origin}/?history=${encodeURIComponent(sym)}&range=${hp.range}&interval=${hp.interval}`);
+      const edge = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+      if(edge){ try{ const hit = await edge.match(cacheKey); if(hit) return new Response(hit.body, { status: 200, headers: hdr('edge') }); }catch(e){} }
+      const memHit = memoFresh(yChartKey(sym, hp.interval, hp.range), HIST_TTL_MS);
+      const h = await dailyHistory(sym, hp.range, hp.interval);
+      if(!h) return json({ t: [], c: [] });   // пусто не кэшируем
+      const body = JSON.stringify(h);
+      if(edge) ctx.waitUntil(edge.put(cacheKey, new Response(body, { headers: hdr('edge') })).catch(() => {}));
+      return new Response(body, { status: 200, headers: hdr(memHit ? 'mem' : 'miss') });
     }
     if(url.searchParams.get('action') === 'sectors'){
       // 🔄 Live Sector Tracker: доходность 11 GICS-секторов (ETF) vs SPY по периодам.
@@ -3019,6 +3129,15 @@ export default {
       catch(e){ return txt('Error: ' + e.message, 500); }
     }
     if(url.searchParams.has('symbols')){
+      if(url.searchParams.get('lite') === '1'){
+        // Скринер: вся вселенная пакетами — только yahooLite (1 подзапрос/символ).
+        // День% тут из chart-фолбэка (может быть «2-дневным» у ^OMX) — для точного дня% есть обычный ?symbols=.
+        const pl = parseSyms(url.searchParams.get('symbols'), SYM_LIMITS.symbolsLite);
+        if(pl.over) return tooMany(pl, SYM_LIMITS.symbolsLite);
+        const outL = {};
+        await Promise.all(pl.syms.map(async s => { outL[s] = await yahooLite(s); }));
+        return json(outL);
+      }
       const p = parseSyms(url.searchParams.get('symbols'), SYM_LIMITS.symbols);
       if(p.over) return tooMany(p, SYM_LIMITS.symbols);
       const syms = p.syms;

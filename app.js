@@ -815,7 +815,9 @@ function pfTotalRealizedCostSEK(tabKey){
   // ничего, база реализованного — стоимость откупа (цена×кол-во + комиссия).
   return Math.round((PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===tabKey&&(t.short?t.act==='buy':t.act==='sell')).reduce((a,t)=>a+((t.short?(+t.price||0)*(+t.qty||0)+(t.feeNative||0):(+t.price||0)*(+t.qty||0)-(t.plNative||0)-(t.feeNative||0))*(FX[t.ccy]||1)),0));
 }
-function recalcPF(i,idx){const k=idx||curIdx,d=DATA[k],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?r[13]-Math.round(qty*buy*fxNow):0;r[12]=buy>0?parseFloat(((price-buy)/buy*100).toFixed(2)):0;}
+function recalcPF(i,idx){const k=idx||curIdx,d=DATA[k],r=d.rows[i];const qty=parseFloat(r[6])||0,price=parseFloat(r[7])||0,buy=parseFloat(r[9])||0,ccy=String(r[8]||'SEK'),fxNow=FX[ccy]||1;
+  const dir=(typeof posMetaGet==='function'&&qty>0&&(posMetaGet(k,r[2])||{}).side==='short')?-1:1;   // шорт (S6): P&L зеркальный
+  r[13]=Math.round(qty*price*fxNow);r[11]=buy>0?dir*(r[13]-Math.round(qty*buy*fxNow)):0;r[12]=buy>0?parseFloat((dir*(price-buy)/buy*100).toFixed(2)):0;}
 function recalcAllPF(idx){const k=idx||curIdx;DATA[k].rows.forEach((_,i)=>recalcPF(i,k))}
 // Базовая валюта вкладки: по умолчанию SEK (kr); у Sergei — USD (без перевода в кроны).
 // Денежные суммы позиций считаются в SEK (r[13]); для показа конвертируем в базовую.
@@ -1477,6 +1479,7 @@ function grpAssign(tab,gi){
 }
 
 function renderAll(){
+  if(typeof deskActive==='function'&&deskActive()){deskRender();return;}   // 🖥 Trade Desk (S6, desk.js): новая оболочка за флагом dash_desk
   if(curIdx!==HOME_KEY)homeFutStop();   // лайв-фьючерсы крутятся только на Home
   if(curIdx!==SECT_KEY)sectStop();      // лайв-поллинг секторов — только на вкладке Сектора
   if(curIdx===AIP_KEY&&isAdmin())aipStart();else aipStop();   // синхрон AI-портфеля с воркером (эндпоинт admin-only) — только на вкладке AI-Портфель
@@ -2289,6 +2292,7 @@ async function stockChartDraw(state,boxId){
 function stockChartsRetheme(){
   if(_chartState&&_chartState.ch)stockChartDraw(_chartState,'chartBox');
   if(typeof pf3State!=='undefined'&&pf3State.ch)stockChartDraw(pf3State,'pf3ChartBox');
+  if(typeof deskRetheme==='function')deskRetheme();
 }
 /* ===== Портфель 3.0 — single-stock (MU) page with the v3 redesign ===== */
 let pf3State={tab:null,row:null,tk:null,ccy:'USD',years:1,side:null,ch:null};

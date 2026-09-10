@@ -1172,3 +1172,152 @@ grp('pf3SignalInfo', function(){
   __eq('below all levels', pf3SignalInfo(d,row(50,100,90,80,85,130)).type, 'below');
   __eq('no data → none', pf3SignalInfo(d,row(0,100,90,80,85,130)).type, 'none');
 });
+
+// 🖥 Trade Desk (S6): чистое ядро desk.js — флаг, лимит книги, сделки лонг/шорт, действия по позиции,
+// корзины «Сегодня», фильтры скринера, журнал сделок «туда-обратно».
+grp('desk core', function(){
+  __eq('flag ?desk=1 → on, remembered', deskFlagFrom('?desk=1',null), {on:true,set:'1'});
+  __eq('flag ?desk=0 overrides stored', deskFlagFrom('?a=1&desk=0','1'), {on:false,set:'0'});
+  __eq('flag from storage', deskFlagFrom('','1'), {on:true,set:null});
+  __eq('flag ?desk=10 is not a flag', deskFlagFrom('?desk=10','0').on, false);
+  var rs={openRiskSEK:2000,capSEK:3660};
+  __ok('cap: +1000 fits', deskCapCheck(rs,1000).ok);
+  __ok('cap: +2000 blocked', !deskCapCheck(rs,2000).ok);
+  __eq('cap: left', deskCapCheck(rs,0).left, 1660);
+  __ok('cap: no added risk never blocks (zero equity)', deskCapCheck({openRiskSEK:0,capSEK:0},0).ok);
+});
+grp('pfApplyTradeSide', function(){
+  var b=pfApplyTradeSide({qty:10,avg:100},{side:'long',act:'buy',qty:10,price:120});
+  __eq('long add: avg', [b.qty,b.avg,b.opens], [20,110,true]);
+  var s=pfApplyTradeSide({qty:20,avg:110},{side:'long',act:'sell',qty:5,price:130});
+  __eq('long sell: pl vs avg, avg kept', [s.qty,s.avg,s.tq,s.plNative], [15,110,5,100]);
+  __eq('oversell capped', pfApplyTradeSide({qty:3,avg:10},{side:'long',act:'sell',qty:5,price:12}).tq, 3);
+  var o=pfApplyTradeSide({qty:0,avg:0},{side:'short',act:'sell',qty:10,price:50});
+  __eq('short open: avg proceeds', [o.qty,o.avg,o.opens,o.plNative], [10,50,true,null]);
+  __eq('short add: average proceeds', pfApplyTradeSide({qty:10,avg:50},{side:'short',act:'sell',qty:10,price:40}).avg, 45);
+  var c=pfApplyTradeSide({qty:20,avg:45},{side:'short',act:'buy',qty:5,price:30});
+  __eq('short cover: pl mirrored', [c.qty,c.plNative,c.opens], [15,75,false]);
+  __eq('cover without position', pfApplyTradeSide({qty:0,avg:0},{side:'short',act:'buy',qty:5,price:30}).err, 'nopos');
+  __eq('bad input', pfApplyTradeSide({qty:1,avg:1},{side:'long',act:'buy',qty:0,price:10}).err, 'input');
+});
+grp('deskPosAct & trail', function(){
+  __eq('trail long', deskTrailStop('long',90,120,5), 110);
+  __eq('trail not better → null', deskTrailStop('long',115,120,5), null);
+  __eq('trail short', deskTrailStop('short',60,40,3), 46);
+  __eq('trail without ATR', deskTrailStop('long',90,120,0), null);
+  var mk=function(px,stop,s,earn){var p={side:'long',entry:100,stop:stop,stop0:90,target:130,qty:10};p.calc=posCalc(p,px,1);return deskPosAct(p,s||null,earn==null?null:earn).act;};
+  __eq('no stop', deskPosAct({side:'long',entry:100,stop:null,calc:posCalc({side:'long',entry:100,qty:1},100,1)},null,null).act, 'nostop');
+  __eq('stop hit → exit', mk(89,90), 'exit');
+  __eq('target → take', mk(131,90), 'take');
+  __eq('overheated long → trim', mk(110,90,{verdict:'trim',atr:2}), 'trim');
+  __eq('earnings at < 1R → earn', mk(105,90,null,2), 'earn');
+  __eq('earnings at ≥ 1R → breakeven first', mk(112,90,null,2), 'be');
+  __eq('+2R → trail', mk(125,90,{verdict:'hold',atr:5}), 'trail');
+  __eq('stop already at b/e → hold', mk(111,100,{verdict:'hold',atr:0.1}), 'hold');
+  __eq('near stop → watch', mk(101.5,100), 'watch');
+  var sp={side:'short',entry:50,stop:55,stop0:55,target:40,qty:10};sp.calc=posCalc(sp,44,1);
+  __eq('short +1.2R → be', deskPosAct(sp,null,null).act, 'be');
+});
+grp('desk today & screener', function(){
+  var S=function(v,side,rr,mode,dEntry,ph,flags,setup,score,near){return {verdict:v,side:side,plan:{rr:rr,mode:mode,dEntry:dEntry||0,flags:[]},flags:flags||[],phase:{key:ph||'up',rank:6},setup:setup||null,score:score||50,price:100,day:0,near:near||null};};
+  var it=function(tk,s,held){return {key:tk+'|USD',sec:{tk:tk,name:tk+' Inc',tabs:[held?'P':'IDX'],held:held?[{tab:'P',qty:1}]:[]},s:s};};
+  var A=it('AAA',S('buy','long',2.5,'market',0,'up',[],'откат',60,{src:'S60',dist:1})),B=it('BBB',S('short','short',3,'market',0,'down',[],'отбой',55)),
+      Cw=it('CCC',S('wait','long',2.0,'limit',-3,'corr')),D=it('DDD',S('hold','long',2.2,'limit',-12,'up')),E=it('EEE',S('wait','long',1,'market',0,'knife',['knife'])),
+      F=it('FFF',S('trim','long',1,'market',0,'heat'),true),G=it('GGG',S('wait','long',1.0,'market',0,'up',[],'откат')),H=it('HHH',null);
+  var items=[A,B,Cw,D,E,F,G,H],pos=[{act:'hold'},{act:'exit'},{act:'trim'},{act:'earn'}];
+  var T=deskTodayBuckets(items,pos);
+  __eq('entries: short rr3 before buy rr2.5', T.entries.map(function(x){return x.sec.tk;}), ['BBB','AAA']);
+  __eq('waiting: limit ≤ 8 %, R/R ≥ 1.2', T.waiting.map(function(x){return x.sec.tk;}), ['CCC']);
+  __eq('filtered reasons', [T.why.knife,T.why.heat,T.why.rr,T.why.none], [1,1,1,1]);
+  __eq('pending = with snapshot', T.pending, 7);
+  __eq('attention / trims', [T.attn.length,T.trims.length], [3,2]);
+  var tks=function(R){return R.map(function(x){return x.sec.tk;});};
+  __eq('screen: buy', tks(deskScreenRows(items,{v:'buy'})), ['AAA']);
+  __eq('screen: wait = wait|hold', tks(deskScreenRows(items,{v:'wait'},{k:'tk',d:1})), ['CCC','DDD','EEE','GGG']);
+  __eq('screen: short side', tks(deskScreenRows(items,{side:'short'})), ['BBB']);
+  __eq('screen: near', tks(deskScreenRows(items,{near:true})), ['AAA']);
+  __eq('screen: R/R ≥ 2 (limit 2.0 incl.)', tks(deskScreenRows(items,{rr:true},{k:'tk',d:1})), ['AAA','BBB','CCC','DDD']);
+  __eq('screen: in book', tks(deskScreenRows(items,{held:true})), ['FFF']);
+  __eq('screen: query by name', tks(deskScreenRows(items,{q:'ggg inc'})), ['GGG']);
+  var all=tks(deskScreenRows(items,{},{k:'verdict',d:-1}));
+  __eq('screen: default order = group → R/R, pending last', [all[0],all[1],all[all.length-1]], ['BBB','AAA','HHH']);
+  __ok('screen: pending hidden by signal filters', tks(deskScreenRows(items,{phase:'up'})).indexOf('HHH')<0);
+  __eq('screen: sort by R/R asc keeps pending last', tks(deskScreenRows(items,{},{k:'rr',d:1})).slice(-1), ['HHH']);
+});
+grp('desk journal', function(){
+  var tr=[{tab:'P',tk:'acme',ccy:'USD',act:'buy',qty:10,price:100,date:'2026-01-01'},{tab:'P',tk:'ACME',ccy:'USD',act:'buy',qty:10,price:110,date:'2026-01-05'},
+    {tab:'P',tk:'ACME',ccy:'USD',act:'sell',qty:20,price:120,plNative:300,date:'2026-02-01'},
+    {tab:'P',tk:'NKE',ccy:'USD',act:'sell',qty:5,price:50,short:true,date:'2026-03-01'},{tab:'P',tk:'NKE',ccy:'USD',act:'buy',qty:5,price:40,short:true,date:'2026-03-10'},
+    {tab:'P',tk:'OPEN',ccy:'USD',act:'buy',qty:3,price:10,date:'2026-04-01'},{tab:'P',tk:'ZZZ',ccy:'USD',act:'sell',qty:3,price:10,plNative:5,date:'2026-04-02'},
+    {tab:'P',tk:'LOSS',ccy:'USD',act:'buy',qty:1,price:100,date:'2025-12-01'},{tab:'P',tk:'LOSS',ccy:'USD',act:'sell',qty:1,price:90,plNative:-10,date:'2025-12-05'}];
+  var T=deskRoundTrips(tr);
+  __eq('trips: open first, orphan sell skipped', T.map(function(t){return t.tk+(t.open?'*':'');}), ['OPEN*','NKE','ACME','LOSS']);
+  var a=T[2];
+  __eq('long trip: avg entry, exit, pl', [a.entryAvg,a.exitAvg,a.pl,a.maxQty,a.days], [105,120,300,20,31]);
+  __approx('long trip: % of entry', a.plPct, 14.2857, 0.001);
+  __eq('short trip: pl mirrored without plNative', [T[1].side,T[1].pl,T[1].plPct], ['short',50,20]);
+  var st=deskJournalStats(T,{USD:10});
+  __eq('stats: closed / open / wins', [st.n,st.open,st.win], [3,1,2]);
+  __approx('stats: win rate', st.winRate, 66.667, 0.01);
+  __approx('stats: profit factor (3500 / 100 kr)', st.pf, 35);
+  __approx('stats: total kr', st.sumSEK, 3400);
+  __eq('stats: empty', deskJournalStats([],{}).pf, null);
+  __eq('R bins clamp tails', deskRBins([-5,-0.5,0.2,1.5,7,null]).n, [1,0,1,1,1,0,0,0,1]);
+});
+grp('desk exec & equity', function(){
+  var _D=DATA,_pm=POS_META,_desk=DESK,_fx=FX,_tr=PF_TRADES,_pr=PLAN_RULES,_role=userRole;
+  userRole='admin';FX={SEK:1,USD:10};POS_META={};PF_TRADES=[];DESK=deskNorm({});
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Прибыль %','Стоимость'];
+  DATA={'BK':{headers:h,v3:'1',port:'1',cashFree:50000,rows:[]}};
+  PLAN_RULES=[planRuleNorm({id:'pl1',tab:'BK',tk:'ACME',act:'buy',side:'long',level:100,stop:95,target:110})];
+  var r=deskExecApply({tab:'BK',side:'long',mode:'open',qty:10,price:100,date:'2026-09-10',stop:95,target:110,planId:'pl1'},{tk:'acme',name:'Acme',ccy:'USD'},null);
+  __ok('open long ok', r.ok, r.err);
+  var row=DATA.BK.rows[0],fee=tradeFeeNative('USD',1000,true).total;
+  __eq('row created: qty/avg/ccy', [row[2],row[6],row[9],row[8]], ['ACME',10,100,'USD']);
+  __approx('cash −(amount+fee)·fx', DATA.BK.cashFree, 50000-(1000+fee)*10);
+  __eq('meta: side/stop0/target/opened/plan', (function(m){return [m.side,m.stop,m.stop0,m.target,m.opened,m.planId];})(posMetaGet('BK','ACME')), ['long',95,95,110,'2026-09-10','pl1']);
+  __eq('plan rule → open', PLAN_RULES[0].status, 'open');
+  __eq('journal: buy recorded', [PF_TRADES[0].act,PF_TRADES[0].qty,!!PF_TRADES[0].short], ['buy',10,false]);
+  __ok('cap blocks a huge risk', /Лимит|cap/.test(deskExecApply({tab:'BK',side:'long',mode:'open',qty:100,price:100,date:'2026-09-10',stop:50},{tk:'BIG',ccy:'USD'},null).err||''));
+  __ok('opposite side blocked', /другой стороны|opposite/.test(deskExecApply({tab:'BK',side:'short',mode:'open',qty:1,price:100,date:'2026-09-10',stop:105},{tk:'ACME',ccy:'USD'},null).err||''));
+  __ok('stop on wrong side blocked', /не с той|wrong side/.test(deskExecApply({tab:'BK',side:'long',mode:'open',qty:1,price:100,date:'2026-09-10',stop:105},{tk:'XYZ',ccy:'USD'},null).err||''));
+  r=deskExecApply({tab:'BK',side:'long',mode:'close',qty:10,price:110,date:'2026-09-20'},{tk:'ACME',ccy:'USD'},null);
+  var fs=tradeFeeNative('USD',1100,false).total;
+  __ok('close long ok', r.ok, r.err);
+  __approx('close: pl net of fee', PF_TRADES[1].plNative, Math.round((100-fs)*100)/100);
+  __ok('close to zero: meta removed, plan done', !posMetaGet('BK','ACME') && PLAN_RULES[0].done===true);
+  var c0=DATA.BK.cashFree;
+  r=deskExecApply({tab:'BK',side:'short',mode:'open',qty:10,price:50,date:'2026-09-21',stop:55,target:40},{tk:'SHRT',name:'Short Co',ccy:'USD'},null);
+  var f1=tradeFeeNative('USD',500,false).total;
+  __ok('open short ok', r.ok, r.err);
+  __approx('short open: only fee leaves cash', DATA.BK.cashFree, c0-f1*10);
+  __eq('short journal: sell short:true', [PF_TRADES[2].act,PF_TRADES[2].short], ['sell',true]);
+  var sr=DATA.BK.rows[1];sr[7]=45;
+  __approx('equity counts short by P&L, not value', pfEquitySEK('BK'), DATA.BK.cashFree+(50-45)*10*10);
+  recalcPF(1,'BK');
+  __ok('recalcPF: short P&L positive when price fell', sr[11]>0 && sr[12]>0);
+  var c1=DATA.BK.cashFree;
+  r=deskExecApply({tab:'BK',side:'short',mode:'close',qty:10,price:40,date:'2026-09-25'},{tk:'SHRT',ccy:'USD'},null);
+  var f2=tradeFeeNative('USD',400,true).total;
+  __approx('cover: pl = (avg − price)·q − fee', PF_TRADES[3].plNative, Math.round((100-f2)*100)/100);
+  __approx('cover: cash += pl·fx', DATA.BK.cashFree, c1+PF_TRADES[3].plNative*10, 0.02);
+  __eq('cover journal: buy short:true, meta gone', [PF_TRADES[3].act,PF_TRADES[3].short,!!posMetaGet('BK','SHRT')], ['buy',true,false]);
+  __eq('tax lots see the short pair', pfTaxLots(PF_TRADES.filter(function(t){return t.tk==='SHRT';}),'avg').length, 1);
+  __eq('journal trips from real trades', deskRoundTrips(PF_TRADES).map(function(t){return t.tk+':'+t.side;}), ['SHRT:short','ACME:long']);
+  // Новая позиция копирует колонки строки-источника по именам (таргет/уровни/SMA), цена — исполнения.
+  var h0=h.concat(['SMA 50','Поддержка','Аналит. таргет']),d0={headers:h0,rows:[[1,'Copy','CPY','🇺🇸','Tech','Рост',0,77,'USD',0,1.5,'','','',70,68,95]]};
+  deskExecApply({tab:'BK',side:'long',mode:'open',qty:1,price:80,date:'2026-09-26'},{tk:'CPY',name:'Copy',ccy:'USD'},d0.rows[0],d0);
+  var nr=DATA.BK.rows.find(function(x){return x[2]==='CPY';}),hh=DATA.BK.headers;
+  __eq('new row: exec price, day %, copied target/support', [nr[7],nr[10],nr[hh.indexOf('Аналит. таргет')],nr[hh.indexOf('Поддержка')]], [80,1.5,95,68]);
+  DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;PF_TRADES=_tr;PLAN_RULES=_pr;userRole=_role;
+});
+grp('desk universe src', function(){
+  var _D=DATA,_role=userRole;userRole='admin';
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  DATA={};DATA[PF3_KEY]={headers:h,v3:'1',rows:[[1,'Micron','MU','','Semis','',5,0,'USD',80,0]]};
+  DATA['Nasdaq 100']={headers:h,v3:'1',rows:[[1,'Apple','AAPL','','Tech','',0,200,'USD',0,0],[2,'Micron','MU','','Semis','',0,99,'USD',0,0]]};
+  var U=deskUniverse();
+  __eq('src: first row with a price', U.bySym['MU|USD'].src, {tab:'Nasdaq 100',i:1});
+  __eq('src: own row', U.bySym['AAPL|USD'].src, {tab:'Nasdaq 100',i:0});
+  DATA=_D;userRole=_role;
+});

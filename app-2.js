@@ -1023,6 +1023,7 @@ function pf3Delete(tk,ev){
 }
 
 function renderPF3(){
+  if(typeof deskActive==='function'&&deskActive()){deskRender();return;}   // 🖥 Trade Desk (S6): старые экраны не рисуются
   const el=document.getElementById('pf3Area'),d=pf3D();
   if(!el||!d)return;
   // Асинхронные хвосты (обновление цен/таргетов/риска) не должны подменять

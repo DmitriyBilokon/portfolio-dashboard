@@ -56,8 +56,8 @@ globalThis.__eq = function(n,g,e){ var p=JSON.stringify(g)===JSON.stringify(e); 
 globalThis.__ok = function(n,c,i){ __res.push({n:n,p:!!c,i:c?'':(i||'falsy')}); };
 globalThis.__approx = function(n,g,e,eps){ var p=(typeof g==='number')&&Math.abs(g-e)<=(eps||0.01); __res.push({n:n,p:p,i:p?'':('got '+g+' exp '+e)}); };
 
-// ── Грузим реальный signals.js + chart.js + app.js…app-5.js (в порядке как в index.html; без авто-boot) + фикстуры и кейсы в ОДНОМ eval ──
-var appSrc = ['signals.js','chart.js','app.js','app-2.js','app-3.js','app-4.js','app-5.js'].map(rd).join('\n').replace(/\nboot\(\);\s*$/, '\n');
+// ── Грузим реальный signals.js + chart.js + app.js…app-5.js + desk.js (в порядке как в index.html; без авто-boot/deskBoot) + фикстуры и кейсы в ОДНОМ eval ──
+var appSrc = ['signals.js','chart.js','app.js','app-2.js','app-3.js','app-4.js','app-5.js','desk.js'].map(function(f){ return rd(f).replace(/\n(boot|deskBoot)\(\);\s*$/, '\n'); }).join('\n');
 var caseSrc = rd('tests/fixtures-signals.js') + '\n;\n' + rd('tests/cases-app.js');
 try { eval(appSrc + '\n;\n' + caseSrc); }
 catch(e){ __res.push({n:'EVAL app.js', p:false, i:String(e && e.message || e)}); }

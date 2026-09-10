@@ -686,11 +686,14 @@ function deskNorm(x){
   return {riskPct:clamp(x.riskPct,0.1,5,1),riskCapPct:clamp(x.riskCapPct,1,30,6),shortOk:(x.shortOk&&typeof x.shortOk==='object')?x.shortOk:{}};
 }
 // Капитал портфеля в kr: акции по текущей цене + свободный кэш (d.cashFree — в базовой валюте вкладки).
-// Плечо не входит (решение §10#6: капитал = акции + кэш).
+// Плечо не входит (решение §10#6: капитал = акции + кэш). Шорт (S6) входит результатом (средняя − цена)·qty:
+// при открытии шорта из desk выручка в кэш не зачисляется (залог у брокера), результат — при откупе.
 function pfEquitySEK(tab){
   const d=DATA[tab];if(!d||!Array.isArray(d.rows))return 0;
   let s=0;
-  d.rows.forEach(r=>{const q=parseFloat(r[6])||0,px=parseFloat(r[7])||0;if(q>0&&px>0)s+=q*px*(FX[String(r[8]||'SEK')]||1);});
+  d.rows.forEach(r=>{const q=parseFloat(r[6])||0,px=parseFloat(r[7])||0,fx=FX[String(r[8]||'SEK')]||1;if(!(q>0&&px>0))return;
+    const m=posMetaGet(tab,r[2]),avg=parseFloat(r[9])||px;
+    s+=m&&m.side==='short'?(avg-px)*q*fx:q*px*fx;});
   return s+(parseFloat(d.cashFree)||0)*pf3BaseFx(d);
 }
 // Книга позиций портфеля: строки с qty>0 + мета + расчёт по текущей цене. Без меты — лонг
@@ -767,13 +770,14 @@ function deskUniverse(now){
   const bySym={},list=[];let tabsN=0;
   v3Tabs().filter(tabAllowed).forEach(tab=>{   // RBAC: только разрешённые вкладки
     const d=DATA[tab];if(!d||!Array.isArray(d.rows))return;tabsN++;
-    d.rows.forEach(r=>{
+    d.rows.forEach((r,i)=>{
       const x=secFromRow(d,r,tab,now);if(!x)return;
+      x.src={tab,i};   // строка-источник (первая с ценой): из неё desk считает снимок v2 и рисует график
       const e=bySym[x.key];
       if(!e){bySym[x.key]=x;list.push(x);return;}
       if(!e.tabs.includes(tab))e.tabs.push(tab);
       e.held=e.held.concat(x.held);
-      if(!e.price&&x.price)['price','day','sma50','sma100','sma200','sup','res','sector','type'].forEach(k=>{e[k]=x[k];});
+      if(!e.price&&x.price)['price','day','sma50','sma100','sma200','sup','res','sector','type','src'].forEach(k=>{e[k]=x[k];});
     });
   });
   return {list,bySym,tabsN};

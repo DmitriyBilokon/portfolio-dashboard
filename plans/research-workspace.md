@@ -1,3 +1,5 @@
+> **Архив (2026-09-10, после S6).** Основа редизайна — Trade Desk (`plans/redesign-trading.md` §10#1); из этого плана взяты гейты свежести данных и дедуп по биржевому символу (S3), экраны — `desk.js` (S6).
+
 # Research workspace and application audit
 
 User request: audit the whole application through 13 independent reviews, deduplicate and challenge findings, then improve design for stock discovery, long/short positions and trading, including entry/exit charts and explicit data freshness.

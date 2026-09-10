@@ -427,6 +427,11 @@ grp('bookcheck', function(){
   __eq('гистерезис по плану: 0.3·ATR', BOOK_CFG.hystAtr, 0.3);
 });
 
+grp('exSymbol worker', function(){
+  __eq('ASML: USD — Nasdaq, иначе Амстердам (как на клиенте)', [exSymbol('ASML','USD'), exSymbol('ASML','EUR'), exSymbol('ASML')], ['ASML','ASML.AS','ASML.AS']);
+  __eq('SEK с классом акции и простая подмена', [exSymbol('INVE B','SEK'), exSymbol('RHM','EUR')], ['INVE-B.ST','RHM.DE']);
+});
+
 // 12) 🏗 worker build — бампается при каждой правке воркера
 grp('worker build', function(){
   __ok('WORKER_BUILD bumped', WORKER_BUILD !== '2026-06-30subreq-split');

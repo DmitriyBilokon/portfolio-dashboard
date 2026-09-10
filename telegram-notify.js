@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10s8b-rule-ccy';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-10s8c-asml-ccy';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -54,11 +54,12 @@ const ANALYZE_PORTFOLIOS = [PF3_KEY, 'Portfolio (Anna)'];
 const PFANALYSIS_INTERVAL_MS = 60 * 60e3;   // на cron — не чаще раза в час
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
 const FX_DEFAULT = { SEK:1, EUR:10.59, USD:8.93, NOK:0.9375, DKK:1.52 };
-const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
+// Как SYMBOL_OVERRIDES в app.js: строка или {валюта: символ, _: по умолчанию} — ASML с USD = Nasdaq, иначе Амстердам.
+const OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':{ USD:'ASML', _:'ASML.AS' }, 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 
 function exSymbol(ticker, ccy){
-  const t = String(ticker || '').trim().toUpperCase().replace(/\s+/g, '-');
-  if(OVERRIDES[t]) return OVERRIDES[t];
+  const t = String(ticker || '').trim().toUpperCase().replace(/\s+/g, '-'), o = OVERRIDES[t];
+  if(o) return typeof o === 'string' ? o : (o[String(ccy || '').toUpperCase()] || o._);
   if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
   return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE' })[String(ccy||'').toUpperCase()] || t;
 }

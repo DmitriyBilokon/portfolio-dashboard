@@ -1760,10 +1760,13 @@ async function fetchQuotes(symbols){
 
 // Map a dashboard ticker + currency to a Yahoo exchange symbol.
 // Overrides handle tickers whose dashboard form differs from the exchange symbol.
-const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':'ASML.AS', 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
+// Значение — символ Yahoo или {валюта: символ, _: по умолчанию}, если бумага торгуется на двух биржах:
+// ASML в строке с USD — Nasdaq (цена в долларах), иначе Амстердам (EUR). Раньше USD-строка получала цену .AS
+// в евро и пересчитывалась в kr по курсу доллара.
+const SYMBOL_OVERRIDES = { 'NDB':'NDA-SE.ST', 'ASML':{USD:'ASML',_:'ASML.AS'}, 'FCT':'FCT.MI', 'FIGMA':'FIG', 'RHM':'RHM.DE', 'RENK':'R3NK.DE', 'DELLIA':'DELIA.OL' };
 function exSymbol(ticker, ccy){
-  const t = String(ticker||'').trim().toUpperCase().replace(/\s+/g,'-');
-  if(SYMBOL_OVERRIDES[t]) return SYMBOL_OVERRIDES[t];
+  const t = String(ticker||'').trim().toUpperCase().replace(/\s+/g,'-'), o = SYMBOL_OVERRIDES[t];
+  if(o) return typeof o==='string' ? o : (o[String(ccy||'').toUpperCase()] || o._);
   if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
   switch(String(ccy||'').toUpperCase()){
     case 'USD': return t;

@@ -505,6 +505,8 @@ grp('exSymbol', function(){
   __eq('USD → bare', exSymbol('AAPL','USD'), 'AAPL');
   __eq('NOK → .OL', exSymbol('EQNR','NOK'), 'EQNR.OL');
   __eq('dotted passthrough', exSymbol('AIR.PA','EUR'), 'AIR.PA');
+  __eq('ASML: USD — Nasdaq, EUR/без валюты — Амстердам', [exSymbol('ASML','USD'), exSymbol('asml','eur'), exSymbol('ASML','')], ['ASML','ASML.AS','ASML.AS']);
+  __eq('простая подмена не зависит от валюты', [exSymbol('RHM','EUR'), exSymbol('FIGMA','USD'), exSymbol('NDB','SEK')], ['RHM.DE','FIG','NDA-SE.ST']);
 });
 
 // 12) Торговая математика pfTrade: позиция / средняя / кэш / журнал (кэш МЕНЯЕТСЯ)

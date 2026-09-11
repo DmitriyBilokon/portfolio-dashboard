@@ -13,10 +13,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 765, worker 239,
+# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 815, worker 239,
 # worker-async 46) — защита от случайно урезанного/не подхваченного файла кейсов.
 # Поднимать вместе с кейсами.
-MIN_CASES_app=720
+MIN_CASES_app=790
 MIN_CASES_worker=195
 MIN_CASES_worker_async=30
 TIMEOUT=90   # сек на сьют; по истечении perl alarm убивает раннер → rc 142

@@ -1,0 +1,695 @@
+<title>Словарь Trade Desk</title>
+<meta name="description" content="Все термины и значения Trade Desk: что это, как считается, пример и как использовать.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --page:#f4f6f8;--panel:#ffffff;--raised:#eef1f5;--line:rgba(20,26,33,.10);--line2:rgba(20,26,33,.20);
+  --ink:#141a21;--ink2:#4d5966;--muted:#66717f;
+  --accent:#2f6fdc;--accent-soft:rgba(47,111,220,.10);
+  --long:#148f5c;--long-soft:rgba(20,143,92,.12);--short:#d5473f;--short-soft:rgba(213,71,63,.12);
+  --warn:#9a6417;--warn-soft:rgba(183,121,31,.14);--hold:#5f6d7c;--hold-soft:rgba(106,120,135,.14);
+  --font:'Golos Text',system-ui,-apple-system,'Segoe UI',sans-serif;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --shadow:0 1px 2px rgba(20,26,33,.06),0 10px 28px -18px rgba(20,26,33,.22);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --page:#0c1017;--panel:#121821;--raised:#182130;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.18);
+  --ink:#e8edf2;--ink2:#a9b4c0;--muted:#8a96a4;
+  --accent:#9cc2ff;--accent-soft:rgba(156,194,255,.12);
+  --long:#35c48d;--long-soft:rgba(53,196,141,.14);--short:#ff6b6b;--short-soft:rgba(255,107,107,.14);
+  --warn:#e6b450;--warn-soft:rgba(230,180,80,.14);--hold:#8fa3b8;--hold-soft:rgba(143,163,184,.14);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 34px -22px rgba(0,0,0,.7);color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --page:#0c1017;--panel:#121821;--raised:#182130;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.18);
+  --ink:#e8edf2;--ink2:#a9b4c0;--muted:#8a96a4;
+  --accent:#9cc2ff;--accent-soft:rgba(156,194,255,.12);
+  --long:#35c48d;--long-soft:rgba(53,196,141,.14);--short:#ff6b6b;--short-soft:rgba(255,107,107,.14);
+  --warn:#e6b450;--warn-soft:rgba(230,180,80,.14);--hold:#8fa3b8;--hold-soft:rgba(143,163,184,.14);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 14px 34px -22px rgba(0,0,0,.7);color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--ink);font:400 15px/1.6 var(--font);padding-inline:20px;padding-block:0 64px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;margin:0}
+code,.mono{font-family:var(--mono);font-size:.86em;font-variant-numeric:tabular-nums}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* Шапка */
+.hd{padding-block:40px 22px;display:grid;gap:14px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;letter-spacing:.04em}
+.mark{width:28px;height:28px;border-radius:7px;background:var(--ink);color:var(--page);display:grid;place-items:center;font:600 11px var(--mono);letter-spacing:0}
+.hd h1{font-size:clamp(30px,4.2vw,44px);font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.hd p{margin:0;max-width:66ch;color:var(--ink2);font-size:16px}
+.tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:6px}
+.search{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:0 12px;min-height:42px;flex:1 1 320px;max-width:520px}
+.search input{border:0;background:transparent;color:var(--ink);font:inherit;flex:1;min-width:0;padding:9px 0;outline:none}
+.search svg{flex:none;color:var(--muted)}
+.count{font:12px var(--mono);color:var(--muted)}
+
+/* Раскладка */
+.grid{display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;align-items:start}
+.toc{position:sticky;top:18px;display:grid;gap:2px;font-size:14px}
+.toc b{font:600 11px var(--font);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 6px 10px}
+.toc a{color:var(--ink2);text-decoration:none;padding:6px 10px;border-radius:6px;display:flex;justify-content:space-between;gap:8px}
+.toc a:hover{background:var(--raised);color:var(--ink)}
+.toc a span{font:11px var(--mono);color:var(--muted)}
+@media (max-width:960px){.grid{grid-template-columns:1fr;gap:12px}.toc{position:static;display:flex;flex-wrap:wrap;gap:6px}.toc b{display:none}.toc a{background:var(--panel);border:1px solid var(--line)}}
+
+/* Сквозной пример */
+.story{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:24px clamp(18px,3vw,30px);margin-bottom:44px}
+.eyebrow{font:600 11px var(--font);letter-spacing:.09em;text-transform:uppercase;color:var(--accent)}
+.story h2{font-size:22px;letter-spacing:-.01em;margin:6px 0 6px}
+.story>p{margin:0 0 16px;color:var(--ink2);max-width:70ch}
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:0;counter-reset:s}
+.steps li{display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;padding:12px 0;border-top:1px solid var(--line);counter-increment:s}
+.steps li::before{content:counter(s);font:600 12px var(--mono);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--raised);color:var(--ink2);margin-top:1px}
+.steps b{font-weight:600}
+.steps p{margin:2px 0 0;color:var(--ink2)}
+.calc{font:13px/1.5 var(--mono);color:var(--ink);background:var(--raised);border-radius:6px;padding:6px 10px;margin-top:6px;display:inline-block;max-width:100%;overflow-x:auto;white-space:nowrap}
+.note{font-size:13px;color:var(--muted);margin-top:14px}
+
+/* Разделы и термины */
+section.sec{margin-bottom:46px;scroll-margin-top:16px}
+.sec>header{display:grid;gap:4px;padding-bottom:12px;border-bottom:2px solid var(--ink);margin-bottom:4px}
+.sec h2{font-size:24px;letter-spacing:-.01em;display:flex;align-items:baseline;gap:10px}
+.sec h2 small{font:500 12px var(--mono);color:var(--muted)}
+.sec>header p{margin:0;color:var(--ink2);max-width:72ch}
+.t{display:grid;grid-template-columns:230px minmax(0,1fr);gap:8px 28px;padding:18px 0;border-bottom:1px solid var(--line);scroll-margin-top:16px}
+.tn{display:flex;flex-direction:column;align-items:flex-start;gap:7px}
+.tn h3{font-size:16.5px;font-weight:600;letter-spacing:-.005em;line-height:1.3}
+.tb{display:grid;gap:8px;max-width:74ch}
+.tb p{margin:0}
+.row{display:grid;grid-template-columns:118px minmax(0,1fr);gap:12px;font-size:14.5px}
+.row>span{font:600 11px/1.9 var(--font);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.row code{background:var(--raised);padding:2px 6px;border-radius:4px;overflow-wrap:anywhere}
+.row.ex>div{color:var(--ink2)}
+@media (max-width:720px){.t{grid-template-columns:1fr}.row{grid-template-columns:1fr;gap:0}}
+
+/* Метки в стиле приложения */
+.pill{display:inline-flex;align-items:center;gap:5px;font:600 12px/1 var(--font);padding:5px 9px;border-radius:999px;white-space:nowrap}
+.v-buy{background:var(--long-soft);color:var(--long)}
+.v-short{background:var(--short-soft);color:var(--short)}
+.v-trim{background:var(--warn-soft);color:var(--warn)}
+.v-hold{background:var(--hold-soft);color:var(--hold)}
+.v-wait{background:transparent;color:var(--hold);box-shadow:inset 0 0 0 1px var(--line2)}
+.tag{display:inline-flex;align-items:center;gap:5px;font:500 12px/1 var(--font);padding:5px 8px;border-radius:5px;background:var(--raised);color:var(--ink2);white-space:nowrap}
+.flag{display:inline-flex;font:500 12px/1 var(--font);padding:4px 7px;border-radius:5px;background:var(--warn-soft);color:var(--warn);white-space:nowrap}
+.sym{font:600 12px var(--mono);color:var(--ink2)}
+.up{color:var(--long)}.dn{color:var(--short)}
+.empty{padding:28px 0;color:var(--muted)}
+.foot{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);max-width:80ch}
+@media (prefers-reduced-motion:no-preference){.toc a,.search{transition:background .15s,border-color .15s}}
+</style>
+
+<div class="wrap">
+<header class="hd">
+  <div class="brand"><span class="mark">TD</span>Trade Desk · Nordic · SEK</div>
+  <h1>Словарь Trade Desk</h1>
+  <p>Каждый термин и значение, которые показывает Trade Desk: что это, как считается, пример на числах и как этим пользоваться. Пороги взяты из кода приложения (правила сигналов <span class="mono">SIG 2026-09-10-c1</span>) — если их поменяют, обновите и этот словарь.</p>
+  <div class="tools">
+    <label class="search" for="q"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="q" type="search" placeholder="Найти термин: ATR, R/R, трейлинг, зона…" autocomplete="off" aria-label="Поиск по словарю"></label>
+    <span class="count" id="cnt" aria-live="polite"></span>
+  </div>
+</header>
+
+<div class="grid">
+<nav class="toc" aria-label="Разделы">
+  <b>Разделы</b>
+  <a href="#story">Одна сделка целиком</a>
+  <a href="#base">Основа <span>R, ATR, стоп</span></a>
+  <a href="#verdict">Вердикты</a>
+  <a href="#phase">Фазы рынка</a>
+  <a href="#flag">Флаги</a>
+  <a href="#today">Экран «Сегодня»</a>
+  <a href="#ideas">Экран «Идеи»</a>
+  <a href="#stock">Экран «Акция»</a>
+  <a href="#book">Экран «Позиции»</a>
+  <a href="#journal">Экран «Журнал»</a>
+  <a href="#menu">Настройки ⋯</a>
+</nav>
+
+<main id="main">
+
+<section class="story" id="story">
+  <div class="eyebrow">Сквозной пример</div>
+  <h2>Одна сделка от сигнала до выхода</h2>
+  <p>Большинство терминов связаны в одну цепочку. Условная акция по <b>100 kr</b>, капитал портфеля <b>200 000 kr</b>, настройки по умолчанию. Комиссию для простоты не учитываем. Все числа — пример, не рекомендация.</p>
+  <ol class="steps">
+    <li><div><b>Сколько можно потерять.</b><p>Риск на сделку 1 % капитала, лимит открытого риска всей книги 6 %.</p><span class="calc">200 000 × 1 % = 2 000 kr на сделку · 200 000 × 6 % = 12 000 kr на все позиции</span></div></li>
+    <li><div><b>Сигнал.</b><p>Цена выше SMA50, SMA100 и SMA200 — фаза <span class="tag">↑ Аптренд</span>. ATR 14 = 4 kr (4 % цены). Ближайшая поддержка S60 = 98,5 — на 1,5 % ниже цены, то есть «у уровня» (≤ 2 %). Это сетап «откат к поддержке».</p></div></li>
+    <li><div><b>Стоп и цель.</b><p>Стоп ставится за поддержкой с буфером 0,5·ATR, но не ближе 1·ATR от входа. Цель — ближайшее сопротивление R60 = 109: оно дальше 1·ATR и ближе коридора 2,5·ATR.</p><span class="calc">98,5 − 2 = 96,5 → ближе 4 kr → стоп 96 · R/R = (109 − 100) ÷ (100 − 96) = 2,25</span><p>R/R ≥ 2,0 по рынку → вердикт <span class="pill v-buy">▲ Купить</span>.</p></div></li>
+    <li><div><b>Размер.</b><p>Количество считается от риска, а не от суммы.</p><span class="calc">2 000 ÷ (100 − 96) = 500 шт = 50 000 kr</span><p>«Что если?» предупредит: доля бумаги станет 25 % (порог 10 %). Уменьшаете «Риск, kr» до 760 → 190 шт на 19 000 kr, доля 9,5 %. <b>1R теперь = 760 kr.</b></p></div></li>
+    <li><div><b>Цена 104 — это +1R.</b><p>Действие по позиции <span class="pill v-hold">● стоп в б/у</span>: переносите стоп на вход 100. Сделка больше не может закончиться убытком.</p></div></li>
+    <li><div><b>Цена 109 — цель.</b><p><span class="pill v-trim">◆ фиксировать</span>: продаёте половину (95 шт) — это +2,25R на эту половину.</p></div></li>
+    <li><div><b>Цена 112 — это +3R.</b><p><span class="pill v-hold">● трейлинг</span>: стоп подтягивается на 2·ATR ниже цены.</p><span class="calc">112 − 2 × 4 = 104 → новый стоп 104</span></div></li>
+    <li><div><b>Откат, стоп 104 сработал.</b><p>Итог сделки в R и в kr:</p><span class="calc">½ × 2,25R + ½ × 1R = 1,625R · 1,625 × 760 = +1 235 kr</span></div></li>
+  </ol>
+  <p class="note">Ровно такую лестницу выхода (½ на цели, +1R → безубыток, +2R → трейлинг 2·ATR) проигрывает «История сигналов» и «Бэктест правил».</p>
+</section>
+
+<!-- ═══════════ ОСНОВА ═══════════ -->
+<section class="sec" id="base">
+<header><h2>Основа <small>встречается на всех экранах</small></h2><p>Единицы, в которых Trade Desk думает о сделке: риск, волатильность, уровни.</p></header>
+
+<article class="t"><div class="tn"><h3>R — единица риска</h3><span class="sym">+1,25R</span></div><div class="tb">
+<p>Сколько вы рискуете в сделке, принятое за единицу. 1R = расстояние от входа до стопа входа. Результат в R показывает, во сколько раз прибыль больше заложенного риска, независимо от суммы.</p>
+<div class="row"><span>Формула</span><div><code>1R = вход − стоп входа</code> (у шорта — наоборот); результат в R = <code>(цена − вход) ÷ 1R</code></div></div>
+<div class="row ex"><span>Пример</span><div>Вход 100, стоп 96 → 1R = 4 kr. Цена 106 → +1,5R. Цена 94 → −1,5R (стоп не сработал на гэпе).</div></div>
+<div class="row"><span>Как использовать</span><div>Сравнивайте сделки в R, а не в процентах: +2R на дешёвой и на дорогой бумаге — одинаково хороший результат. Потеря больше −1R — сигнал, что стоп не соблюдается.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>R/R — прибыль к риску</h3><span class="sym">2,25 · ≈2,0</span></div><div class="tb">
+<p>Сколько можно заработать до цели на каждую единицу риска до стопа. Главный фильтр входа.</p>
+<div class="row"><span>Формула</span><div><code>R/R = (цель − вход) ÷ (вход − стоп)</code></div></div>
+<div class="row ex"><span>Пример</span><div>Вход 100, стоп 96, цель 109 → 9 ÷ 4 = 2,25. Знак <b>≈</b> перед числом значит, что цель не структурная, а условная: вход + 2·ATR.</div></div>
+<div class="row"><span>Как использовать</span><div>≥ 2,0 — можно входить по рынку. От 1,2 до 2,0 — только лимитом (см. «Лимит под R/R 2»). Ниже 1,2 — цель слишком близко, пропускайте. При R/R 2 и доле прибыльных сделок 40 % система в плюсе.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>ATR 14</h3><span class="sym">4,00 · 4,0 %</span></div><div class="tb">
+<p>Средний дневной размах цены за 14 дней (по Уайлдеру, с учётом гэпов). Мера «шума»: насколько бумага обычно ходит за день.</p>
+<div class="row"><span>Формула</span><div>True Range = max(High − Low, |High − вчерашний Close|, |Low − вчерашний Close|), сглаженный за 14 дней</div></div>
+<div class="row ex"><span>Пример</span><div>ATR 4 kr при цене 100 = 4 %. Стоп в 1 kr от входа такая бумага выбьет случайным движением почти каждый день.</div></div>
+<div class="row"><span>Как использовать</span><div>Все расстояния в Trade Desk меряются в ATR: стоп не ближе 1·ATR, цель не дальше 2,5·ATR, трейлинг 2·ATR. ATR в % цены определяет уровень риска 1–5.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>SMA50 · SMA100 · SMA200</h3><span class="sym">↑ SMA50 &gt; SMA200</span></div><div class="tb">
+<p>Средняя цена закрытия за 50, 100 и 200 торговых дней (≈ 2,5 месяца, полгода, год). Показывают направление тренда и служат уровнями поддержки/сопротивления.</p>
+<div class="row"><span>Формула</span><div><code>SMA50 = сумма 50 последних закрытий ÷ 50</code></div></div>
+<div class="row ex"><span>Пример</span><div>Цена 100, SMA50 95, SMA200 88 → цена выше обеих, SMA50 выше SMA200 — тренд вверх (стрелка ↑ рядом с фазой).</div></div>
+<div class="row"><span>Как использовать</span><div><b>Тренд ↑</b> (SMA50 &gt; SMA200) — ищите покупки на откатах. <b>Тренд ↓</b> — покупка считается ранней: вход идёт с ½ риска, а шорт становится допустимым.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Уровни: S60, R60, S20, R20, L52w, H52w</h3><span class="tag">S60 · SMA200</span></div><div class="tb">
+<p>Структурные уровни, от которых считаются стоп, цель и лимит. S — поддержка (минимум), R — сопротивление (максимум).</p>
+<div class="row"><span>Что есть что</span><div><b>S60/R60</b> — минимум и максимум за 60 дней (≈ 3 месяца). <b>S20/R20</b> — за 20 дней (свинг). <b>L52w/H52w</b> — за год. Также SMA50/100/200. Уровни ближе 0,3 % друг к другу склеиваются: «S60 · SMA200» значит, что там совпали оба.</div></div>
+<div class="row ex"><span>Пример</span><div>«Ближайший уровень S60 · SMA200 −1,5 %» — под ценой в 1,5 % совпали 3-месячный минимум и годовая средняя. Сильная поддержка.</div></div>
+<div class="row"><span>Как использовать</span><div>Склеенный уровень весомее одиночного. Пивоты (P, R1, S1) в расчёте участвуют, но стоп и цель за них не ставятся.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>У уровня</h3><span class="tag">у уровня ≤ 2 %</span></div><div class="tb">
+<p>Цена ближе 2 % к ближайшему структурному уровню. Только у уровня бывает сетап на вход.</p>
+<div class="row ex"><span>Пример</span><div>Цена 100, поддержка 98,5 → 1,5 % → у уровня. Поддержка 96 → 4 % → не у уровня, сетапа нет, будет условный лимит у 96.</div></div>
+<div class="row"><span>Как использовать</span><div>Фильтр «у уровня ≤ 2 %» в «Идеях» оставляет бумаги, где решение нужно принимать сейчас.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Откат или пробой</h3></div><div class="tb">
+<p>Если уровень под ценой — это вчерашний максимум (R60, R20, H52w), цена не откатилась к поддержке, а только что пробила сопротивление. Trade Desk такой вход не даёт.</p>
+<div class="row ex"><span>Пример</span><div>«аптренд, цена у свежего максимума R20 — пробой, не откат; ждать ретеста».</div></div>
+<div class="row"><span>Как использовать</span><div>Ждите, пока цена вернётся проверить пробитый уровень сверху (ретест), — тогда он станет поддержкой и появится сетап.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Стоп</h3><span class="sym">S60 − 0,5·ATR</span></div><div class="tb">
+<p>Цена, при которой идея признаётся ошибочной и позиция закрывается. Задаёт 1R и размер позиции.</p>
+<div class="row"><span>Как считается</span><div>За ближайшим структурным уровнем с буфером 0,5·ATR (уровень ищется в коридоре 2,5·ATR от входа). Нет уровня — вход ∓ 1,5·ATR. Ближе 1·ATR не ставится. Подпись показывает источник: «S60 − 0,5·ATR → мин. 1·ATR».</div></div>
+<div class="row ex"><span>Пример</span><div>Поддержка 98,5, ATR 4 → 96,5; до входа 3,5 &lt; 4 → стоп сдвигается на 96.</div></div>
+<div class="row"><span>Как использовать</span><div>Стоп не двигают дальше от цены — только ближе (безубыток, трейлинг). Позиция без стопа не попадает в открытый риск, и Trade Desk подсветит её «задать стоп».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Стоп входа (stop0)</h3></div><div class="tb">
+<p>Стоп на момент открытия позиции. Хранится отдельно и не меняется, когда вы двигаете текущий стоп.</p>
+<div class="row ex"><span>Пример</span><div>Вход 100, стоп0 96. Стоп перенесли в б/у на 100 — «R сейчас» всё равно считается от 96, иначе 1R стал бы нулём.</div></div>
+<div class="row"><span>Как использовать</span><div>В форме «Стоп/цель…» меняется только текущий стоп; в позиции видно «Стоп 100 · был 96».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Цель</h3><span class="sym">R60 · ≈ +2·ATR</span></div><div class="tb">
+<p>Цена фиксации прибыли (половины позиции).</p>
+<div class="row"><span>Как считается</span><div>Ближайшее структурное сопротивление (для шорта — поддержка) не ближе 1·ATR и не дальше 2,5·ATR от входа. Нет такого — вход + 2·ATR, флаг «цель ≈ 2·ATR».</div></div>
+<div class="row ex"><span>Пример</span><div>ATR 4: подходят уровни от 104 до 110. R60 = 109 — цель. Если бы ближайший был 115, цель стала бы ≈ 108.</div></div>
+<div class="row"><span>Как использовать</span><div>Условная цель (≈) слабее структурной — при ней R/R стоит перепроверить по графику.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>По рынку и лимит</h3><span class="tag">лимит у S60 · −3,2 %</span></div><div class="tb">
+<p><b>По рынку</b> — вход по текущей цене, когда сетап готов. <b>Лимит</b> — заявка на цену, которой пока нет: у ближайшего уровня (−0,25·ATR запаса) или на цене, дающей нужный R/R.</p>
+<div class="row ex"><span>Пример</span><div>«лимит у S60 · −3,2 %» — план купить на 3,2 % ниже текущей цены, у 3-месячного минимума.</div></div>
+<div class="row"><span>Как использовать</span><div>Лимит не требует сидеть у экрана: нажмите «Взвести», и при касании придёт уведомление (в браузере и в Telegram).</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Лимит под R/R 2</h3></div><div class="tb">
+<p>Если по рынку R/R от 1,2 до 2,0, Trade Desk ищет цену входа, при которой R/R станет ровно 2 — со стопом и целью того же плана.</p>
+<div class="row"><span>Формула</span><div><code>лимит = (цель + 2 × стоп) ÷ 3</code></div></div>
+<div class="row ex"><span>Пример</span><div>Цена 100, стоп 94,5, цель 107 → по рынку R/R 1,27. Лимит = (107 + 189) ÷ 3 = 98,67 → R/R 2,0. Вердикт «Ждать», в «Сегодня» бумага попадёт в «Ждать уровня».</div></div>
+<div class="row"><span>Как использовать</span><div>Если лимит не помещается между стопом и ценой, Trade Desk пишет «лимит под R/R 2 не помещается» — сделку пропускают.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Размер позиции</h3><span class="sym">→ 500 шт</span></div><div class="tb">
+<p>Сколько акций брать, чтобы при стопе потерять ровно заданный риск.</p>
+<div class="row"><span>Формула</span><div><code>шт = ⌊риск, kr ÷ ((вход − стоп) × курс валюты)⌋</code></div></div>
+<div class="row ex"><span>Пример</span><div>Риск 2 000 kr, вход 100 $, стоп 96 $, курс USD 9,4 → 2 000 ÷ 37,6 = 53 шт.</div></div>
+<div class="row"><span>Как использовать</span><div>Широкий стоп → меньше акций, узкий → больше. Поле «Риск, kr» в плане меняет размер только для этой бумаги в текущей сессии.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Капитал портфеля</h3></div><div class="tb">
+<p>База для риска и долей: стоимость акций + кэш; шорт входит своим результатом, а не стоимостью.</p>
+<div class="row ex"><span>Пример</span><div>Акции 150 000 + кэш 50 000 = 200 000 kr → риск на сделку 2 000 kr, лимит книги 12 000 kr.</div></div>
+<div class="row"><span>Как использовать</span><div>Если у позиций нет цены (не обновились котировки), капитал занижен — «Что если?» об этом предупредит.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>live · не live</h3><span class="tag">live</span></div><div class="tb">
+<p><b>live</b> — цена получена живой котировкой в этой сессии. <b>не live</b> — цена из сохранённого снимка или последней дневной свечи.</p>
+<div class="row"><span>Как использовать</span><div>Перед сделкой нажмите ⟳ в шапке. «Что если?» предупреждает, если цена не обновлялась дольше 30 минут.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ВЕРДИКТЫ ═══════════ -->
+<section class="sec" id="verdict">
+<header><h2>Вердикты <small>сигналы v2</small></h2><p>Итог анализа бумаги одним словом. Сортировка везде одна: сначала «Купить»/«Шорт», затем «Сократить», затем «Держать»/«Ждать»; внутри группы — по R/R, затем по баллу.</p></header>
+
+<article class="t"><div class="tn"><h3>Купить</h3><span class="pill v-buy">▲ Купить</span></div><div class="tb">
+<p>Готовый вход в лонг по рынку сегодня.</p>
+<div class="row"><span>Условия</span><div>Фаза аптренд, разворот, коррекция или недооценка · цена у поддержки ≤ 2 % и это не пробой · R/R по рынку ≥ 2,0 · до отчёта больше 3 дней.</div></div>
+<div class="row ex"><span>Пример</span><div>«откат к поддержке S60 (1,5 %) · R/R 2,3».</div></div>
+<div class="row"><span>Как использовать</span><div>Проверьте «Что если?» (доли, кэш, лимит книги) → «Исполнить» или «В план». При тренде ↓ Trade Desk добавит «½ риска».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Шорт</h3><span class="pill v-short">▼ Шорт</span></div><div class="tb">
+<p>Готовый вход в короткую позицию: заработать на падении.</p>
+<div class="row"><span>Условия</span><div>Фаза даунтренд и SMA50 &lt; SMA200 · цена ≤ 2 % под сопротивлением и это не пробой вниз · R/R ≥ 2,0 · нет риска сквиза · до отчёта больше 3 дней.</div></div>
+<div class="row"><span>Как использовать</span><div>Сначала убедитесь, что брокер даёт бумагу в займ и сколько это стоит, — затем поставьте галочку «Шорт доступен у брокера». Без неё исполнение идёт с предупреждением.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Сократить / Перегрев</h3><span class="pill v-trim">◆ Сократить</span><span class="pill v-trim">◆ Перегрев</span></div><div class="tb">
+<p>Цена ушла слишком далеко. У бумаги в портфеле пишется «Сократить», у бумаги, которой у вас нет, — «Перегрев».</p>
+<div class="row"><span>Условия</span><div>Цена выше таргета аналитиков на 5 % и больше (только когда цена выше SMA50) или цена выше всех SMA и больше чем на 30 % над SMA200.</div></div>
+<div class="row ex"><span>Пример</span><div>«перегрев: +38 % над SMA200 — фиксировать часть, новых покупок нет».</div></div>
+<div class="row"><span>Как использовать</span><div>Держите позицию — продайте часть (например, треть), остаток ведите трейлингом. Не держите — не покупайте.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Держать</h3><span class="pill v-hold">● Держать</span></div><div class="tb">
+<p>Тренд здоровый, но новой точки входа нет.</p>
+<div class="row"><span>Условия</span><div>Аптренд, импульс или недооценка над SMA200 без сетапа; или цена упёрлась в сопротивление — «не догонять».</div></div>
+<div class="row"><span>Как использовать</span><div>Позицию держите по плану. Хотите купить — берите условный лимит на откат из плана сделки.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Ждать</h3><span class="pill v-wait">○ Ждать</span></div><div class="tb">
+<p>Сейчас действовать не нужно: нет сетапа, R/R недостаточен, нож, скоро отчёт или риск сквиза.</p>
+<div class="row"><span>Как использовать</span><div>Первая строка причины объясняет, чего ждать: «ждать касания поддержки», «лимит 98,67 даёт 2,0», «отчёт через 2 дн — новых входов нет».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Лонг и шорт (сторона)</h3><span class="pill v-buy">▲ Лонг</span><span class="pill v-short">▼ Шорт</span></div><div class="tb">
+<p><b>Лонг</b> — покупка, заработок на росте. <b>Шорт</b> — продажа взятых в долг акций, заработок на падении. Сторона сигнала выбирается автоматически (даунтренд → шорт), на «Акции» её можно переключить вручную.</p>
+<div class="row"><span>Как использовать</span><div>Переключатель ▲/▼ пересчитывает план: у шорта стоп над ценой, цель под ценой. При открытии шорта кэш уменьшается только на комиссию.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ФАЗЫ ═══════════ -->
+<section class="sec" id="phase">
+<header><h2>Фазы рынка <small>9 фаз</small></h2><p>Где бумага в своём цикле. Проверяются сверху вниз — первая подошедшая побеждает. Стрелка ↑/↓ после фазы — тренд (SMA50 выше/ниже SMA200).</p></header>
+
+<article class="t"><div class="tn"><h3>Падающий нож</h3><span class="tag">⤓ Падающий нож</span></div><div class="tb">
+<p>Цена ниже всех SMA и за день упала на 3 % и больше или пробила вчерашний 3-месячный минимум.</p>
+<div class="row"><span>Как использовать</span><div>Не ловить. Покупки не будет даже у поддержки — ждите, пока цена стабилизируется.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Перегрев</h3><span class="tag">△ Перегрев</span></div><div class="tb">
+<p>Цена выше таргета аналитиков на ≥ 5 % (над SMA50) или на ≥ 30 % выше SMA200.</p>
+<div class="row"><span>Как использовать</span><div>Фиксируйте часть прибыли, новых покупок нет.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Импульс</h3><span class="tag">⇈ Импульс</span></div><div class="tb">
+<p>Сильный день: +2,5 % при цене выше SMA50 или +4 % в любом случае.</p>
+<div class="row"><span>Как использовать</span><div>Не догоняйте свечу — дождитесь отката к уровню. Позицию держите.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Недооценка</h3><span class="tag">◇ Недооценка</span></div><div class="tb">
+<p>До таргета аналитиков 25 % и больше, и цена не ниже всех SMA.</p>
+<div class="row"><span>Как использовать</span><div>Кандидат на покупку у поддержки. Над SMA200 без сетапа — «Держать».</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Аптренд</h3><span class="tag">↑ Аптренд</span></div><div class="tb">
+<p>Цена выше SMA50, SMA100 и SMA200.</p>
+<div class="row"><span>Как использовать</span><div>Лучшая фаза для покупок на откате к поддержке.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Разворот</h3><span class="tag">↗ Разворот</span></div><div class="tb">
+<p>Цена выше SMA50, но ниже SMA200 — выходит из падения.</p>
+<div class="row"><span>Как использовать</span><div>Ранняя покупка у поддержки; при тренде ↓ — с ½ риска.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Коррекция</h3><span class="tag">↓ Коррекция</span></div><div class="tb">
+<p>Цена ниже SMA50, но выше SMA200 — откат внутри роста.</p>
+<div class="row"><span>Как использовать</span><div>Ждите касания поддержки (часто SMA200 или S60) — там появляется сетап.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Боковик</h3><span class="tag">→ Боковик</span></div><div class="tb">
+<p>Средние перепутаны, явного направления нет.</p>
+<div class="row"><span>Как использовать</span><div>Обычно без сетапа. Можно торговать от границ диапазона лимитами.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Даунтренд</h3><span class="tag">↘ Даунтренд</span></div><div class="tb">
+<p>Цена ниже всех SMA.</p>
+<div class="row"><span>Как использовать</span><div>При SMA50 &lt; SMA200 — поле для шорта на подходе к сопротивлению. При SMA50 &gt; SMA200 это глубокий откат: ждите возврата над SMA200.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ФЛАГИ ═══════════ -->
+<section class="sec" id="flag">
+<header><h2>Флаги <small>предупреждения рядом с вердиктом</small></h2><p>Оранжевые метки: что не так с идеей. Часть из них понижает вердикт, часть только предупреждает.</p></header>
+
+<article class="t"><div class="tn"><h3>Широкий стоп</h3><span class="flag">широкий стоп</span></div><div class="tb">
+<p>Стоп дальше 2·ATR от входа.</p>
+<div class="row"><span>Как использовать</span><div>Позиция выйдет маленькой, а уровень риска бумаги вырастет на 1. Рассмотрите ½ риска или лимит ближе к уровню.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>½ риска</h3><span class="flag">½ риска</span></div><div class="tb">
+<p>Покупка при неподтверждённом тренде (SMA50 &lt; SMA200): размер делится пополам.</p>
+<div class="row ex"><span>Пример</span><div>Риск 2 000 kr → 500 шт по плану → берётся 250 шт.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Риск сквиза</h3><span class="flag">риск сквиза</span></div><div class="tb">
+<p>Только для шорта: бумага выросла за день на 4 % и больше или объём вдвое выше среднего на зелёной свече.</p>
+<div class="row"><span>Как использовать</span><div>Шорт сегодня не открывайте — вердикт понижается до «Ждать».</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Отчёт скоро</h3><span class="flag">отчёт скоро</span></div><div class="tb">
+<p>До квартального отчёта 3 дня или меньше.</p>
+<div class="row"><span>Как использовать</span><div>Новых входов нет. Открытая позиция меньше +1R получит действие «перед отчётом — сократить».</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Нож</h3><span class="flag">нож</span></div><div class="tb">
+<p>Фаза «Падающий нож». Уровень риска +1.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Таргет устарел</h3><span class="flag">таргет устарел</span></div><div class="tb">
+<p>Свежий «Таргет 3м» ниже среднего таргета аналитиков больше чем на 50 % — средний держится на старых оценках.</p>
+<div class="row"><span>Как использовать</span><div>Не доверяйте апсайду по среднему таргету. Уровень риска +1.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Шорт не подтверждён</h3><span class="flag">шорт не подтверждён</span></div><div class="tb">
+<p>Вы не отметили, что брокер даёт бумагу в займ.</p>
+<div class="row"><span>Как использовать</span><div>Проверьте у брокера и поставьте галочку «Шорт доступен у брокера» в плане сделки.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Цель ≈ 2·ATR</h3><span class="sym">R/R ≈2,0</span></div><div class="tb">
+<p>Структурной цели в коридоре нет, цель условная. Показывается знаком ≈ перед R/R.</p>
+</div></article>
+</section>
+
+<!-- ═══════════ СЕГОДНЯ ═══════════ -->
+<section class="sec" id="today">
+<header><h2>Экран «Сегодня»</h2><p>Что требует решения прямо сейчас. Начинайте день отсюда.</p></header>
+
+<article class="t"><div class="tn"><h3>Фокус дня</h3></div><div class="tb">
+<p>Сколько действий ждёт: входы + позиции, требующие действия, + сработавшие правила плана.</p>
+<div class="row"><span>Как использовать</span><div>«Всё идёт по плану» — можно не торговать сегодня.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Открытый риск книги</h3><span class="sym">6 400 kr · 53 % лимита</span></div><div class="tb">
+<p>Сколько вы потеряете, если все позиции закроются по текущим стопам.</p>
+<div class="row"><span>Формула</span><div><code>Σ (цена − текущий стоп) × кол-во × курс</code>; лимит = капитал × 6 %</div></div>
+<div class="row ex"><span>Пример</span><div>Капитал 200 000 → лимит 12 000. Открыто 6 400 → 53 %. Новая сделка с риском 2 000 → 8 400, проходит.</div></div>
+<div class="row"><span>Как использовать</span><div>Выше лимита новые входы блокируются. Подтягивая стопы в б/у, вы освобождаете место. «N без стопа — риск не учтён» — реальный риск больше, чем показано.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Сетапов на вход</h3></div><div class="tb">
+<p>Бумаги с вердиктом «Купить» или «Шорт» (R/R ≥ 2 по рынку), с разбивкой на лонг и шорт.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Вход сегодня</h3></div><div class="tb">
+<p>Карточки этих сетапов: глагол, цена, причина, вход · стоп · цель · R/R · размер и кнопки «В план» / «Исполнить».</p>
+<div class="row"><span>Как использовать</span><div>Нажмите карточку — откроется «Акция» с графиком и «Что если?».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Ждать уровня</h3><span class="sym">Δ −3,2 %</span></div><div class="tb">
+<p>До 12 бумаг, у которых план — лимит не дальше 8 % от цены и R/R ≥ 1,2. <b>Δ</b> — сколько цене пройти до лимита.</p>
+<div class="row"><span>Как использовать</span><div>Нажмите «Взвести» — лимит станет правилом плана, и при касании придёт уведомление. Не нужно ставить заявку у брокера заранее.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Взвести</h3></div><div class="tb">
+<p>Создать правило плана «купить (или шортить) на лимите» со стопом и целью.</p>
+<div class="row"><span>Как использовать</span><div>Правило видно в панели «План» и в «Журнал → Планы». Когда цена дойдёт — 🔔 «пора».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Остальные сигналы</h3><span class="sym">3 нож · 5 без сетапа</span></div><div class="tb">
+<p>Почему остальные бумаги сейчас не в работе: нож, перегрев, R/R &lt; 1,2, сквиз, отчёт, без сетапа. «Ждут свечей» — сигнал ещё считается.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Сократить в книге</h3></div><div class="tb">
+<p>Ваши позиции с действием «фиксировать», «сократить» или «перед отчётом».</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Позиции — внимание</h3></div><div class="tb">
+<p>Все позиции, у которых действие не «по плану»: стоп, цель, б/у, трейлинг, отчёт, у стопа, без стопа.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>План</h3><span class="flag">🔔 пора</span><span class="flag">✖ сетап сломан</span></div><div class="tb">
+<p>Взведённые правила плана и их состояние.</p>
+<div class="row"><span>Статусы</span><div><b>до уровня 3,1 %</b> — ждём цену. <b>🔔 пора</b> — цена дошла, действуйте. <b>✖ сетап сломан</b> — цена ушла за стоп раньше входа, правило надо удалить.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ИДЕИ ═══════════ -->
+<section class="sec" id="ideas">
+<header><h2>Экран «Идеи»</h2><p>Скринер всей вселенной (все бумаги ваших вкладок) и ваш список покупок.</p></header>
+
+<article class="t"><div class="tn"><h3>Все идеи · Список покупок · Финал</h3></div><div class="tb">
+<p><b>Все идеи</b> — скринер. <b>Список покупок</b> — бумаги, которые вы хотите купить по своей цене. <b>Финал</b> — отобранные из списка к покупке в ближайшее время.</p>
+<div class="row"><span>Как использовать</span><div>«＋ В список» на карточке → зона и тезис → по мере готовности «··· → В финал».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Фильтры скринера</h3></div><div class="tb">
+<p>Вердикт · сторона · фаза · вкладка · «у уровня ≤ 2 %» · «R/R ≥ 2» · «в книге» (только ваши бумаги) · поиск по тикеру.</p>
+<div class="row ex"><span>Пример</span><div>«▲ Купить» + «↑ Аптренд» + «R/R ≥ 2» — чистые покупки по тренду.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Можно действовать · Нужно движение</h3><span class="sym">Сейчас 100 → Жду цену 96,8</span></div><div class="tb">
+<p>На карточке идеи: <b>Можно действовать</b> — вход по рынку. <b>Нужно движение −3,2 %</b> — план лимитный, цене нужно дойти до «Жду цену».</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Балл</h3><span class="sym">0–100</span></div><div class="tb">
+<p>Сводная оценка качества сигнала. Только для сортировки внутри одного вердикта — сам по себе не сигнал.</p>
+<div class="row"><span>Из чего</span><div>Базово 50; тренд в сторону сделки +15 (против −15); фаза; цена у «своего» уровня +12; R/R до +15; RSI; нож −20, перегрев −12.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Зона покупки</h3><span class="sym">Куплю 92–95</span></div><div class="tb">
+<p>Ваша цена или диапазон, где вы готовы купить. По умолчанию берётся из сигнала: лимит плана, иначе ближайшая поддержка, иначе вход по рынку.</p>
+<div class="row"><span>Как использовать</span><div>Ставьте зону там, где идея становится выгодной, а не на текущей цене. Меняется в «··· → Изменить зону и тезис».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Нужна коррекция</h3><span class="sym">≈ −5…−8 %</span></div><div class="tb">
+<p>На сколько должна упасть цена до зоны.</p>
+<div class="row"><span>Формула</span><div><code>верх зоны ÷ цена − 1</code> (и низ зоны ÷ цена − 1)</div></div>
+<div class="row ex"><span>Пример</span><div>Цена 100, зона 92–95 → «нужна коррекция ≈ −5…−8 %». Цена 94 → «цена в зоне». Цена 90 → «ниже зоны на 2,2 %».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Зелёная точка ●</h3></div><div class="tb">
+<p>Цена в зоне, ниже неё или не дальше 3 % над верхом зоны.</p>
+<div class="row"><span>Как использовать</span><div>Пробегите список по зелёным точкам — это кандидаты на покупку сегодня.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Уведомить</h3><span class="sym">🔔 Уведомить при 95</span></div><div class="tb">
+<p>Создаёт правило плана на верх зоны: при касании — уведомление в браузере и в Telegram.</p>
+</div></article>
+</section>
+
+<!-- ═══════════ АКЦИЯ ═══════════ -->
+<section class="sec" id="stock">
+<header><h2>Экран «Акция»</h2><p>Всё про одну бумагу: тезис, риск, оценка, план сделки и последствия для портфеля.</p></header>
+
+<article class="t"><div class="tn"><h3>Ключевой тезис</h3></div><div class="tb">
+<p>Одно предложение: почему бумага интересна. Пока вы не написали свой, показывается «авто по сигналу» — первая причина вердикта.</p>
+<div class="row"><span>Как использовать</span><div>Напишите тезис до покупки («рост дата-центров, маржа восстанавливается»). Если тезис перестал быть верным — это повод продать, даже без стопа.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Моя зона покупки · Что делать</h3></div><div class="tb">
+<p>Если бумага в списке покупок — зона и нужная коррекция. Если нет — глагол вердикта и цена входа («Ждать цену» у лимита).</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Уровень риска 1–5</h3><span class="sym">■■■■□ Высокий</span></div><div class="tb">
+<p>Насколько бумага «дёрганая» и сколько у идеи дополнительных рисков.</p>
+<div class="row"><span>Как считается</span><div>База по ATR в % цены: ≤ 1,5 % → 1 · ≤ 2,5 → 2 · ≤ 3,5 → 3 · ≤ 5 → 4 · больше → 5. Плюс 1 за каждое: широкий стоп, отчёт скоро, нож, таргет устарел, бета &gt; 1,5. Максимум 5. В идее можно задать вручную.</div></div>
+<div class="row ex"><span>Пример</span><div>ATR 4 % → база 4 «Высокий». Если ещё и отчёт через 2 дня → 5 «Очень высокий».</div></div>
+<div class="row"><span>Как использовать</span><div>Риск 4–5 — меньше позиция и доля в портфеле, даже если сигнал хороший.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Цена на дату тезиса</h3><span class="sym">с тех пор +6,2 %</span></div><div class="tb">
+<p>Цена в момент, когда вы записали идею, и изменение с тех пор. Показывает, прав ли был тезис.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Справедливая стоимость</h3><span class="sym">112,50</span></div><div class="tb">
+<p>Ваша оценка «сколько бумага должна стоить». Считается по вашим сценариям, а если их нет — по таргетам аналитиков.</p>
+<div class="row"><span>Формула</span><div><code>25 % × bear + 50 % × base + 25 % × bull</code> (или минимум · консенсус · максимум аналитиков)</div></div>
+<div class="row ex"><span>Пример</span><div>bear 80, base 115, bull 140 → 20 + 57,5 + 35 = 112,5.</div></div>
+<div class="row"><span>Как использовать</span><div>Заполните сценарии в идее — своя оценка честнее консенсуса. Задан только base — считается по нему.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Апсайд до справедливой</h3><span class="sym up">+12,5 %</span></div><div class="tb">
+<p><code>справедливая ÷ текущая цена − 1</code>. Отрицательный — бумага уже дороже вашей оценки.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Что покупаю · Главный риск</h3></div><div class="tb">
+<p>Две заметки в идее: за что вы платите и что может сломать тезис.</p>
+<div class="row ex"><span>Пример</span><div>«Покупаю: лидера HBM-памяти» · «Риск: цикл памяти развернётся вниз».</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>График</h3></div><div class="tb">
+<p>Свечи с линиями плана выбранной стороны (вход, стоп, цель) или, если позиция открыта, — средней, стопа и цели. Переключатель 1Г / 3Г — период.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>План сделки</h3></div><div class="tb">
+<p>Готовая сделка: вход (или лимит), стоп с источником, цель с источником, R/R с полосой риск/прибыль, поле «Риск, kr» → количество и сумма.</p>
+<div class="row"><span>Кнопки</span><div><b>В план</b> — записать как правило, ничего не покупая. <b>Взвести лимит</b> — то же для лимитного плана. <b>Исполнить…</b> — записать реальную сделку: позиция, кэш, журнал, стоп и цель.</div></div>
+<div class="row"><span>Как использовать</span><div>«Исполнить» — после того как вы купили у брокера, с реальной ценой и количеством.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Что если?</h3><span class="pill v-buy">✓ можно</span><span class="pill v-trim">⚠ внимание</span><span class="pill v-short">⛔ заблокировано</span></div><div class="tb">
+<p>Симуляция покупки или шорта в выбранном портфеле. Ничего не записывает, пока вы не нажмёте «Исполнить».</p>
+<div class="row"><span>Как считается</span><div>Бюджет — сумма в kr или доля капитала. Количество = ⌊бюджет ÷ (цена × курс)⌋, только целые акции, комиссия сверху. Таблица «Сейчас → После»: кэш, доля бумаги, сектор, валюта, открытый риск книги.</div></div>
+<div class="row"><span>Предупреждения</span><div>Бумага станет больше 10 % капитала · сектор больше 35 % · валюта, кроме SEK, больше 60 % · нет стопа · цена не live дольше 30 мин · шорт не подтверждён.</div></div>
+<div class="row"><span>Блокировки</span><div>Превышен лимит открытого риска · кэша не хватает на покупку · бюджета не хватает на одну акцию · в портфеле позиция другой стороны.</div></div>
+<div class="row ex"><span>Пример</span><div>Доля 2 % от 200 000 = 4 000 kr → 40 шт по 100 kr; комиссия 0,15 % (минимум 1 kr) = 6 kr; для иностранной валюты ещё +0,25 %.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Рост бизнеса</h3><span class="sym">Выручка · EPS · FCF</span></div><div class="tb">
+<p>Годовые ряды выручки, прибыли на акцию (EPS) и свободного денежного потока (FCF). Сплошные столбцы — факт, полупрозрачные с «П» — прогноз аналитиков, линия — рост год к году. Загружается только при раскрытии блока.</p>
+<div class="row"><span>CAGR</span><div>Среднегодовой рост: <code>(последний ÷ первый)^(1/лет) − 1</code>. <b>Исторический</b> — по факту, <b>прогнозный</b> — от последнего факта до последнего прогноза (нужно ≥ 2 года прогноза).</div></div>
+<div class="row ex"><span>Пример</span><div>Выручка 10 → 14,6 млрд за 4 года → CAGR (1,46)^(1/4) − 1 = +9,9 %.</div></div>
+<div class="row"><span>Как использовать</span><div>Растущая бумага без роста выручки — тревожный знак. Для шведских и европейских компаний истории часто нет.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Аналитики и оценка</h3></div><div class="tb">
+<p>Капитализация, цель аналитиков с апсайдом, мультипликаторы и распределение рекомендаций (Strong Buy … Strong Sell, только для US).</p>
+<div class="row"><span>Мультипликаторы</span><div><b>P/E</b> — цена ÷ прибыль за год. <b>Forward P/E</b> — по прогнозной прибыли. <b>P/S</b> — капитализация ÷ выручка. <b>P/FCF</b> — капитализация ÷ свободный денежный поток. Зелёный — дешевле медианы сектора больше чем на 10 %, красный — дороже.</div></div>
+<div class="row"><span>Веер цели</span><div>Цена за год и линии к минимуму, консенсусу и максимуму таргетов через 12 месяцев.</div></div>
+<div class="row"><span>P/E против пиров</span><div>Точки — P/E до 8 крупнейших бумаг того же сектора, черта — медиана. «Против своей истории» — сравнение с медианой P/E самой бумаги за 3 и 5 лет.</div></div>
+<div class="row"><span>Как использовать</span><div>Высокий P/E при высоком росте нормален; высокий P/E без роста — переплата.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>История сигналов</h3></div><div class="tb">
+<p>Как сработали бы правила v2 на этой бумаге за 2 года: вход в день, когда вердикт стал «Купить»/«Шорт», выход по лестнице (стоп · ½ на цели · +1R → б/у · +2R → трейлинг 2·ATR). Результат в R.</p>
+<div class="row"><span>Как использовать</span><div>Если на этой бумаге правила исторически теряли — будьте осторожнее с сигналом.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Сигнал (подробности)</h3></div><div class="tb">
+<p>Все причины вердикта и индикаторы: тренд, <b>RSI 14</b> (выше 70 — перекуплен, ниже 30 — перепродан), ATR 14, <b>объём к среднему</b> (× к среднему за 20 дней; от ×1,5 — заметный интерес), расстояние до SMA200, балл.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Лестница уровней</h3></div><div class="tb">
+<p>По 3 ближайших структурных сопротивления и поддержки вокруг цены с расстоянием в %.</p>
+<div class="row"><span>Как использовать</span><div>Видно, где цене «тесно»: сопротивление в 2 % выше — цель близко, R/R будет слабым.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Фундаментал и события</h3></div><div class="tb">
+<p><b>Таргет (эфф.)</b> — таргет аналитиков, который использует приложение: если средний устарел, берётся свежий. <b>Свежий · средний</b> — таргет за 3 месяца и за всё время. <b>Betyg</b> — оценка качества компании (по 5 столпам, 0–100). <b>Отчёт</b> — дата и сколько дней осталось. <b>Инсайдеры 90 дн</b> — покупки ▲ и продажи ▼ менеджмента. <b>Новости</b> — тон свежих заголовков.</p>
+<div class="row"><span>Как использовать</span><div>Кластер покупок инсайдеров — сильный плюс к идее. Отчёт через 1–3 дня — не входите.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ПОЗИЦИИ ═══════════ -->
+<section class="sec" id="book">
+<header><h2>Экран «Позиции»</h2><p>Книга: все открытые позиции, их риск и что с каждой делать.</p></header>
+
+<article class="t"><div class="tn"><h3>Нетто экспозиция</h3></div><div class="tb">
+<p>Стоимость лонгов минус стоимость шортов. Насколько портфель ставит на рост рынка.</p>
+<div class="row ex"><span>Пример</span><div>Лонги 150 000, шорты 30 000 → нетто 120 000 kr.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Брутто</h3></div><div class="tb">
+<p>Лонги плюс шорты — весь объём позиций. Выше капитала — работаете с плечом.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>P&amp;L открытых</h3></div><div class="tb">
+<p>Нереализованная прибыль или убыток всех открытых позиций по текущим ценам.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Открытый риск</h3><span class="sym">3,2 % капитала · лимит 6 %</span></div><div class="tb">
+<p>То же, что на «Сегодня», в процентах капитала и с полосой заполнения лимита.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Средняя</h3></div><div class="tb">
+<p>Средняя цена покупки — как в налоговом расчёте (genomsnittsmetoden): докупка усредняет, частичная продажа среднюю не меняет.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Стоп ◆ цена → цель</h3></div><div class="tb">
+<p>Полоса прогресса: слева стоп, справа цель, ◆ — где цена сейчас, | — вход. Красный ромб — до стопа 2 % и меньше.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>R сейчас</h3><span class="sym">+1,40R</span></div><div class="tb">
+<p>Где позиция сейчас в единицах начального риска (от стопа входа).</p>
+<div class="row"><span>Формула</span><div><code>(цена − средняя) ÷ (средняя − стоп входа)</code></div></div>
+<div class="row"><span>Как использовать</span><div>Главный ориентир для управления: от +1R — стоп в безубыток, от +2R — трейлинг.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Риск (позиции)</h3></div><div class="tb">
+<p>Сколько потеряет эта позиция до текущего стопа, в kr. После переноса стопа в б/у — около нуля.</p>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Действие по позиции</h3></div><div class="tb">
+<p>Подсказка, что делать с позицией. Проверяется по порядку, выходы — первыми:</p>
+<div class="row"><span>○ задать стоп</span><div>У позиции нет стопа. Кнопка «Принять стоп … · цель …» берёт их из плана v2.</div></div>
+<div class="row"><span>▼ закрыть</span><div>Стоп пробит — закрывайте без раздумий.</div></div>
+<div class="row"><span>◆ фиксировать</span><div>Цель достигнута — продайте ½.</div></div>
+<div class="row"><span>◆ сократить</span><div>Лонг в фазе перегрева — продайте часть.</div></div>
+<div class="row"><span>◆ перед отчётом</span><div>Отчёт через ≤ 3 дня, а позиция ещё не дала +1R — уменьшите до отчёта.</div></div>
+<div class="row"><span>● трейлинг</span><div>+2R и стоп 2·ATR под ценой выше текущего — кнопка «Трейл 2·ATR → 104».</div></div>
+<div class="row"><span>● стоп в б/у</span><div>+1R, а стоп ещё ниже входа — кнопка «Стоп в б/у».</div></div>
+<div class="row"><span>○ у стопа</span><div>До стопа 2 % и меньше — на контроле.</div></div>
+<div class="row"><span>● по плану</span><div>Ничего делать не нужно.</div></div>
+</div></article>
+
+<article class="t"><div class="tn"><h3>Безубыток (б/у)</h3></div><div class="tb">
+<p>Стоп на цене входа: худший исход — ноль.</p>
+<div class="row ex"><span>Пример</span><div>Вход 100, стоп 96, цена 104 (+1R) → стоп 100.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Трейлинг-стоп 2·ATR</h3></div><div class="tb">
+<p>Стоп, который идёт за ценой на расстоянии 2·ATR (chandelier) и только в сторону прибыли.</p>
+<div class="row ex"><span>Пример</span><div>Цена 112, ATR 4 → стоп 104. Цена выросла до 118 → стоп 110.</div></div>
+<div class="row"><span>Как использовать</span><div>Даёт тренду вырасти, но забирает большую часть движения при развороте.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ ЖУРНАЛ ═══════════ -->
+<section class="sec" id="journal">
+<header><h2>Экран «Журнал»</h2><p>Ваши реальные сделки, правила плана и проверка правил на истории.</p></header>
+
+<article class="t"><div class="tn"><h3>Мои сделки</h3></div><div class="tb">
+<p>Сделка = от открытия позиции с нуля до закрытия в ноль (частичные продажи суммируются). Продажи позиций, открытых до ведения журнала, не входят.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Доля в плюсе</h3><span class="sym">58 % · 7/12</span></div><div class="tb">
+<p>Сколько закрытых сделок прибыльны.</p>
+<div class="row"><span>Как использовать</span><div>Сама по себе мало говорит: 40 % в плюсе при R/R 2 выгоднее, чем 70 % при R/R 0,5.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Средний результат</h3></div><div class="tb">
+<p>Средний % прибыли на сделку от цены входа.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Profit factor</h3><span class="sym">2,00</span></div><div class="tb">
+<p>Сумма прибылей ÷ сумма убытков.</p>
+<div class="row ex"><span>Пример</span><div>Прибыльные сделки дали 9 000 kr, убыточные −4 500 → PF 2,0.</div></div>
+<div class="row"><span>Как использовать</span><div>Меньше 1 — система теряет. 1,3–2 — рабочая. ∞ — убыточных сделок ещё не было.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Планы</h3></div><div class="tb">
+<p>Все правила плана и их статус: взведено · до уровня X % · 🔔 пора · ✖ сетап сломан · позиция открыта · исполнено. Кнопка ✓ — отметить исполненным, 🗑 — удалить.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Бэктест правил</h3></div><div class="tb">
+<p>Проверка правил, а не ваших сделок: «История сигналов» по всем бумагам вселенной сразу. Таргетов и отчётов в истории нет — это упрощение.</p>
+<div class="row"><span>Средний R</span><div>Ожидание на сделку: сколько R в среднем приносит один сигнал. +0,3R при 50 сделках в год и 1R = 2 000 kr ≈ +30 000 kr.</div></div>
+<div class="row"><span>Распределение в R</span><div>Гистограмма исходов от −3R до +5R. Много сделок у −1R и несколько больших справа — здоровая картина трендовой системы.</div></div>
+<div class="row"><span>Как использовать</span><div>Profit factor отдельно для лонга и шорта показывает, какой стороне правила доверять больше.</div></div>
+</div></article>
+</section>
+
+<!-- ═══════════ МЕНЮ ═══════════ -->
+<section class="sec" id="menu">
+<header><h2>Настройки ⋯ и шапка</h2></header>
+
+<article class="t"><div class="tn"><h3>Риск: 1 % · лимит книги 6 %</h3></div><div class="tb">
+<p><b>Риск на сделку</b> — доля капитала, которую вы готовы потерять в одной сделке (0,1–5 %, по умолчанию 1 %). <b>Лимит книги</b> — сколько можно одновременно держать под риском во всех позициях (1–30 %, по умолчанию 6 %).</p>
+<div class="row"><span>Как использовать</span><div>Новичку — 0,5–1 % и 4–6 %. Шесть одновременных сделок по 1 % упираются в лимит 6 % — седьмая заблокируется, пока вы не подтянете стопы.</div></div>
+</div></article>
+<article class="t"><div class="tn"><h3>Telegram-алерты</h3></div><div class="tb">
+<p>Воркер по расписанию проверяет стопы, цели и лимиты плана и пишет в Telegram, даже когда страница закрыта. Повторно одно и то же условие не присылается, пока цена не отойдёт от уровня на 0,3·ATR.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Вселенная · сигналы N/M · свечи</h3></div><div class="tb">
+<p>В шапке: сколько бумаг из скольких вкладок анализируется, для скольких уже посчитан сигнал и сколько дневных свечей (2 года) загружено. Индикаторы «Стокгольм» и «США» — открыта ли биржа.</p>
+</div></article>
+<article class="t"><div class="tn"><h3>Как рассчитано</h3></div><div class="tb">
+<p>Свёрнутые блоки под числами с полной формулой на ваших данных. Какие блоки открыты, запоминается на этом устройстве.</p>
+<div class="row"><span>Как использовать</span><div>Если число кажется странным — раскройте «Как рассчитано»: там видно, откуда взялась каждая цифра.</div></div>
+</div></article>
+</section>
+
+<p class="empty" id="none" hidden>Ничего не найдено. Попробуйте другое слово: «стоп», «ATR», «зона», «отчёт».</p>
+
+<p class="foot">Все пороги — из кода приложения на 11.09.2026: правила входа и выхода — <span class="mono">SIG.CFG</span> в signals.js, пороги идей, риска и «Что если?» — <span class="mono">DESK_IDEA_CFG</span> в app-5.js. Числа в примерах условные. Словарь объясняет, как работает приложение, и не является инвестиционной рекомендацией.</p>
+</main>
+</div>
+</div>
+
+<script>
+(function(){
+  var q=document.getElementById('q'),cnt=document.getElementById('cnt'),none=document.getElementById('none');
+  var terms=[].slice.call(document.querySelectorAll('.t')),secs=[].slice.call(document.querySelectorAll('section.sec')),story=document.getElementById('story');
+  var idx=terms.map(function(t){return t.textContent.toLowerCase().replace(/ё/g,'е');});
+  function run(){
+    var v=(q.value||'').trim().toLowerCase().replace(/ё/g,'е'),n=0;
+    terms.forEach(function(t,i){var ok=!v||idx[i].indexOf(v)>=0;t.hidden=!ok;if(ok)n++;});
+    secs.forEach(function(s){s.hidden=!!v&&!s.querySelector('.t:not([hidden])');});
+    story.hidden=!!v;none.hidden=!v||n>0;
+    cnt.textContent=v?('найдено '+n+' из '+terms.length):(terms.length+' терминов');
+  }
+  q.addEventListener('input',run);
+  document.addEventListener('keydown',function(e){if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus();}});
+  run();
+})();
+</script>

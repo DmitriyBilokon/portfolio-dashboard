@@ -1626,3 +1626,125 @@ grp('chartFanModel', function(){
   __eq('без консенсуса или свечей → null', [chartFanModel(bars,{low:1,high:2}),chartFanModel([],{consensus:1}),chartFanModel(bars,null)], [null,null,null]);
   __ok('время строго возрастает', M.hist.concat(M.future).every(function(p,i,a){return !i||a[i-1].time<p.time;}));
 });
+// ── 📖 Словарь Trade Desk (G1, plans/desk-glossary.md) ──
+function __glNorm(s){ return String(s).replace(/<[^>]*>/g,' ').replace(/\s+/g,' '); }   // nbsp тысяч → пробел
+grp('desk glossary: записи', function(){
+  var I=DESK_GLOSS.items,ids={},secs={},dup=[],bad=[];
+  DESK_GLOSS.secs.forEach(function(s){secs[s.id]=1;});
+  I.forEach(function(it){ if(ids[it.id])dup.push(it.id); ids[it.id]=1;
+    if(!/^[a-z0-9-]+$/.test(it.id)||!secs[it.sec]||!deskGlossText(it.t)||!deskGlossText(it.d))bad.push(it.id); });
+  __eq('id уникальны', dup, []);
+  __eq('у каждой записи kebab-id, существующий раздел, термин и описание', bad, []);
+  __ok('перенесены все термины артефакта (93, «Действие по позиции» разбито на act-*)', I.length>=93, 'n='+I.length);
+  var broken=[];
+  I.forEach(function(it){
+    var f=[it.t,it.lbl,it.d,it.f,it.ex,it.use].concat((it.rows||[]).reduce(function(a,r){return a.concat(r);},[]));
+    f.forEach(function(x){ if(x==null)return; var s=deskGlossText(x); if(!s||/undefined|NaN|\[object/.test(s))broken.push(it.id); });
+  });
+  __eq('каждое поле разворачивается в непустую строку без undefined/NaN', broken, []);
+  var miss=[];
+  Object.keys(DK_V).forEach(function(k){if(!deskGlossItem('v-'+k))miss.push('v-'+k);});
+  Object.keys(DK_PH).forEach(function(k){if(!deskGlossItem('ph-'+k))miss.push('ph-'+k);});
+  Object.keys(DK_FLAG).forEach(function(k){if(!deskGlossItem('fl-'+k))miss.push('fl-'+k);});
+  Object.keys(DK_ACT).forEach(function(k){if(!deskGlossItem('act-'+k))miss.push('act-'+k);});
+  __eq('покрытие меток DK_V/DK_PH/DK_FLAG/DK_ACT', miss, []);
+});
+grp('desk glossary: пороги из конфига', function(){
+  var C=SIG.CFG,W=DESK_IDEA_CFG.whatIf,rr0=C.rrMin,w0=W.weightPct,e0=C.earnDays;
+  __ok('rr: по умолчанию rrMin 2,0', deskGlossText(deskGlossItem('rr').use).indexOf('≥ 2,0 — можно входить')>=0);
+  try{
+    C.rrMin=2.5; W.weightPct=12; C.earnDays=5;
+    __ok('rr: rrMin 2.5 → «≥ 2,5» в тексте', deskGlossText(deskGlossItem('rr').use).indexOf('≥ 2,5 — можно входить')>=0);
+    __ok('v-buy: rrMin 2.5 в условиях', __glNorm(deskGlossText(deskGlossItem('v-buy').rows[0][1])).indexOf('≥ 2,5')>=0);
+    var wi=deskGlossItem('what-if'); __ok('what-if: weightPct 12 → «больше 12 %»', __glNorm(deskGlossText(wi.rows[1][1])).indexOf('больше 12 % капитала')>=0);
+    __ok('fl-earnings: earnDays 5', deskGlossText(deskGlossItem('fl-earnings').d).indexOf('5 дня')>=0);
+    __ok('история: weightPct 12 в примере', __glNorm(deskGlossStoryHTML()).indexOf('порог 12 %')>=0);
+  } finally { C.rrMin=rr0; W.weightPct=w0; C.earnDays=e0; }
+  __eq('конфиг восстановлен', [C.rrMin,W.weightPct,C.earnDays], [rr0,w0,e0]);
+  __ok('лимит книги — из deskNorm по умолчанию', __glNorm(deskGlossText(deskGlossItem('book-risk').f)).indexOf('капитал × '+deskNorm({}).riskCapPct+' %')>=0);
+});
+grp('desk glossary: сквозной пример считается кодом', function(){
+  var S=deskGlossStory(),P=S.plan;
+  __eq('стоп/цель/R/R', [P.stop,P.target,P.rr], [96,109,2.25]);
+  __eq('источник стопа — S60 с буфером и минимумом 1·ATR', P.stopSrc, 'S60 − 0.5·ATR → мин. 1·ATR');
+  __eq('риск 2 000 → 500 шт, лимит книги 12 000', [S.riskKr,P.qty,S.capKr], [2000,500,12000]);
+  __eq('у уровня и вердикт buy', [!!S.near,S.verdict], [true,'buy']);
+  __eq('«Что если?»: доля 25 % → 190 шт, 1R = 760', [S.w1,S.qty2,S.risk2], [25,190,760]);
+  __eq('действия лестницы: б/у → фиксировать → трейлинг', [S.acts.be,S.acts.take,S.acts.trail], ['be','take','trail']);
+  __eq('трейл 104, итог 1,625R = +1 235 kr', [S.trail,S.totalR,Math.round(S.totalKr)], [104,1.625,1235]);
+  __approx('лимит под R/R 2 = 98,67', S.limit.entry, 98.6667, 1e-3);
+  __approx('…и он равен SIG.limitForRR', S.limit.entry, SIG.limitForRR(107,94.5,SIG.CFG.rrGood), 1e-12);
+  var H=__glNorm(deskGlossStoryHTML(S));
+  ['стоп 96','= 2,25','500 шт','2 000 kr на сделку','12 000 kr','новый стоп 104','1,625R','+1 235 kr','760','190 шт'].forEach(function(x){ __ok('в тексте примера: '+x, H.indexOf(x)>=0, 'нет «'+x+'»'); });
+  __ok('лимит 98,67 — в тексте записи limit-rr', __glNorm(deskGlossText(deskGlossItem('limit-rr').ex)).indexOf('= 98,67')>=0);
+  __ok('пример запись rr: 9 ÷ 4 = 2,25', __glNorm(deskGlossText(deskGlossItem('rr').ex)).indexOf('9 ÷ 4 = 2,25')>=0);
+  __ok('справедливая: 20 + 57,5 + 35 = 112,5', __glNorm(deskGlossText(deskGlossItem('fair-value').ex)).indexOf('20 + 57,5 + 35 = 112,5')>=0);
+});
+grp('desk glossary: поиск', function(){
+  var n=DESK_GLOSS.items.length,ids=function(q){return deskGlossFind(q).map(function(x){return x.id;});};
+  __eq('пусто → все', [deskGlossFind('').length,deskGlossFind('   ').length], [n,n]);
+  __ok('«атр» → ATR (через aka)', ids('атр').indexOf('atr')>=0);
+  __ok('регистр не важен: «ATR» = «atr»', ids('ATR').join()===ids('atr').join());
+  __ok('«трейлинг» → ≥ 2 записей', deskGlossFind('трейлинг').length>=2, 'n='+deskGlossFind('трейлинг').length);
+  __ok('ё = е: «отчет» находит «отчёт скоро»', ids('ОТЧЕТ СКОРО').indexOf('fl-earnings')>=0);
+  __eq('несуществующее → 0', deskGlossFind('zzqxj').length, 0);
+  __ok('поиск по формуле', ids('(цель + 2 × стоп)').indexOf('limit-rr')>=0);
+  __ok('поиск по строке rows', ids('генерал').length===0 && ids('гистограмма').indexOf('backtest')>=0);
+});
+grp('desk glossary: рендер', function(){
+  var H=deskGlossHTML(''),miss=[];
+  DESK_GLOSS.items.forEach(function(it){ if(H.indexOf('id="dkg-'+it.id+'"')<0)miss.push(it.id); });
+  __eq('все записи — якоря dkg-<id>', miss, []);
+  __ok('разделы — якоря dkgs-<id> и пример', DESK_GLOSS.secs.every(function(s){return H.indexOf('id="dkgs-'+s.id+'"')>=0;}) && H.indexOf('id="dkgs-story"')>=0);
+  __ok('нет <script', !/<script/i.test(H));
+  var Q=deskGlossHTML('трейлинг');
+  __ok('с поиском — без сквозного примера', Q.indexOf('dkgs-story')<0 && Q.indexOf('id="dkg-trail"')>=0);
+  __ok('ничего не найдено → подсказка', deskGlossHTML('zzqxj').indexOf('Ничего не найдено')>=0);
+  __eq('счётчик', [deskGlossCount(''),deskGlossCount('zzqxj')], [DESK_GLOSS.items.length+' терминов','найдено 0 из '+DESK_GLOSS.items.length]);
+  __ok('метка вердикта — класс приложения', deskGlossItemHTML(deskGlossItem('v-buy')).indexOf('dk-pill v-buy')>=0);
+});
+// ── Подсказки на экранах (G2) ──
+grp('desk glossary: подсказки на экранах (G2)', function(){
+  // Литералы в исходнике desk.js: data-g="…", dkG('…'), dkGi('…') — каждый id должен быть записью словаря.
+  var src=rd('desk.js'),re=/\bdkGi?\('([a-z0-9-]+)'\)|data-g="([a-z0-9-]+)"/g,m,lit=[],miss=[];
+  while((m=re.exec(src)))lit.push(m[1]||m[2]);
+  __ok('в desk.js размечены подсказки', lit.length>=60, 'n='+lit.length);
+  lit.forEach(function(id){ if(!deskGlossItem(id)&&miss.indexOf(id)<0)miss.push(id); });
+  __eq('каждый литерал data-g / dkG / dkGi — запись словаря', miss, []);
+  // Метки, id которых строятся из ключей словарей desk.js.
+  var ids=function(h){var r=/data-g="([^"]+)"/g,x,o=[];while((x=r.exec(h)))o.push(x[1]);return o;},dyn=[];
+  Object.keys(DK_V).forEach(function(k){dyn=dyn.concat(ids(dkPill(k,true)),ids(dkPill(k,false)));});
+  Object.keys(DK_PH).forEach(function(k){dyn=dyn.concat(ids(dkPhase({phase:{key:k,label:'x'},trendUp:true})));});
+  dyn=dyn.concat(ids(dkFlags({flags:Object.keys(DK_FLAG)})));
+  Object.keys(DK_ACT).forEach(function(k){dyn=dyn.concat(ids(dkActPill(k)));});
+  dyn=dyn.concat(ids(dkSide('long')),ids(dkSide('short')),ids(dkRiskMeter({level:3,word:'x'})),ids(dkRiskMeter(null)));
+  __ok('метки дают id для всех ключей', dyn.length>=Object.keys(DK_V).length*2+Object.keys(DK_PH).length+Object.keys(DK_ACT).length+4);
+  __eq('id меток — записи словаря', dyn.filter(function(id){return !deskGlossItem(id);}), []);
+  __ok('dkPill(buy) → data-g="v-buy"', dkPill('buy').indexOf('data-g="v-buy"')>=0);
+  __ok('«Перегрев» и «Сократить» — одна запись v-trim', ids(dkPill('trim',false)).join()==='v-trim' && ids(dkPill('trim',true)).join()==='v-trim');
+  __ok('неизвестный вердикт/действие → v-wait / act-hold', dkPill('zz').indexOf('data-g="v-wait"')>=0 && dkActPill('zz').indexOf('data-g="act-hold"')>=0);
+  __ok('фаза, флаг, действие, сторона, риск', dkPhase({phase:{key:'up',label:'Аптренд'},trendUp:true}).indexOf('data-g="ph-up"')>=0 && dkFlags({flags:['wide']}).indexOf('data-g="fl-wide"')>=0
+    && dkActPill('trail').indexOf('data-g="act-trail"')>=0 && dkSide('short').indexOf('data-g="side"')>=0 && dkRiskMeter({level:2,word:'x'}).indexOf('data-g="risk-level"')>=0);
+  __ok('фаза без title (подсказка вместо системной)', dkPhase({phase:{key:'up',label:'x'},trendUp:true}).indexOf('title=')<0);
+  var gi=dkGi('rr');
+  __ok('ⓘ — кнопка gtip с data-g и подписью', /^<button type="button" class="dk-gi" data-a="gtip" data-g="rr"/.test(gi) && gi.indexOf('aria-label=')>0 && gi.indexOf('aria-controls="dkTip"')>0);
+  // Текст подсказки.
+  __eq('rr: первое предложение описания без разметки', deskGlossTip('rr'), 'Сколько можно заработать до цели на каждую единицу риска до стопа.');
+  __eq('короткое первое предложение — вместе со вторым', deskGlossTip('fl-knife'), 'Фаза «Падающий нож». Уровень риска +1.');
+  __eq('разметка и сущности сняты', deskGlossTip('fl-half'), 'Покупка при неподтверждённом тренде (SMA50 < SMA200): размер делится пополам.');
+  __eq('пороги — из конфига', deskGlossTip('fl-wide'), 'Стоп дальше '+String(SIG.CFG.wideAtr).replace('.',',')+'·ATR от входа.');
+  var badTip=[];
+  DESK_GLOSS.items.forEach(function(it){ var t=deskGlossTip(it.id); if(!t||t.length>320||/[<>]\w|&[a-z#0-9]+;|undefined|NaN/.test(t))badTip.push(it.id+':'+t.length); });
+  __eq('у каждой записи — подсказка: непустая, ≤ 320 знаков, без HTML', badTip, []);
+  var H=deskGlossTipHTML('pl-open');
+  __ok('HTML подсказки: термин экранирован, кнопка «Подробнее»', H.indexOf('>P&amp;L открытых<')>=0 && H.indexOf('data-ta="more"')>=0 && H.indexOf('id="dkTipT"')>=0);
+  __ok('HTML подсказки: без <script и без неэкранированного <', !/<script/i.test(H) && deskGlossTipHTML('fl-half').indexOf('SMA50 &lt; SMA200')>=0);
+  __eq('неизвестный id → пусто', [deskGlossTip('zz'),deskGlossTipHTML('zz')], ['','']);
+  // Позиция всплывашки.
+  __eq('под меткой, по центру', deskTipPos({left:100,right:140,top:200,bottom:220,width:40,height:20},200,80,1000,800), {left:20,top:226,below:true});
+  __eq('снизу не помещается → над меткой', deskTipPos({left:100,right:140,top:700,bottom:720,width:40,height:20},200,80,1000,800), {left:20,top:614,below:false});
+  __eq('не помещается ни снизу, ни сверху → снизу', deskTipPos({left:100,right:140,top:40,bottom:60,width:40,height:20},200,780,1000,800).below, true);
+  __eq('у правого края — отступ 8 px', deskTipPos({left:980,right:1000,top:10,bottom:30,width:20,height:20},200,80,1000,800).left, 792);
+  __eq('у левого края — отступ 8 px', deskTipPos({left:0,right:10,top:10,bottom:30,width:10,height:20},200,80,1000,800).left, 8);
+  __eq('телефон 400 px: подсказка во всю ширину минус отступы', deskTipPos({left:300,right:360,top:100,bottom:120,width:60,height:20},384,90,400,800).left, 8);
+});

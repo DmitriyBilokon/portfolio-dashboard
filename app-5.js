@@ -752,6 +752,7 @@ function deskNorm(x){
 // 🛒 Список покупок (I1, plans/reference-features-implementation.md §2.1–2.3). Все пороги и лимиты новых функций
 // (зона, справедливая стоимость, уровень риска, длины полей) — только в DESK_IDEA_CFG; правила входа — в SIG.CFG.
 const DESK_IDEA_CFG={
+  selection:{maxCards:12,maxCompare:4,loadPool:2}, // P1: UI-лимиты отбора, без нового общего score
   nearZonePct:3,                                // ● зелёная точка: цена в зоне, ниже неё или не дальше 3 % над верхом
   fvW:{bear:25,base:50,bull:25},                // веса сценариев и таргетов аналитиков (решение §6#2)
   risk:{atrPct:[1.5,2.5,3.5,5],betaHi:1.5,bump:['wide','earnings','knife','stale-target']},   // §2.3, решение §6#1
@@ -983,17 +984,17 @@ function sigOpts(d,r,riskKr,now){
 }
 // Снимок v2 для строки или null (свечей ещё нет). Мемо по (время загрузки свечей + входы): повторные
 // рендеры не пересчитывают (solo#3), а смена таргета/календаря/курса — пересчитывает.
-function sigSnapRow(d,r,riskKr,now){
+function sigSnapRow(d,r,riskKr,now,readOnly){
   if(typeof SIG==='undefined'||!d||!r||!posTk(r[2]))return null;
   const sym=exSymbol(r[2],r[8]),hc=_histCache[sigHistKey(sym)];
   if(!hc||!hc.j)return null;
   const o=sigOpts(d,r,riskKr,now),k=hc.t+'|'+JSON.stringify(o),m=SIGNALS[sym];
   if(m&&m.k===k)return m.s;
-  if(!hc.bars)hc.bars=SIG.barsFromHist(hc.j);
-  const full=SIG.snapshot(hc.bars,o);
+  const bars=hc.bars||SIG.barsFromHist(hc.j);
+  if(!readOnly&&!hc.bars)hc.bars=bars;
+  const full=SIG.snapshot(bars,o);
   const s=full?Object.assign({},full,{ind:null,ohlc:Array.isArray(hc.j.h)}):null;
-  SIGNALS[sym]={k,s};
-  if(s)sigShadowRecord(d,r,sym,s,now);
+  if(!readOnly){SIGNALS[sym]={k,s};if(s)sigShadowRecord(d,r,sym,s,now);}
   return s;
 }
 // Догрузка свечей (2 года, дневные) пулом по SIG_POOL; неудача — повтор не раньше SIG_TTL (без петли

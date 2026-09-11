@@ -2,6 +2,204 @@
 // поэтому видят реальные функции/глобалы. Каждая группа изолирована в grp().
 function grp(name, fn){ try { fn(); } catch(e){ __res.push({n:name, p:false, i:'threw '+(e&&e.message||e)}); } }
 
+// P1: вход модели — независимые бизнес-столпы и технический снимок, без живых глобалов.
+function selectionFixture(){
+  const now=Date.parse('2026-09-11T12:00:00Z');
+  return {identity:{key:'TEST|USD',sym:'TEST',ccy:'USD',sector:'Tech',tabs:['p']},
+    price:{value:100,observedAt:now,freshness:'fresh'},
+    business:{mode:'fundamental',pillars:['profit','growth','balance','cash'].map(key=>({key,score:9})),
+      facts:{revenueGrowth:10,growthBasis:'actual'},asOf:'2025-12-31'},
+    valuation:{value:120,source:'analysts',currency:'USD',comparable:true,asOf:'2026-09-10',peContext:{value:20,eps:5,comparable:true}},
+    signal:{verdict:'buy',side:'long',plan:{side:'long',mode:'market',entry:100,stop:95,target:112,rr:2.4,flags:[]},
+      phase:{key:'up'},flags:[],why:['original reason'],score:70,version:SIG.VER},
+    risk:{auto:2,override:null,level:2,reasons:['atr']},position:null,
+    context:{selectedPortfolio:'p',now,config:deskSelectionConfig(),permissions:{view:true,trade:true,refresh:true}}};
+}
+grp('P1 quality and unchanged Betyg',function(){
+  const C=deskSelectionConfig(),x=selectionFixture();let q=deskSelectionModel(x).quality;
+  __approx('P1 full business value',q.value,9,1e-12);
+  __eq('P1 full business dimensions', [q.grade,q.mode,q.coverage,q.known,q.applicable],['A+','full',1,4,4]);
+  x.business.pillars.push({key:'val',score:0});const before=deskSelectionModel(x).quality;
+  x.business.pillars[4].score=10;x.valuation.value=500;
+  __eq('P1 val cannot change business quality',deskSelectionModel(x).quality,before);
+  x.business.pillars[0].score=null;q=deskSelectionModel(x).quality;
+  __approx('P1 weighted coverage, not pillar count',q.coverage,0.6/0.85,1e-12);
+  __eq('P1 partial score remains provisional',[q.value,q.mode,q.missing],[9,'partial',['profit']]);
+  x.business.pillars=[{key:'profit',score:0}];q=deskSelectionModel(x).quality;
+  __eq('P1 zero is real, one pillar not complete',[q.value,q.grade,q.mode,q.known],[0,'F','partial',1]);
+  x.business.pillars=[{key:'profit',score:NaN},{key:'growth',score:Infinity},{key:'cash',score:-1}];q=deskSelectionModel(x).quality;
+  __eq('P1 invalid pillars are missing',[q.value,q.coverage,q.mode],[null,0,'missing']);
+  x.business.pillars=[{key:'profit',score:9},{key:'growth',score:8},{key:'balance',score:null,na:true},{key:'cash',score:null,na:true}];
+  q=deskSelectionModel(x).quality;
+  __eq('P1 bank coverage excludes inapplicable pillars',[q.mode,q.coverage,q.known,q.applicable,q.notApplicable],['full',1,2,2,['balance','cash']]);
+  __approx('P1 bank relative weights',q.value,(9*0.25+8*0.2)/0.45,1e-12);
+  x.business.mode='lite';x.business.facts={roe:-3,revenueGrowth:0,growthBasis:'actual'};q=deskSelectionModel(x).quality;
+  __eq('P1 financial ROE-lite has no false F',[q.value,q.grade,q.mode,q.facts.roe,q.facts.revenueGrowth],[null,null,'lite',-3,0]);
+  const oldVal=VAL;try{
+    VAL={};
+    const strong={revenue:1000,netIncome:250,freeCashFlow:200,operatingCashFlow:300,debtToEquity:0.2,currentRatio:3,revenueCagr:20,revenueYoY:18,fwdPe:15,ps:4};
+    const B=pf3Betyg(strong,'ZZZ','');
+    __approx('P1 original five-pillar total',B.total,8.70530303030303,1e-12);
+    __eq('P1 original five-pillar rounded score',B.score100,87);
+    __eq('P1 original weak score',pf3Betyg({revenue:1000,netIncome:-50,freeCashFlow:-30,operatingCashFlow:-10,debtToEquity:2.5,currentRatio:0.7,revenueCagr:-8,revenueYoY:-15,pe:80,ps:20},'ZZZ','').score100,0);
+    __eq('P1 original insufficient bank',pf3Betyg({revenue:11700,operatingCashFlow:-21200,fwdPe:131.5,ps:52.8,revenueCagr:6.6,revenueYoY:-2.7},'ZZZ','Financial').score100,null);
+    __approx('P1 original complete bank total',pf3Betyg({revenue:1000,netIncome:300,revenueCagr:20,revenueYoY:30,pe:22},'ZZZ','Financial').total,8.75,1e-12);
+  }finally{VAL=oldVal;}
+});
+grp('P1 valuation and price freshness',function(){
+  let x=selectionFixture(),m=deskSelectionModel(x);
+  __eq('P1 comparable external discount', [m.valuation.status,m.selection.buckets.includes('discount')],['available',true]);
+  __approx('P1 discount to actual price',m.valuation.upsidePct,20);
+  [null,0,NaN,Infinity,-1].forEach(v=>{x=selectionFixture();x.price.value=v;m=deskSelectionModel(x);__eq('P1 unusable price '+v,[m.action.key,m.selection.eligible],['refresh',false]);});
+  [null,0,'bad'].forEach(v=>{x=selectionFixture();x.price.observedAt=v;__eq('P1 unknown price date '+v,deskSelectionModel(x).price.freshness,'unknown');});
+  x=selectionFixture();x.price.observedAt=x.context.now-30*60000;__eq('P1 existing staleMin boundary',deskSelectionModel(x).price.freshness,'fresh');
+  x.price.observedAt--;__eq('P1 older than staleMin',deskSelectionModel(x).price.freshness,'stale');
+  x.price.observedAt=x.context.now+1;__eq('P1 future price date invalid',deskSelectionModel(x).price.freshness,'invalid');
+  // Оценка не обязательна для «Кандидатов» (§15 #1): статус виден, кандидат не блокируется, «Дисконт» — только available.
+  x=selectionFixture();x.valuation.currency='EUR';m=deskSelectionModel(x);
+  __eq('P1 incomparable valuation: candidate kept, no discount',[m.valuation.status,m.valuation.upsidePct,m.selection.eligible,m.selection.buckets.includes('discount')],['incomparable',null,true,false]);
+  x=selectionFixture();x.valuation.asOf=null;x.valuation.fetchedAt=x.context.now;m=deskSelectionModel(x);
+  __eq('P1 fresh fetch is not source date',[m.valuation.status,m.selection.eligible,m.selection.buckets.includes('discount')],['undated',true,false]);
+  x.valuation.asOf='2027-01-01';__eq('P1 future source date not valid',deskSelectionModel(x).valuation.status,'undated');
+  x=selectionFixture();x.valuation={};m=deskSelectionModel(x);
+  __eq('P1 candidate without valuation',[m.valuation.status,m.selection.eligible,m.action.key,m.selection.buckets.includes('discount'),m.selection.buckets.includes('research')],['missing',true,'candidate',false,false]);
+  x=selectionFixture();x.valuation.value=null;__eq('P1 missing valuation is not expensive',deskSelectionModel(x).valuation.status,'missing');
+  x=selectionFixture();x.valuation.source='scenarios';m=deskSelectionModel(x);
+  __ok('P1 user valuation never enters external discount',!m.selection.buckets.includes('discount'));
+  x=selectionFixture();x.signal.flags=['stale-target'];m=deskSelectionModel(x);
+  __eq('P1 stale target: status kept, candidate kept, no discount',[m.valuation.status,m.selection.eligible,m.selection.buckets.includes('discount')],['stale',true,false]);
+  __eq('P1 candidate reasons without valuation code',m.selection.bucketReasons.candidates,['signal-buy','business-full']);
+  x=selectionFixture();x.valuation.peContext.eps=-2;m=deskSelectionModel(x);
+  __eq('P1 negative EPS forbids normal PE, not candidacy',[m.valuation.peContext.comparable,m.selection.buckets.includes('research'),m.selection.eligible],[false,false,true]);
+  __ok('P1 negative EPS does not discard security',m.identity.key===x.identity.key&&m.valuation.value===120);
+});
+grp('P1 action priority and buckets',function(){
+  let x=selectionFixture(),m=deskSelectionModel(x);
+  __eq('P1 buy is candidate with preview',[m.action.key,m.action.nextStep,m.action.requiresPreview],['candidate','check-trade',true]);
+  x.signal.verdict='wait';m=deskSelectionModel(x);__ok('P1 high quality never upgrades wait',m.action.key!=='candidate'&&!m.selection.eligible&&m.timing.verdict==='wait');
+  x.business.pillars=[];m=deskSelectionModel(x);__eq('P1 incomplete business preserves technical verdict',[m.action.key,m.action.nextStep,m.timing.verdict],['research','check-company','wait']);
+  ['exit','take','trim','earn','trail','be','nostop','watch','hold'].forEach(act=>{
+    x=selectionFixture();x.business.pillars=[];x.signal.flags=['knife','earnings'];
+    x.position={tab:'p',side:'long',action:{act,note:'existing position result',extra:{stop:95}}};
+    m=deskSelectionModel(x);__eq('P1 preserves full position action '+act,[m.action.key,m.action.source,m.action.position], [act,'position',x.position]);
+  });
+  x.price.observedAt=null;x.position.action.act='exit';m=deskSelectionModel(x);
+  __eq('P1 urgent exit visible while refresh required',[m.action.key,m.action.nextStep,m.action.position.side],['exit','refresh-data','long']);
+  x=selectionFixture();x.signal.side='short';x.signal.verdict='short';m=deskSelectionModel(x);
+  __eq('P1 short is technical scenario',[m.action.key,m.action.nextStep,m.selection.eligible],['technical','view-technical',false]);
+  x.position={tab:'p',side:'long',action:{act:'hold',note:'on plan'}};__eq('P1 short signal cannot sell held long',deskSelectionModel(x).action.key,'hold');
+  x.position.side='short';x.position.action.act='exit';__eq('P1 short position exit side',deskSelectionModel(x).action.position.side,'short');
+  x=selectionFixture();x.signal.flags=['knife','earnings','wide','stale-target'];x.risk={auto:5,override:1,level:1,reasons:['atr']};m=deskSelectionModel(x);
+  __eq('P1 override cannot remove automatic high risk',[m.risk.auto,m.risk.override,m.risk.level,m.selection.buckets.includes('high-risk'),m.selection.eligible],[5,1,1,true,false]);
+  __ok('P1 all critical warnings retained',x.signal.flags.every(f=>m.action.warnings.includes(f)));
+  x=selectionFixture();x.signal.verdict='wait';x.signal.plan={side:'long',mode:'limit',entry:98,stop:94,target:110,rr:3,flags:[]};m=deskSelectionModel(x);
+  __eq('P1 valid near-zone wait',[m.selection.buckets.includes('near-zone'),m.action.key,m.timing.waitingLevel],[true,'wait',98]);
+  x.price.value=93;__ok('P1 broken limit excluded',!deskSelectionModel(x).selection.buckets.includes('near-zone'));
+  x.price.value=111;__ok('P1 reached target excluded',!deskSelectionModel(x).selection.buckets.includes('near-zone'));
+  x.price.value=100;x.signal.plan.rr=0.5;__ok('P1 weak RR excluded',!deskSelectionModel(x).selection.buckets.includes('near-zone'));
+  x.signal.plan.rr=3;x.watch={zone:{lo:85,hi:90},source:'manual'};m=deskSelectionModel(x);
+  __eq('P1 manual zone separate from SIG limit',[m.timing.waitingLevel,m.timing.manualZone,m.timing.zoneSource],[98,{lo:85,hi:90},'manual']);
+  x=selectionFixture();__ok('P1 actual high quality growth',deskSelectionModel(x).selection.buckets.includes('quality-growth'));
+  x.business.facts.growthBasis='forecast';__ok('P1 forecast is not actual growth',!deskSelectionModel(x).selection.buckets.includes('quality-growth'));
+  x.business.facts.growthBasis='actual';x.business.facts.revenueGrowth=0;__ok('P1 zero is not positive growth',!deskSelectionModel(x).selection.buckets.includes('quality-growth'));
+  x=selectionFixture();x.signal=null;m=deskSelectionModel(x);
+  __eq('P1 missing snapshot: refresh, no buckets',[m.action.key,m.selection.buckets],['refresh',[]]);
+  x=selectionFixture();x.signal.usable=false;m=deskSelectionModel(x);__eq('P1 stale signal requires refresh',[m.action.key,m.selection.eligible],['refresh',false]);
+  __eq('P1 stale-candle buy is research',m.selection.bucketReasons.research,['signal-stale']);
+  x=selectionFixture();x.context.selectedPortfolio='all';__eq('P1 all portfolios requires selection',deskSelectionModel(x).action.nextStep,'select-portfolio');
+  x.context.selectedPortfolio='p';x.context.permissions.trade=false;m=deskSelectionModel(x);
+  __eq('P1 reader keeps analysis without trade action',[m.selection.eligible,m.action.nextStep],[true,'view-technical']);
+  x.context.permissions.view=false;__eq('P1 inaccessible input discarded',deskSelectionModel(x),null);
+});
+// «Нужно изучить» — только почти кандидаты (§15 #2): технически проходят, не хватает только данных.
+grp('P1 research is narrow',function(){
+  let x=selectionFixture(),m;
+  x.business.pillars=x.business.pillars.slice(0,3);m=deskSelectionModel(x);
+  __eq('P1 buy with partial business → research',[m.selection.buckets.includes('research'),m.selection.eligible],[true,false]);
+  __ok('P1 research reason is business gap',m.selection.bucketReasons.research.includes('business-partial'));
+  x=selectionFixture();x.price.observedAt=x.context.now-31*60000;m=deskSelectionModel(x);
+  __eq('P1 buy with stale price → research',[m.selection.buckets.includes('research'),m.selection.bucketReasons.research],[true,['price-stale']]);
+  x=selectionFixture();x.price.value=null;__ok('P1 buy with missing price → research',deskSelectionModel(x).selection.buckets.includes('research'));
+  x=selectionFixture();x.signal.verdict='wait';x.business.pillars=[];x.valuation={};x.price.observedAt=null;m=deskSelectionModel(x);
+  __eq('P1 wait without zone and with gaps → not research',m.selection.buckets.includes('research'),false);
+  x=selectionFixture();x.signal.flags=['knife'];x.business.pillars=[];m=deskSelectionModel(x);
+  __eq('P1 blocked buy with gaps → not research',m.selection.buckets.includes('research'),false);
+  x=selectionFixture();x.signal.side='short';x.signal.verdict='short';x.business.pillars=[];
+  __ok('P1 short with gaps → not research',!deskSelectionModel(x).selection.buckets.includes('research'));
+  x=selectionFixture();x.signal.verdict='wait';x.signal.plan={side:'long',mode:'limit',entry:98,stop:94,target:110,rr:3,flags:[]};
+  x.price.observedAt=null;m=deskSelectionModel(x);
+  __eq('P1 near-zone limit with unknown price → research, not near-zone',[m.selection.buckets.includes('research'),m.selection.buckets.includes('near-zone'),m.selection.bucketReasons.research],[true,false,['price-unknown']]);
+  x.price.observedAt=x.context.now;x.business.pillars=[];m=deskSelectionModel(x);
+  __eq('P1 near-zone needs no business data',[m.selection.buckets.includes('near-zone'),m.selection.buckets.includes('research')],[true,false]);
+  x=selectionFixture();x.valuation.currency='EUR';x.valuation.warnings=['cache-incomparable'];x.business.reasonCodes=['business-cache-stale'];
+  __ok('P1 full buy with valuation/cache warnings → candidate, not research',(m=deskSelectionModel(x),m.selection.eligible&&!m.selection.buckets.includes('research')));
+});
+grp('P1 sorting, isolation and glossary',function(){
+  const xs=[];for(let i=0;i<15;i++){const x=selectionFixture();x.identity.key='T'+String(i).padStart(2,'0')+'|USD';x.signal.score=i;xs.push(deskSelectionModel(x));}
+  const b=deskPickBuckets(xs,SIG.cmp,DESK_IDEA_CFG.selection).candidates;
+  __eq('P1 card limit and total',[b.items.length,b.total,b.items[0].signal.score],[12,15,14]);
+  xs[0].signal.plan.rr=5;__eq('P1 SIG RR before score',deskPickBuckets(xs,SIG.cmp,DESK_IDEA_CFG.selection).candidates.items[0].identity.key,xs[0].identity.key);
+  const x=selectionFixture(),a=deskSelectionModel(x);x.identity.key='AAA|USD';const z=deskSelectionModel(x);
+  __eq('P1 stable exchange key tie breaker',deskPickBuckets([a,z],SIG.cmp,DESK_IDEA_CFG.selection).candidates.items.map(m=>m.identity.key),['AAA|USD','TEST|USD']);
+  // Модели без снимка сейчас ни в одну подборку не попадают; порядок deskPickBuckets проверяем на заданной принадлежности.
+  const n=selectionFixture();n.signal=null;n.identity.key='BBB|USD';const n1=deskSelectionModel(n);n.identity.key='AAA|USD';const n2=deskSelectionModel(n);
+  x.identity.key='ZZZ|USD';const w=deskSelectionModel(x);
+  [n1,n2,w].forEach(m=>{m.selection.buckets=['research'];});
+  __eq('P1 snapshots first, then no snapshots by key',deskPickBuckets([n1,n2,w],SIG.cmp,DESK_IDEA_CFG.selection).research.items.map(m=>m.identity.key),['ZZZ|USD','AAA|USD','BBB|USD']);
+  const frozen=selectionFixture(),freeze=o=>{if(o&&typeof o==='object'){Object.values(o).forEach(freeze);Object.freeze(o);}return o;};
+  freeze(frozen);const before=JSON.stringify(frozen),model=deskSelectionModel(frozen);deskPickBuckets([model],SIG.cmp,DESK_IDEA_CFG.selection);
+  __eq('P1 inputs not mutated',JSON.stringify(frozen),before);
+  model.timing.plan.entry=2;model.identity.tabs.push('new');model.signal.flags.push('new');
+  __eq('P1 output has no mutable input aliases',JSON.stringify(frozen),before);
+  const isolated=new Function('SIG','DATA','VAL','FX','document','fetch',rd('desk-selection.js')+';return deskSelectionModel;')();
+  __approx('P1 standalone module without application globals',isolated(frozen).quality.value,9,1e-12);
+  ['quality','coverage','partial','na','valuation','candidates','near-zone','quality-growth','discount','research','high-risk'].forEach(k=>__ok('P1 glossary '+k,!!deskGlossItem('selection-'+k)));
+});
+// Адаптер (§15 #1, #3): листинг таргета, строка по sec.src.i, риск как у deskItems → мемо SIGNALS без SIG.snapshot.
+grp('P1 selection adapter',function(){
+  var _D=DATA,_hc=_histCache,_S=SIGNALS,_L=SIG_SHADOW,_tg=TG_FULL,_val=VAL,_pf=PF_FUND,_px=PX_LIVE,_role=userRole,_desk=DESK,_port=DESK_UI.port,_cal=pf3Cal,_fx=FX,_pm=POS_META,_snap=SIG.snapshot,_sfr=secFromRow;
+  try{
+    var now=Date.parse('2026-09-10T12:00:00Z');
+    var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м'];
+    userRole='admin';FX={SEK:1,USD:10};POS_META={};pf3Cal={data:{},loaded:1,loading:false,failed:false};PF_FUND={};VAL={};PX_LIVE={};
+    DESK=deskNorm({riskPct:1,riskCapPct:6});DESK_UI.port='all';SIG_SHADOW={v:1,days:{}};
+    DATA={};
+    DATA[PF3_KEY]={headers:h,v3:'1',cashFree:100000,rows:[[1,'Volvo','VOLV B','🇸🇪','Auto','Акция',0,250,'SEK',0,0,'','','','','','',''],[2,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',10,1527.5,'SEK',1400,-0.8,1614,1650,1717,1500,1600,1900,2600]]};
+    DATA['OMXS30']={headers:h,v3:'1',rows:[[1,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',0,1527.5,'SEK',0,-0.8,1614,1650,1717,1500,1600,1900,2600]]};
+    var F=SIG_FIX['AZN.ST'],j={t:F.map(function(b){return Date.parse(b[0]+'T00:00:00Z')/1000;}),o:F.map(function(b){return b[1];}),h:F.map(function(b){return b[2];}),l:F.map(function(b){return b[3];}),c:F.map(function(b){return b[4];}),v:F.map(function(b){return b[5];})};
+    _histCache={'AZN.ST:2y':{j:j,t:now-60e3}};SIGNALS={};
+    TG_FULL={AZN:{consensus:1800,low:1500,high:2100,count:12,lastDate:null,ccy:'SEK',sym:'AZN.ST',at:'2026-09-10T11:00:00Z'}};
+    var inp=deskSelectionInput('AZN.ST|SEK','all',now),m=deskSelectionModel(inp);
+    __eq('P1 adapter: target with listing ccy comparable',[inp.valuation.source,inp.valuation.currency,inp.valuation.comparable,inp.valuation.warnings,m.valuation.comparable,m.valuation.status],['analysts','SEK',true,[],true,'undated']);
+    TG_FULL={AZN:{consensus:1800,low:1500,high:2100,count:12,lastDate:null,at:'2026-09-10T11:00:00Z'}};inp=deskSelectionInput('AZN.ST|SEK','all',now);
+    __eq('P1 adapter: target without ccy incomparable',[inp.valuation.source,inp.valuation.warnings],[null,['cache-incomparable']]);
+    TG_FULL={AZN:{consensus:180,ccy:'USD',sym:'AZN'}};
+    __eq('P1 adapter: other listing incomparable',deskSelectionInput('AZN.ST|SEK','all',now).valuation.warnings,['cache-incomparable']);
+    TG_FULL={AZN:{consensus:1800,ccy:' sek ',sym:'AZN.ST'}};
+    __eq('P1 adapter: cached ccy normalised',deskSelectionInput('AZN.ST|SEK','all',now).valuation.comparable,true);
+    // Строка-источник — sec.src.i: вызовов secFromRow не больше двух на строку (вселенная + проверка ключа).
+    var calls=0;secFromRow=function(){calls++;return _sfr.apply(this,arguments);};
+    var U=deskUniverse(now);__eq('P1 adapter: src row found',deskSelectionInput('AZN.ST|SEK',PF3_KEY,now,U).identity.tabs,[PF3_KEY,'OMXS30']);
+    var rowsN=DATA[PF3_KEY].rows.length+DATA['OMXS30'].rows.length;
+    calls=0;deskSelectionModels('all',now);__ok('P1 adapter: linear row lookup ('+calls+' calls, '+rowsN+' rows)',calls<=rowsN+U.list.length);
+    U.bySym['AZN.ST|SEK'].src.i=0;
+    __eq('P1 adapter: shifted src row → key check falls back to scan',deskSelectionInput('AZN.ST|SEK',PF3_KEY,now,U).identity.sym,'AZN.ST');
+    secFromRow=_sfr;
+    // Мемо: deskItems заполняет SIGNALS с риском deskRiskKr(); подборки обоих режимов его переиспользуют.
+    _deskItems=null;var it=deskItems().byKey['AZN.ST|SEK'];_deskItems=null;
+    __ok('P1 adapter: deskItems filled memo',!!(it&&it.s&&SIGNALS['AZN.ST']));
+    var n=0;SIG.snapshot=function(){n++;return _snap.apply(this,arguments);};
+    var ms=deskSelectionModels('all',now);deskSelectionModels(PF3_KEY,now);
+    __eq('P1 adapter: warm memo → no SIG.snapshot (all + portfolio)',n,0);
+    __ok('P1 adapter: memo snapshot reused',ms.some(function(x){return x.identity.key==='AZN.ST|SEK'&&x.timing.verdict===it.s.verdict;}));
+    SIGNALS={};n=0;var sh=JSON.stringify(SIG_SHADOW);deskSelectionModels('all',now);
+    __eq('P1 adapter: cold memo computes read-only (no memo/shadow writes)',[n>=1,!!SIGNALS['AZN.ST'],JSON.stringify(SIG_SHADOW)===sh],[true,false,true]);
+  }finally{
+    SIG.snapshot=_snap;secFromRow=_sfr;_deskItems=null;
+    DATA=_D;_histCache=_hc;SIGNALS=_S;SIG_SHADOW=_L;TG_FULL=_tg;VAL=_val;PF_FUND=_pf;PX_LIVE=_px;userRole=_role;DESK=_desk;DESK_UI.port=_port;pf3Cal=_cal;FX=_fx;POS_META=_pm;
+  }
+});
+
 // 1) Комиссия (Avanza «Small») — клиентская модель
 grp('commission', function(){
   __approx('fee USD 1000 buy total', tradeFeeNative('USD',1000,true).total, 8.5);

@@ -2,7 +2,7 @@
 // (localStorage; ?desk=1 включает, ?desk=0 выключает). Пять экранов: Сегодня · Скринер · Акция · Позиции · Журнал.
 // Данные — глобалы приложения (DATA, POS_META, PLAN_RULES, PF_TRADES, DESK, FX), вселенная — deskUniverse,
 // сигналы — SIG через адаптер sigSnapRow (свечи ?history= в общем кэше _histCache), график — stockChartDraw.
-// Грузится ПОСЛЕДНИМ (после app-5.js). Старые экраны живут до S7: при активном desk renderAll/renderPF3
+// Грузится после app-5.js и чистого desk-selection.js, перед desk-gloss.js. Старые экраны живут до S7: при активном desk renderAll/renderPF3
 // перерисовывают его (deskRender), классический вид открывается через deskClassic() и возвращается кнопкой.
 // Чистые функции (ядро ниже) покрыты тестами в tests/cases-app.js; DOM — после маркера «── DOM ──».
 
@@ -444,6 +444,86 @@ function deskBook(){
   return out;
 }
 function deskSecOf(key){const I=deskItems();return I.byKey[key]||null;}
+
+// P1: адаптер отбора — только чтение строк/кэшей, без fetch, теневого журнала и записи состояния.
+// Каждый вызов заново проверяет доступ и контекст; кэша моделей между аккаунтами/портфелями нет.
+function deskSelectionConfig(){
+  return Object.assign({},DESK_IDEA_CFG.selection,{weights:PF3_BETYG_WEIGHTS,grade:pf3Grade,
+    nearZonePct:DESK_IDEA_CFG.nearZonePct,staleMin:DESK_IDEA_CFG.whatIf.staleMin,rrOk:SIG.rrOk,rrWeak:SIG.CFG.rrWeak});
+}
+// Старый ticker-cache без валюты/листинга не доказывает сопоставимость даже при одной видимой строке.
+function deskSelectionCache(cache,sec){
+  const v=cache&&(cache[sec.tk]||cache[posTk(sec.tk)]);if(!v)return {data:null,reason:null,ccy:null};
+  const ccy=String(v.ccy||v.currency||'').trim().toUpperCase(),sym=v.sym||v.symbol;
+  const ok=ccy===sec.ccy&&(sym?sym===sec.sym:exSymbol(sec.tk,ccy)===sec.sym)&&(!v.scale||v.scale===1);
+  return {data:ok?v:null,reason:ok?null:'cache-incomparable',ccy:ok?ccy:null};
+}
+// Риск на сделку — тот же, что у deskItems (deskRiskKr), иначе ключ мемо SIGNALS не совпадёт и каждый
+// пересчёт подборок заново зовёт SIG.snapshot для всей вселенной (§15 #3).
+function deskSelectionRiskKr(selectedPortfolio){
+  return selectedPortfolio&&selectedPortfolio!=='all'?sigRiskKr(selectedPortfolio):deskRiskKr();
+}
+function deskSelectionInput(key,selectedPortfolio,now,universe,riskKr){
+  now=now==null?Date.now():now;
+  if(!can('view.portfolio'))return null;
+  const U=universe||deskUniverse(now),sec=U.bySym[key];
+  if(!sec)return null;
+  const tabs=sec.tabs.filter(tabAllowed);if(!tabs.length)return null;
+  if(selectedPortfolio&&selectedPortfolio!=='all'&&(!tabAllowed(selectedPortfolio)||!pf3MyPort(selectedPortfolio)))return null;
+  const tab=sec.src&&tabs.includes(sec.src.tab)?sec.src.tab:tabs[0],d=DATA[tab],rowKey=row=>{const q=secFromRow(d,row,tab,now);return q&&q.key;};
+  // Строка-источник deskUniverse (O(1)); поиск по вкладке — только если строки сдвинулись после сборки вселенной.
+  const ri=d&&sec.src&&sec.src.tab===tab?d.rows[sec.src.i]:null;
+  const r=ri&&rowKey(ri)===key?ri:d&&d.rows.find(row=>rowKey(row)===key);if(!r)return null;
+  const health=can('view.health'),valuationAllowed=can('view.valuation'),planAllowed=can('view.plan');
+  const metrics=pf3TypeMetrics(d,r),fc=health&&PF_FUND[sec.sym];
+  // Числа из битого кэша не должны превращаться в нулевые/максимальные столпы pf3Scores.
+  const raw=fc&&fc.data,F=raw?Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,typeof v==='number'&&!Number.isFinite(v)?null:v])):null;
+  const B=F?pf3Betyg(F,sec.tk,sec.sector):null;
+  const vc=valuationAllowed?deskSelectionCache(VAL,sec):{data:null,reason:'valuation-restricted'};
+  const tc=valuationAllowed?deskSelectionCache(TG_FULL,sec):{data:null,reason:null},V=vc.data;
+  const watch=planAllowed?deskWatchGet(key):null;
+  const s=sigSnapRow(d,r,riskKr>0?riskKr:deskSelectionRiskKr(selectedPortfolio),now,true);
+  const lv=PX_LIVE[sec.sym],live=lv&&deskSelNum(lv.price)>0;
+  const price=live?lv.price:sec.price,observedAt=live?lv.at:null;
+  const fv=valuationAllowed?deskFairValue(watch,tc.data,price):{value:null,src:null};
+  const fvCurrency=fv.src==='scenarios'?watch.ccy:fv.src==='analysts'?tc.ccy:null;
+  const pe=valuationAllowed?(V?deskSelNum(V.pe):F?deskSelNum(F.pe):null):null,eps=valuationAllowed&&F?deskSelNum(F.eps):null;
+  const risk=deskRiskLevel(s,{plan:s&&s.plan,beta:metrics.beta,riskOvr:watch&&watch.riskOvr});
+  const pos=selectedPortfolio&&selectedPortfolio!=='all'?bookPositions(selectedPortfolio).find(p=>p.sym===sec.sym&&p.ccy===sec.ccy):null;
+  const businessReasons=health?[]:['business-restricted'];
+  const fetched=fc?deskSelTime(fc.at):null;
+  if(F&&(fetched==null||fetched>now))businessReasons.push('business-fetch-date-unknown');
+  else if(F&&now-fetched>6*3600e3)businessReasons.push('business-cache-stale'); // существующий TTL PF_FUND
+  const growth=F?deskSelNum(F.revenueYoY):health?metrics.revg:null;
+  return {identity:{key:sec.key,sym:sec.sym,tk:sec.tk,ccy:sec.ccy,sector:sec.sector,tabs,
+      held:(sec.held||[]).filter(p=>tabs.includes(p.tab)).map(p=>({tab:p.tab}))},
+    price:{value:price,observedAt,freshness:live?'fresh':'unknown'},
+    business:{pillars:B?B.pillars.filter(p=>p.key!=='val'):[],mode:F?'fundamental':health?'lite':'missing',
+      notApplicable:pf3FinSec(sec.sector)?['balance','cash']:[],asOf:F&&F.asOf||null,fetchedAt:fc&&fc.at||null,
+      reasonCodes:businessReasons,facts:{roe:health?metrics.roe:null,revenueGrowth:growth,growthBasis:growth!=null?'actual':null}},
+    valuation:{value:fv.value,source:fv.src,currency:fvCurrency,comparable:!!fv.src&&fvCurrency===sec.ccy,
+      // TG_FULL.at — время загрузки, не дата источника. updatedAt списка также не дата оценки.
+      asOf:fv.src==='analysts'?tc.data.lastDate||null:null,fetchedAt:fv.src==='analysts'?tc.data.at||null:null,
+      warnings:[vc.reason,tc.reason].filter(Boolean),stale:!!(s&&(s.flags||[]).includes('stale-target')),
+      peContext:{value:pe,eps,source:V?'valuation':F?'fundamentals':null,asOf:V&&V.at||F&&F.asOf||null,
+        historical:V?deskSelCopy(V.hist||null):null,comparable:pe>0&&(eps==null||eps>0),
+        reasonCodes:eps!=null&&eps<=0?['pe-nonpositive-eps']:pe>0?[]:['pe-missing']}},
+    signal:s?Object.assign({},s,{version:SIG.VER,usable:!!(_histCache[sigHistKey(sec.sym)]&&
+      _histCache[sigHistKey(sec.sym)].t<=now&&now-_histCache[sigHistKey(sec.sym)].t<=SIG_TTL)}):null,
+    risk:{auto:risk.auto,override:risk.ovr,level:risk.level,reasons:risk.parts.map(p=>p.k),parts:risk.parts},
+    position:pos?{tab:pos.tab,side:pos.side,action:deskPosAct(pos,s,sigEarnDays(sec.sym,now))}:null,
+    context:{selectedPortfolio:selectedPortfolio||null,now,config:deskSelectionConfig(),permissions:{view:true,
+      trade:can('action.edit_trades'),refresh:can('action.refresh_data'),editPlan:can('action.edit_plan')}},
+    watch:watch?{key:watch.key,zone:deskWatchZone(watch,price),source:watch.buySrc,planId:watch.planId}:null};
+}
+function deskSelectionModels(selectedPortfolio,now){
+  now=now==null?Date.now():now;if(!can('view.portfolio'))return [];
+  const U=deskUniverse(now),rk=deskSelectionRiskKr(selectedPortfolio);
+  return U.list.map(sec=>deskSelectionModel(deskSelectionInput(sec.key,selectedPortfolio,now,U,rk))).filter(Boolean);
+}
+function deskSelectionBuckets(selectedPortfolio,now){
+  return deskPickBuckets(deskSelectionModels(selectedPortfolio,now),SIG.cmp,DESK_IDEA_CFG.selection);
+}
 
 // ── Флаг, монтирование, перерисовка ──
 function deskSetFlag(on){try{localStorage.setItem(DESK_LS,on?'1':'0');}catch(e){}}

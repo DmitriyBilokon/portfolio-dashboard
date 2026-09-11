@@ -2067,6 +2067,7 @@ function pf3ValScore(F,tk,sector,fin){
   const a=kinds.map(one).filter(x=>x!=null);
   return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
 }
+const PF3_BETYG_WEIGHTS=Object.freeze({profit:0.25,growth:0.2,balance:0.2,cash:0.2,val:0.15});
 function pf3Betyg(F,tk,sector){
   if(!F)return null;
   const fin=pf3FinSec(sector);
@@ -2079,7 +2080,7 @@ function pf3Betyg(F,tk,sector){
     {key:'cash',   icon:'💵', label:['Денежный поток','Cash flow'],  score:fin?null:S.cash,    na:fin},
     {key:'val',    icon:'🏷', label:['Оценка','Valuation'],          score:pf3ValScore(F,tk,sector,fin)},
   ];
-  const W={profit:0.25,growth:0.2,balance:0.2,cash:0.2,val:0.15};
+  const W=PF3_BETYG_WEIGHTS;
   let sw=0,wsum=0,n=0;
   pillars.forEach(p=>{if(p.score!=null){sw+=p.score*W[p.key];wsum+=W[p.key];n++;}});
   // Недостаточно валидных столпов (типично у банков/финансов с неприменимыми метриками

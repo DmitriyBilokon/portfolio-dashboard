@@ -290,7 +290,8 @@ async function valUpdateAll(){
       try{
         const r=await fetch(PRICE_PROXY+'?action=targetsagg',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
         const j=await r.json();
-        if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]={...t,at:new Date().toISOString()};}
+        // ccy/sym листинга, по которому запрошены таргеты: кэш по тикеру, desk сверяет листинг (stock-selection-ux §15 #1).
+        if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]={...t,ccy:String(x.ccy||'USD').trim().toUpperCase(),sym,at:new Date().toISOString()};}
       }catch(e){ if(i===0)break; }   // упал ПЕРВЫЙ чанк → эндпоинт недоступен (старый воркер/CORS), не долбим; иначе пропускаем сбойный чанк и продолжаем
     }
     // Алерты «дёшево по обоим измерениям» (новые) → Telegram, дедуп по подписи.

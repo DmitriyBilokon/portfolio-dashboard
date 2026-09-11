@@ -1626,6 +1626,85 @@ grp('chartFanModel', function(){
   __eq('без консенсуса или свечей → null', [chartFanModel(bars,{low:1,high:2}),chartFanModel([],{consensus:1}),chartFanModel(bars,null)], [null,null,null]);
   __ok('время строго возрастает', M.hist.concat(M.future).every(function(p,i,a){return !i||a[i-1].time<p.time;}));
 });
+// ── Линия прибыли на графике (plans/earnings-line.md): chartEarningsModel / chartEarnAt / deskEarnPe ──
+function __wdays(from,to){var o=[];for(var t=Date.parse(from+'T00:00:00Z');t<=Date.parse(to+'T00:00:00Z');t+=864e5){var wd=new Date(t).getUTCDay();if(wd&&wd<6)o.push({d:new Date(t).toISOString().slice(0,10),c:150,h:152,l:148});}return o;}
+function __vi(view,d){for(var i=0;i<view.length;i++)if(view[i].d===d)return i;return -1;}
+grp('earnings line', function(){
+  var view=__wdays('2023-06-01','2025-06-30'),L=view.length,C=DESK_IDEA_CFG.earn;
+  var fin={status:'ok',ccy:'SEK',fiscalYearEnd:'12-31',annual:[{year:2022,eps:5},{year:2023,eps:6},{year:2024,eps:8}],estimates:[{year:2024,eps:99,n:1},{year:2025,eps:10,n:30},{year:2026,eps:11,n:25}]};
+  var o={pe:20,peSrc:'pe5',ccy:'SEK',fx:{SEK:1,USD:10},futureBars:C.futureBars,scaleX:C.scaleX};
+  var M=chartEarningsModel(view,fin,o);
+  __eq('state ok', M.state, 'ok');
+  __eq('факт: точки на концах FY (31.12.2023 — воскресенье → бар 01.01.2024), значение = EPS × P/E', M.hist.filter(function(p){return !p.interp;}).map(function(p){return [p.time,p.value,p.eps,p.year];}), [['2024-01-01',120,6,2023],['2024-12-31',160,8,2024]]);
+  __eq('точка до окна → интерполированная точка на первом баре окна', [M.hist[0].i,M.hist[0].time,!!M.hist[0].interp], [0,view[0].d,true]);
+  __approx('…по календарным дням между FY2022 и FY2023', M.hist[0].value, 100+20*152/365, 1e-9);
+  __eq('индексы факта — бары окна', [M.hist[1].i,M.hist[2].i], [__vi(view,'2024-01-01'),__vi(view,'2024-12-31')]);
+  __eq('прогноз: первая точка = последняя фактическая, дальше estimates (прогноз ≤ последнего факта отброшен)', M.fcst.map(function(p){return [p.time,p.value,p.n||null];}), [['2024-12-31',160,null],['2025-12-31',200,30],['2026-12-31',220,25]]);
+  __eq('прогноз после последнего бара — на будущих слотах', [M.fcst[1].i>=L,M.fcst[2].i,M.fcst[2].i-L], [true,L+M.future.length-1,M.future.length-1]);
+  var F=M.future;
+  __ok('будущие слоты — рабочие дни после последнего бара, строго возрастают', F[0].time==='2025-07-01' && F.every(function(s,i){var wd=new Date(s.time+'T00:00:00Z').getUTCDay();return wd>0&&wd<6&&(!i||F[i-1].time<s.time);}));
+  __eq('слоты покрывают последний FY прогноза и не длиннее futureBars', [F[F.length-1].time,F.length<=C.futureBars], ['2026-12-31',true]);
+  __ok('время серий строго возрастает', [M.hist,M.fcst,M.line].every(function(S){return S.every(function(p,i){return !i||S[i-1].i<p.i;});}));
+  __eq('линия для легенды: факт + прогноз без повтора стыка', M.line.map(function(p){return p.value;}).slice(1), [120,160,200,220]);
+  var a=__vi(view,'2024-12-31'),b=M.fcst[1].i,at=chartEarnAt(M,L-1);
+  __approx('значение на последнем баре — интерполяция по индексу к прогнозу', at.value, 160+40*(L-1-a)/(b-a), 1e-9);
+  __eq('…это отрезок прогноза к FY2025 (30 аналит.)', [at.fcst,at.at.year,at.at.n], [true,2025,30]);
+  __eq('на факте — не прогноз, точное значение', [chartEarnAt(M,a).value,chartEarnAt(M,a).fcst], [160,false]);
+  __eq('вне линии → null', [chartEarnAt(M,-1),chartEarnAt(M,L+F.length)], [null,null]);
+  __approx('last: отклонение цены от линии, %', M.last.dev, (150/at.value-1)*100, 1e-9);
+  __eq('fit: линия в пределах цены × scaleX; заметок нет', [M.fit,M.notes], [true,[]]);
+  // FY-конец в выходной → ближайший следующий бар.
+  var v2=__wdays('2024-01-02','2025-03-31'),M2=chartEarningsModel(v2,{status:'ok',ccy:'SEK',fiscalYearEnd:'06-30',annual:[{year:2024,eps:6}],estimates:[]},o);
+  __eq('FY до 30.06.2024 (вс) → бар 01.07.2024; нет прогноза — нет будущего', [M2.hist.map(function(p){return p.time;}),M2.future.length,M2.notes], [['2024-07-01'],0,['no-fcst']]);
+  __eq('без fiscalYearEnd — 31.12', chartEarningsModel(v2,{status:'ok',annual:[{year:2024,eps:4}]},o).hist[0].time, '2024-12-31');
+  // Обе точки до окна.
+  var v3=__wdays('2025-03-03','2025-06-30'),M3=chartEarningsModel(v3,{status:'ok',annual:[{year:2023,eps:5},{year:2024,eps:6}]},o);
+  __eq('обе точки факта до окна (без прогноза) → нет точек, state nowin', [M3.hist,M3.state], [[],'nowin']);
+  var M3f=chartEarningsModel(v3,{status:'ok',annual:[{year:2023,eps:5},{year:2024,eps:6}],estimates:[{year:2025,eps:9}]},o);
+  __eq('факт до окна + прогноз → пунктир входит с левого края', [M3f.hist.length,M3f.fcst[0].i,!!M3f.fcst[0].interp,M3f.state], [0,0,true,'ok']);
+  // Предел futureBars.
+  var M4=chartEarningsModel(view,fin,Object.assign({},o,{futureBars:10}));
+  __eq('futureBars 10 → 10 слотов, прогноз за пределом — интерполяция на последнем слоте', [M4.future.length,M4.fcst[M4.fcst.length-1].i,!!M4.fcst[M4.fcst.length-1].interp], [10,L+9,true]);
+  // Убыток.
+  var M5=chartEarningsModel(view,{status:'ok',annual:[{year:2023,eps:5},{year:2024,eps:-2}],estimates:[{year:2025,eps:3}]},o);
+  __eq('eps ≤ 0 → разрыв (value null), прогноз без стыка с убыточным годом', [M5.hist.map(function(p){return p.value;}),M5.fcst.length,M5.fcst[0].year], [[100,null],1,2025]);
+  __eq('на разрыве значения нет', chartEarnAt(M5,__vi(view,'2024-12-31')-1), null);
+  __eq('все годы убыточные → loss', chartEarningsModel(view,{status:'ok',annual:[{year:2023,eps:-1},{year:2024,eps:0}],estimates:[{year:2025,eps:3}]},o).state, 'loss');
+  __eq('fin null → nofin; ошибка → nofin + error; нет EPS → noeps', [chartEarningsModel(view,null,o).state,chartEarningsModel(view,{status:'error'},o).notes,chartEarningsModel(view,{status:'nodata',annual:[]},o).state,chartEarningsModel(view,{status:'ok',annual:[{year:2024,revenue:5,eps:null}]},o).state], ['nofin',['error'],'noeps','noeps']);
+  // Валюта.
+  var fu={status:'ok',ccy:'USD',annual:[{year:2024,eps:2}]};
+  __eq('валюта отчётности ≠ торгов без курса → ccy', chartEarningsModel(view,fu,Object.assign({},o,{fx:{SEK:1}})).state, 'ccy');
+  __eq('с курсом — пересчёт: 2 USD × 10 × P/E 20 = 400 kr', chartEarningsModel(view,fu,o).hist[0].value, 400);
+  __approx('USD-отчётность, торги в GBP (ANTO.L): курс USD/GBP', chartEarningsModel(view,fu,Object.assign({},o,{ccy:'GBP',fx:{SEK:1,USD:10,GBP:12.5}})).hist[0].value, 2*0.8*20, 1e-9);
+  __approx('отчётность в пенсах (GBp) → фунты', chartEarningsModel(view,{status:'ok',ccy:'GBp',annual:[{year:2024,eps:150}]},Object.assign({},o,{ccy:'GBP'})).hist[0].value, 1.5*20, 1e-9);
+  __eq('нет P/E → nope (и без отчётности: desk её тогда не запрашивает)', [chartEarningsModel(view,fin,Object.assign({},o,{pe:null})).state,chartEarningsModel(view,null,Object.assign({},o,{pe:0})).state], ['nope','nope']);
+  __eq('P/E текущий → заметка «только динамика»', chartEarningsModel(view,fin,Object.assign({},o,{peSrc:'cur'})).notes, ['pe-cur']);
+  var M6=chartEarningsModel(view,fin,Object.assign({},o,{pe:60}));
+  __eq('линия далеко от цены → вне автомасштаба', [M6.fit,M6.notes], [false,['off-scale']]);
+  __ok('заметка под графиком: отклонение и источник P/E', chartEarnNote(M,Object.assign({fin:fin},o)).indexOf('ниже линии прибыли · P/E 20')>0);
+  __ok('заметка: убыточна / нет P/E в пределах', chartEarnNote({state:'loss',notes:[]},o).indexOf('убыточна')>0 && chartEarnNote({state:'nope',notes:[]},{peMin:5,peMax:60}).indexOf('5–60')>0);
+});
+grp('deskEarnPe', function(){
+  var V={AAA:{sector:'Tech',pe:30,hist:{pe5:22,pe3:25}},BBB:{sector:'Tech',pe:12,hist:{pe3:70}},CCC:{sector:'Tech',pe:8},DDD:{sector:'Solo',pe:2},'INVE B':{sector:'Fin',pe:15}};
+  var S={Tech:{pe:18,n:3},Solo:{pe:2,n:1},Fin:{pe:14,n:1}};
+  __eq('приоритет: медиана 5 лет', deskEarnPe('aaa',V,S), {pe:22,src:'pe5'});
+  __eq('pe3 вне [peMin, peMax] → медиана сектора', deskEarnPe('BBB',V,S), {pe:18,src:'sector'});
+  __eq('сектор из 1 бумаги не годится → текущий', deskEarnPe(' inve b ',V,S), {pe:15,src:'cur'});
+  __eq('ничего подходящего → null; нет бумаги → null', [deskEarnPe('DDD',V,S),deskEarnPe('ZZZ',V,S)], [null,null]);
+  var C=DESK_IDEA_CFG.earn,m0=C.peMax;
+  try{ C.peMax=24; __eq('peMax 24 → pe5 22 проходит', deskEarnPe('AAA',V,S).src, 'pe5'); C.peMax=20; __eq('peMax 20 → pe5/pe3/текущий отпадают → сектор 18', deskEarnPe('AAA',V,S), {pe:18,src:'sector'}); }
+  finally{ C.peMax=m0; }
+  __eq('конфиг восстановлен', C.peMax, m0);
+});
+grp('desk glossary: линия прибыли', function(){
+  var it=deskGlossItem('earn-line'),X=deskGlossEarnEx();
+  __ok('запись earn-line в разделе «Акция»', it && it.sec==='stock');
+  __eq('пример считается моделью: 144 → 180 → 216', X.pts.map(function(p){return p.value;}), [144,180,216]);
+  __ok('числа в тексте = результат модели', __glNorm(deskGlossText(it.ex)).indexOf('линия 144 → 180 → 216')>=0);
+  __ok('подсказка — первое предложение', deskGlossTip('earn-line').indexOf('Где была бы цена')===0);
+  var C=DESK_IDEA_CFG.earn,m0=C.peMax;
+  try{ C.peMax=45; __ok('пороги в тексте — из DESK_IDEA_CFG.earn', __glNorm(deskGlossText(it.use)).indexOf('5–45')>=0); } finally{ C.peMax=m0; }
+});
 // ── 📖 Словарь Trade Desk (G1, plans/desk-glossary.md) ──
 function __glNorm(s){ return String(s).replace(/<[^>]*>/g,' ').replace(/\s+/g,' '); }   // nbsp тысяч → пробел
 grp('desk glossary: записи', function(){

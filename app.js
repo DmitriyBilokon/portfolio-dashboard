@@ -1905,7 +1905,7 @@ async function stockChartDraw(state,boxId){
   const trades=PF_TRADES.filter(t=>t&&posTk(t.tk)===tk).map(t=>({date:t.date,act:t.act,short:!!t.short}));
   if(state.ch){state.ch.destroy();state.ch=null}
   try{
-    state.ch=renderStockChart(box,bars,snap,{side:state.side,plan,bars:years===3?756:252,replay:e.rep,ccy,insider:iv&&Array.isArray(iv.tx)?iv.tx:null,trades});
+    state.ch=renderStockChart(box,bars,snap,{side:state.side,plan,bars:years===3?756:252,replay:e.rep,ccy,insider:iv&&Array.isArray(iv.tx)?iv.tx:null,trades,earn:state.earn||null});
   }catch(err){box.textContent=RT('Ошибка графика: ','Chart error: ')+(err.message||err);return}
   state.planPos=!!plan;
   stockChartTools(state,boxId==='chartBox'?'cy':'pf3cs');

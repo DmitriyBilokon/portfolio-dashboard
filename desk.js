@@ -308,6 +308,17 @@ function deskRatings(r){
   segs.forEach(x=>{x.pct=x.n/total*100;});
   return {segs:segs.filter(x=>x.n),total,consensus:r.consensus||null};
 }
+// «Нормальный» P/E для линии прибыли (plans/earnings-line.md): своя медиана 5 лет → 3 года → медиана сектора
+// (n ≥ 2) → текущий P/E; первый в [earn.peMin, earn.peMax]. val/secMed — для тестов (по умолчанию VAL и медианы).
+// → {pe, src:'pe5'|'pe3'|'sector'|'cur'} или null.
+function deskEarnPe(tk,val,secMed){
+  const C=DESK_IDEA_CFG.earn,Vm=val||VAL||{},t=String(tk||'').toUpperCase(),V=Vm[t]||Vm[posTk(t)]||null;
+  if(!V)return null;
+  const S=secMed||_valSecCache||valSectorMedians(),med=V.sector?S[V.sector]:null,h=V.hist||{};
+  const c=[['pe5',h.pe5],['pe3',h.pe3],['sector',med&&med.n>=2?med.pe:null],['cur',V.pe]];
+  for(const [src,v] of c){if(v>0&&+v>=C.peMin&&+v<=C.peMax)return {pe:+v,src};}
+  return null;
+}
 
 // ── DOM ────────────────────────────────────────────────────────────────────
 const DESK_LS='dash_desk';
@@ -352,6 +363,21 @@ let _deskDet=null;
 function deskDetOpen(id){if(!_deskDet){try{_deskDet=JSON.parse(localStorage.getItem(DESK_DET_LS)||'{}')||{};}catch(e){_deskDet={};}}return !!_deskDet[id];}
 function deskDetSave(id,open){deskDetOpen(id);if(open)_deskDet[id]=1;else delete _deskDet[id];try{localStorage.setItem(DESK_DET_LS,JSON.stringify(_deskDet));}catch(e){}}
 const dkDetAttr=id=>` data-det="${id}"${deskDetOpen(id)?' open':''}`;
+// Линия прибыли на графике «Акции»: переключатель на этом устройстве (localStorage, не снапшот), по умолчанию включён.
+// Выключен — нет ни запроса ?financials=, ни линии.
+const DESK_EARN_LS='dash_desk_earn';
+function deskEarnOn(){try{return localStorage.getItem(DESK_EARN_LS)!=='0';}catch(e){return true;}}
+function deskEarnSet(on){try{localStorage.setItem(DESK_EARN_LS,on?'1':'0');}catch(e){}}
+// Параметры линии для stockChartDraw (state.earn) и ключ готовности: сменился ответ ?financials= или P/E — график
+// перерисовывается (иначе канвас переносится как есть и линия не появилась бы до смены периода).
+function deskEarnFor(it){
+  if(!deskEarnOn())return {earn:null,key:'off'};
+  const sym=it.sec.sym,P=deskEarnPe(it.sec.tk);
+  if(P)deskFinLoad(sym);   // без P/E линии не будет — квоту FMP не тратим
+  const c=_deskFin[sym],fin=(c&&c.data)||null;
+  const earn=Object.assign({fin,pe:P&&P.pe,peSrc:P&&P.src,ccy:it.sec.ccy,fx:FX},DESK_IDEA_CFG.earn);
+  return {earn,key:(fin?(fin.fetchedAt||'')+'|'+fin.status:'wait')+'|'+(P?P.src+P.pe:'-')};
+}
 const dkHow=(id,body,title)=>`<details class="dk-how"${dkDetAttr(id)}><summary>${title||RT('Как рассчитано','How it’s calculated')}</summary><div class="dk-how-b">${body}</div></details>`;
 // Уровень риска 1–5 (deskRiskLevel): пять делений + слово; «вручную» — если перекрыт в идее.
 function dkRiskMeter(R){
@@ -516,15 +542,15 @@ function deskChartsAttach(keep){
   const used={_deskChart:false,_deskMini:false};
   want.forEach(([id,it,years,slot])=>{
     const box=document.getElementById(id);if(!box)return;used[slot]=true;
-    const cur=slot==='_deskChart'?_deskChart:_deskMini,side=deskSideFor(it);
+    const cur=slot==='_deskChart'?_deskChart:_deskMini,side=deskSideFor(it),E=slot==='_deskChart'?deskEarnFor(it):{earn:null,key:'off'};
     if(cur&&cur.key===it.key&&cur.years===years){
-      if(cur.ch&&keep[id]){box.replaceWith(keep[id]);if(cur.side!==side){cur.side=side;cur.ch.setSide(side);}return;}
-      if(cur._loading){cur.side=side;return;}   // рисуется: stockChartDraw сам найдёт новый контейнер по id
+      if(cur._loading){cur.side=side;cur.earn=E.earn;cur.ek=E.key;return;}   // рисуется: stockChartDraw сам найдёт новый контейнер по id и возьмёт earn
+      if(cur.ch&&keep[id]&&cur.ek===E.key){box.replaceWith(keep[id]);if(cur.side!==side){cur.side=side;cur.ch.setSide(side);}return;}
     }
     if(cur&&cur.ch){try{cur.ch.destroy();}catch(e){}}
     // Позиция в моём портфеле — график от её строки (план позиции: средняя/стоп/цель из POS_META).
     const h=deskHeld(it),hd=h&&DATA[h.tab],hr=hd&&hd.rows.find(r=>posTk(r[2])===h.tk);
-    const st={key:it.key,tab:hr?h.tab:it.tab,row:hr||it.r,ccy:it.sec.ccy,years,side,ch:null,_loading:true};
+    const st={key:it.key,tab:hr?h.tab:it.tab,row:hr||it.r,ccy:it.sec.ccy,years,side,ch:null,_loading:true,earn:E.earn,ek:E.key};
     if(slot==='_deskChart')_deskChart=st;else _deskMini=st;
     stockChartDraw(st,id).catch(()=>{}).then(()=>{st._loading=false;});
   });
@@ -905,11 +931,12 @@ function deskStockHTML(){
       ${s?dkPill(s.verdict,!!held)+dkPhase(s)+dkFlags(s):''}
       <div class="dk-ctl"><div class="dk-seg side">${held&&held.stop?'':`<button class="${side==='long'?'on':''} long" data-a="side" data-v="long" data-k="${dkEsc(it.key)}">▲ ${RT('Лонг','Long')}</button><button class="${side==='short'?'on':''} short" data-a="side" data-v="short" data-k="${dkEsc(it.key)}">▼ ${RT('Шорт','Short')}</button>`}</div>
         <div class="dk-seg"><button class="${DESK_UI.years===1?'on':''}" data-a="years" data-v="1">1${RT('Г','Y')}</button><button class="${DESK_UI.years===3?'on':''}" data-a="years" data-v="3">3${RT('Г','Y')}</button></div>
+        <button class="dk-toggle dk-earn-t${deskEarnOn()?' on':''}" data-a="earn" aria-pressed="${deskEarnOn()}"${dkG('earn-line')}><i aria-hidden="true"></i>${RT('Прибыль','Earnings')}</button>
         <button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде','Full card in the classic view')}">${RT('Ещё','More')} ···</button></div></div>
     ${deskThesisHTML(it,w,plan,side,px)}
     <div class="dk-cols">
       <div>
-        <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${held&&held.stop?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}</div></div>
+        <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${held&&held.stop?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}${deskEarnOn()?` · <span${dkG('earn-line')}>${RT('маджента — прибыль × P/E, пунктир — прогноз аналитиков','magenta — earnings × P/E, dashed — analyst forecast')}</span>`:''}</div></div>
         ${deskFinHTML(it)}${deskAnaHTML(it,px)}
         <details class="dk-panel dk-mt14"${held?'':' open'}><summary class="dk-ph"><h2>${RT('История сигналов','Signal history')}${dkGi('sig-history')}</h2><span class="dk-cnt">${hc&&hc.rep?hc.rep.trades.length:0}</span><span class="dk-note dk-ml">${st?dkEsc(chartStatsText(st)):RT('реплей вердикта v2 по свечам','verdict v2 replayed over candles')}</span></summary>
           ${trades.length?`<div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Вход','Entry')}</th><th>${RT('Сторона','Side')}</th><th class="r">${RT('Цена','Price')}</th><th class="r">${RT('Стоп','Stop')}</th><th class="r">${RT('Цель','Target')}</th><th>${RT('Выход','Exit')}</th><th class="r"${dkG('r-unit')}>R</th><th>${RT('Причина','Reason')}</th></tr></thead><tbody>${trades.map(t=>{const x=t.exits[t.exits.length-1];return `<tr><td class="dk-num">${t.d}</td><td>${dkSide(t.side)}</td><td class="r dk-num">${dkPx(t.entry)}</td><td class="r dk-num dk-dn">${dkPx(t.stop0)}</td><td class="r dk-num dk-up">${dkPx(t.target)}</td><td class="dk-num">${t.open?RT('открыта','open'):(x?x.d+' · '+dkEsc(x.why):'')}</td><td class="r dk-num dk-b ${t.R>=0?'dk-up':'dk-dn'}">${dkR(t.R)}</td><td class="dk-ink2">${dkEsc(t.why||'')}</td></tr>`;}).join('')}</tbody></table></div>`:`<div class="dk-empty">${RT('Входов по правилам v2 на истории не было (или свечи ещё грузятся).','No v2 entries over the history (or candles are loading).')}</div>`}</details>
@@ -1457,6 +1484,7 @@ function deskOnClick(e){
     case 'sort':{const s=el.dataset.s;if(DESK_UI.sort.k===s)DESK_UI.sort.d*=-1;else DESK_UI.sort={k:s,d:(s==='tk'||s==='dEntry'||s==='near')?1:-1};deskRender(true);break;}
     case 'side':DESK_UI.side[k]=el.dataset.v;{const st=_deskChart&&_deskChart.key===k?_deskChart:_deskMini&&_deskMini.key===k?_deskMini:null;if(st&&st.ch){st.side=el.dataset.v;st.ch.setSide(el.dataset.v);}}deskRender(true);break;
     case 'years':DESK_UI.years=+el.dataset.v===3?3:1;deskRender(true);break;
+    case 'earn':deskEarnSet(!deskEarnOn());deskRender(true);break;
     case 'plan':deskPlanAdd(k,el.dataset.side);break;
     case 'wimode':deskWiSave({mode:el.dataset.v==='weight'?'weight':'amount'});deskRender(true);setTimeout(()=>{const i=document.getElementById('dkWiV');if(i)i.focus();},0);break;
     case 'wiq':deskWiSave({mode:'amount',amountSEK:+el.dataset.v});deskRender(true);break;

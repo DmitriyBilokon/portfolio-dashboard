@@ -2479,3 +2479,90 @@ grp('P4 glossary coverage', function(){
   __eq('P4 причины несопоставимости — тексты', ['none','missing','not-applicable','provisional','status','applicability-differs','source-differs','side-differs','period-differs','equal'].filter(function(k){return !DK_CMP_WHY[k]||!DK_CMP_WHY[k]();}), []);
   __eq('P4 измерения различий — подписи', ['action','company','price','timing','risk','earnings'].filter(function(k){return !DK_CMP_DIM[k];}), []);
 });
+
+// P5a: слой журнала результатов выбора (desk-journal.js) — только чистые функции (без localStorage/DOM).
+function journalInput(over){
+  return Object.assign({key:'AAA|USD',sym:'AAA',ccy:'USD',selectionVersion:'sv1',signalVersion:'sig1',
+    bucket:'candidates',dimensions:{quality:9,valuation:'available',timing:'buy',risk:2},
+    observedPrice:100,observationAsOf:Date.parse('2026-09-11T12:00:00Z'),
+    benchmark:{symbol:'^GSPC',currency:'USD',basis:'price'},costAssumptions:null},over||{});
+}
+grp('P5a record shape and immutability', function(){
+  var now=Date.parse('2026-09-11T12:00:00Z'),rec=deskJournalRecord(journalInput(),{id:'j1',now:now});
+  __eq('P5a обязательные поля записи', [rec.id,rec.recordedAt,rec.key,rec.sym,rec.ccy,rec.source,rec.selectionVersion,rec.bucket,rec.status],
+    ['j1',now,'AAA|USD','AAA','USD','manual-selection','sv1','candidates','pending']);
+  __eq('P5a вход пуст до расчёта', rec.entry, null);
+  __eq('P5a три горизонта, все pending', Object.keys(rec.horizons).sort(), ['120','20','60']);
+  __eq('P5a горизонт — статус/значение/дата завершения', rec.horizons[20], {status:'pending',value:null,completedAt:null});
+  var dims=journalInput().dimensions;rec.dimensions.quality=1;
+  __eq('P5a dimensions скопированы, не по ссылке', dims.quality, 9);
+  var patched=deskJournalPatch([rec],'j1',{key:'HACK|USD',status:'complete',entry:{px:101}});
+  __eq('P5a patch меняет только entry/horizons/status', [patched[0].key,patched[0].status,patched[0].entry], ['AAA|USD','complete',{px:101}]);
+  __eq('P5a patch чужого id не трогает список', deskJournalPatch([rec],'nope',{status:'complete'})[0].status, 'pending');
+});
+grp('P5a dedup by stock/version/UTC date', function(){
+  var d1=Date.parse('2026-09-11T23:30:00Z'),d2=Date.parse('2026-09-12T00:30:00Z');
+  var a=deskJournalRecord(journalInput(),{id:'a',now:d1}),b=deskJournalRecord(journalInput(),{id:'b',now:d1+1000});
+  __eq('P5a тот же день — тот же ключ дедупа', deskJournalDedupKey(a)===deskJournalDedupKey(b), true);
+  var c=deskJournalRecord(journalInput(),{id:'c',now:d2});
+  __eq('P5a следующий UTC-день — другой ключ', deskJournalDedupKey(a)===deskJournalDedupKey(c), false);
+  var r1=deskJournalAdd([],a,DESK_JOURNAL_CFG);
+  __eq('P5a первая запись проходит', [r1.ok,r1.items.length], [true,1]);
+  var r2=deskJournalAdd(r1.items,b,DESK_JOURNAL_CFG);
+  __eq('P5a повтор той же бумаги/версии/дня отклонён', [r2.ok,r2.reason,r2.items.length], [false,'duplicate',1]);
+  var other=deskJournalRecord(journalInput({key:'BBB|USD'}),{id:'other',now:d1});
+  var r3=deskJournalAdd(r1.items,other,DESK_JOURNAL_CFG);
+  __eq('P5a другая бумага в тот же день — не дубль', [r3.ok,r3.items.length], [true,2]);
+});
+grp('P5a quota limit does not touch existing items', function(){
+  var cfg={maxRecords:2,maxBytes:500000,horizons:[20,60,120],retainDays:365};
+  var a=deskJournalRecord(journalInput({key:'A|USD'}),{id:'a',now:1}),b=deskJournalRecord(journalInput({key:'B|USD'}),{id:'b',now:2});
+  var r1=deskJournalAdd([],a,cfg),r2=deskJournalAdd(r1.items,b,cfg);
+  __eq('P5a до лимита — записи проходят', [r1.ok,r2.ok,r2.items.length], [true,true,2]);
+  var c=deskJournalRecord(journalInput({key:'C|USD'}),{id:'c',now:3});
+  var r3=deskJournalAdd(r2.items,c,cfg);
+  __eq('P5a лимит — отказ без изменения списка', [r3.ok,r3.reason,r3.items], [false,'limit',r2.items]);
+  var cfgBytes={maxRecords:500,maxBytes:10,horizons:[20,60,120],retainDays:365};
+  var r4=deskJournalAdd([],a,cfgBytes);
+  __eq('P5a лимит по байтам тоже отклоняет', [r4.ok,r4.reason], [false,'limit']);
+  var q=deskJournalQuotaState(r2.items,cfg);
+  __eq('P5a quotaState видит достижение лимита по числу записей', [q.count,q.atLimit], [2,true]);
+  __eq('P5a quotaState далеко от лимита по умолчанию', deskJournalQuotaState([a],DESK_JOURNAL_CFG).atLimit, false);
+});
+grp('P5a retention: completed age-out, pending never by age', function(){
+  var day=86400000,now=Date.parse('2026-09-11T00:00:00Z');
+  var oldDone=deskJournalRecord(journalInput({key:'OLD|USD'}),{id:'old',now:now-400*day});
+  oldDone.status='complete';oldDone.horizons[120]={status:'complete',value:0.1,completedAt:now-370*day};
+  var recentDone=deskJournalRecord(journalInput({key:'NEW|USD'}),{id:'new',now:now-10*day});
+  recentDone.status='complete';recentDone.horizons[120]={status:'complete',value:0.1,completedAt:now-5*day};
+  var oldPending=deskJournalRecord(journalInput({key:'PEND|USD'}),{id:'pend',now:now-500*day});
+  var kept=deskJournalCleanup([oldDone,recentDone,oldPending],now,365);
+  __eq('P5a завершённая >365д после последнего горизонта уходит, недавняя и pending остаются',
+    kept.map(function(r){return r.id;}).sort(), ['new','pend']);
+  __eq('P5a cleanup не меняет входной массив', [oldDone,recentDone,oldPending].length, 3);
+  var cleared=deskJournalClearCompleted([oldDone,recentDone,oldPending]);
+  __eq('P5a очистка «сейчас» убирает все завершённые независимо от возраста', cleared.map(function(r){return r.id;}), ['pend']);
+});
+grp('P5a export string round-trips the same envelope as storage', function(){
+  var items=[deskJournalRecord(journalInput(),{id:'x',now:1})];
+  var json=deskJournalExportJSON(items,42),parsed=JSON.parse(json);
+  __eq('P5a экспорт — версия/время/записи', [parsed.v,parsed.exportedAt,parsed.items.length], [DESK_JOURNAL_V,42,1]);
+  __eq('P5a экспортированная запись равна исходной', parsed.items[0], items[0]);
+});
+grp('P5a account namespace — no anonymous writes', function(){
+  var S={user:currentUser};
+  try{
+    currentUser=null;
+    __eq('P5a без аккаунта — ключа нет', deskJournalKey(), null);
+    __eq('P5a без аккаунта — запись отклонена явно', deskJournalRecordAdd(journalInput(),{id:'anon',now:1}), {ok:false,reason:'no-account'});
+    __eq('P5a без аккаунта — load не падает', deskJournalLoad(), []);
+    currentUser={id:'u7'};
+    __eq('P5a ключ содержит id пользователя', deskJournalKey(), 'dash_desk_journal_u7');
+  }finally{currentUser=S.user;}
+});
+grp('P5a isolated module load has no DOM/global reads in pure functions', function(){
+  var isolated=new Function('deskSelCopy',rd('desk-journal.js')+
+    ';return {rec:deskJournalRecord,add:deskJournalAdd,dedup:deskJournalDedupKey,cfg:DESK_JOURNAL_CFG};')(function(v){return v;});
+  var r=isolated.rec(journalInput(),{id:'iso',now:5});
+  __eq('P5a чистые функции работают без localStorage/currentUser/document', [r.id,r.key,isolated.add([],r,isolated.cfg).ok], ['iso','AAA|USD',true]);
+});

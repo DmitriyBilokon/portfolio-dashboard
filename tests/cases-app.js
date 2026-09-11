@@ -2232,3 +2232,250 @@ grp('P2 glossary coverage', function(){
   __eq('P2 новые термины экрана', ['stock-views','decision','dim-timing','main-risk','biz','events','insiders','news','ai-opinion'].filter(function(k){return !deskGlossItem(k);}), []);
   __eq('P2 коды причин модели — тексты', ['price-missing','price-unknown','price-stale','signal-missing','signal-stale','business-lite','business-partial','business-missing','business-restricted','valuation-incomparable','cache-incomparable','level-not-calculated'].filter(function(c){return dkSelR(c)===c;}), []);
 });
+
+// ── P4: сравнение 2–4 бумаг (plans/stock-selection-ux.md §6) ──
+function cmpFin(rows){return {annual:rows.map(function(r){return {year:r[0],revenue:r[1],eps:r[2],fcf:r[3]};}),ccy:'USD',source:'fmp',status:'ok'};}
+function cmpCol(key,mut,extra){
+  var x=selectionFixture();x.identity.key=key;if(mut)mut(x);
+  var tk=key.split('|')[0];
+  return Object.assign({key:key,tk:tk,name:tk+' Corp',ccy:'USD',sector:'Tech',fin:false,model:deskSelectionModel(x),
+    facts:deskCompareFinFacts(cmpFin([[2024,100,2,10],[2025,120,3,18]])),fwdPe:18,earnDays:null,finBusy:false,
+    it:{key:key,sec:{tk:tk,sym:tk,ccy:'USD',held:[],price:100},s:null}},extra||{});
+}
+function cmpRow(M,id){return M.rows.filter(function(r){return r.id===id;})[0];}
+grp('P4 compare selection 0/1/2/4/5', function(){
+  var T=function(keys,k){return deskCompareToggle(keys,k,DESK_IDEA_CFG.selection.maxCompare);};
+  __eq('P4 лимит сравнения — 4', DESK_IDEA_CFG.selection.maxCompare, 4);
+  __eq('P4 0 → 1', T([],'A|USD'), {keys:['A|USD'],full:false});
+  __eq('P4 1 → 2', T(['A|USD'],'B|USD').keys, ['A|USD','B|USD']);
+  __eq('P4 3 → 4', T(['A','B','C'],'D'), {keys:['A','B','C','D'],full:false});
+  __eq('P4 пятая не добавляется', T(['A','B','C','D'],'E'), {keys:['A','B','C','D'],full:true});
+  __eq('P4 при четырёх снять можно', T(['A','B','C','D'],'C'), {keys:['A','B','D'],full:false});
+  __eq('P4 повторный выбор снимает', T(['A','B'],'A').keys, ['B']);
+  __eq('P4 без повторов и пустых', T(['A','A','','B'],null).keys, ['A','B']);
+  __eq('P4 ключи биржевые: один тикер на двух биржах — две бумаги', T(['ASML|USD'],'ASML.AS|EUR').keys, ['ASML|USD','ASML.AS|EUR']);
+  var S={items:deskItems,user:currentUser,can:can,cmp:DESK_UI.compare,toast:toast,render:deskRender},msg=[];
+  try{
+    deskItems=function(){return {byKey:{'A|USD':{sec:{tk:'A'}},'B|USD':{sec:{tk:'B'}},'C|USD':{sec:{tk:'C'}},'D|USD':{sec:{tk:'D'}},'E|USD':{sec:{tk:'E'}}},items:[]};};
+    deskRender=function(){};toast=function(m,err){msg.push(!!err);};can=function(){return true;};
+    currentUser={id:'u1'};DESK_UI.compare={keys:['A|USD','B|USD','C|USD','D|USD'],acct:'u1',dropped:0};
+    deskCmpToggleKey('E|USD');
+    __eq('P4 пятая: выбор не меняется, предупреждение', [DESK_UI.compare.keys.length,msg], [4,[true]]);
+    deskCmpToggleKey('B|USD');
+    __eq('P4 снятие из выбора', DESK_UI.compare.keys, ['A|USD','C|USD','D|USD']);
+    DESK_UI.compare={keys:['A|USD','B|USD','X|USD'],acct:'u1',dropped:0};
+    __eq('P4 бумага без доступа убирается с пояснением', [deskCompareKeys(),DESK_UI.compare.dropped], [['A|USD','B|USD'],1]);
+    currentUser={id:'u2'};
+    __eq('P4 смена аккаунта очищает выбор', [deskCompareKeys(),DESK_UI.compare.keys,DESK_UI.compare.dropped], [[],[],0]);
+    DESK_UI.compare.keys=['A|USD','B|USD'];can=function(p){return p!=='view.portfolio';};
+    __eq('P4 без права на портфель — выбора нет', deskCompareKeys(), []);
+    can=function(){return true;};DESK_UI.compare={keys:['A|USD'],acct:'u2',dropped:0};
+    var box=dkCmpBox('A|USD');
+    __ok('P4 чекбокс: label — noop (не открывает карточку), событие — у input', /^<label class="dk-cmp-t on" data-a="noop"><input type="checkbox" data-a="cmp" data-k="A\|USD" checked>/.test(box));
+    __ok('P4 чекбокс не отмечен вне выбора', dkCmpBox('B|USD').indexOf(' checked')<0);
+    DESK_UI.route='screen';var tr=deskCmpTrayHTML();
+    __ok('P4 лоток с одной бумагой: «Сравнить» недоступна, подсказка', tr.indexOf('data-r="compare" disabled')>0 && tr.indexOf('выберите ещё')>0);
+    DESK_UI.compare.keys=['A|USD','B|USD'];tr=deskCmpTrayHTML();
+    __ok('P4 лоток с двумя: «Сравнить» доступна, без primary', tr.indexOf('data-r="compare" disabled')<0 && tr.indexOf('data-r="compare"')>0 && tr.indexOf('dk-btn pri')<0);
+    DESK_UI.route='compare';__eq('P4 на самом сравнении лотка нет', deskCmpTrayHTML(), '');
+    DESK_UI.compare.keys=[];DESK_UI.route='screen';__eq('P4 пустой выбор — лотка нет', deskCmpTrayHTML(), '');
+    // Клик: label → noop, input → переключение (делегирование на #desk).
+    var oGet=document.getElementById;document.getElementById=function(){return {contains:function(){return true;}};};
+    try{
+      var ev=function(ds){var el={dataset:ds,tagName:'INPUT'};return {target:{closest:function(){return el;}}};};
+      deskOnClick(ev({a:'noop'}));__eq('P4 клик по подписи ничего не меняет', DESK_UI.compare.keys, []);
+      deskOnClick(ev({a:'cmp',k:'C|USD'}));__eq('P4 клик по чекбоксу — в выборе', DESK_UI.compare.keys, ['C|USD']);
+      deskOnClick(ev({a:'cmpclr'}));__eq('P4 «Очистить»', DESK_UI.compare.keys, []);
+    }finally{document.getElementById=oGet;}
+  }finally{deskItems=S.items;currentUser=S.user;can=S.can;DESK_UI.compare=S.cmp;toast=S.toast;deskRender=S.render;DESK_UI.route='today';}
+});
+grp('P4 compare FY facts', function(){
+  var f=deskCompareFinFacts(cmpFin([[2025,120,3,18],[2023,90,1.5,5],[2024,100,2,10]]));
+  __eq('P4 последний FY (порядок входа не важен)', [f.fy,f.ccy,f.codes], [2025,'USD',[]]);
+  __approx('P4 рост выручки FY', f.revYoY, 20, 1e-9);__approx('P4 рост EPS FY', f.epsYoY, 50, 1e-9);__approx('P4 FCF-маржа FY', f.fcfMargin, 15, 1e-9);
+  f=deskCompareFinFacts(cmpFin([[2024,100,-1,10],[2025,120,3,18]]));
+  __eq('P4 EPS от отрицательной базы — не процент', [f.epsYoY,f.codes.indexOf('eps-base-nonpositive')>=0,f.revYoY!=null], [null,true,true]);
+  f=deskCompareFinFacts(cmpFin([[2024,100,0,10],[2025,120,3,18]]));
+  __eq('P4 EPS от нулевой базы — не процент', [f.epsYoY,f.codes.indexOf('eps-base-nonpositive')>=0], [null,true]);
+  f=deskCompareFinFacts(cmpFin([[2024,100,2,10],[2025,120,-1,18]]));
+  __approx('P4 падение в убыток от положительной базы — обычный процент', f.epsYoY, -150, 1e-9);
+  f=deskCompareFinFacts(cmpFin([[2023,100,2,10],[2025,120,3,18]]));
+  __eq('P4 пропуск года — роста нет', [f.revYoY,f.epsYoY,f.codes.indexOf('revenue-yoy-missing')>=0], [null,null,true]);
+  f=deskCompareFinFacts(cmpFin([[2024,100,2,10],[2025,120,3,null]]));
+  __eq('P4 нет FCF — маржи нет', [f.fcfMargin,f.codes.indexOf('fcf-margin-missing')>=0], [null,true]);
+  __eq('P4 нет ответа / ошибка / пусто', [deskCompareFinFacts(null).codes,deskCompareFinFacts({status:'error'}).codes,deskCompareFinFacts({annual:[]}).codes], [['fin-missing'],['fin-error'],['fin-nodata']]);
+});
+grp('P4 compare model: comparability', function(){
+  var CFG={earnDays:SIG.CFG.earnDays},M,r;
+  var A=cmpCol('AAA|USD'),B=cmpCol('BBB|USD',function(x){x.business.pillars.forEach(function(p){p.score=7;});x.valuation.value=110;x.valuation.peContext={value:15,eps:4,comparable:true};});
+  M=deskCompareModel([A,B],CFG);
+  __eq('P4 все строки модели', M.rows.map(function(x){return x.id;}), DESK_CMP_ROWS.map(function(x){return x[0];}));
+  __eq('P4 первый вид', M.rows.filter(function(x){return x.primary;}).map(function(x){return x.id;}), ['action','quality','valuation','timing','rr','risk','earnings']);
+  r=cmpRow(M,'quality');__eq('P4 качество сопоставимо: максимум и минимум', [r.comparable,r.best,r.worst], [true,[0],[1]]);
+  r=cmpRow(M,'valuation');__eq('P4 дисконт к датированной оценке аналитиков', [r.comparable,r.best,r.worst], [true,[0],[1]]);
+  r=cmpRow(M,'pe');__eq('P4 P/E: лучший — ниже', [r.dir,r.best,r.worst], ['lo',[1],[0]]);
+  r=cmpRow(M,'rr');__eq('P4 равные R/R не подсвечиваются', [r.comparable,r.why,r.best], [true,'equal',[]]);
+  r=cmpRow(deskCompareModel([cmpCol('R1|USD',function(x){x.signal.plan.rr=2.24;}),cmpCol('R2|USD',function(x){x.signal.plan.rr=2.18;})],CFG),'rr');
+  __eq('P4 на экране одинаковые (2,2 и 2,2) — не подсвечиваются', [r.why,r.best], ['equal',[]]);
+  r=cmpRow(deskCompareModel([cmpCol('R1|USD',function(x){x.signal.plan.rr=2.26;}),cmpCol('R2|USD',function(x){x.signal.plan.rr=2.14;})],CFG),'rr');
+  __eq('P4 видимая разница (2,3 и 2,1) — подсвечивается', [r.best,r.worst], [[0],[1]]);
+  __eq('P4 факт-строки без подсветки', ['action','timing','risk','earnings','entry-dist','stop-dist','sector'].map(function(id){var x=cmpRow(M,id);return x.dir===null&&!x.best.length&&x.why===null;}), [true,true,true,true,true,true,true]);
+  var bank=cmpCol('BNK|USD',function(x){x.business.pillars=[{key:'profit',score:9},{key:'growth',score:8},{key:'balance',score:null,na:true},{key:'cash',score:null,na:true}];},{fin:true});
+  M=deskCompareModel([A,bank],CFG);
+  __eq('P4 банк и не банк: качество по разным столпам — без подсветки', [cmpRow(M,'quality').why,cmpRow(M,'quality').best], ['applicability-differs',[]]);
+  __eq('P4 неприменимый столп и FCF банка', [cmpRow(M,'balance').why,cmpRow(M,'fcf-margin').why,cmpRow(M,'fcf-margin').cells[1].na], ['not-applicable','not-applicable',true]);
+  __eq('P4 применимые столпы банка сравниваются', cmpRow(M,'profit').comparable, true);
+  M=deskCompareModel([A,cmpCol('PRT|USD',function(x){x.business.pillars=x.business.pillars.slice(0,3);})],CFG);
+  __eq('P4 предварительное качество — без подсветки', cmpRow(M,'quality').why, 'provisional');
+  M=deskCompareModel([A,cmpCol('SCN|USD',function(x){x.valuation.source='scenarios';})],CFG);
+  __eq('P4 разные источники оценки', cmpRow(M,'valuation').why, 'source-differs');
+  M=deskCompareModel([A,cmpCol('UND|USD',function(x){x.valuation.asOf=null;})],CFG);
+  __eq('P4 оценка без даты — без подсветки', cmpRow(M,'valuation').why, 'status');
+  M=deskCompareModel([A,cmpCol('NOV|USD',function(x){x.valuation={};})],CFG);
+  __eq('P4 нет оценки у одной — без подсветки', cmpRow(M,'valuation').why, 'missing');
+  var neg=cmpCol('NEG|USD',function(x){x.valuation.peContext={value:5,eps:-2,comparable:true};});
+  M=deskCompareModel([A,neg],CFG);r=cmpRow(M,'pe');
+  __eq('P4 отрицательный EPS не даёт «самый дешёвый P/E»', [r.why,r.best,r.cells[1].v,r.cells[1].codes], ['not-applicable',[],null,['pe-nonpositive-eps']]);
+  M=deskCompareModel([A,cmpCol('SHT|USD',function(x){x.signal.side='short';x.signal.verdict='short';x.signal.plan={side:'short',mode:'market',entry:100,stop:105,target:88,rr:2.4,flags:[]};})],CFG);
+  __eq('P4 R/R планов разных сторон не сравнивается', cmpRow(M,'rr').why, 'side-differs');
+  M=deskCompareModel([A,cmpCol('EPN|USD',null,{facts:deskCompareFinFacts(cmpFin([[2024,100,-1,10],[2025,120,3,18]]))})],CFG);
+  __eq('P4 рост EPS от базы ≤ 0 — без процента и подсветки', [cmpRow(M,'eps-yoy').why,cmpRow(M,'eps-yoy').cells[1].codes.indexOf('eps-base-nonpositive')>=0,cmpRow(M,'rev-yoy').comparable], ['missing',true,true]);
+  M=deskCompareModel([A,cmpCol('LIT|USD',function(x){x.business.mode='lite';x.business.pillars=[];})],CFG);
+  __eq('P4 lite без рейтинга — строки столпов без подсветки', [cmpRow(M,'quality').why,cmpRow(M,'profit').why], ['missing','missing']);
+  var four=['A1','A2','A3','A4'].map(function(k,i){return cmpCol(k+'|USD',function(x){x.business.pillars.forEach(function(p){p.score=[8,6,8,5][i];});});});
+  r=cmpRow(deskCompareModel(four,CFG),'quality');
+  __eq('P4 четыре бумаги: ничья за максимум — обе', [r.best,r.worst], [[0,2],[3]]);
+  __eq('P4 ни у одной нет значения — отдельная причина', cmpRow(deskCompareModel([cmpCol('N1|USD',function(x){x.valuation={};}),cmpCol('N2|USD',function(x){x.valuation={};})],CFG),'valuation').why, 'none');
+  __eq('P4 одна колонка — не сравнение', [cmpRow(deskCompareModel([A],CFG),'quality').why,deskCompareModel([A],CFG).diffs], ['few',[]]);
+});
+grp('P4 compare model: differences and purity', function(){
+  var CFG={earnDays:SIG.CFG.earnDays},A=cmpCol('AAA|USD'),A2=cmpCol('AAB|USD');
+  __eq('P4 одинаковые условия — различий нет', deskCompareModel([A,A2],CFG).diffs, []);
+  var W=cmpCol('WWW|USD',function(x){x.signal.verdict='wait';x.signal.plan={side:'long',mode:'limit',entry:95,stop:90,target:110,rr:3,dEntry:-5,flags:[]};x.risk={auto:4,override:null,level:4,reasons:['atr']};});
+  var D=deskCompareModel([A,W],CFG).diffs,dims=D.map(function(d){return d.dim;});
+  __eq('P4 различия: действие, момент, риск', dims, ['action','timing','risk']);
+  var T=D.filter(function(d){return d.dim==='timing';})[0];
+  __eq('P4 факты момента по каждой бумаге', T.items.map(function(x){return [x.key,x.verdict,x.waiting];}), [['AAA|USD','buy',null],['WWW|USD','wait',95]]);
+  __eq('P4 у модели нет победителя и общего балла — только строки и различия', Object.keys(deskCompareModel([A,W],CFG)), ['keys','rows','diffs']);
+  var E=cmpCol('EEE|USD',null,{earnDays:2});
+  __ok('P4 близкий отчёт — всегда в различиях', deskCompareModel([A,E],CFG).diffs.some(function(d){return d.dim==='earnings'&&d.items[1].soon===true&&d.items[0].soon===false;}));
+  var B=cmpCol('BBB|USD',function(x){x.valuation.value=110;});
+  __ok('P4 цена: разный дисконт к одной оценке — различие', deskCompareModel([A,B],CFG).diffs.some(function(d){return d.dim==='price';}));
+  var pos=cmpCol('POS|USD',function(x){x.position={tab:'p',side:'long',action:{act:'exit',note:'стоп пробит'}};});
+  var PA=deskCompareModel([A,pos],CFG);
+  __eq('P4 срочный выход позиции виден в сравнении', cmpRow(PA,'action').cells[1].pos, 'exit');
+  var freeze=function(o){if(o&&typeof o==='object'&&!Object.isFrozen(o)){Object.freeze(o);Object.keys(o).forEach(function(k){freeze(o[k]);});}return o;};
+  var cols=[cmpCol('FZA|USD'),cmpCol('FZB|USD',function(x){x.business.pillars.forEach(function(p){p.score=6;});})];
+  cols.forEach(function(c){delete c.it;});freeze(cols);var before=JSON.stringify(cols),M=deskCompareModel(cols,CFG);
+  __eq('P4 входы не мутируют', JSON.stringify(cols), before);
+  var iso=new Function('SIG','DATA','VAL','FX','document','fetch','DESK_UI',rd('desk-selection.js')+';return deskCompareModel;')();
+  __eq('P4 модуль работает без глобалов приложения', JSON.stringify(iso(cols,CFG)), JSON.stringify(M));
+});
+grp('P4 compare route and Back', function(){
+  __eq('P4 адрес сравнения — без ключей', deskHashOf('compare','A|USD','tech'), '#desk/compare');
+  __eq('P4 разбор адреса', deskHashParse('#desk/compare'), {route:'compare',key:null,view:'decision'});
+  __eq('P4 подпись экрана', deskRouteLabel('compare'), 'Сравнение');
+  var oLoc=globalThis.location,oHist=globalThis.history,oR=deskRender,S={route:DESK_UI.route,key:DESK_UI.key,from:DESK_UI._cmpFrom,f:JSON.stringify(DESK_UI.f),iv:DESK_UI.iv},pushed=[],backs=0;
+  try{
+    globalThis.location={hash:'#desk/screen',href:''};
+    globalThis.history={state:{dk:1},pushState:function(s,t,h){pushed.push(h);location.hash=h;history.state=s;},replaceState:function(s){history.state=s;},back:function(){backs++;}};
+    deskRender=function(){};DESK_UI.route='screen';DESK_UI.iv='watch';DESK_UI.f.v='buy';DESK_UI.key='K|USD';
+    deskGo('compare');
+    __eq('P4 вход: новая запись истории, источник запомнен, бумага «Акции» не тронута', [pushed,DESK_UI._cmpFrom,DESK_UI.route,DESK_UI.key], [['#desk/compare'],'screen','compare','K|USD']);
+    deskGo('compare');__eq('P4 повторный вход не плодит записи', pushed.length, 1);
+    location.hash='#desk/screen';deskFromHash();
+    __eq('P4 Back: подборка и фильтры на месте', [DESK_UI.route,DESK_UI.iv,DESK_UI.f.v], ['screen','watch','buy']);
+    DESK_UI.route='compare';deskCompareBack();
+    __eq('P4 «← Назад» — history.back()', backs, 1);
+    DESK_UI._cmpFrom=null;location.hash='#desk/compare';deskCompareBack();
+    __eq('P4 прямая ссылка: «← Назад» ведёт в «Идеи»', [DESK_UI.route,pushed[pushed.length-1]], ['screen','#desk/screen']);
+  }finally{globalThis.location=oLoc;globalThis.history=oHist;deskRender=oR;DESK_UI.route=S.route;DESK_UI.key=S.key;DESK_UI._cmpFrom=S.from;DESK_UI.f=JSON.parse(S.f);DESK_UI.iv=S.iv;}
+});
+grp('P4 compare loads: pool, dedup, only selected', function(){
+  var P=_deskPool,save={q:P.q,run:P.run,live:P.live},SY=['C1','C2','C3','C4','C5'];
+  var S={fetch:fetch,sec:deskSecOf,can:can,fund:PF_FUND,keys:deskCompareKeys,route:DESK_UI.route,cf:DESK_UI._cmpFor},n=0,urls=[];
+  try{
+    P.q=[];P.run=0;P.live={};PF_FUND={};SY.forEach(function(s){delete _deskFin[s];delete _deskEarn[s];});
+    fetch=function(u){n++;urls.push(String(u).replace(/^.*\?/,''));return new Promise(function(){});};
+    var its={};SY.forEach(function(s){its[s+'|USD']={key:s+'|USD',sec:{sym:s,tk:s,ccy:'USD'}};});
+    deskSecOf=function(k){return its[k]||null;};can=function(){return true;};
+    var K=['C1|USD','C2|USD','C3|USD','C4|USD'];deskCompareKeys=function(){return K.slice();};
+    DESK_UI.route='screen';DESK_UI._cmpFor=null;deskCompareEnsure();
+    __eq('P4 «Идеи» не грузят данные сравнения', n, 0);
+    DESK_UI.route='compare';deskCompareEnsure();
+    __eq('P4 вход: 2 запроса сразу (пул), 10 в очереди', [n,P.q.length,urls], [2,10,['fundamentals=C1','financials=C1']]);
+    deskCompareEnsure();deskCompareEnsure();
+    __eq('P4 перерисовка не повторяет загрузки', [n,P.q.length], [2,10]);
+    __ok('P4 невыбранная бумага не грузится', urls.concat(P.q).join().indexOf('C5')<0);
+    K.push('C5|USD');deskCompareEnsure();
+    __eq('P4 добавленная бумага — только её загрузки', [P.q.length,P.q.slice(-3)], [13,['fund|C5','fin|C5','earn|C5']]);
+    DESK_UI.route='screen';deskCompareEnsure();__eq('P4 уход сбрасывает вход', DESK_UI._cmpFor, null);
+    P.q=[];P.run=0;P.live={};n=0;urls=[];K=['C3|USD','C4|USD'];PF_FUND={};can=function(p){return p!=='view.health';};
+    DESK_UI.route='compare';deskCompareEnsure();
+    __eq('P4 без права на данные компании — только дата отчёта', urls, ['earnings=C3','earnings=C4']);
+  }finally{fetch=S.fetch;deskSecOf=S.sec;can=S.can;PF_FUND=S.fund;deskCompareKeys=S.keys;DESK_UI.route=S.route;DESK_UI._cmpFor=S.cf;P.q=save.q;P.run=save.run;P.live=save.live;SY.forEach(function(s){delete _deskFin[s];delete _deskEarn[s];});}
+});
+grp('P4 compare what-if: each stock on its own', function(){
+  var _D=DATA,_pm=POS_META,_desk=DESK,_fx=FX,_tr=PF_TRADES,_pr=PLAN_RULES,_ro=DESK_UI.riskOvr;
+  try{
+    FX={SEK:1,USD:10};DESK=deskNorm({riskPct:1,riskCapPct:6,whatIf:{mode:'amount',amountSEK:40000}});PF_TRADES=[];PLAN_RULES=[];DESK_UI.riskOvr={};
+    var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+    DATA={'BK':{headers:h,v3:'1',port:'1',cashFree:50000,rows:[[1,'Acme','ACME','🇺🇸','Tech','Рост',10,110,'USD',100,0]]}};POS_META={'BK':{'ACME':{side:'long',stop:90}}};
+    var NOW=Date.UTC(2026,8,10,12);
+    var mk=function(tk){return {key:tk+'|USD',sec:{tk:tk,sym:tk,ccy:'USD',sector:'Tech',price:100,pxAt:NOW},s:{price:100,plans:{long:{mode:'market',entry:100,stop:95,target:112,rr:2.4,qty:10,risk:5,flags:[]}}}};};
+    var A=mk('AAA'),B=mk('BBB'),before=JSON.stringify([DATA,POS_META,PF_TRADES,PLAN_RULES]);
+    var ra=deskCompareWhatIf(A,'BK',NOW),rb=deskCompareWhatIf(B,'BK',NOW),alone=deskCompareWhatIf(B,'BK',NOW);
+    __eq('P4 один бюджет и один портфель у всех', [ra.budgetSEK,rb.budgetSEK,ra.tab,rb.tab], [40000,40000,'BK','BK']);
+    __eq('P4 оба варианта — от одного текущего кэша', [ra.cashBefore,rb.cashBefore], [50000,50000]);
+    __eq('P4 второй вариант не видит первую покупку', JSON.stringify(rb), JSON.stringify(alone));
+    __ok('P4 по отдельности проходят, вместе кэша бы не хватило', ra.cashAfter>=0 && rb.cashAfter>=0 && ra.notionalSEK+rb.notionalSEK>50000);
+    __eq('P4 расчёт ничего не записал', JSON.stringify([DATA,POS_META,PF_TRADES,PLAN_RULES]), before);
+    __eq('P4 без портфеля — ошибка, не расчёт', deskCompareWhatIf(A,null,NOW).err, 'port');
+  }finally{DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;PF_TRADES=_tr;PLAN_RULES=_pr;DESK_UI.riskOvr=_ro;}
+});
+grp('P4 compare screen', function(){
+  var S={can:can,watch:DESK_WATCH,plan:PLAN_RULES,items:deskItems,cmp:DESK_UI.compare};
+  try{
+    can=function(){return true;};DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};PLAN_RULES=[];
+    deskItems=function(){return {byKey:{},items:[]};};DESK_UI.compare={keys:[],acct:'',dropped:0};
+    var A=cmpCol('AAA|USD'),B=cmpCol('BBB|USD',function(x){x.business.pillars.forEach(function(p){p.score=7;});x.signal.verdict='wait';x.signal.plan={side:'long',mode:'limit',entry:95,stop:90,target:110,rr:3,dEntry:-5,riskPct:5.3,flags:[]};x.valuation.peContext={value:5,eps:-1,comparable:true};});
+    var before=JSON.stringify([DESK_WATCH,PLAN_RULES,DATA]);
+    var H=deskCompareView(['AAA|USD','BBB|USD'],[A,B],null);
+    __eq('P4 две бумаги в заголовке (✕ — только в основной таблице)', (H.match(/class="dk-cmp-x" data-a="cmp"/g)||[]).length, 2);
+    __ok('P4 «Чем отличаются условия» с фактами момента', H.indexOf('Чем отличаются условия')>0 && H.indexOf('<b>Момент</b>')>0 && H.indexOf('ждать 95')>0);
+    __ok('P4 максимум качества отмечен текстом, не только цветом', H.indexOf('<td class="best">')>0 && H.indexOf('▲ максимум')>0);
+    __ok('P4 несопоставимая строка объяснена', H.indexOf('без подсветки: к части бумаг неприменимо')>0);
+    __ok('P4 EPS ≤ 0 — без P/E', H.indexOf('EPS ≤ 0 — P/E не сравнивается')>0);
+    __ok('P4 остальные строки — в раскрываемом блоке', /<details class="dk-panel dk-mb" data-det="cmp-all">/.test(H) && H.indexOf('Все показатели')>0);
+    __eq('P4 «В финал» у каждой бумаги', (H.match(/data-a="cfinal"/g)||[]).length, 2);
+    __eq('P4 просмотр ничего не пишет', JSON.stringify([DESK_WATCH,PLAN_RULES,DATA]), before);
+    can=function(p){return p!=='action.edit_plan';};
+    __eq('P4 без права на план — «В финал» нет', (deskCompareView(['AAA|USD','BBB|USD'],[A,B],null).match(/data-a="cfinal"/g)||[]).length, 0);
+    can=function(){return true;};DESK_WATCH.items=[{key:'AAA|USD',tk:'AAA',status:'final'}];
+    __ok('P4 уже в финале — метка вместо кнопки', deskCompareView(['AAA|USD','BBB|USD'],[A,B],null).indexOf('в финале')>0);
+    var E0=deskCompareView([],[],null),E1=deskCompareView(['AAA|USD'],[],null);
+    __ok('P4 0 бумаг: предложение выбрать и путь к идеям', E0.indexOf('не выбраны')>0 && E0.indexOf('data-a="nav" data-r="screen"')>0);
+    __ok('P4 1 бумага: просьба выбрать ещё, её можно убрать', E1.indexOf('Выбрана одна бумага')>0 && E1.indexOf('data-a="cmp" data-k="AAA|USD"')>0);
+    __ok('P4 выбор есть, анализа нет — объяснение доступа', deskCompareView(['AAA|USD','BBB|USD'],[A],null).indexOf('нет доступа к анализу')>0);
+    DESK_UI.compare.dropped=1;__ok('P4 убранная без доступа бумага — пояснение', deskCompareView([],[],null).indexOf('Убрано из сравнения: 1')>0);
+  }finally{can=S.can;DESK_WATCH=S.watch;PLAN_RULES=S.plan;deskItems=S.items;DESK_UI.compare=S.cmp;}
+});
+grp('P4 compare «В финал» via watch mutators', function(){
+  var S={can:can,watch:DESK_WATCH,sec:deskSecOf,toast:toast,render:deskRender,save:scheduleSave};
+  try{
+    DESK_WATCH=deskWatchNorm({});deskRender=function(){};toast=function(){};scheduleSave=function(){};
+    deskSecOf=function(k){return k==='AAA|USD'?{key:k,sec:{key:k,tk:'AAA',sym:'AAA',ccy:'USD',name:'Aaa',price:100,sector:'Tech'},s:null}:null;};
+    can=function(p){return p!=='action.edit_plan';};deskCompareFinal('AAA|USD');
+    __eq('P4 без права — список не меняется', DESK_WATCH.items.length, 0);
+    can=function(){return true;};deskCompareFinal('AAA|USD');
+    __eq('P4 не было в списке — добавлена и в финале', [DESK_WATCH.items.length,deskWatchGet('AAA|USD').status], [1,'final']);
+    deskCompareFinal('AAA|USD');__eq('P4 повтор не дублирует', DESK_WATCH.items.length, 1);
+  }finally{can=S.can;DESK_WATCH=S.watch;deskSecOf=S.sec;toast=S.toast;deskRender=S.render;scheduleSave=S.save;}
+});
+grp('P4 glossary coverage', function(){
+  __eq('P4 новые записи словаря', ['compare','compare-comparable','compare-diffs'].filter(function(k){return !deskGlossItem(k);}), []);
+  __eq('P4 у каждой строки модели — подпись', DESK_CMP_ROWS.map(function(r){return r[0];}).filter(function(id){return !DK_CMP_ROW[id];}), []);
+  __eq('P4 подписи строк — записи словаря', Object.keys(DK_CMP_ROW).filter(function(k){return !deskGlossItem(DK_CMP_ROW[k][1]);}), []);
+  __eq('P4 причины несопоставимости — тексты', ['none','missing','not-applicable','provisional','status','applicability-differs','source-differs','side-differs','period-differs','equal'].filter(function(k){return !DK_CMP_WHY[k]||!DK_CMP_WHY[k]();}), []);
+  __eq('P4 измерения различий — подписи', ['action','company','price','timing','risk','earnings'].filter(function(k){return !DK_CMP_DIM[k];}), []);
+});

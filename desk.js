@@ -328,7 +328,8 @@ function deskEarnPe(tk,own,val,secMed){
 }
 
 // P2 (plans/stock-selection-ux.md §4): «Акция» в трёх режимах. Маршрут — тот же hash, без второго роутера:
-// #desk/<route>[/<ключ>[/<режим>]]; «Решение» — режим по умолчанию и в адрес не пишется.
+// #desk/<route>[/<ключ>[/<режим>]]; «Решение» — режим по умолчанию и в адрес не пишется. P4: #desk/compare —
+// без ключей (выбор живёт в памяти вкладки; прямая ссылка без выбора предлагает выбрать бумаги).
 const DK_VIEWS=['decision','company','tech'];
 function deskHashOf(route,key,view){
   if(route!=='stock'||!key)return '#desk/'+route;
@@ -337,7 +338,7 @@ function deskHashOf(route,key,view){
 function deskHashParse(h){
   h=String(h||'');if(!/^#desk\//.test(h))return null;
   const [r,k,v]=h.slice(6).split('/');
-  const route=['today','screen','stock','book','journal'].includes(r)?r:null;
+  const route=['today','screen','stock','book','journal','compare'].includes(r)?r:null;
   let key=null;if(k)try{key=decodeURIComponent(k);}catch(e){key=null;}
   return {route,key,view:route==='stock'&&DK_VIEWS.includes(v)?v:'decision'};
 }
@@ -382,7 +383,8 @@ let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},year
   wiRaw:null,   // I2: вводимое в «Что если?» значение до подтверждения (change) — пересчёт на месте
   finOpen:null,finM:'revenue',   // I3: у какой бумаги раскрыт «Рост бизнеса» (сессия, не localStorage — открытие desk не шлёт запросов), ряд
   gloss:{open:false,q:'',id:null},   // G1: панель «📖 Словарь» (desk-gloss.js) — только память сессии, не снапшот
-  stockView:'decision',_compFor:null,r1:null,_restoreY:null};   // P2: режим «Акции» (память), для какой бумаги уже запущены загрузки «Компании», обновление одной бумаги, прокрутка из history.state
+  stockView:'decision',_compFor:null,r1:null,_restoreY:null,   // P2: режим «Акции» (память), для какой бумаги уже запущены загрузки «Компании», обновление одной бумаги, прокрутка из history.state
+  compare:{keys:[],acct:null,dropped:0},_cmpFor:null,_cmpFrom:null};   // P4: выбор для сравнения (память вкладки, аккаунт выбора, сколько убрано из-за доступа), для какого набора запущены загрузки, откуда пришли
 let _deskFan=null;   // I3: веер цели {key, ch}
 let _deskChart=null,_deskMini=null;   // состояния stockChartDraw: {key,tab,row,ccy,years,side,ch}
 const deskActive=()=>!!(DESK_UI.on&&!DESK_UI.classic);
@@ -645,6 +647,7 @@ function deskHistSave(){try{history.replaceState(Object.assign({},history.state|
 function deskGo(r,key,view){
   const prev=DESK_UI.key;
   if(key)DESK_UI.key=key;
+  if(r==='compare'&&DESK_UI.route!=='compare')DESK_UI._cmpFrom=DESK_UI.route;   // «← Назад» сравнения — history.back() к этому экрану
   if(r==='stock')DESK_UI.stockView=DK_VIEWS.includes(view)?view:(key&&key!==prev?'decision':DESK_UI.stockView||'decision');
   DESK_UI.route=r;DESK_UI.menu=false;DESK_UI.exec=null;DESK_UI.edit=null;DESK_UI.wiRaw=null;
   if(typeof deskTipHide==='function')deskTipHide(false);
@@ -680,16 +683,17 @@ function deskPaint(){
   const ae=document.activeElement,q=v=>CSS.escape(String(v));
   const fk=ae&&ae!==main&&root.contains(ae)?(ae.id?'#'+q(ae.id):ae.dataset&&ae.dataset.a?`[data-a="${q(ae.dataset.a)}"]`+['k','v','r','g'].map(f=>ae.dataset[f]!=null?`[data-${f}="${q(ae.dataset[f])}"]`:'').join(''):null):null;
   const fi=fk?[...root.querySelectorAll(fk)].indexOf(ae):-1;   // одинаковых (две ⓘ с одним id) — та же по счёту
+  deskCompareKeys();   // P4: выбор сравнения сверяется с аккаунтом и доступом до того, как чекбоксы экрана его прочитают
   let html='';
-  try{html=({today:deskTodayHTML,screen:deskScreenHTML,stock:deskStockHTML,book:deskBookHTML,journal:deskJournalHTML})[DESK_UI.route]();}
+  try{html=({today:deskTodayHTML,screen:deskScreenHTML,stock:deskStockHTML,book:deskBookHTML,journal:deskJournalHTML,compare:deskCompareHTML})[DESK_UI.route]();}
   catch(e){console.error(e);html=`<div class="dk-panel dk-empty">${RT('Ошибка экрана: ','Screen error: ')}${dkEsc(e.message||e)}</div>`;}
-  main.innerHTML=deskTopHTML()+html;
+  main.innerHTML=deskTopHTML()+html+deskCmpTrayHTML();
   // Вселенная сменилась (вход/синк/RBAC/новые вкладки) — догрузить свечи новых бумаг (кэшированные пропускаются).
   const L=DESK_UI.load,I=deskItems();
   if(!L.busy&&L.at&&L.key!==I.items.length+'|'+I.tabsN)setTimeout(()=>deskLoad(true),0);
   document.getElementById('dkModal').innerHTML=deskModalHTML();
   deskChartsAttach(keep);
-  deskCompanyEnsure();
+  deskCompanyEnsure();deskCompareEnsure();
   if(fk&&document.activeElement!==ae){const L=root.querySelectorAll(fk),n=L[fi]||L[0];if(n)try{n.focus({preventScroll:true});}catch(e){}}
   try{window.scrollTo(0,scr);}catch(e){}
   document.title=RT('Trade Desk','Trade Desk')+' · '+deskRouteLabel(DESK_UI.route);
@@ -790,12 +794,12 @@ async function deskQuotes(manual){
 }
 
 // ── Каркас: рельса, шапка, меню ──
-function deskRouteLabel(r){return ({today:RT('Сегодня','Today'),screen:RT('Идеи','Ideas'),stock:RT('Акция','Stock'),book:RT('Позиции','Positions'),journal:RT('Журнал','Journal')})[r]||r;}
+function deskRouteLabel(r){return ({today:RT('Сегодня','Today'),screen:RT('Идеи','Ideas'),stock:RT('Акция','Stock'),book:RT('Позиции','Positions'),journal:RT('Журнал','Journal'),compare:RT('Сравнение','Comparison')})[r]||r;}
 function deskRailHTML(){
   const I=[['today','<path d="M4 7h16M4 12h10M4 17h7"/>'],['screen','<path d="M4 5h16l-6 8v6l-4-2v-4z"/>'],['stock','<path d="M3 17l5-6 4 4 5-8 4 5"/>'],['book','<path d="M5 4h14v16H5zM9 4v16M5 9h4M5 14h4"/>'],['journal','<path d="M6 3h9l4 4v14H6zM9 12h6M9 16h6"/>']];
   const ready=(PLAN_RULES||[]).filter(r=>!r.done&&planStatus(r).ready).length;
   return `<div class="dk-brand"><div class="dk-brand-mark">TD</div><div><div class="dk-brand-t">Trade Desk</div><div class="dk-brand-s">Nordic · SEK</div></div></div>`+
-    I.map(([r,svg],i)=>`<button class="dk-nav${DESK_UI.route===r?' on':''}" data-a="nav" data-r="${r}"><svg viewBox="0 0 24 24" aria-hidden="true">${svg}</svg>${deskRouteLabel(r)}${r==='today'&&ready?`<span class="dk-badge" title="${RT('Сработали правила плана','Plan rules fired')}">${ready}</span>`:''}<span class="dk-k">${i+1}</span></button>`).join('')+
+    I.map(([r,svg],i)=>`<button class="dk-nav${DESK_UI.route===r||r==='screen'&&DESK_UI.route==='compare'?' on':''}" data-a="nav" data-r="${r}"><svg viewBox="0 0 24 24" aria-hidden="true">${svg}</svg>${deskRouteLabel(r)}${r==='today'&&ready?`<span class="dk-badge" title="${RT('Сработали правила плана','Plan rules fired')}">${ready}</span>`:''}<span class="dk-k">${i+1}</span></button>`).join('')+
     `<div class="dk-rail-foot">${RT('Главное сначала, детали по запросу.','Essentials first, details on demand.')}</div>`;
 }
 function deskMkt(){
@@ -1057,7 +1061,7 @@ function deskBucketCardHTML(m,key){
     <div class="dk-idea-dims dk-note"><span>${RT('Кач.','Qual.')} ${deskBucketQualBadge(m.quality)}</span><span>${deskBucketValBadge(m.valuation)}</span><span>${RT('Риск','Risk')} <b>${deskRiskWord(m.risk.level)}</b></span></div>
     <div class="dk-idea-route"><span><small>${RT('Сейчас','Now')}</small><b class="dk-num">${dkPx(px)}</b></span><i>→</i><span><small>${t.waitingLevel!=null?RT('Жду цену','Wait for'):RT('Вход','Entry')}</small><b class="dk-num ${t.side==='short'?'dk-dn':'dk-up'}">${level!=null?dkPx(level):'—'}</b></span></div>
     <p>${deskBucketReason(m,key)}</p>
-    <div class="dk-idea-add">${key==='research'?deskBucketLoadBtn(m):''}${dkWatchBtn(sec.key)}</div>
+    <div class="dk-idea-add">${dkCmpBox(sec.key)}${key==='research'?deskBucketLoadBtn(m):''}${dkWatchBtn(sec.key)}</div>
   </article>`;
 }
 function deskBucketSectionHTML(def,buckets){
@@ -1087,7 +1091,7 @@ function deskIdeasAllHTML(){
   const ideaCards=shown.slice(0,24).map(x=>{const s=x.s,sec=x.sec;
     if(!s)return `<article class="dk-idea pending" data-a="sel" data-k="${dkEsc(x.key)}"><div class="dk-idea-head"><div><b class="dk-tk">${dkEsc(sec.tk)}</b><small>${dkEsc(sec.name)}</small></div><span class="dk-tag">${RT('считаем…','loading…')}</span></div><div class="dk-idea-price dk-num">${dkPx(sec.price)} ${dkCcy(sec.ccy)}</div></article>`;
     const p=deskPlanFor(x,s.side)||s.plan,delta=p&&p.dEntry!=null?p.dEntry:0;
-    return `<article class="dk-idea v-${s.verdict}${DESK_UI.sel===x.key?' on':''}" data-a="sel" data-k="${dkEsc(x.key)}" tabindex="0"><div class="dk-idea-head"><div><b class="dk-tk">${dkEsc(sec.tk)}</b><small>${dkEsc(sec.name)}</small></div>${dkPill(s.verdict,!!sec.held.length)}</div><div class="dk-idea-route"><span><small>${RT('Сейчас','Now')}</small><b class="dk-num">${dkPx(s.price)}</b></span><i>→</i><span><small>${p.mode==='limit'?RT('Жду цену','Wait for'):RT('Вход','Entry')}</small><b class="dk-num ${s.side==='short'?'dk-dn':'dk-up'}">${dkPx(p.entry)}</b></span></div><div class="dk-idea-foot"><span${dkG('act-now')}>${p.mode==='limit'?RT('Нужно движение','Move needed'):RT('Можно действовать','Actionable')} <b class="dk-num">${dkPct(delta,1)}</b></span><span><span${dkG('rr')}>R/R</span> <b class="dk-num">${dkRR(p)}</b></span></div><p>${dkEsc(s.why[0]||'')}</p><div class="dk-idea-add">${dkWatchBtn(x.key)}</div></article>`;}).join('');
+    return `<article class="dk-idea v-${s.verdict}${DESK_UI.sel===x.key?' on':''}" data-a="sel" data-k="${dkEsc(x.key)}" tabindex="0"><div class="dk-idea-head"><div><b class="dk-tk">${dkEsc(sec.tk)}</b><small>${dkEsc(sec.name)}</small></div>${dkPill(s.verdict,!!sec.held.length)}</div><div class="dk-idea-route"><span><small>${RT('Сейчас','Now')}</small><b class="dk-num">${dkPx(s.price)}</b></span><i>→</i><span><small>${p.mode==='limit'?RT('Жду цену','Wait for'):RT('Вход','Entry')}</small><b class="dk-num ${s.side==='short'?'dk-dn':'dk-up'}">${dkPx(p.entry)}</b></span></div><div class="dk-idea-foot"><span${dkG('act-now')}>${p.mode==='limit'?RT('Нужно движение','Move needed'):RT('Можно действовать','Actionable')} <b class="dk-num">${dkPct(delta,1)}</b></span><span><span${dkG('rr')}>R/R</span> <b class="dk-num">${dkRR(p)}</b></span></div><p>${dkEsc(s.why[0]||'')}</p><div class="dk-idea-add">${dkCmpBox(x.key)}${dkWatchBtn(x.key)}</div></article>`;}).join('');
   const rows=shown.map(x=>{const s=x.s,sec=x.sec;
     if(!s)return `<tr class="dk-tr${DESK_UI.sel===x.key?' on':''}" data-a="sel" data-k="${dkEsc(x.key)}"><td><span class="dk-tk">${dkEsc(sec.tk)}</span><span class="dk-nm">${dkEsc(sec.name)}</span></td><td class="r dk-num">${dkPx(sec.price)}</td><td class="r c-opt">${dkDay(sec.day)}</td><td colspan="6" class="dk-mut">${RT('свечи грузятся…','candles loading…')}</td></tr>`;
     const p=deskPlanFor(x,s.side)||s.plan;
@@ -1111,7 +1115,7 @@ function deskDrawerHTML(){
   const side=deskSideFor(it),s=it.s;
   return `<div class="dk-panel"><div class="dk-ph"><h2><span class="dk-tk">${dkEsc(it.sec.tk)}</span> <span class="dk-nm">${dkEsc(it.sec.name)}</span></h2><div class="dk-act"><div class="dk-seg side"><button class="${side==='long'?'on':''} long" data-a="side" data-v="long" data-k="${dkEsc(it.key)}">${RT('Лонг','Long')}</button><button class="${side==='short'?'on':''} short" data-a="side" data-v="short" data-k="${dkEsc(it.key)}">${RT('Шорт','Short')}</button></div><button class="dk-btn dk-sm" data-a="unsel" aria-label="${RT('Закрыть','Close')}">✕</button></div></div>
     <div class="dk-chart-panel"><div id="dkMini" class="dk-mini">${it.r?'':RT('Нет строки бумаги','No row')}</div></div>
-    <div class="dk-bt">${deskPlanBox(it,side,true)}${s?`<div class="dk-why dk-padx">${s.why.map(w=>`<div>${dkEsc(w)}</div>`).join('')}</div>`:''}<div class="dk-pad dk-row"><button class="dk-btn" data-a="open" data-k="${dkEsc(it.key)}">${RT('Открыть страницу акции →','Open stock page →')}</button>${dkWatchBtn(it.key)}</div></div></div>`;
+    <div class="dk-bt">${deskPlanBox(it,side,true)}${s?`<div class="dk-why dk-padx">${s.why.map(w=>`<div>${dkEsc(w)}</div>`).join('')}</div>`:''}<div class="dk-pad dk-row"><button class="dk-btn" data-a="open" data-k="${dkEsc(it.key)}">${RT('Открыть страницу акции →','Open stock page →')}</button>${dkWatchBtn(it.key)}${dkCmpBox(it.key)}</div></div></div>`;
 }
 
 // ═══════════════════ Список покупок (I1, §3.1) ═══════════════════
@@ -1146,12 +1150,256 @@ function deskWatchHTML(status){
       <div class="dk-wname">${dkEsc(w.name)}</div>
       <div class="dk-idea-route"><span><small>${RT('Сейчас','Now')}</small><b class="dk-num">${dkPx(px)}</b></span><i>→</i><span><small${dkG('zone')}>${RT('Куплю','Buy at')}</small><b class="dk-num dk-up">${dkZoneText(w)}</b></span></div>
       <div class="dk-wneed${z&&z.hot?' hot':''}"${z&&z.hot?dkG('zone-dot'):dkG('zone-need')}><span class="dk-dot${z&&z.hot?' hot':''}"></span>${dkEsc(dkZoneNeed(w,z))} <span class="dk-mut">${dkEsc(dkCcy(w.ccy))}</span></div>
-      <div class="dk-idea-foot">${s?`<span>v2 ${dkPill(s.verdict,!!(it.sec.held||[]).length)}</span><span>R/R <b class="dk-num">${dkRR(pl)}</b></span>`:`<span>${it?RT('сигнал считается…','signal loading…'):RT('бумаги нет во вкладках','not in any tab')}</span>`}</div>${menu}</article>`;
+      <div class="dk-idea-foot">${s?`<span>v2 ${dkPill(s.verdict,!!(it.sec.held||[]).length)}</span><span>R/R <b class="dk-num">${dkRR(pl)}</b></span>`:`<span>${it?RT('сигнал считается…','signal loading…'):RT('бумаги нет во вкладках','not in any tab')}</span>`}</div>${it?`<div class="dk-idea-add">${dkCmpBox(w.key)}</div>`:''}${menu}</article>`;
   };
   const head=`<div class="dk-whead"><div><h2>${dkEsc(name)}${canE?` <button class="dk-btn dk-sm" data-a="wname" aria-label="${RT('Переименовать список','Rename the list')}">✎</button>`:''}</h2><div class="dk-note">${status==='final'?RT('Финал — отобранные к покупке','Final — picked to buy'):RT('текущая цена → моя зона покупки','current price → my buy zone')}</div></div><div class="dk-wcount"><span>${RT('Компаний','Companies')}</span><b class="dk-num">${L.length}</b></div></div>`;
   const empty=`<div class="dk-panel dk-empty">${status==='final'?RT('В финале пока пусто — «···» → «В финал» на карточке списка.','Nothing in the final yet — “···” → “To final” on a list card.'):RT('Список пуст. Добавьте бумагу кнопкой «＋ В список» во «Всех идеях», в инспекторе или на странице акции.','The list is empty. Add a stock with “＋ To list” in All ideas, the inspector or on the stock page.')}</div>`;
   return `${head}<div class="dk-wlayout"><nav class="dk-wside" aria-label="${dkEsc(name)}">${nav}</nav><div class="dk-wgrid">${L.length?L.map(card).join(''):empty}</div></div>
     <p class="dk-note dk-mt14">${RT(`Зона — ваша цена покупки (по умолчанию из сигнала: лимит плана v2 или ближайшая поддержка). «Уведомить» создаёт правило плана на верх зоны; удаление идеи правило не удаляет без вопроса. ${hotTitle}.`,`The zone is your buy price (default from the signal: v2 plan limit or nearest support). “Alert” creates a plan rule at the top of the zone; deleting an idea asks before deleting the rule. ${hotTitle}.`)}</p>`;
+}
+
+// ═══════════════════ Сравнение 2–4 бумаг (P4, plans/stock-selection-ux.md §6) ═══════════════════
+// Выбор — DESK_UI.compare.keys: биржевые ключи в памяти вкладки, до selection.maxCompare; «Сравнить» не добавляет
+// бумагу в список покупок. Смена аккаунта очищает выбор, бумага без доступа (или удалённая из вкладок) убирается
+// с пояснением. Строки и сопоставимость — чистая deskCompareModel (desk-selection.js); здесь адаптер и вёрстка.
+function deskCompareKeys(){
+  const C=DESK_UI.compare,acct=(currentUser&&currentUser.id)||'';
+  if(C.acct!==acct){C.keys=[];C.acct=acct;C.dropped=0;}
+  if(!C.keys.length)return [];
+  const I=can('view.portfolio')?deskItems():{byKey:{}},keep=C.keys.filter(k=>I.byKey[k]);
+  if(keep.length<C.keys.length){C.dropped+=C.keys.length-keep.length;C.keys=keep;}
+  return keep.slice();
+}
+function deskCmpToggleKey(k){
+  const max=DESK_IDEA_CFG.selection.maxCompare,r=deskCompareToggle(deskCompareKeys(),k,max);
+  if(r.full)toast(RT(`В сравнении уже ${max} бумаги — уберите одну`,`${max} stocks are already in the comparison — remove one`),true);
+  DESK_UI.compare.keys=r.keys;DESK_UI.compare.dropped=0;deskRender(true);
+}
+// Чекбокс «Сравнить»: label — noop (клик по нему не открывает карточку), событие — у самого input.
+const dkCmpBox=key=>{const on=DESK_UI.compare.keys.includes(key);
+  return `<label class="dk-cmp-t${on?' on':''}" data-a="noop"><input type="checkbox" data-a="cmp" data-k="${dkEsc(key)}"${on?' checked':''}>${RT('Сравнить','Compare')}</label>`;};
+// Лоток выбора внизу экрана (кроме самого сравнения): бумаги, «Сравнить →» (от двух) и «Очистить».
+function deskCmpTrayHTML(){
+  if(DESK_UI.route==='compare')return '';
+  const K=deskCompareKeys();if(!K.length)return '';
+  const I=deskItems(),max=DESK_IDEA_CFG.selection.maxCompare;
+  const chips=K.map(k=>{const it=I.byKey[k],tk=dkEsc(it?it.sec.tk:k);return `<span class="dk-cmp-chip"><b class="dk-tk">${tk}</b><button type="button" class="dk-cmp-x" data-a="cmp" data-k="${dkEsc(k)}" aria-label="${RT('Убрать из сравнения','Remove from comparison')} ${tk}">✕</button></span>`;}).join('');
+  return `<div class="dk-cmp-tray" role="region" aria-label="${RT('Выбор для сравнения','Comparison selection')}"><span class="dk-lbl">${RT('Сравнение','Compare')}${dkGi('compare')} <span class="dk-num">${K.length}/${max}</span></span>${chips}
+    <span class="dk-cmp-tray-a">${K.length<2?`<span class="dk-note">${RT('выберите ещё хотя бы одну','pick at least one more')}</span>`:''}<button type="button" class="dk-btn dk-sm dk-cmp-go" data-a="nav" data-r="compare"${K.length<2?' disabled':''}>${RT('Сравнить','Compare')} →</button><button type="button" class="dk-btn dk-sm" data-a="cmpclr">${RT('Очистить','Clear')}</button></span></div>`;
+}
+// Портфель сравнения — один для всех бумаг: выбранный в шапке, из «Все портфели» — портфель риска (как «Акция»).
+function deskCmpPort(){const p=deskPort();return p==='all'?deskRiskTab():p;}
+// Дней до отчёта: ?earnings= (грузится при входе в сравнение), иначе календарь ?calendar=.
+function deskEarnDaysOf(sym,now){
+  const E=(_deskEarn[sym]||{}).data,next=E&&E.next&&E.next.date?String(E.next.date).slice(0,10):null;
+  if(!next)return sigEarnDays(sym,now);
+  const n=Math.round((Date.parse(next+'T00:00:00Z')-Date.parse(new Date(now||Date.now()).toISOString().slice(0,10)+'T00:00:00Z'))/864e5);
+  return isFinite(n)&&n>=0?n:null;
+}
+// Колонка: модель P1 с одним портфелем для всех, факты FY из ?financials=, forward P/E своего листинга, дни до отчёта.
+// Права — те же, что у «Решения»/«Компании»; нет доступа к бумаге — колонки нет.
+function deskCompareCols(keys,port,now){
+  now=now==null?Date.now():now;
+  const U=deskUniverse(now),rk=deskSelectionRiskKr(port),I=deskItems(),health=can('view.health'),valA=can('view.valuation');
+  return (keys||[]).map(k=>{
+    const it=I.byKey[k];if(!it)return null;
+    let model=null;try{model=deskSelectionModel(deskSelectionInput(k,port,now,U,rk));}catch(e){console.warn('compare model',e);}
+    if(!model)return null;
+    const sec=it.sec,fc=_deskFin[sec.sym],V=valA?deskSelectionCache(VAL,sec).data:null,F=health?pf3FundFor(sec.sym):null;
+    const fwd=V&&V.fwdPe>0?+V.fwdPe:F&&F.fwdPe>0?+F.fwdPe:null;
+    return {key:k,tk:sec.tk,name:sec.name,ccy:sec.ccy,sector:sec.sector,fin:pf3FinSec(sec.sector),model,it,
+      facts:health?deskCompareFinFacts(fc&&fc.data):{fy:null,codes:['business-restricted']},finBusy:health&&!!(fc&&fc.loading),
+      fwdPe:valA?fwd:null,earnDays:deskEarnDaysOf(sec.sym,now)};
+  }).filter(Boolean);
+}
+// «Что если?» сравнения (§6): каждая бумага — отдельно против ТЕКУЩЕГО портфеля с одним бюджетом (DESK.whatIf);
+// варианты не складываются в корзину на один кэш. Сторона — позиции в этом портфеле или лонг. Ничего не пишет.
+function deskCompareWhatIf(it,port,now){
+  if(!port)return {err:'port'};
+  const c=deskWiCfg(),h=bookPositions(port).find(p=>p.sym+'|'+p.ccy===it.key),side=h?h.side:'long',s=it.s,plan=s?deskPlanFor(it,side):null;
+  return deskWhatIf({tab:port,sec:it.sec,side,plan,mode:c.mode,amountSEK:c.amountSEK,weightPct:c.weightPct,
+    price:plan&&plan.mode==='limit'?plan.entry:(s?s.price:it.sec.price),now:now||Date.now()});
+}
+// Загрузки при входе в сравнение (§8): отчётность, ?financials=, ?earnings= выбранных бумаг — через общий пул
+// (лимит, дедуп, TTL загрузчиков). Перерисовка не повторяет; новая бумага в выборе догружается одна.
+function deskCompareEnsure(){
+  if(DESK_UI.route!=='compare'){DESK_UI._cmpFor=null;return;}
+  const K=deskCompareKeys(),sig=K.join(',');if(DESK_UI._cmpFor===sig)return;
+  const prev=new Set(String(DESK_UI._cmpFor||'').split(','));DESK_UI._cmpFor=sig;
+  K.filter(k=>!prev.has(k)).forEach(k=>{const it=deskSecOf(k);if(it)deskCompareLoad(it);});
+}
+function deskCompareLoad(it){
+  const sym=it.sec.sym;
+  if(can('view.health')){deskPoolRun('fund|'+sym,()=>pf3FundFetch([sym]));deskFinLoad(sym);}
+  deskPoolRun('earn|'+sym,()=>deskEarnLoad(sym));
+}
+// «Обновить цены»: живая котировка и свечи только тех выбранных бумаг, у которых цена не свежая.
+function deskCompareRefresh(){
+  if(!can('action.refresh_data'))return;
+  const st=DESK_IDEA_CFG.whatIf.staleMin*60e3;
+  deskCompareKeys().forEach(k=>{const it=deskSecOf(k);if(!it||!it.r)return;const sym=it.sec.sym,lv=PX_LIVE[sym];
+    if(lv&&lv.price>0&&Date.now()-lv.at<=st)return;
+    deskPoolRun('px|'+sym,()=>pf3RefreshCardPrice(it.d,it.r,it.tab));deskPoolRun('hist|'+sym,()=>sigEnsure([sym]));});
+  deskRender(true);
+}
+// «★ В финал» — существующие мутаторы списка и права: нет в списке — добавить (зона по сигналу), затем статус final.
+function deskCompareFinal(key){
+  if(!can('action.edit_plan'))return;
+  if(!deskWatchGet(key)&&!deskWatchAddFrom(key,true))return;
+  deskWatchSetStatus(key,'final');scheduleSave();
+  toast('★ '+RT('В финале','In the final')+': '+((deskWatchGet(key)||{}).tk||key));deskRender(true);
+}
+// «← Назад»: пришли из desk — history.back() (вернёт подборку, фильтры и прокрутку из записи истории), иначе — «Идеи».
+function deskCompareBack(){
+  let st=null;try{st=history.state;}catch(e){}
+  if(DESK_UI._cmpFrom&&st&&st.dk){try{history.back();return;}catch(e){}}
+  deskGo(DESK_UI._cmpFrom||'screen');
+}
+// Подписи строк: [название, запись словаря].
+const DK_CMP_ROW={action:[()=>RT('Действие','Action'),'decision'],quality:[()=>RT('Компания','Company'),'selection-quality'],
+  valuation:[()=>RT('Цена к оценке','Price vs valuation'),'selection-valuation'],timing:[()=>RT('Момент','Timing'),'dim-timing'],rr:[()=>'R/R','rr'],
+  risk:[()=>RT('Риск','Risk'),'risk-level'],earnings:[()=>RT('Отчёт','Earnings'),'events'],
+  profit:[()=>RT('Прибыльность','Profitability'),'biz'],growth:[()=>RT('Рост','Growth'),'biz'],balance:[()=>RT('Баланс','Balance sheet'),'biz'],cash:[()=>RT('Денежный поток','Cash flow'),'biz'],
+  'rev-yoy':[()=>RT('Выручка г/г','Revenue YoY'),'fin'],'eps-yoy':[()=>RT('EPS г/г','EPS YoY'),'fin'],'fcf-margin':[()=>RT('FCF-маржа','FCF margin'),'fin'],
+  pe:[()=>'P/E TTM','analysts'],'fwd-pe':[()=>'Forward P/E','analysts'],'entry-dist':[()=>RT('До входа','To entry'),'market-limit'],
+  'stop-dist':[()=>RT('До стопа','To stop'),'stop'],sector:[()=>RT('Сектор','Sector'),'compare-comparable']};
+const DK_CMP_WHY={none:()=>RT('значения нет ни у одной бумаги','no stock has a value'),missing:()=>RT('не у всех есть значение','not every stock has a value'),'not-applicable':()=>RT('к части бумаг неприменимо','not applicable to some stocks'),
+  provisional:()=>RT('предварительные данные','provisional data'),status:()=>RT('не у всех оценка датирована и сопоставима','not every valuation is dated and comparable'),
+  'applicability-differs':()=>RT('разный набор применимых столпов','different applicable pillars'),'source-differs':()=>RT('разные источники оценки','different valuation sources'),
+  'side-differs':()=>RT('планы разных сторон','plans of different sides'),'period-differs':()=>RT('разный тип периода','different period types'),
+  equal:()=>RT('значения равны','values are equal'),few:()=>''};
+const DK_CMP_DIM={action:()=>RT('Действие','Action'),company:()=>RT('Компания','Company'),price:()=>RT('Цена','Price'),timing:()=>RT('Момент','Timing'),risk:()=>RT('Риск','Risk'),earnings:()=>RT('Отчёт','Earnings')};
+const dkCmpSm=t=>t?`<small class="dk-cmp-sub">${t}</small>`:'';
+function dkCmpVerdictText(verdict,waiting,dEntry,entry){
+  if(!verdict)return RT('сигнал считается','signal loading');
+  const V=(DK_V[verdict]||DK_V.wait)[1]();
+  return V+(waiting!=null?' · '+RT('ждать','wait for')+' '+dkPx(waiting)+(dEntry!=null?` (${dkPct(dEntry,1)})`:''):entry>0?' · '+RT('по рынку','at market')+' ≈ '+dkPx(entry):'');
+}
+function dkCmpCell(row,c,col){
+  const busy=t=>deskPoolBusy(t+'|'+col.it.sec.sym),dash='<span class="dk-mut">—</span>',ld=`<span class="dk-mut">${RT('загрузка…','loading…')}</span>`;
+  switch(row.id){
+    case 'action':{if(c.pos)return dkActPill(c.pos)+dkCmpSm(dkEsc((DK_DEC_POS[c.pos]||DK_DEC_POS.hold)()));
+      const D=DK_DEC[c.k]||DK_DEC.study;return `<span class="dk-pill v-${D[1]}"${dkG('dec-'+(DK_DEC[c.k]?c.k:'study'))}>${dkEsc(D[0]())}</span>`;}
+    case 'quality':{const Q=dkQualHTML(col.model.quality);return (Q.v==='—'&&busy('fund')?ld:Q.v)+dkCmpSm(Q.d);}
+    case 'valuation':{const v=col.model.valuation;
+      if(v.value!=null&&v.status!=='incomparable')return (c.v!=null?`<b class="dk-num ${c.v>=0?'dk-up':'dk-dn'}">${dkPct(c.v,1)}</b>`:`<b class="dk-num">${dkPx(v.value)}</b>`)
+        +dkCmpSm(dkEsc([v.source==='scenarios'?RT('ваши сценарии','your scenarios'):RT('аналитики','analysts'),v.asOf?String(v.asOf).slice(0,10):null,
+          v.status==='stale'?RT('таргет устарел','stale target'):v.status==='undated'?RT('дата источника неизвестна','source date unknown'):null].filter(Boolean).join(' · ')));
+      return dash+dkCmpSm(dkEsc(v.reasonCodes.includes('valuation-restricted')?dkSelR('valuation-restricted'):v.status==='incomparable'?dkSelR('valuation-incomparable'):RT('оценки нет — это не значит «дорого»','no valuation — that does not mean “expensive”')));}
+    case 'timing':{if(!c.verdict)return `<span class="dk-mut">${RT('сигнал считается…','signal loading…')}</span>`;
+      const d=c.waiting!=null?`${RT('ждать','wait for')} ${dkPx(c.waiting)}${c.dEntry!=null?` (${dkPct(c.dEntry,1)})`:''}`:c.entry>0?`${RT('по рынку','at market')} ≈ ${dkPx(c.entry)}`:dkSelR('level-not-calculated');
+      return dkPill(c.verdict,!!col.it.sec.held.length)+(c.side==='short'?' '+dkSide('short'):'')+dkCmpSm(dkEsc(d));}
+    case 'rr':return c.v!=null?`<b class="dk-num">${c.approx?'≈':''}${dkN(c.v,1)}</b>${c.basis==='short'?dkCmpSm(RT('план шорта','short plan')):''}`:dash;
+    case 'risk':return (c.level?`<b class="dk-num">${c.level}</b> · ${dkEsc(deskRiskWord(c.level))}`:dash)
+      +dkCmpSm(dkEsc([c.override&&c.v&&c.override!==c.v?RT(`вручную; авто ${c.v}`,`manual; auto ${c.v}`):'',...c.blockers.map(dkSelR)].filter(Boolean).join(' · ')));
+    case 'earnings':return c.v!=null?`<span class="${c.soon?'dk-flag':'dk-num'}"${c.soon?dkG('fl-earnings'):''}>${RT('через','in')} ${c.v} ${RT('дн','d')}</span>`+(c.soon?dkCmpSm(RT('новый вход заблокирован','new entry blocked')):'')
+      :busy('earn')?ld:`<span class="dk-mut">${RT('дата неизвестна','date unknown')}</span>`;
+    case 'profit':case 'growth':case 'balance':case 'cash':
+      return c.na?`<span class="dk-mut"${dkG('selection-na')}>${RT('н/п','n/a')}</span>`:c.v!=null?`<b class="dk-num">${dkN(c.v,1)}</b><small>/10</small>`:busy('fund')?ld:dash;
+    case 'rev-yoy':case 'eps-yoy':
+      if(c.v!=null)return `<b class="dk-num ${c.v>=0?'dk-up':'dk-dn'}">${dkPct(c.v,1)}</b>`+dkCmpSm('FY'+c.fy);
+      if(c.codes.some(x=>/-base-nonpositive$/.test(x)))return `<span class="dk-mut">${RT('н/з','n/m')}</span>`+dkCmpSm(RT('база ≤ 0 — не в процентах','base ≤ 0 — not a percentage'));
+      return col.finBusy?ld:dash+dkCmpSm(c.codes.includes('business-restricted')?dkEsc(dkSelR('business-restricted')):'');
+    case 'fcf-margin':
+      if(c.na)return `<span class="dk-mut"${dkG('selection-na')}>${RT('н/п','n/a')}</span>`+dkCmpSm(RT('банк/финансы','bank/financials'));
+      return c.v!=null?`<b class="dk-num">${dkN(c.v,1)} %</b>`+dkCmpSm('FY'+c.fy):col.finBusy?ld:dash;
+    case 'pe':return c.na?dash+dkCmpSm(dkEsc(dkSelR('pe-nonpositive-eps'))):c.v!=null?`<b class="dk-num">${dkN(c.v,1)}</b>`:dash;
+    case 'fwd-pe':return c.v!=null?`<b class="dk-num">${dkN(c.v,1)}</b>`:dash;
+    case 'entry-dist':return c.v!=null?`<span class="dk-num">${dkPct(c.v,1)}</span>`+dkCmpSm(c.mode==='limit'?RT('лимит','limit'):RT('по рынку','at market')):dash;
+    case 'stop-dist':return c.v!=null?`<span class="dk-num">${dkPct(-c.v,1)}</span>`:dash;
+    case 'sector':return c.text?dkEsc(c.text):dash;
+  }
+  return dash;
+}
+// Отметка лучшего/худшего — цветом и текстом (не только цветом): «максимум»/«минимум» по направлению строки.
+function dkCmpMark(row,i){
+  const hiT='▲ '+RT('максимум','highest'),loT='▼ '+RT('минимум','lowest');
+  if(row.best.includes(i))return `<small class="dk-cmp-mk">${row.dir==='hi'?hiT:loT}</small>`;
+  if(row.worst.includes(i))return `<small class="dk-cmp-mk">${row.dir==='hi'?loT:hiT}</small>`;
+  return '';
+}
+function dkCmpRowHTML(row,cols){
+  const L=DK_CMP_ROW[row.id]||[()=>row.id,null],why=row.dir&&row.why&&row.why!=='few'?(row.why==='equal'?DK_CMP_WHY.equal():RT('без подсветки: ','no highlight: ')+DK_CMP_WHY[row.why]()):'';
+  const note=row.id==='sector'&&new Set(row.cells.map(c=>c.text)).size===1&&row.cells[0].text?RT('один сектор — ещё не прямые конкуренты','one sector does not make direct peers'):'';
+  return `<tr><th scope="row" class="dk-cmp-lbl"><span${L[1]?dkG(L[1]):''}>${L[0]()}</span>${why?`<small${dkG('compare-comparable')}>${dkEsc(why)}</small>`:''}${note?`<small>${dkEsc(note)}</small>`:''}</th>`
+    +row.cells.map((c,i)=>`<td class="${row.best.includes(i)?'best':row.worst.includes(i)?'worst':''}">${dkCmpCell(row,c,cols[i])}${dkCmpMark(row,i)}</td>`).join('')+'</tr>';
+}
+function dkCmpHeadHTML(cols,withX){
+  return `<thead><tr><th scope="col" class="dk-cmp-lbl"><span class="dk-mut">${RT('Бумага','Stock')}</span></th>${cols.map(c=>{const s=c.it.s,px=s?s.price:c.it.sec.price,fresh=c.model.price.freshness==='fresh';
+    return `<th scope="col" class="dk-cmp-col"><div class="dk-cmp-hd"><button type="button" class="dk-link dk-tk" data-a="open" data-k="${dkEsc(c.key)}">${dkEsc(c.tk)}</button>${withX?`<button type="button" class="dk-cmp-x" data-a="cmp" data-k="${dkEsc(c.key)}" aria-label="${RT('Убрать из сравнения','Remove from comparison')} ${dkEsc(c.tk)}">✕</button>`:''}</div>
+      <div class="dk-nm">${dkEsc(c.name)}</div><div class="dk-num">${dkPx(px)} ${dkCcy(c.ccy)} <span class="dk-tag${fresh?'':' dk-mut'}"${dkG('live')}>${fresh?'live':RT('не live','not live')}</span></div></th>`;}).join('')}</tr></thead>`;
+}
+function dkCmpFinalBtn(key){
+  const w=deskWatchGet(key);if(w&&w.status==='final')return `<span class="dk-tag dk-inlist">★ ${RT('в финале','in the final')}</span>`;
+  return can('action.edit_plan')?`<button type="button" class="dk-btn dk-sm" data-a="cfinal" data-k="${dkEsc(key)}">★ ${RT('В финал','To final')}</button>`:'';
+}
+function deskCompareDiffsHTML(M,cols){
+  const tk=k=>{const c=cols.find(x=>x.key===k);return dkEsc(c?c.tk:k);};
+  const one=(dim,x)=>{switch(dim){
+    case 'action':return x.pos?(DK_DEC_POS[x.pos]||DK_DEC_POS.hold)():(DK_DEC[x.k]||DK_DEC.study)[0]();
+    case 'company':return x.mode==='full'?`${x.grade} · ${dkN(x.value,1)}/10`:x.mode==='partial'?RT(`предварительно, ${x.known} из ${x.applicable} столпов`,`provisional, ${x.known} of ${x.applicable} pillars`):x.mode==='lite'?RT('без рейтинга — отчётность не загружена','no rating — reports not loaded'):RT('нет данных о бизнесе','no business data');
+    case 'price':return ['available','undated','stale'].includes(x.status)?`${x.upsidePct!=null?dkPct(x.upsidePct,0):'—'} ${RT('к оценке','to valuation')} (${x.source==='scenarios'?RT('ваши сценарии','your scenarios'):RT('аналитики','analysts')}${x.status==='stale'?', '+RT('таргет устарел','stale target'):x.status==='undated'?', '+RT('без даты','undated'):''})`
+      :x.status==='incomparable'?RT('оценка несопоставима с ценой','valuation not comparable with the price'):RT('оценки нет','no valuation');
+    case 'timing':return dkCmpVerdictText(x.verdict,x.waiting,x.dEntry,x.entry)+(x.side==='short'?' · '+RT('шорт','short'):'');
+    case 'risk':return `${x.level||'—'} ${deskRiskWord(x.level)}`+(x.blockers.length?' · '+x.blockers.map(dkSelR).join(', '):'');
+    case 'earnings':return x.days!=null?RT(`отчёт через ${x.days} дн`,`earnings in ${x.days} d`)+(x.soon?' — '+RT('новый вход заблокирован','new entry blocked'):''):RT('дата отчёта неизвестна','earnings date unknown');
+  }return '';};
+  const L=M.diffs.map(d=>`<li><b>${DK_CMP_DIM[d.dim]()}</b><span>${d.items.map(x=>`<span class="dk-tk">${tk(x.key)}</span> — ${dkEsc(one(d.dim,x))}`).join('<i>·</i>')}</span></li>`).join('');
+  return `<section class="dk-panel dk-mb"><div class="dk-ph"><h2>${RT('Чем отличаются условия','How the conditions differ')}${dkGi('compare-diffs')}</h2><span class="dk-note dk-ml">${RT('факты по измерениям, без итога «A лучше B»','facts by dimension, no “A beats B” verdict')}</span></div>
+    ${L?`<ul class="dk-cmp-diff">${L}</ul>`:`<div class="dk-empty">${RT('По действию, компании, цене, моменту и риску условия одинаковые — различия в показателях ниже.','Action, company, price, timing and risk are the same — the differences are in the metrics below.')}</div>`}</section>`;
+}
+// «Что если?» сравнения: один бюджет и портфель, каждая бумага — отдельно (не корзина покупок).
+function deskCompareWiHTML(cols,port){
+  if(!port||!cols.length)return '';
+  const c=deskWiCfg(),C=DESK_IDEA_CFG.whatIf,amt=c.mode==='amount',v=DESK_UI.wiRaw!=null?DESK_UI.wiRaw:(amt?c.amountSEK:c.weightPct),R=cols.map(x=>deskCompareWhatIf(x.it,port));
+  const ST={ok:['✓',RT('можно','clear'),'buy'],attention:['⚠',RT('внимание','attention'),'trim'],blocked:['⛔',RT('заблокировано','blocked'),'short']};
+  const cell=(r,f)=>r&&!r.err?f(r):`<span class="dk-mut">${r&&r.err==='price'?RT('нет цены','no price'):'—'}</span>`;
+  const row=(l,f)=>`<tr><th scope="row" class="dk-cmp-lbl">${l}</th>${R.map(r=>`<td>${cell(r,f)}</td>`).join('')}</tr>`;
+  const inputs=`<div class="dk-wi-in"><div class="dk-seg" role="group" aria-label="${RT('Сумма или доля','Amount or weight')}"><button type="button" class="${amt?'on':''}" data-a="wimode" data-v="amount" aria-pressed="${amt}">${RT('Сумма','Amount')}</button><button type="button" class="${amt?'':'on'}" data-a="wimode" data-v="weight" aria-pressed="${!amt}">${RT('Доля','Weight')}</button></div>
+      <label class="dk-wi-v"><input id="dkWiV" class="dk-inp dk-num" type="number" inputmode="decimal" data-c="wiv" min="${amt?C.amount[0]:C.weight[0]}" max="${amt?C.amount[1]:C.weight[1]}" step="${amt?1000:0.5}" value="${dkEsc(v)}" aria-label="${amt?RT('Сумма, kr','Amount, kr'):RT('Доля капитала, %','Share of equity, %')}"><span>${amt?'kr':RT('% капитала','% of equity')}</span></label>
+      <span class="dk-note">${RT('портфель','portfolio')} <b>${dkEsc(TAB_LABEL(port))}</b> — ${RT('выбирается в шапке','chosen in the header')}</span></div>`;
+  const tbl=`<div class="dk-wrap"><table class="dk-tbl dk-cmp">${dkCmpHeadHTML(cols,false)}<tbody>
+    ${row(RT('Итог','Result'),r=>{const S=ST[r.status];return `<span class="dk-pill v-${S[2]}"${dkG('what-if')}>${S[0]} ${S[1]}</span>`;})}
+    ${row(RT('Количество','Quantity'),r=>`<b class="dk-num">${r.qty} ${RT('шт','sh')}</b>${dkCmpSm(dkKr(r.notionalSEK))}`)}
+    ${row(RT('Доля бумаги после','Weight after'),r=>`<span class="dk-num">${r.weightAfter!=null?dkN(r.weightAfter,1)+' %':'—'}</span>`)}
+    ${row(`<span${dkG('size')}>${RT('Риск сделки','Trade risk')}</span>`,r=>`<span class="dk-num">${r.stop?dkKr(r.tradeRiskSEK):'—'}</span>`)}
+    ${row(RT('Кэш после','Cash after'),r=>`<span class="dk-num${r.hasCash&&r.cashAfter<0?' dk-dn':''}">${r.hasCash?dkKr(r.cashAfter):RT('не ведётся','not tracked')}</span>`)}
+    ${row(RT('Предупреждения','Warnings'),r=>r.warnings.length?r.warnings.map(w=>`<div class="${w.blocking?'dk-crit':'dk-note'}">${w.blocking?'⛔':'⚠'} ${dkEsc(w.text)}</div>`).join(''):'<span class="dk-mut">—</span>')}
+  </tbody></table></div>`;
+  return `<section class="dk-panel dk-mb dk-cmp-wi"><div class="dk-ph"><h2>${RT('Что если? — каждая отдельно','What if? — each on its own')}${dkGi('what-if')}</h2></div>${inputs}
+    <p class="dk-note dk-padx">${RT('Каждая бумага посчитана отдельно против текущего кэша и лимита риска книги — это не корзина: вместе варианты могут не пройти по кэшу или лимиту. Ничего не записано.','Each stock is computed on its own against the current cash and book risk cap — not a basket: together the options may not fit the cash or the cap. Nothing is recorded.')}</p>${tbl}</section>`;
+}
+function deskCompareHTML(){
+  const K=deskCompareKeys(),port=deskCmpPort();
+  return deskCompareView(K,K.length>=2?deskCompareCols(K,port):[],port);
+}
+// Экран сравнения по готовым колонкам (тесты зовут напрямую): ничего не пишет и не грузит.
+function deskCompareView(K,cols,port){
+  const C=DESK_UI.compare,max=DESK_IDEA_CFG.selection.maxCompare,I=deskItems();
+  const drop=C.dropped?`<div class="dk-warn dk-mb">⚠ ${RT(`Убрано из сравнения: ${C.dropped} — нет доступа или бумаги больше нет во вкладках.`,`Removed from the comparison: ${C.dropped} — no access or the stock is no longer in any tab.`)}</div>`:'';
+  if(K.length<2||cols.length<2){
+    const title=!K.length?RT('Бумаги для сравнения не выбраны','No stocks selected for comparison'):K.length===1?RT('Выбрана одна бумага','One stock selected'):RT('Сравнение недоступно: нет доступа к анализу выбранных бумаг','Comparison unavailable: no access to the analysis of the selected stocks');
+    const chips=K.map(k=>{const it=I.byKey[k];return `<span class="dk-cmp-chip"><b class="dk-tk">${dkEsc(it?it.sec.tk:k)}</b><button type="button" class="dk-cmp-x" data-a="cmp" data-k="${dkEsc(k)}" aria-label="${RT('Убрать из сравнения','Remove from comparison')}">✕</button></span>`;}).join('');
+    return drop+`<div class="dk-panel dk-cmp-empty"><h2>${title}${dkGi('compare')}</h2>
+      <p>${RT(`Отметьте «Сравнить» у 2–${max} бумаг: на карточках «Идей», в списке покупок, в инспекторе или на странице акции. Выбор живёт в этой вкладке браузера и не меняет список покупок.`,`Tick “Compare” on 2–${max} stocks: on Ideas cards, in the shopping list, the inspector or the stock page. The selection lives in this browser tab and does not change the shopping list.`)}</p>
+      <div class="dk-row">${chips}<button type="button" class="dk-btn" data-a="nav" data-r="screen">${RT('К идеям','To ideas')} →</button></div></div>`;
+  }
+  const M=deskCompareModel(cols,{earnDays:SIG.CFG.earnDays}),prim=M.rows.filter(r=>r.primary),rest=M.rows.filter(r=>!r.primary);
+  const loading=cols.some(c=>c.finBusy||deskPoolBusy('fund|'+c.it.sec.sym)||deskPoolBusy('earn|'+c.it.sec.sym));
+  const stale=cols.filter(c=>c.model.price.freshness!=='fresh'),pxBusy=cols.some(c=>deskPoolBusy('px|'+c.it.sec.sym));
+  const refresh=stale.length&&can('action.refresh_data')?`<button type="button" class="dk-btn dk-sm" data-a="cmpref"${pxBusy?' disabled':''}>${pxBusy?'⏳ '+RT('Обновляю…','Refreshing…'):'⟳ '+RT(`Обновить цены (${stale.length})`,`Refresh prices (${stale.length})`)}</button>`:'';
+  const top=`<div class="dk-cmp-top"><button type="button" class="dk-btn dk-sm" data-a="cmpback">← ${RT('Назад','Back')}</button>
+    <span class="dk-note">${RT(`${cols.length} бумаги · портфель ${dkEsc(port?TAB_LABEL(port):'—')} · одни правила для всех, общего балла нет`,`${cols.length} stocks · portfolio ${dkEsc(port?TAB_LABEL(port):'—')} · the same rules for all, no overall score`)}</span>
+    ${loading?`<span class="dk-chip">⏳ ${RT('догружаю отчётность и отчёты','loading reports and earnings')}</span>`:''}${refresh}${dkGi('compare')}</div>`;
+  const act=`<tr class="dk-cmp-act"><th scope="row" class="dk-cmp-lbl">${RT('Дальше','Next')}</th>${cols.map(c=>`<td><div class="dk-row">${dkCmpFinalBtn(c.key)}<button type="button" class="dk-btn dk-sm" data-a="open" data-k="${dkEsc(c.key)}">${RT('Открыть','Open')} →</button></div></td>`).join('')}</tr>`;
+  const how=`<p>${RT('Подсветка максимума и минимума — только если значение есть у всех бумаг и посчитано одинаково: тот же тип периода (последний фин. год, TTM или прогноз), та же сторона плана, тот же источник оценки и одинаковый набор применимых столпов. Предварительные данные, неприменимые показатели и пропуски строку не подсвечивают.','Highest/lowest are marked only when every stock has the value and it is computed the same way: the same period type (last fiscal year, TTM or forecast), the same plan side, the same valuation source and the same set of applicable pillars. Provisional data, non-applicable metrics and gaps leave the row unmarked.')}</p>
+    <p>${RT('Абсолютные суммы (выручка, капитализация) не сравниваются — только доли и мультипликаторы, поэтому валюта и масштаб бумаг на подсветку не влияют. Отрицательный EPS исключает P/E, рост от нулевой или отрицательной базы не показывается процентом. Один сектор не делает компании прямыми конкурентами.','Absolute amounts (revenue, market cap) are not compared — only ratios and multiples, so currency and scale do not affect the marks. Negative EPS excludes P/E; growth from a zero or negative base is not shown as a percentage. One sector does not make companies direct peers.')}</p>
+    <p>${RT(`Рост и FCF-маржа — последний фин. год из «Роста бизнеса» (?financials=); отчётность, консенсус и дата отчёта грузятся при открытии сравнения, не больше ${DESK_IDEA_CFG.selection.loadPool} запросов одновременно. Качество — бизнес-столпы без оценки цены (как в «Решении»).`,`Growth and FCF margin — the last fiscal year from Business growth (?financials=); reports, consensus and the earnings date load when the comparison opens, at most ${DESK_IDEA_CFG.selection.loadPool} requests at a time. Quality — business pillars without valuation (as in Decision).`)}</p>`;
+  return drop+top+deskCompareDiffsHTML(M,cols)
+    +`<section class="dk-panel dk-mb"><div class="dk-wrap"><table class="dk-tbl dk-cmp">${dkCmpHeadHTML(cols,true)}<tbody>${prim.map(r=>dkCmpRowHTML(r,cols)).join('')}${act}</tbody></table></div></section>`
+    +`<details class="dk-panel dk-mb"${dkDetAttr('cmp-all')}><summary class="dk-ph"><h2>${RT('Все показатели','All metrics')}</h2><span class="dk-cnt">${rest.length}</span><span class="dk-note dk-ml">${RT('столпы, рост, FCF, мультипликаторы, уровни','pillars, growth, FCF, multiples, levels')}</span></summary>
+      <div class="dk-wrap"><table class="dk-tbl dk-cmp">${dkCmpHeadHTML(cols,false)}<tbody>${rest.map(r=>dkCmpRowHTML(r,cols)).join('')}</tbody></table></div><div class="dk-padx dk-pb">${dkHow('cmp',how,RT('Как сравнивается','How it compares'))}</div></details>`
+    +deskCompareWiHTML(cols,port);
 }
 
 // ═══════════════════ Акция (P2, plans/stock-selection-ux.md §4): «Решение» · «Компания» · «Техника» ═══════════════════
@@ -1188,7 +1436,7 @@ function deskStockHeadHTML(it,held,view){
   return `<div class="dk-stock-hd"><span class="dk-tk dk-tk-xl">${dkEsc(sec.tk)}</span><div class="dk-stock-id"><div class="dk-b">${dkEsc(sec.name)}${w&&w.tag?` <span class="dk-wtag">${dkEsc(w.tag)}</span>`:''}</div><div class="dk-mut dk-xs">${dkEsc([sec.sector,sec.type,sec.tabs.map(TAB_LABEL).join(', '),sec.ccy].filter(Boolean).join(' · '))}</div></div>
       <span class="dk-px dk-num">${dkPx(px)} ${dkCcy(sec.ccy)}</span>${dkDay(day)}${sec.live?`<span class="dk-tag"${dkG('live')}>live${age!=null?` · ${age} ${RT('мин','min')}`:''}</span>`:`<span class="dk-tag dk-mut"${dkG('live')}>${RT('не live','not live')}</span>`}
       ${s?dkPill(s.verdict,!!held)+dkPhase(s)+dkFlags(s):''}${pos}
-      <div class="dk-ctl"><button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде — временно, до переноса всех блоков (S7b)','Full card in the classic view — temporary, until every block is moved (S7b)')}">${RT('Ещё','More')} ···</button></div></div>`;
+      <div class="dk-ctl">${dkCmpBox(it.key)}<button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде — временно, до переноса всех блоков (S7b)','Full card in the classic view — temporary, until every block is moved (S7b)')}">${RT('Ещё','More')} ···</button></div></div>`;
 }
 function deskStockTabsHTML(view){
   const L=[['decision',RT('Решение','Decision')],['company',RT('Компания','Company')],['tech',RT('Техника','Technicals')]];
@@ -2013,6 +2261,11 @@ function deskOnClick(e){
     case 'view':deskStockView(el.dataset.v);break;
     case 'wiopen':deskDetSave('st-wi',true);deskRender(true);setTimeout(()=>{const i=document.getElementById('dkWiV');if(i){i.focus();try{i.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});}catch(x){}}},40);break;
     case 'refresh1':deskRefreshOne(k);break;
+    case 'cmp':deskCmpToggleKey(k);break;   // P4: чекбокс «Сравнить» и ✕ в лотке/заголовке сравнения
+    case 'cmpclr':DESK_UI.compare.keys=[];DESK_UI.compare.dropped=0;deskRender(true);break;
+    case 'cfinal':deskCompareFinal(k);break;
+    case 'cmpback':deskCompareBack();break;
+    case 'cmpref':deskCompareRefresh();break;
     case 'newsre':if(NEWS_LIVE[k])NEWS_LIVE[k].at=0;deskPoolRun('news|'+k,()=>pf3NewsEnsure(k,el.dataset.ccy));deskRender(true);break;
     case 'sel':DESK_UI.sel=DESK_UI.sel===k?null:k;deskRender(true);break;
     case 'unsel':DESK_UI.sel=null;deskRender(true);break;
@@ -2083,7 +2336,8 @@ function deskOnChange(e){
   else if(c==='wiport'){deskWiSave({port:el.value});deskWhatIfRecalc();}
   else if(c==='wiv'){   // подтверждение ввода: нормализованное значение сохраняется (синк), поле показывает его
     clearTimeout(_deskWiT);const w=deskWiCfg(),v=parseFloat(String(el.value).replace(',','.'));
-    deskWiSave(w.mode==='weight'?{weightPct:v}:{amountSEK:v});const n=deskWiCfg();el.value=n.mode==='weight'?n.weightPct:n.amountSEK;deskWhatIfRecalc();}
+    deskWiSave(w.mode==='weight'?{weightPct:v}:{amountSEK:v});const n=deskWiCfg();el.value=n.mode==='weight'?n.weightPct:n.amountSEK;
+    if(DESK_UI.route==='compare')deskRender(true);else deskWhatIfRecalc();}   // P4: в сравнении бюджет общий для всех колонок
   else if(c==='fside'){DESK_UI.f.side=el.value;deskRender(true);}
   else if(c==='fphase'){DESK_UI.f.phase=el.value;deskRender(true);}
   else if(c==='ftab'){DESK_UI.f.tab=el.value;deskRender(true);}

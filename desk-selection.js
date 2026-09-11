@@ -1,4 +1,4 @@
-// P1: чистая модель отбора. Только нормализованные входы, время и конфигурация аргументами.
+// P1: чистая модель отбора (P4 — и сравнения). Только нормализованные входы, время и конфигурация аргументами.
 // value качества — 0…10 (шкала Betyg), coverage — 0…1. Причины — коды; UI переводит их.
 const deskSelNum=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
 const deskSelTime=v=>typeof v==='number'?(v>0&&Number.isFinite(v)?v:null):
@@ -108,4 +108,114 @@ function deskPickBuckets(models,compareSignals,config){
   };
   Object.values(out).forEach(b=>{b.items.sort(cmp);b.total=b.items.length;b.items=b.items.slice(0,config.maxCards);});
   return out;
+}
+
+// ── P4 (plans/stock-selection-ux.md §6): сравнение 2–4 бумаг ──
+// Выбор для сравнения: биржевые ключи без повторов, до max; повторный выбор снимает. full — лимит не дал добавить.
+function deskCompareToggle(keys,key,max){
+  const K=(keys||[]).filter((k,i,a)=>k&&a.indexOf(k)===i);
+  if(!key)return {keys:K,full:false};
+  if(K.includes(key))return {keys:K.filter(k=>k!==key),full:false};
+  if(K.length>=max)return {keys:K,full:true};
+  return {keys:K.concat(key),full:false};
+}
+// Факты последнего фин. года из ответа ?financials= (у обоих провайдеров — годовые ряды, один тип периода):
+// рост выручки и EPS к предыдущему году и FCF-маржа. Нет соседнего года — роста нет; база ≤ 0 — не процент.
+function deskCompareFinFacts(fin){
+  const out={fy:null,ccy:null,source:null,revYoY:null,epsYoY:null,fcfMargin:null,codes:[]};
+  if(!fin||typeof fin!=='object'){out.codes.push('fin-missing');return out;}
+  if(fin.status==='error'){out.codes.push('fin-error');return out;}
+  const A=(Array.isArray(fin.annual)?fin.annual:[]).filter(x=>x&&+x.year>0).slice().sort((a,b)=>a.year-b.year);
+  if(!A.length){out.codes.push('fin-nodata');return out;}
+  const last=A[A.length-1],prev=A.find(x=>+x.year===+last.year-1)||null;
+  Object.assign(out,{fy:+last.year,ccy:fin.ccy||null,source:fin.source||null});
+  const yoy=k=>{const a=deskSelNum(last[k]),b=prev?deskSelNum(prev[k]):null;
+    if(a==null||b==null){out.codes.push(k+'-yoy-missing');return null;}
+    if(!(b>0)){out.codes.push(k+'-base-nonpositive');return null;}
+    return (a/b-1)*100;};
+  out.revYoY=yoy('revenue');out.epsYoY=yoy('eps');
+  const r=deskSelNum(last.revenue),f=deskSelNum(last.fcf);
+  if(r>0&&f!=null)out.fcfMargin=f/r*100;else out.codes.push('fcf-margin-missing');
+  return out;
+}
+// Строки: id · измерение · направление лучшего (hi — больше, lo — меньше, null — только факт) · первый вид.
+// Абсолютных сумм нет: только доли, мультипликаторы и баллы — валюта и масштаб бумаг на них не влияют.
+const DESK_CMP_ROWS=[
+  ['action','action',null,true],['quality','company','hi',true],['valuation','price','hi',true],
+  ['timing','timing',null,true],['rr','timing','hi',true],['risk','risk',null,true],['earnings','risk',null,true],
+  ['profit','company','hi',false],['growth','company','hi',false],['balance','company','hi',false],['cash','company','hi',false],
+  ['rev-yoy','company','hi',false],['eps-yoy','company','hi',false],['fcf-margin','company','hi',false],
+  ['pe','price','lo',false],['fwd-pe','price','lo',false],['entry-dist','timing',null,false],['stop-dist','timing',null,false],
+  ['sector','company',null,false]];
+// Причина несопоставимости, когда у всех значения есть, но посчитаны по-разному.
+const DESK_CMP_BASIS_WHY={quality:'applicability-differs',valuation:'source-differs',rr:'side-differs'};
+function deskCompareCell(id,c,cfg){
+  const m=c.model,q=m.quality,v=m.valuation,t=m.timing,p=t.plan||null,F=c.facts||{codes:[]},FC=F.codes||[];
+  const cell=o=>Object.assign({v:null,basis:null,na:false,prov:false,codes:[]},o);
+  const pick=pre=>FC.filter(x=>x.indexOf(pre)===0||x.indexOf('fin-')===0||x==='business-restricted');
+  switch(id){
+    case 'action':{const pa=m.action.source==='position'&&m.action.position?m.action.position.action:null;
+      return cell({k:m.action.key,pos:pa?pa.act:null,next:m.action.nextStep});}
+    case 'quality':return cell({v:q.value,basis:q.pillars.filter(x=>!x.na).map(x=>x.key).join(','),prov:q.mode!=='full',
+      mode:q.mode,grade:q.grade,known:q.known,applicable:q.applicable,codes:q.reasonCodes.slice()});
+    case 'valuation':return cell({v:v.upsidePct,basis:v.source,prov:v.status!=='available',status:v.status,value:v.value,
+      asOf:v.asOf,codes:v.reasonCodes.slice()});
+    case 'timing':return cell({verdict:t.verdict,side:t.side,waiting:t.waitingLevel,mode:p&&p.mode||null,
+      entry:p?deskSelNum(p.entry):null,dEntry:p?deskSelNum(p.dEntry):null,blockers:t.blockers.slice()});
+    case 'rr':return cell({v:p?deskSelNum(p.rr):null,basis:p&&p.side||null,approx:!!(p&&(p.flags||[]).includes('atr-target'))});
+    case 'risk':return cell({v:m.risk.auto,override:m.risk.override,level:m.risk.level,blockers:t.blockers.slice()});
+    case 'earnings':{const d=deskSelNum(c.earnDays),ok=d!=null&&d>=0;return cell({v:ok?d:null,soon:ok&&d<=cfg.earnDays});}
+    case 'profit':case 'growth':case 'balance':case 'cash':{const P=q.pillars.find(x=>x.key===id)||{};
+      return cell({v:P.na?null:deskSelNum(P.score),na:!!P.na,basis:'betyg',codes:P.na?['business-not-applicable']:q.mode==='full'?[]:['business-'+q.mode]});}
+    case 'rev-yoy':return cell({v:F.revYoY,basis:F.fy!=null?'FY':null,fy:F.fy,codes:pick('revenue-')});
+    case 'eps-yoy':return cell({v:F.epsYoY,basis:F.fy!=null?'FY':null,fy:F.fy,codes:pick('eps-')});
+    case 'fcf-margin':return c.fin?cell({na:true,codes:['business-not-applicable']}):
+      cell({v:F.fcfMargin,basis:F.fy!=null?'FY':null,fy:F.fy,codes:pick('fcf-')});
+    case 'pe':{const pe=v.peContext||{},neg=(pe.reasonCodes||[]).includes('pe-nonpositive-eps');
+      return cell({v:!neg&&pe.value>0?pe.value:null,na:neg,basis:'TTM',codes:neg?['pe-nonpositive-eps']:pe.value>0?[]:['pe-missing']});}
+    case 'fwd-pe':return cell({v:c.fwdPe>0?c.fwdPe:null,basis:'fwd'});
+    case 'entry-dist':return cell({v:p?deskSelNum(p.dEntry):null,mode:p&&p.mode||null});
+    case 'stop-dist':return cell({v:p?deskSelNum(p.riskPct):null});
+    case 'sector':return cell({text:c.sector||null});
+  }
+  return cell({});
+}
+// Лучшее/худшее — только в сопоставимой строке: значение есть у всех, применимо ко всем, не предварительное и
+// посчитано одинаково (тип периода, сторона плана, источник оценки, набор столпов). Сравнение — с точностью показа
+// (0,1): значения, которые на экране выглядят равными, не подсвечиваются.
+function deskCompareRow(def,cells){
+  const [id,dim,dir,primary]=def,row={id,dim,dir,primary,cells,comparable:false,why:null,best:[],worst:[]};
+  if(!dir)return row;
+  row.why=cells.length<2?'few':cells.some(c=>c.na)?'not-applicable':cells.every(c=>c.v==null)?'none':cells.some(c=>c.v==null)?'missing':
+    cells.some(c=>c.prov)?(id==='valuation'?'status':'provisional'):
+    new Set(cells.map(c=>c.basis)).size>1?(DESK_CMP_BASIS_WHY[id]||'period-differs'):null;
+  if(row.why)return row;
+  row.comparable=true;
+  const vs=cells.map(c=>Math.round(c.v*10)),hi=Math.max(...vs),lo=Math.min(...vs);
+  if(hi===lo){row.why='equal';return row;}
+  const top=dir==='hi'?hi:lo,bot=dir==='hi'?lo:hi;
+  vs.forEach((v,i)=>{if(v===top)row.best.push(i);else if(v===bot)row.worst.push(i);});
+  return row;
+}
+// «Чем отличаются условия»: по измерению — только если бумаги различаются; факты каждой бумаги, без итога «A лучше B».
+function deskCompareDiffs(rows,keys){
+  const R={},out=[];rows.forEach(r=>{R[r.id]=r;});
+  const add=(dim,sig,items)=>{if(new Set(sig).size>1)out.push({dim,items:items.map((x,i)=>Object.assign({key:keys[i]},x))});};
+  const A=R.action.cells,Q=R.quality.cells,V=R.valuation.cells,T=R.timing.cells,K=R.risk.cells,E=R.earnings.cells;
+  add('action',A.map(c=>c.pos||c.k),A.map(c=>({k:c.k,pos:c.pos})));
+  add('company',Q.map(c=>c.mode+'|'+(c.mode==='full'?c.grade:'')),Q.map(c=>({mode:c.mode,grade:c.grade,value:c.v,known:c.known,applicable:c.applicable})));
+  add('price',V.map((c,i)=>c.status+'|'+(R.valuation.best.includes(i)?'best':R.valuation.worst.includes(i)?'worst':'')),
+    V.map(c=>({status:c.status,upsidePct:c.v,source:c.basis,asOf:c.asOf})));
+  add('timing',T.map(c=>[c.verdict,c.side,c.waiting!=null?'limit':c.mode].join('|')),T.map(c=>({verdict:c.verdict,side:c.side,waiting:c.waiting,mode:c.mode,entry:c.entry,dEntry:c.dEntry})));
+  add('risk',K.map(c=>c.v+'|'+c.blockers.join(',')),K.map(c=>({level:c.v,override:c.override,blockers:c.blockers})));
+  // Близкий отчёт — критический факт, даже если он у всех.
+  if(E.some(c=>c.soon))out.push({dim:'earnings',items:E.map((c,i)=>({key:keys[i],days:c.v,soon:c.soon}))});
+  return out;
+}
+// cols: [{key, tk, ccy, sector, fin (финансовый сектор), model (deskSelectionModel), facts (deskCompareFinFacts),
+// fwdPe, earnDays}]; cfg: {earnDays}. Нового общего балла и победителя нет.
+function deskCompareModel(cols,cfg){
+  const C=(cols||[]).filter(c=>c&&c.model),keys=C.map(c=>c.key);
+  const rows=DESK_CMP_ROWS.map(def=>deskCompareRow(def,C.map(c=>deskCompareCell(def[0],c,cfg))));
+  return {keys,rows,diffs:C.length>=2?deskCompareDiffs(rows,keys):[]};
 }

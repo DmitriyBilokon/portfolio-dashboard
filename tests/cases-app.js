@@ -1122,7 +1122,7 @@ grp('replay', function(){
 grp('chartModel', function(){
   var B=sigFixBars('MU'),snap=SIG.snapshot(B,{}),rep=SIG.replay(B,{ind:snap.ind});
   var m=chartModel(B,snap,rep,{bars:120});
-  __eq('window: last 120 bars', [m.show,m.off,m.candles.length,m.candles[119].time,m.candles[0].close], [120,140,120,B[259].d,B[140].c]);
+  __eq('window: last 120 bars', [m.show,m.off,m.price.length,m.price[119].time,m.price[0].value], [120,140,120,B[259].d,B[140].c]);
   __eq('SMA/RSI series: window minus warm-up (SMA200 from bar 199)', [m.sma.s50.length,m.sma.s200.length,m.rsi.length,m.sma.s200[0].time], [120,61,120,B[199].d]);
   __ok('zones: ≤ 2 sup + ≤ 2 res, structural, ±0.3·ATR', m.zones.length<=4 && m.zones.every(function(z){return !/^(S|R) · (P|R1|S1|R2|S2)$/.test(z.label)&&Math.abs((z.hi-z.lo)-0.6*snap.atr)<1e-9;}));
   __eq('lines = plan of verdict side', m.lines.map(function(l){return l.kind;}), ['entry','stop','target']);

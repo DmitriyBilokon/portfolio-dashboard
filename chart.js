@@ -1,5 +1,5 @@
 // 📈 График акции (S5 редизайна, plans/redesign-trading.md §6): lightweight-charts 5.0.8 (грузит loadLWC в app.js).
-// Слои: зоны S/R (примитив) → свечи → объём (панель) → SMA50/100/200 → линии Вход/Стоп/Цель (по стороне
+// Слои: зоны S/R (примитив) → линия цены закрытия → объём (панель) → SMA50/100/200 → линии Вход/Стоп/Цель (по стороне
 // или плану позиции) → маркеры: сделки реплея вердикта v2 (SIG.replay, решение Q4), инсайдеры, мои сделки →
 // RSI(14) (панель) → легенда/тултип по crosshair. chartModel — чистая (тесты), renderStockChart — DOM.
 // Грузится после signals.js, до app.js (boot() в конце app-5.js уже может рисовать); RT и SIG берутся в момент
@@ -80,7 +80,7 @@
     if (n.includes('pe-cur')) parts.push(tr('по текущему P/E линия показывает только динамику прибыли', 'at the current P/E the line shows only the earnings trend'));
     if (n.includes('no-fcst')) parts.push(tr('прогноза аналитиков нет', 'no analyst forecast'));
     else parts.push(tr('пунктир — прогноз аналитиков', 'dashed — analyst forecast'));
-    if (n.includes('off-scale')) parts.push(tr('линия далеко от цены — вне автомасштаба', 'the line is far from the price — excluded from autoscale'));
+    if (n.includes('off-scale')) parts.push(tr('линия далеко от цены — вне автомасштаба (потяните шкалу цены, чтобы увидеть; двойной клик по шкале — вернуть)', 'the line is far from the price — excluded from autoscale (drag the price scale to see it; double-click the scale to reset)'));
     return h + parts.join(' · ');
   }
   // Чистая модель графика. opts: side ('long'|'short'; по умолчанию сторона вердикта), bars (сколько
@@ -97,7 +97,7 @@
     const plan = o.plan || (snap.plans && snap.plans[side]) || null;
     return {
       show, off, view, side, dec, zones, plan, lines: planLines(plan, snap.price),
-      candles: view.map(b => ({ time: b.d, open: b.o, high: b.h, low: b.l, close: b.c })),
+      price: view.map(b => ({ time: b.d, value: b.c })),   // линейный график по закрытию (не свечи — решение пользователя 2026-09-11)
       volume: view.map(b => ({ time: b.d, value: b.v, up: b.c >= b.o })), hasVol: view.some(b => b.v > 0),
       sma: { s50: line(ind.s50), s100: line(ind.s100), s200: line(ind.s200) }, rsi: line(ind.rsi),
       markers: chartMarkers(view, off, rep, o.insider, o.trades),
@@ -276,8 +276,8 @@
       localization: { priceFormatter: p => fmtN(p, M.dec) },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
-    const candles = chart.addSeries(L.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: true, priceLineColor: T.ink, priceLineWidth: 1, priceLineStyle: L.LineStyle.Dotted });
-    candles.setData(M.candles);
+    const px = chart.addSeries(L.LineSeries, { color: T.ink, lineWidth: 2, crosshairMarkerVisible: true, crosshairMarkerRadius: 3, priceLineVisible: true, priceLineColor: T.ink, priceLineWidth: 1, priceLineStyle: L.LineStyle.Dotted });
+    px.setData(M.price);
     let pane = 1;
     if (M.hasVol) {
       const vol = chart.addSeries(L.HistogramSeries, { priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false }, pane++);
@@ -302,16 +302,16 @@
         h.setData(EM.hist.map(ws)); dots(h, EM.hist, T.earn);
       }
     }
-    candles.attachPrimitive(new ZonesPrimitive(M.zones, T));
+    px.attachPrimitive(new ZonesPrimitive(M.zones, T));
     let lines = [];
     const drawLines = () => {
-      lines.forEach(l => candles.removePriceLine(l)); lines = [];
-      M.lines.forEach(l => lines.push(candles.createPriceLine({ price: l.price, color: T[l.kind], lineWidth: l.kind === 'entry' && l.atMarket ? 1 : 2,
+      lines.forEach(l => px.removePriceLine(l)); lines = [];
+      M.lines.forEach(l => lines.push(px.createPriceLine({ price: l.price, color: T[l.kind], lineWidth: l.kind === 'entry' && l.atMarket ? 1 : 2,
         lineStyle: l.kind === 'entry' ? (l.atMarket ? L.LineStyle.Dotted : L.LineStyle.Solid) : L.LineStyle.LargeDashed, axisLabelVisible: !l.atMarket, title: l.title })));
     };
     drawLines();
     const MC = { buy: T.long, short: T.short, part: T.target, exit: T.exit, 'ins-buy': T.long, 'ins-sell': T.short, me: T.me };
-    L.createSeriesMarkers(candles, M.markers.map(m => ({ time: m.time, position: m.position, shape: m.shape, color: MC[m.kind] || T.muted, text: m.text })));
+    L.createSeriesMarkers(px, M.markers.map(m => ({ time: m.time, position: m.position, shape: m.shape, color: MC[m.kind] || T.muted, text: m.text })));
     const rsi = chart.addSeries(L.LineSeries, { color: T.rsi, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: 0, minMove: 1 } }, pane);
     rsi.setData(M.rsi);
     [70, 30].forEach(p => rsi.createPriceLine({ price: p, color: T.rsiBand, lineWidth: 1, lineStyle: L.LineStyle.Solid, axisLabelVisible: false, title: '' }));

@@ -2581,6 +2581,10 @@ function deskOnKey(e){
   }
   const o=e.target.closest&&e.target.closest('#desk [data-a="open"]');
   if(e.key==='Enter'&&o&&o.tagName!=='BUTTON'&&e.target.closest('[data-a]')===o){deskGo('stock',o.dataset.k,'decision');return;}
+  // P6: карточки подборок «Идей» (data-a="sel", tabindex=0) реагировали только на клик мышью —
+  // Enter/Space на сфокусированной карточке ничего не делали. Активируем тем же путём, что клик (deskOnClick).
+  const sc=e.target.closest&&e.target.closest('#desk [data-a="sel"][tabindex="0"]');
+  if((e.key==='Enter'||e.key===' ')&&sc&&e.target.closest('[data-a]')===sc){e.preventDefault();deskOnClick({target:sc});return;}
   if(e.key==='/'){e.preventDefault();const q=document.getElementById('dkQ');if(q)q.focus();return;}
   if(e.key==='?'&&typeof deskGlossOpen==='function'){e.preventDefault();if(DESK_UI.menu){DESK_UI.menu=false;deskRender(true);}deskGlossOpen();return;}
   if(/^[1-5]$/.test(e.key)){deskGo(['today','screen','stock','book','journal'][+e.key-1]);return;}

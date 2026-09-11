@@ -458,12 +458,13 @@ function newsSentiment(items,nowMs){
   });
   return {sent:Math.round(sent*10)/10,pos,neg,n:items.length};
 }
+// Возвращает промис загрузки (desk ждёт его в пуле запросов); свежий кэш или идущая загрузка — undefined.
 function pf3NewsEnsure(tk,ccy){
   const cur=NEWS_LIVE[tk];
   if(cur&&cur.loading)return;
   if(cur&&cur.at&&Date.now()-cur.at<10*60000)return;   // кэш 10 мин = «онлайн»
   NEWS_LIVE[tk]={...(cur||{}),loading:true};
-  fetch(PRICE_PROXY+'?news='+encodeURIComponent(exSymbol(tk,ccy))).then(r=>r.json()).then(j=>{
+  return fetch(PRICE_PROXY+'?news='+encodeURIComponent(exSymbol(tk,ccy))).then(r=>r.json()).then(j=>{
     const items=(j&&Array.isArray(j.items))?j.items.map(it=>({...it,pol:newsPolarity(it.title||'')})):[];
     const s=newsSentiment(items,Date.now());
     NEWS_LIVE[tk]={items,sent:s.sent,pos:s.pos,neg:s.neg,at:Date.now(),loading:false};

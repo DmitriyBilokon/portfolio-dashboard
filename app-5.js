@@ -1203,8 +1203,10 @@ async function pf3Refresh(silent){
 // (таргет/цена) считался по актуальной цене, а не по последнему обновлению
 // вкладки. Дёшево: один тикер; не чаще раза в 2 мин на символ.
 let _cardPxAt={};
-async function pf3RefreshCardPrice(d,r){
-  const sym=exSymbol(r[2],r[8]);if(!sym)return;
+// tab — вкладка строки (desk): фиксируется до await, иначе recalcPF пересчитал бы строку по индексу в той вкладке,
+// что выбрана к моменту ответа (v3Key меняется при переходе к другой бумаге).
+async function pf3RefreshCardPrice(d,r,tab){
+  const sym=exSymbol(r[2],r[8]),key=tab||v3Key;if(!sym)return;
   if(_cardPxAt[sym]&&Date.now()-_cardPxAt[sym]<45000)return;   // ~45с: «% за день» обновляется живо на открытой карточке
   _cardPxAt[sym]=Date.now();
   try{
@@ -1225,7 +1227,7 @@ async function pf3RefreshCardPrice(d,r){
     if(s200>=0&&set[2]!=null)r[s200]=set[2];
     if(q.support!=null)r[supI]=q.support;
     if(q.resistance!=null)r[resI]=q.resistance;
-    recalcPF(i,v3Key);scheduleSave();
+    recalcPF(i,key);scheduleSave();
     {const ve=document.getElementById('pf3Vol');if(ve&&isV3()&&pf3Sel===tk)ve.innerHTML=cardVolInner(tk);}   // объём — обновляем in-place (на случай, если перерисовку пропустим из-за фокуса в input)
     // Перерисовать только если карточка той же бумаги ещё открыта и пользователь не печатает.
     const ae=document.activeElement;

@@ -2476,7 +2476,10 @@ function stockAiSnapshot(d,r){
   }
   const prior=(STOCK_AI_LOG||[]).filter(e=>String(e.ticker||'').toUpperCase()===tk).slice(0,4)
     .map(e=>({at:e.ts,priceThen:e.price,verdict:(e.data||{}).verdict||null,targetThen:(e.data||{}).targetPrice||null,priceNow:price}));
-  const tf=pf3TypeFull(d,r),F=pf3FundData();
+  // Фундаментал СВОЕЙ бумаги: снапшот собирается после await, а pf3FundData() смотрит на текущий выбор (v3Key/pf3Sel) —
+  // переход к другой бумаге во время запроса подставил бы её отчётность. Кэш карточки — только при совпадении символа.
+  const fc=pf3Fund.cache[pf3Fund.period];   // ключ кэша карточки — как pf3Sym(), общего кэша — как pf3BetygRow
+  const tf=pf3TypeFull(d,r),F=fc&&fc.sym===exSymbol(r[2],r[8])&&fc.data?fc.data:pf3FundFor(exSymbol(String(r[2]||'').trim(),r[8]||'USD'));
   // 🏅 Фундаментальный рейтинг «betyg» (0–100 + буква A–F + 5 столпов) — тот же,
   // что инвестор видит в карточке «💪 Здоровье бизнеса». Даёт AI единую оценку
   // качества бизнеса (прибыльность/рост/баланс/денежный поток/оценка).

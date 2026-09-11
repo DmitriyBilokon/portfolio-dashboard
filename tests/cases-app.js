@@ -2061,3 +2061,174 @@ grp('desk glossary: подсказки на экранах (G2)', function(){
   __eq('у левого края — отступ 8 px', deskTipPos({left:0,right:10,top:10,bottom:30,width:10,height:20},200,80,1000,800).left, 8);
   __eq('телефон 400 px: подсказка во всю ширину минус отступы', deskTipPos({left:300,right:360,top:100,bottom:120,width:60,height:20},384,90,400,800).left, 8);
 });
+
+// ── P2: экран «Акция» в трёх режимах (plans/stock-selection-ux.md §4) ──
+grp('P2 stock route and history', function(){
+  __eq('P2 «Решение» не пишется в адрес', deskHashOf('stock','AAPL|USD','decision'), '#desk/stock/AAPL%7CUSD');
+  __eq('P2 режим в адресе', deskHashOf('stock','AAPL|USD','company'), '#desk/stock/AAPL%7CUSD/company');
+  __eq('P2 другие экраны — без ключа и режима', deskHashOf('book','X|USD','tech'), '#desk/book');
+  __eq('P2 разбор адреса', deskHashParse('#desk/stock/AAPL%7CUSD/tech'), {route:'stock',key:'AAPL|USD',view:'tech'});
+  __eq('P2 без режима → «Решение»', deskHashParse('#desk/stock/AAPL%7CUSD').view, 'decision');
+  __eq('P2 неизвестный режим → «Решение»', deskHashParse('#desk/stock/AAPL%7CUSD/zz').view, 'decision');
+  __eq('P2 ключ со слэшем', deskHashParse(deskHashOf('stock','A/B|USD','tech')), {route:'stock',key:'A/B|USD',view:'tech'});
+  __eq('P2 битая кодировка → ключ null', deskHashParse('#desk/stock/%E0%A4%A').key, null);
+  __eq('P2 не desk', deskHashParse('#pf3'), null);
+  var oLoc=globalThis.location,oHist=globalThis.history,oR=deskRender,oTab=DESK_UI.route,oKey=DESK_UI.key,oView=DESK_UI.stockView,pushed=[],repl=[];
+  try{
+    globalThis.location={hash:'',href:''};
+    globalThis.history={state:null,pushState:function(s,t,h){pushed.push(h);location.hash=h;history.state=s;},replaceState:function(s,t,h){history.state=s;if(h&&h.charAt(0)==='#'){repl.push(h);location.hash=h;}}};
+    deskRender=function(){};
+    DESK_UI.key='A|USD';DESK_UI.stockView='tech';
+    deskGo('stock','B|USD');
+    __eq('P2 новая бумага открывается «Решением»', [DESK_UI.stockView,pushed], ['decision',['#desk/stock/B%7CUSD']]);
+    deskStockView('company');
+    __eq('P2 смена режима — replaceState, без новой записи', [pushed.length,repl[repl.length-1],DESK_UI.stockView], [1,'#desk/stock/B%7CUSD/company','company']);
+    deskGo('today');deskGo('stock','B|USD');
+    __eq('P2 возврат к той же бумаге через рельсу хранит режим', DESK_UI.stockView, 'company');
+    deskGo('stock','B|USD','decision');
+    __eq('P2 явное открытие — «Решение»', DESK_UI.stockView, 'decision');
+    __ok('P2 уходящая запись получает прокрутку', pushed.length>=3 && history.state && history.state.dk===1);
+    location.hash='#desk/stock/C%7CUSD/tech';deskFromHash();
+    __eq('P2 Back/Forward: бумага и режим из адреса', [DESK_UI.route,DESK_UI.key,DESK_UI.stockView], ['stock','C|USD','tech']);
+    location.hash='#desk/stock/C%7CUSD';deskFromHash();
+    __eq('P2 адрес без режима → «Решение»', DESK_UI.stockView, 'decision');
+  }finally{globalThis.location=oLoc;globalThis.history=oHist;deskRender=oR;DESK_UI.route=oTab;DESK_UI.key=oKey;DESK_UI.stockView=oView;}
+});
+grp('P2 side of the stock views', function(){
+  var oH=deskHeld,oSide=DESK_UI.side,oV=DESK_UI.stockView,it={key:'K|USD',s:{side:'short'}};
+  try{
+    deskHeld=function(){return null;};DESK_UI.side={'K|USD':'short'};
+    DESK_UI.stockView='tech';__eq('P2 «Техника» — моделируемая сторона', deskStockSide(it), 'short');
+    DESK_UI.stockView='decision';__eq('P2 переключатель «Техники» не меняет лонг-отбор «Решения»', deskStockSide(it), 'long');
+    DESK_UI.stockView='company';__eq('P2 и «Компании»', deskStockSide(it), 'long');
+    deskHeld=function(){return {side:'short',tab:'p'};};DESK_UI.stockView='decision';
+    __eq('P2 открытая позиция задаёт сторону «Решения»', deskStockSide(it), 'short');
+  }finally{deskHeld=oH;DESK_UI.side=oSide;DESK_UI.stockView=oV;}
+});
+grp('P2 decision button', function(){
+  var B=function(o){return deskDecisionBtn(Object.assign({canPlan:true,canTrade:true},o));};
+  __eq('P2 кандидат → проверить сделку', B({key:'candidate',nextStep:'check-trade'}), 'trade');
+  __eq('P2 нет данных → обновить', B({key:'refresh',nextStep:'refresh-data'}), 'refresh');
+  __eq('P2 без права обновлять — кнопки нет', B({key:'refresh',nextStep:'view-data-status'}), null);
+  __eq('P2 исследование → компания', B({key:'research',nextStep:'check-company'}), 'company');
+  __eq('P2 шорт → техника', B({key:'technical',nextStep:'view-technical'}), 'tech');
+  __eq('P2 ждать: не в списке → добавить', B({key:'wait',nextStep:'view-level',inList:false}), 'wadd');
+  __eq('P2 ждать: в списке с зоной → уведомить', B({key:'wait',nextStep:'view-level',inList:true,zoneHi:95}), 'wnotify');
+  __eq('P2 взведённое уведомление не создаётся повторно', B({key:'wait',nextStep:'view-level',inList:true,zoneHi:95,ruleArmed:true}), 'tech');
+  __eq('P2 без права менять план — к технике', B({key:'wait',nextStep:'view-level',canPlan:false}), 'tech');
+  __eq('P2 нет портфеля — кнопки нет', B({key:'candidate',nextStep:'select-portfolio'}), null);
+  __eq('P2 выход по стопу', B({source:'position',key:'exit',nextStep:'position-action'}), 'close');
+  __eq('P2 фиксация/сокращение/отчёт — частичное закрытие', ['take','trim','earn'].map(function(k){return B({source:'position',key:k,nextStep:'position-action'});}), ['trim','trim','trim']);
+  __eq('P2 стоп в б/у, трейл, задать стоп', [B({source:'position',key:'be',nextStep:'position-action'}),B({source:'position',key:'trail',nextStep:'position-action',trail:101}),B({source:'position',key:'trail',nextStep:'position-action'}),B({source:'position',key:'nostop',nextStep:'position-action',hasSug:true}),B({source:'position',key:'nostop',nextStep:'position-action'})], ['be','trail','stops','accept','stops']);
+  __eq('P2 держать/у стопа — primary нет', [B({source:'position',key:'hold',nextStep:'position-action'}),B({source:'position',key:'watch',nextStep:'position-action'})], [null,null]);
+  __eq('P2 позиция: цена не свежая → сначала обновить', B({source:'position',key:'exit',nextStep:'refresh-data'}), 'refresh');
+  __eq('P2 позиция без права сделок — primary нет', B({source:'position',key:'exit',nextStep:'view-position',canTrade:false}), null);
+});
+grp('P2 main risk', function(){
+  __eq('P2 своя формулировка первой', deskMainRisk({user:'цикл памяти',blockers:['knife'],level:5}), {k:'user',text:'цикл памяти'});
+  __eq('P2 блокер раньше флага', deskMainRisk({blockers:['earnings'],flags:['wide']}).k, 'earnings');
+  __eq('P2 нож из флагов', deskMainRisk({flags:['knife']}).k, 'knife');
+  __eq('P2 флаг плана', deskMainRisk({flags:['stale-target']}).k, 'stale-target');
+  __eq('P2 высокий уровень', deskMainRisk({flags:[],level:4}).k, 'level');
+  __eq('P2 явных флагов нет', deskMainRisk({level:2}).k, 'none');
+});
+grp('P2 chart lifecycle', function(){
+  var S={sec:deskSecOf,draw:stockChartDraw,held:deskHeld,earn:deskEarnFor,fan:deskFanAttach,get:document.getElementById,route:DESK_UI.route,key:DESK_UI.key,view:DESK_UI.stockView,years:DESK_UI.years,ch:_deskChart},calls=[];
+  try{
+    var it={key:'K|USD',r:['1','K Corp','K'],tab:'t',sec:{ccy:'USD',sym:'K'},s:null},box={replaceWith:function(){}};
+    deskSecOf=function(k){return k==='K|USD'?it:null;};deskHeld=function(){return null;};deskEarnFor=function(){return {earn:null,key:'off'};};deskFanAttach=function(){};
+    stockChartDraw=function(st){st._tok=(st._tok||0)+1;calls.push(st);return new Promise(function(){});};
+    document.getElementById=function(id){return id==='dkChart'&&DESK_UI.stockView==='tech'?box:null;};
+    DESK_UI.route='stock';DESK_UI.key='K|USD';DESK_UI.years=1;_deskChart=null;
+    DESK_UI.stockView='decision';deskChartsAttach({});
+    __eq('P2 «Решение» не рисует график', [calls.length,_deskChart], [0,null]);
+    DESK_UI.stockView='tech';deskChartsAttach({});
+    var st1=_deskChart,tok1=st1&&st1._tok;
+    __eq('P2 «Техника» — один график', calls.length, 1);
+    deskChartsAttach({});
+    __eq('P2 перерисовка во время загрузки — без второго канваса', calls.length, 1);
+    DESK_UI.stockView='company';deskChartsAttach({});
+    __ok('P2 уход из «Техники» освобождает график', _deskChart===null);
+    __ok('P2 брошенная загрузка погашена: поздний ответ не нарисует канвас', st1._tok>tok1 && st1._loading===false);
+    DESK_UI.stockView='tech';deskChartsAttach({});
+    __ok('P2 возврат — новое состояние графика', calls.length===2 && calls[1]!==st1 && _deskChart===calls[1]);
+    var destroyed=0;_deskChart._loading=false;_deskChart.ch={destroy:function(){destroyed++;},setSide:function(){}};
+    deskChartsAttach({dkChart:{}});
+    __eq('P2 нарисованный канвас переносится, не перерисовывается', [calls.length,destroyed], [2,0]);
+    DESK_UI.stockView='decision';deskChartsAttach({});
+    __eq('P2 уход — destroy канваса и наблюдателей', [destroyed,_deskChart], [1,null]);
+  }finally{deskSecOf=S.sec;stockChartDraw=S.draw;deskHeld=S.held;deskEarnFor=S.earn;deskFanAttach=S.fan;document.getElementById=S.get;DESK_UI.route=S.route;DESK_UI.key=S.key;DESK_UI.stockView=S.view;DESK_UI.years=S.years;_deskChart=S.ch;}
+});
+grp('P2 request pool and company loads', function(){
+  var P=_deskPool,save={q:P.q,run:P.run,live:P.live},started=[];
+  try{
+    P.q=[];P.run=0;P.live={};
+    var mk=function(n){return function(){started.push(n);return new Promise(function(){});};};
+    var a=deskPoolRun('x|A',mk('a')),a2=deskPoolRun('x|A',mk('a2'));deskPoolRun('y|A',mk('b'));deskPoolRun('z|A',mk('c'));
+    __eq('P2 пул: не больше loadPool одновременно, дедуп по ключу', [started,DESK_IDEA_CFG.selection.loadPool], [['a','b'],2]);
+    __ok('P2 тот же ключ — тот же промис', a===a2);
+    __ok('P2 в очереди — занят, чужой ключ — свободен', deskPoolBusy('z|A')&&!deskPoolBusy('q|A'));
+    __eq('P2 очередь', P.q, ['z|A']);
+  }finally{P.q=save.q;P.run=save.run;P.live=save.live;}
+  var S={fetch:fetch,sec:deskSecOf,can:can,fund:PF_FUND,news:NEWS_LIVE,route:DESK_UI.route,key:DESK_UI.key,view:DESK_UI.stockView,comp:DESK_UI._compFor,fin:DESK_UI.finOpen},n=0,urls=[];
+  try{
+    P.q=[];P.run=0;P.live={};PF_FUND={};NEWS_LIVE={};delete _deskFin.CO;delete _deskEarn.CO;
+    fetch=function(u){n++;urls.push(String(u).replace(/^.*\?/,'').split('=')[0]);return new Promise(function(){});};
+    var it={key:'CO|USD',sec:{sym:'CO',tk:'CO',ccy:'USD'}};
+    deskSecOf=function(k){return k==='CO|USD'?it:null;};can=function(){return true;};
+    DESK_UI.route='stock';DESK_UI.key='CO|USD';DESK_UI._compFor=null;
+    DESK_UI.stockView='decision';deskCompanyEnsure();
+    __eq('P2 «Решение» не шлёт запросов', n, 0);
+    DESK_UI.stockView='company';deskCompanyEnsure();
+    __eq('P2 вход в «Компанию»: 2 запроса сразу (пул), остальные в очереди', [n,urls,P.q], [2,['fundamentals','financials'],['news|CO','earn|CO']]);
+    deskCompanyEnsure();deskCompanyEnsure();
+    __eq('P2 перерисовка «Компании» не повторяет запросы', n, 2);
+    DESK_UI.stockView='tech';deskCompanyEnsure();
+    __eq('P2 уход из «Компании» сбрасывает вход', DESK_UI._compFor, null);
+    can=function(p){return p!=='view.health';};P.q=[];P.run=0;P.live={};n=0;urls=[];DESK_UI.stockView='company';deskCompanyEnsure();
+    __eq('P2 без права на данные компании — отчётность не запрашивается', urls, ['news','earnings']);
+  }finally{fetch=S.fetch;deskSecOf=S.sec;can=S.can;PF_FUND=S.fund;NEWS_LIVE=S.news;DESK_UI.route=S.route;DESK_UI.key=S.key;DESK_UI.stockView=S.view;DESK_UI._compFor=S.comp;DESK_UI.finOpen=S.fin;P.q=save.q;P.run=save.run;P.live=save.live;delete _deskFin.CO;delete _deskEarn.CO;}
+});
+grp('P2 decision screen', function(){
+  var S={can:can,watch:DESK_WATCH,plan:PLAN_RULES};
+  var it={key:'TEST|USD',tab:null,r:null,sec:{tk:'TEST',sym:'TEST',ccy:'USD',held:[],tabs:[]},s:{verdict:'buy',side:'long',why:['откат к поддержке'],phase:{key:'up',label:'Аптренд'},trendUp:true,flags:[],plans:{},price:100,atr:2}};
+  var pri=function(h){return (h.match(/class="dk-btn pri"/g)||[]).length;};
+  try{
+    can=function(){return true;};DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};PLAN_RULES=[];
+    var H=deskDecisionHTML(it,deskSelectionModel(selectionFixture()),null);
+    __eq('P2 кандидат: одна primary «Проверить сделку»', [pri(H),H.indexOf('data-a="wiopen"')>0], [1,true]);
+    __ok('P2 кандидат: честная подпись P0.5', H.indexOf('не опережал случайный день')>0);
+    __eq('P2 четыре измерения', (H.match(/dk-stat dk-dim"/g)||[]).length, 4);
+    __ok('P2 цена ожидания с источником', H.indexOf('Вход по рынку')>0);
+    var x=selectionFixture();x.position={tab:'p',side:'long',action:{act:'exit',note:'стоп пробит — закрыть'}};
+    var held={tab:'p',tk:'TEST',sym:'TEST',side:'long',qty:10,entry:100,stop:95,calc:null};
+    var E=deskDecisionHTML(it,deskSelectionModel(x),held);
+    __ok('P2 выход по стопу виден при высоком качестве', E.indexOf('Закрыть позицию')>0 && E.indexOf('data-a="close"')>0 && pri(E)===1);
+    x.price.observedAt=x.context.now-(DESK_IDEA_CFG.whatIf.staleMin+1)*60000;
+    E=deskDecisionHTML(it,deskSelectionModel(x),held);
+    __ok('P2 цена не свежая: выход виден, primary — обновить, предупреждение на виду', E.indexOf('Закрыть позицию')>0 && E.indexOf('data-a="refresh1"')>0 && E.indexOf('dk-crit-list')>0 && pri(E)===1);
+    x=selectionFixture();x.signal.verdict='wait';x.signal.flags=['knife'];x.signal.plan={side:'long',mode:'limit',entry:95,stop:90,target:110,rr:3,flags:[]};
+    DESK_WATCH.items=[{key:'TEST|USD',tk:'TEST',buyHi:95,buyLo:95,planId:'r1',ccy:'USD'}];PLAN_RULES=[{id:'r1',done:false,status:'armed',level:95}];
+    var W=deskDecisionHTML(it,deskSelectionModel(x),null);
+    __ok('P2 критический флаг «нож» на виду', W.indexOf('dk-crit-list')>0 && W.indexOf('data-g="fl-knife"')>0);
+    __ok('P2 взведённое уведомление: без повторной кнопки и с пояснением', W.indexOf('data-a="wnotify"')<0 && W.indexOf('Уведомление уже взведено')>0);
+    __ok('P2 ручная зона подписана отдельно от лимита SIG', W.indexOf('Моя зона')>0 && W.indexOf('лимит плана SIG')>0);
+    __eq('P2 без модели — объяснение, без кнопок', pri(deskDecisionHTML(it,null,null)), 0);
+  }finally{can=S.can;DESK_WATCH=S.watch;PLAN_RULES=S.plan;}
+});
+grp('P2 AI snapshot is bound to its stock', function(){
+  var S={cache:pf3Fund.cache,period:pf3Fund.period,fund:PF_FUND};
+  try{
+    var d={headers:['#','Имя','Тикер','Биржа','Сектор','Тип','Кол-во','Цена','Валюта','Средняя','День','P','P%','SEK'],rows:[]},r=['1','Alpha','AAA','','Tech','','0','100','USD','0','0','0','0','0'];d.rows.push(r);
+    pf3Fund.period='annual';pf3Fund.cache={annual:{sym:'BBB',data:{revenue:999},loaded:Date.now()}};
+    PF_FUND={AAA:{data:{revenue:111},at:Date.now()}};
+    __eq('P2 чужой кэш карточки не попадает в снапшот', stockAiSnapshot(d,r).fundamentals.revenue, 111);
+    pf3Fund.cache={annual:{sym:exSymbol('AAA','USD'),data:{revenue:222},loaded:Date.now()}};
+    __eq('P2 кэш своей бумаги — используется', stockAiSnapshot(d,r).fundamentals.revenue, 222);
+  }finally{pf3Fund.cache=S.cache;pf3Fund.period=S.period;PF_FUND=S.fund;}
+});
+grp('P2 glossary coverage', function(){
+  __eq('P2 выводы DK_DEC — записи dec-*', Object.keys(DK_DEC).filter(function(k){return !deskGlossItem('dec-'+k);}), []);
+  __eq('P2 новые термины экрана', ['stock-views','decision','dim-timing','main-risk','biz','events','insiders','news','ai-opinion'].filter(function(k){return !deskGlossItem(k);}), []);
+  __eq('P2 коды причин модели — тексты', ['price-missing','price-unknown','price-stale','signal-missing','signal-stale','business-lite','business-partial','business-missing','business-restricted','valuation-incomparable','cache-incomparable','level-not-calculated'].filter(function(c){return dkSelR(c)===c;}), []);
+});

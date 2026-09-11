@@ -327,6 +327,52 @@ function deskEarnPe(tk,own,val,secMed){
   return curFY?{pe:curFY,src:'cur',cur,skip,own}:null;
 }
 
+// P2 (plans/stock-selection-ux.md §4): «Акция» в трёх режимах. Маршрут — тот же hash, без второго роутера:
+// #desk/<route>[/<ключ>[/<режим>]]; «Решение» — режим по умолчанию и в адрес не пишется.
+const DK_VIEWS=['decision','company','tech'];
+function deskHashOf(route,key,view){
+  if(route!=='stock'||!key)return '#desk/'+route;
+  return '#desk/stock/'+encodeURIComponent(key)+(view&&view!=='decision'&&DK_VIEWS.includes(view)?'/'+view:'');
+}
+function deskHashParse(h){
+  h=String(h||'');if(!/^#desk\//.test(h))return null;
+  const [r,k,v]=h.slice(6).split('/');
+  const route=['today','screen','stock','book','journal'].includes(r)?r:null;
+  let key=null;if(k)try{key=decodeURIComponent(k);}catch(e){key=null;}
+  return {route,key,view:route==='stock'&&DK_VIEWS.includes(v)?v:'decision'};
+}
+// Одна primary-кнопка «Решения» (§4): задача модели отбора (action.key/nextStep) + состояние идеи и права.
+// o: {key, source, nextStep, inList, zoneHi, ruleArmed, canPlan, canTrade, hasSug, trail} → id кнопки | null.
+// Уже взведённое уведомление повторно не создаётся; у позиции без срочного действия primary нет.
+function deskDecisionBtn(o){
+  o=o||{};
+  if(o.source==='position'){
+    if(o.nextStep==='refresh-data')return 'refresh';
+    if(o.nextStep!=='position-action'||!o.canTrade)return null;
+    return ({exit:'close',take:'trim',trim:'trim',earn:'trim',be:'be',trail:o.trail>0?'trail':'stops',nostop:o.hasSug?'accept':'stops'})[o.key]||null;
+  }
+  switch(o.nextStep){
+    case 'refresh-data':return 'refresh';
+    case 'check-company':return 'company';
+    case 'view-technical':return 'tech';
+    case 'check-trade':return 'trade';
+    case 'view-level':
+      if(!o.canPlan)return 'tech';
+      if(!o.inList)return 'wadd';
+      return o.zoneHi>0&&!o.ruleArmed?'wnotify':'tech';
+  }
+  return null;
+}
+// Главный риск (§4): своя формулировка из идеи → блокер входа → флаг → высокий уровень → «явных флагов нет».
+// o: {user, blockers, flags, level, side} → {k, text?}; тексты — в UI.
+function deskMainRisk(o){
+  o=o||{};const B=o.blockers||[],F=o.flags||[];
+  if(o.user)return {k:'user',text:o.user};
+  for(const k of ['knife','earnings','squeeze','no-short'])if(B.includes(k)||(k==='knife'||k==='earnings')&&F.includes(k))return {k};
+  for(const k of ['wide','stale-target','half'])if(F.includes(k))return {k};
+  return o.level>=4?{k:'level'}:{k:'none'};
+}
+
 // ── DOM ────────────────────────────────────────────────────────────────────
 const DESK_LS='dash_desk';
 let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},years:1,port:null,jt:'mine',
@@ -335,7 +381,8 @@ let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},year
   iv:'all',wmenu:null,wedit:null,drag:null,   // I1: вид «Идей» (all|watch|final), меню карточки списка, форма идеи, перетаскивание
   wiRaw:null,   // I2: вводимое в «Что если?» значение до подтверждения (change) — пересчёт на месте
   finOpen:null,finM:'revenue',   // I3: у какой бумаги раскрыт «Рост бизнеса» (сессия, не localStorage — открытие desk не шлёт запросов), ряд
-  gloss:{open:false,q:'',id:null}};   // G1: панель «📖 Словарь» (desk-gloss.js) — только память сессии, не снапшот
+  gloss:{open:false,q:'',id:null},   // G1: панель «📖 Словарь» (desk-gloss.js) — только память сессии, не снапшот
+  stockView:'decision',_compFor:null,r1:null,_restoreY:null};   // P2: режим «Акции» (память), для какой бумаги уже запущены загрузки «Компании», обновление одной бумаги, прокрутка из history.state
 let _deskFan=null;   // I3: веер цели {key, ch}
 let _deskChart=null,_deskMini=null;   // состояния stockChartDraw: {key,tab,row,ccy,years,side,ch}
 const deskActive=()=>!!(DESK_UI.on&&!DESK_UI.classic);
@@ -533,8 +580,10 @@ function deskToggle(on){
   de.classList.toggle('ui2',!on);   // классика — всегда ui2 (тумблер удалён в S7a)
   if(on)deskEnable();else{if(typeof deskGlossClose==='function'){deskGlossClose(true);deskTipHide(false);}deskStopTimers();deskBackBtn(false);init();}
 }
+// Прокрутку при Back/Forward в desk ставит deskPaint (экран рисуется асинхронно); классика — браузер, как раньше.
+function deskScrollMode(manual){try{if('scrollRestoration' in history)history.scrollRestoration=manual?'manual':'auto';}catch(e){}}
 function deskEnable(){
-  deskMount();
+  deskMount();deskScrollMode(true);
   try{homeFutStop();sectStop();aipStop();pfSumPPStop();pf3StopAutoRefresh();}catch(e){}
   // Старые экраны не рисуются, пока desk активен; их устаревший DOM убираем, чтобы id не дублировались.
   ['pf3Area','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.innerHTML='';});
@@ -543,7 +592,7 @@ function deskEnable(){
   deskLoad();deskQuotes();
   if(!DESK_UI._timer)DESK_UI._timer=setInterval(()=>{if(deskActive()&&!document.hidden){deskQuotes();deskLoad();}},5*60e3);
 }
-function deskStopTimers(){if(DESK_UI._timer){clearInterval(DESK_UI._timer);DESK_UI._timer=null;}deskChartsDrop();}
+function deskStopTimers(){if(DESK_UI._timer){clearInterval(DESK_UI._timer);DESK_UI._timer=null;}deskChartsDrop();deskScrollMode(false);}
 function deskMount(){
   let el=document.getElementById('desk');
   if(el)return el;
@@ -584,29 +633,48 @@ function deskRender(force){
   DESK_UI._t=setTimeout(deskPaint,force?0:60);
 }
 function deskFromHash(){
-  const h=String(location.hash||'');if(!/^#desk\//.test(h))return;
-  const [r,k]=h.slice(6).split('/');
-  if(['today','screen','stock','book','journal'].includes(r))DESK_UI.route=r;
-  if(k)DESK_UI.key=decodeURIComponent(k);
+  const H=deskHashParse(location.hash);if(!H)return;
+  if(H.route)DESK_UI.route=H.route;
+  if(H.key)DESK_UI.key=H.key;
+  if(H.route==='stock')DESK_UI.stockView=H.view;   // адрес без режима — «Решение»
 }
-function deskGo(r,key){
+// Прокрутка уходящего экрана — в его запись истории: Back вернёт место (фильтры/режим живут в DESK_UI и адресе).
+function deskHistSave(){try{history.replaceState(Object.assign({},history.state||{},{dkY:window.scrollY||0}),'',location.href);}catch(e){}}
+// view: режим «Акции». Прямой вход в бумагу (карточка, поиск, адрес без режима) — «Решение»; возврат через рельсу
+// к той же бумаге сохраняет последний режим.
+function deskGo(r,key,view){
+  const prev=DESK_UI.key;
   if(key)DESK_UI.key=key;
+  if(r==='stock')DESK_UI.stockView=DK_VIEWS.includes(view)?view:(key&&key!==prev?'decision':DESK_UI.stockView||'decision');
   DESK_UI.route=r;DESK_UI.menu=false;DESK_UI.exec=null;DESK_UI.edit=null;DESK_UI.wiRaw=null;
   if(typeof deskTipHide==='function')deskTipHide(false);
-  const h='#desk/'+r+(r==='stock'&&DESK_UI.key?'/'+encodeURIComponent(DESK_UI.key):'');
-  if(location.hash!==h){try{history.pushState(null,'',h);}catch(e){location.hash=h;}}
+  const h=deskHashOf(r,DESK_UI.key,DESK_UI.stockView);
+  if(location.hash!==h){deskHistSave();try{history.pushState({dk:1},'',h);}catch(e){location.hash=h;}}
   deskRender(true);
-  const m=document.getElementById('dkMain');if(m)try{window.scrollTo(0,0);}catch(e){}
+  try{window.scrollTo(0,0);}catch(e){}
+}
+// Смена режима «Акции» — replaceState: Back не ходит по вкладкам, но возвращает бумагу в её режиме.
+function deskStockView(v){
+  v=DK_VIEWS.includes(v)?v:'decision';
+  if(DESK_UI.stockView===v&&DESK_UI.route==='stock')return;
+  DESK_UI.stockView=v;DESK_UI.edit=null;DESK_UI.wiRaw=null;
+  if(typeof deskTipHide==='function')deskTipHide(false);
+  const h=deskHashOf('stock',DESK_UI.key,v);
+  if(location.hash!==h){try{history.replaceState(history.state,'',h);}catch(e){}}
+  deskRender(true);
 }
 // Графики: при перерисовке того же экрана канвас переносится в новый контейнер (без перерисовки и мигания).
-function deskChartsDrop(){[_deskChart,_deskMini,_deskFan].forEach(st=>{if(st&&st.ch){try{st.ch.destroy();}catch(e){}st.ch=null;}});_deskChart=null;_deskMini=null;_deskFan=null;}
+// Брошенное состояние гасится: destroy (канвас + ResizeObserver) и сдвиг _tok — поздний ответ stockChartDraw
+// этого состояния сверяет токен и ничего не рисует (иначе он лёг бы вторым канвасом в новый контейнер).
+function deskChartKill(st){if(!st)return;st._tok=(st._tok||0)+1;st._loading=false;if(st.ch){try{st.ch.destroy();}catch(e){}st.ch=null;}}
+function deskChartsDrop(){[_deskChart,_deskMini].forEach(deskChartKill);if(_deskFan&&_deskFan.ch){try{_deskFan.ch.destroy();}catch(e){}}_deskChart=null;_deskMini=null;_deskFan=null;}
 function deskPaint(){
   if(!deskActive())return;
   DESK_UI._pending=false;_deskItems=null;
   const root=deskMount(),main=document.getElementById('dkMain'),rail=document.getElementById('dkRail');
   rail.innerHTML=deskRailHTML();
   const keep={};['dkChart','dkMini','dkFan'].forEach(id=>{const e=document.getElementById(id);if(e&&e.firstChild)keep[id]=e;});
-  const scr=window.scrollY||0;
+  const scr=DESK_UI._restoreY!=null?DESK_UI._restoreY:(window.scrollY||0);DESK_UI._restoreY=null;   // Back/Forward — место из history.state
   // Фокус клавиатуры переживает перерисовку (фоновые догрузки свечей/котировок перерисовывают экран): тот же id
   // или тот же data-a/data-k/data-v в новом DOM.
   const ae=document.activeElement,q=v=>CSS.escape(String(v));
@@ -621,6 +689,7 @@ function deskPaint(){
   if(!L.busy&&L.at&&L.key!==I.items.length+'|'+I.tabsN)setTimeout(()=>deskLoad(true),0);
   document.getElementById('dkModal').innerHTML=deskModalHTML();
   deskChartsAttach(keep);
+  deskCompanyEnsure();
   if(fk&&document.activeElement!==ae){const L=root.querySelectorAll(fk),n=L[fi]||L[0];if(n)try{n.focus({preventScroll:true});}catch(e){}}
   try{window.scrollTo(0,scr);}catch(e){}
   document.title=RT('Trade Desk','Trade Desk')+' · '+deskRouteLabel(DESK_UI.route);
@@ -628,9 +697,10 @@ function deskPaint(){
   if(typeof deskTipAfterPaint==='function')deskTipAfterPaint();
 }
 function deskChartsAttach(keep){
-  // Акция: большой график; Скринер: мини-график инспектора. Контейнер тот же бумаги/периода → переносим канвас.
+  // Акция → «Техника»: большой график; Скринер: мини-график инспектора. Контейнер тот же бумаги/периода → переносим
+  // канвас. Нет контейнера (другой режим/экран) — график и наблюдатели освобождаются.
   const want=[];
-  if(DESK_UI.route==='stock'){const it=deskSecOf(DESK_UI.key);if(it&&it.r)want.push(['dkChart',it,DESK_UI.years,'_deskChart']);}
+  if(DESK_UI.route==='stock'&&DESK_UI.stockView==='tech'){const it=deskSecOf(DESK_UI.key);if(it&&it.r)want.push(['dkChart',it,DESK_UI.years,'_deskChart']);}
   if(DESK_UI.route==='screen'&&DESK_UI.sel){const it=deskSecOf(DESK_UI.sel);if(it&&it.r)want.push(['dkMini',it,1,'_deskMini']);}
   const used={_deskChart:false,_deskMini:false};
   want.forEach(([id,it,years,slot])=>{
@@ -640,15 +710,15 @@ function deskChartsAttach(keep){
       if(cur._loading){cur.side=side;cur.earn=E.earn;cur.ek=E.key;return;}   // рисуется: stockChartDraw сам найдёт новый контейнер по id и возьмёт earn
       if(cur.ch&&keep[id]&&cur.ek===E.key){box.replaceWith(keep[id]);if(cur.side!==side){cur.side=side;cur.ch.setSide(side);}return;}
     }
-    if(cur&&cur.ch){try{cur.ch.destroy();}catch(e){}}
+    deskChartKill(cur);
     // Позиция в моём портфеле — график от её строки (план позиции: средняя/стоп/цель из POS_META).
     const h=deskHeld(it),hd=h&&DATA[h.tab],hr=hd&&hd.rows.find(r=>posTk(r[2])===h.tk);
     const st={key:it.key,tab:hr?h.tab:it.tab,row:hr||it.r,ccy:it.sec.ccy,years,side,ch:null,_loading:true,earn:E.earn,ek:E.key};
     if(slot==='_deskChart')_deskChart=st;else _deskMini=st;
     stockChartDraw(st,id).catch(()=>{}).then(()=>{st._loading=false;});
   });
-  if(!used._deskChart&&_deskChart){if(_deskChart.ch)try{_deskChart.ch.destroy();}catch(e){}_deskChart=null;}
-  if(!used._deskMini&&_deskMini){if(_deskMini.ch)try{_deskMini.ch.destroy();}catch(e){}_deskMini=null;}
+  if(!used._deskChart&&_deskChart){deskChartKill(_deskChart);_deskChart=null;}
+  if(!used._deskMini&&_deskMini){deskChartKill(_deskMini);_deskMini=null;}
   deskFanAttach(keep.dkFan);
 }
 function deskRetheme(){
@@ -662,6 +732,9 @@ function deskSideFor(it){
   const h=deskHeld(it);if(h)return h.side;
   return (it.s&&it.s.side)||'long';
 }
+// Сторона экрана «Акция» (§4): в «Технике» — моделируемая (deskSideFor); в «Решении»/«Компании» — сторона открытой
+// позиции или лонг: переключатель Лонг/Шорт «Техники» не меняет незаметно лонг-отбор других режимов.
+function deskStockSide(it){if(DESK_UI.stockView==='tech')return deskSideFor(it);const h=deskHeld(it);return h?h.side:'long';}
 // Открытая позиция бумаги в моих портфелях (сначала выбранный).
 function deskHeld(it){
   if(!it)return null;const P=deskPorts(),pref=deskPort();
@@ -802,21 +875,26 @@ function deskWhatIfArgs(it,side){
   return {tab:c.port,sec:it.sec,side,plan,mode:c.mode,amountSEK:c.mode==='amount'&&raw!=null?raw:c.amountSEK,weightPct:c.mode==='weight'&&raw!=null?raw:c.weightPct,
     price:plan&&plan.mode==='limit'?plan.entry:(s?s.price:it.sec.price),now:Date.now()};
 }
-function deskWhatIfPanel(it,side){
+// compact («Решение», §4): итог и критическое видны сразу, форма и таблица «Сейчас/После» — в явно раскрываемом блоке.
+function deskWhatIfPanel(it,side,compact){
   const P=deskPorts();if(!P.length)return '';
   const c=deskWiCfg(),C=DESK_IDEA_CFG.whatIf,amt=c.mode==='amount',v=DESK_UI.wiRaw!=null?DESK_UI.wiRaw:(amt?c.amountSEK:c.weightPct);
   const quick=C.quick.map(q=>`<button type="button" class="dk-btn dk-sm${amt&&c.amountSEK===q&&DESK_UI.wiRaw==null?' on':''}" data-a="wiq" data-v="${q}">${q>=1000?dkN(q/1000,0)+'k':q} kr</button>`).join('');
-  return `<div class="dk-panel dk-wi" id="dkWi"><div class="dk-ph"><h2>${RT('Что если?','What if?')}${dkGi('what-if')}</h2>${dkSide(side)}<span class="dk-note dk-ml">${side==='short'?RT('открыть шорт','open a short'):RT('купить','buy')} ${dkEsc(it.sec.tk)}</span></div>
-    <div class="dk-wi-in">
+  const head=`<div class="dk-ph"><h2>${RT('Что если?','What if?')}${dkGi('what-if')}</h2>${dkSide(side)}<span class="dk-note dk-ml">${side==='short'?RT('открыть шорт','open a short'):RT('купить','buy')} ${dkEsc(it.sec.tk)} · ${dkEsc(TAB_LABEL(c.port))}</span></div>`;
+  const inputs=`<div class="dk-wi-in">
       <select class="dk-sel" data-c="wiport" aria-label="${RT('Портфель симуляции','Simulation portfolio')}">${P.map(k=>`<option value="${dkEsc(k)}"${k===c.port?' selected':''}>${dkEsc(TAB_LABEL(k))}</option>`).join('')}</select>
       <div class="dk-seg" role="group" aria-label="${RT('Сумма или доля','Amount or weight')}"><button type="button" class="${amt?'on':''}" data-a="wimode" data-v="amount" aria-pressed="${amt}">${RT('Сумма','Amount')}</button><button type="button" class="${amt?'':'on'}" data-a="wimode" data-v="weight" aria-pressed="${!amt}">${RT('Доля','Weight')}</button></div>
       <label class="dk-wi-v"><input id="dkWiV" class="dk-inp dk-num" type="number" inputmode="decimal" data-c="wiv" min="${amt?C.amount[0]:C.weight[0]}" max="${amt?C.amount[1]:C.weight[1]}" step="${amt?1000:0.5}" value="${dkEsc(v)}" aria-label="${amt?RT('Сумма, kr','Amount, kr'):RT('Доля капитала, %','Share of equity, %')}"><span>${amt?'kr':RT('% капитала','% of equity')}</span></label>
       ${amt?`<div class="dk-wi-quick">${quick}</div>`:''}
-    </div>
-    <div id="dkWiOut" aria-live="polite">${deskWhatIfOutHTML(it,side,deskWhatIf(deskWhatIfArgs(it,side)))}</div></div>`;
+    </div>`;
+  const R=deskWhatIf(deskWhatIfArgs(it,side));
+  if(compact)return `<div class="dk-panel dk-wi" id="dkWi">${head}<div id="dkWiSum" class="dk-wi-o" aria-live="polite">${deskWhatIfOutHTML(it,side,R,'sum')}</div>
+    <details class="dk-wi-more"${dkDetAttr('st-wi')}><summary>${RT('Сумма, портфель и последствия для книги','Amount, portfolio and book impact')}</summary>${inputs}<div id="dkWiOut" aria-live="polite">${deskWhatIfOutHTML(it,side,R,'body')}</div></details></div>`;
+  return `<div class="dk-panel dk-wi" id="dkWi">${head}${inputs}<div id="dkWiOut" aria-live="polite">${deskWhatIfOutHTML(it,side,R)}</div></div>`;
 }
-function deskWhatIfOutHTML(it,side,R){
-  if(!R||R.err)return `<div class="dk-empty">${R&&R.err==='price'?RT('Нет цены бумаги — обновите котировки.','No stock price — refresh quotes.'):RT('Выберите портфель.','Select a portfolio.')}</div>`;
+// part: 'sum' — итог + предупреждения; 'body' — таблица, «Как рассчитано», кнопки; иначе — всё.
+function deskWhatIfOutHTML(it,side,R,part){
+  if(!R||R.err)return part==='body'?'':`<div class="dk-empty">${R&&R.err==='price'?RT('Нет цены бумаги — обновите котировки.','No stock price — refresh quotes.'):RT('Выберите портфель.','Select a portfolio.')}</div>`;
   const C=DESK_IDEA_CFG.whatIf,ccy=R.ccy,k=dkEsc(it.key),short=side==='short',s=it.s,plan=s?deskPlanFor(it,side):null;
   const ST={ok:['✓',RT('можно','clear'),'buy'],attention:['⚠',RT('внимание','attention'),'trim'],blocked:['⛔',RT('заблокировано','blocked'),'short']}[R.status];
   const sum=`<div class="dk-wi-sum"><b class="dk-num">${R.qty} ${RT('шт','sh')}</b>${short?` <span class="dk-mut">${RT('в шорт','short')}</span>`:''} · ${RT('новая доля','new weight')} <b class="dk-num">${R.weightAfter!=null?dkN(R.weightAfter,1)+' %':'—'}</b> · ${RT('риск','risk')} <b class="dk-num">${R.stop?dkKr(R.tradeRiskSEK):'—'}</b><span class="dk-pill v-${ST[2]} dk-ml"${dkG('what-if')}>${ST[0]} ${ST[1]}</span></div>`;
@@ -844,13 +922,17 @@ function deskWhatIfOutHTML(it,side,R){
   const blocked=R.status==='blocked',q=R.qty>0?R.qty:0;
   const btns=s&&plan?`<div class="dk-row">${can('action.edit_plan')&&q?`<button class="dk-btn" data-a="wiplan" data-k="${k}" data-side="${side}" data-q="${q}">${RT('В план','Add to plan')} · ${q} ${RT('шт','sh')}</button>`:''}${can('action.edit_trades')&&q?`<button class="dk-btn pri" data-a="wiexec" data-k="${k}" data-side="${side}" data-q="${q}" data-tab="${dkEsc(R.tab)}"${blocked?` disabled title="${RT('Сначала снимите блокировку','Resolve the block first')}"`:''}>${RT('Исполнить…','Execute…')}</button>`:''}</div>`
     :`<div class="dk-note">${RT('«В план» и «Исполнить» — когда посчитан сигнал (грузятся свечи).','“Add to plan” and “Execute” appear once the signal is computed (candles loading).')}</div>`;
+  if(part==='sum')return sum+warn;
+  if(part==='body')return tbl+dkHow('whatif',how)+btns;
   return sum+warn+tbl+dkHow('whatif',how)+btns;
 }
 let _deskWiT=0;
 function deskWhatIfRecalc(){
   const box=document.getElementById('dkWiOut');if(!box||DESK_UI.route!=='stock')return;
   const it=deskSecOf(DESK_UI.key);if(!it)return;
-  const side=deskSideFor(it);box.innerHTML=deskWhatIfOutHTML(it,side,deskWhatIf(deskWhatIfArgs(it,side)));
+  const side=deskStockSide(it),R=deskWhatIf(deskWhatIfArgs(it,side)),sum=document.getElementById('dkWiSum');
+  if(sum){sum.innerHTML=deskWhatIfOutHTML(it,side,R,'sum');box.innerHTML=deskWhatIfOutHTML(it,side,R,'body');}
+  else box.innerHTML=deskWhatIfOutHTML(it,side,R);
 }
 
 // ═══════════════════ Сегодня ═══════════════════
@@ -1000,64 +1082,313 @@ function deskWatchHTML(status){
     <p class="dk-note dk-mt14">${RT(`Зона — ваша цена покупки (по умолчанию из сигнала: лимит плана v2 или ближайшая поддержка). «Уведомить» создаёт правило плана на верх зоны; удаление идеи правило не удаляет без вопроса. ${hotTitle}.`,`The zone is your buy price (default from the signal: v2 plan limit or nearest support). “Alert” creates a plan rule at the top of the zone; deleting an idea asks before deleting the rule. ${hotTitle}.`)}</p>`;
 }
 
-// ═══════════════════ Акция ═══════════════════
+// ═══════════════════ Акция (P2, plans/stock-selection-ux.md §4): «Решение» · «Компания» · «Техника» ═══════════════════
+// Общая шапка (бумага, цена и свежесть, позиция и её срочное действие) видна во всех режимах; режим — DESK_UI.stockView.
 function deskStockHTML(){
   const I=deskItems();
   let it=deskSecOf(DESK_UI.key);
   if(!it){const B=deskTodayBuckets(I.items,[]);it=B.entries[0]||I.items.find(x=>x.sec.held.length)||I.items[0];if(it)DESK_UI.key=it.key;}
   if(!it)return `<div class="dk-panel dk-empty">${RT('Бумаг нет — добавьте тикеры во вкладки или откройте поиск «/».','No stocks — add tickers to tabs or use search “/”.')}</div>`;
-  const s=it.s,sec=it.sec,held=deskHeld(it),side=deskSideFor(it),C=SIG.CFG;
-  // AI-блок и фундаментал классики читают выбранную бумагу из v3Key/pf3Sel — в desk старые экраны не рисуются, так что безопасно.
+  // AI-блоки и тезис-монитор классики читают бумагу из v3Key/pf3Sel; их ответы привязаны к тикеру запуска, не к текущему выбору.
   if(it.tab&&it.r){v3Key=it.tab;pf3Sel=String(it.r[2]||'');}
-  const px=s?s.price:sec.price,day=s?s.day:sec.day;
+  const view=DK_VIEWS.includes(DESK_UI.stockView)?DESK_UI.stockView:'decision',held=deskHeld(it);
+  // «Компания» той же бумаги открывается с раскрытым «Ростом бизнеса»; сами запросы — deskCompanyEnsure после отрисовки.
+  if(view==='company'&&DESK_UI._compFor!==it.key&&can('view.health'))DESK_UI.finOpen=it.key;
+  const m=view==='tech'?null:deskStockModel(it,held);
+  let body='';
+  try{body=view==='company'?deskCompanyHTML(it,m):view==='tech'?deskTechHTML(it,held):deskDecisionHTML(it,m,held);}
+  catch(e){console.error(e);body=`<div class="dk-panel dk-empty">${RT('Ошибка режима: ','View error: ')}${dkEsc(e.message||e)}</div>`;}
+  return deskStockHeadHTML(it,held,view)+deskStockTabsHTML(view)+`<div class="dk-view" id="dkView" role="tabpanel" aria-labelledby="dkTab-${view}">${body}</div>`;
+}
+// Портфель «Акции»: позиция бумаги → её портфель; иначе выбранный, а из «Все портфели» — портфель риска (как в шапке).
+function deskStockPort(held){if(held)return held.tab;const p=deskPort();return p==='all'?deskRiskTab():p;}
+function deskStockModel(it,held){
+  try{return deskSelectionModel(deskSelectionInput(it.key,deskStockPort(held),Date.now()));}catch(e){console.warn('selection model',e);return null;}
+}
+function deskStockHeadHTML(it,held,view){
+  const s=it.s,sec=it.sec,w=deskWatchGet(it.key),px=s?s.price:sec.price,day=s?s.day:sec.day;
+  const age=sec.live&&sec.pxAt?Math.max(0,Math.round((Date.now()-sec.pxAt)/60000)):null;
+  let pos='';
+  if(held){
+    const act=deskPosAct(held,s,sigEarnDays(held.sym)),urgent=['exit','take','trim','earn','nostop','watch'].includes(act.act);
+    pos=`<span class="dk-pos-chip${urgent?' urgent':''}">${dkSide(held.side)}${dkActPill(act.act)}<span class="dk-mut dk-xs">${dkEsc(TAB_LABEL(held.tab))}</span>${view!=='decision'?`<button type="button" class="dk-link" data-a="view" data-v="decision">${RT('к позиции','to position')}</button>`:''}</span>`;
+  }
+  return `<div class="dk-stock-hd"><span class="dk-tk dk-tk-xl">${dkEsc(sec.tk)}</span><div class="dk-stock-id"><div class="dk-b">${dkEsc(sec.name)}${w&&w.tag?` <span class="dk-wtag">${dkEsc(w.tag)}</span>`:''}</div><div class="dk-mut dk-xs">${dkEsc([sec.sector,sec.type,sec.tabs.map(TAB_LABEL).join(', '),sec.ccy].filter(Boolean).join(' · '))}</div></div>
+      <span class="dk-px dk-num">${dkPx(px)} ${dkCcy(sec.ccy)}</span>${dkDay(day)}${sec.live?`<span class="dk-tag"${dkG('live')}>live${age!=null?` · ${age} ${RT('мин','min')}`:''}</span>`:`<span class="dk-tag dk-mut"${dkG('live')}>${RT('не live','not live')}</span>`}
+      ${s?dkPill(s.verdict,!!held)+dkPhase(s)+dkFlags(s):''}${pos}
+      <div class="dk-ctl"><button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде — временно, до переноса всех блоков (S7b)','Full card in the classic view — temporary, until every block is moved (S7b)')}">${RT('Ещё','More')} ···</button></div></div>`;
+}
+function deskStockTabsHTML(view){
+  const L=[['decision',RT('Решение','Decision')],['company',RT('Компания','Company')],['tech',RT('Техника','Technicals')]];
+  return `<div class="dk-views-w"><div class="dk-views" role="tablist" aria-label="${RT('Режим экрана акции','Stock screen mode')}">${L.map(([v,l])=>`<button type="button" role="tab" id="dkTab-${v}" aria-controls="dkView" aria-selected="${v===view}" tabindex="${v===view?0:-1}" class="${v===view?'on':''}" data-a="view" data-v="${v}">${l}</button>`).join('')}</div>${dkGi('stock-views')}</div>`;
+}
+
+// ── «Решение» (§3.3/§4): вывод, четыре измерения, цена ожидания с источником, главный риск, одна primary-кнопка ──
+// Коды причин модели отбора (desk-selection.js) → текст UI; флаги SIG — из DK_FLAG.
+const DK_SEL_R={
+  'price-missing':()=>RT('нет цены','no price'),
+  'price-unknown':()=>RT('цена не live — время котировки неизвестно','price not live — quote time unknown'),
+  'price-stale':()=>RT(`котировка старше ${DESK_IDEA_CFG.whatIf.staleMin} мин`,`quote older than ${DESK_IDEA_CFG.whatIf.staleMin} min`),
+  'price-invalid':()=>RT('время котировки в будущем','quote time is in the future'),
+  'signal-missing':()=>RT('сигнал ещё не посчитан — грузятся свечи','no signal yet — candles loading'),
+  'signal-stale':()=>RT('свечи сигнала устарели','signal candles are stale'),
+  'business-lite':()=>RT('отчётность не загружена — есть только ROE и рост из строки','reports not loaded — only the row’s ROE and growth'),
+  'business-partial':()=>RT('отчётность неполная','reports incomplete'),
+  'business-missing':()=>RT('нет данных о бизнесе','no business data'),
+  'business-restricted':()=>RT('нет доступа к данным компании','no access to company data'),
+  'business-not-applicable':()=>RT('часть столпов неприменима (банк/финансы)','some pillars do not apply (bank/financials)'),
+  'business-fetch-date-unknown':()=>RT('время загрузки отчётности неизвестно','report fetch time unknown'),
+  'business-cache-stale':()=>RT('кэш отчётности старше 6 ч','report cache older than 6 h'),
+  'valuation-missing':()=>RT('оценки нет','no valuation'),
+  'valuation-incomparable':()=>RT('оценка несопоставима с ценой (валюта или листинг)','valuation not comparable with the price (currency or listing)'),
+  'valuation-date-unknown':()=>RT('дата источника оценки неизвестна','valuation source date unknown'),
+  'valuation-restricted':()=>RT('нет доступа к оценке','no access to valuation'),
+  'cache-incomparable':()=>RT('старый кэш без валюты листинга — нужен перезапуск «📐 Оценка»','old cache without listing currency — rerun “📐 Valuation”'),
+  'level-not-calculated':()=>RT('уровень входа не рассчитан','entry level not calculated'),
+  'pe-missing':()=>RT('P/E нет','no P/E'),'pe-nonpositive-eps':()=>RT('EPS ≤ 0 — P/E не сравнивается','EPS ≤ 0 — P/E not comparable')
+};
+const dkSelR=c=>DK_SEL_R[c]?DK_SEL_R[c]():DK_FLAG[c]?DK_FLAG[c]():String(c);
+// Выводы «Решения» по action.key модели → [заголовок, тон]; подсказка — запись словаря dec-<ключ> (тест покрытия).
+const DK_DEC={candidate:[()=>RT('Кандидат на вход','Entry candidate'),'buy'],wait:[()=>RT('Ждать уровня','Wait for the level'),'wait'],
+  study:[()=>RT('Изучить','Study'),'hold'],research:[()=>RT('Проверить компанию','Check the company'),'hold'],
+  technical:[()=>RT('Технический сценарий','Technical scenario'),'short'],refresh:[()=>RT('Обновить данные','Refresh data'),'wait']};
+// Вывод по открытой позиции — действие deskPosAct (подсказка — act-<ключ>).
+const DK_DEC_POS={exit:()=>RT('Закрыть позицию','Close the position'),take:()=>RT('Зафиксировать прибыль','Take profit'),trim:()=>RT('Сократить позицию','Trim the position'),
+  earn:()=>RT('Сократить перед отчётом','Reduce before earnings'),trail:()=>RT('Подтянуть стоп','Trail the stop'),be:()=>RT('Стоп в безубыток','Stop to breakeven'),
+  watch:()=>RT('Позиция у стопа','Position near its stop'),nostop:()=>RT('Задать стоп','Set a stop'),hold:()=>RT('Держать по плану','Hold on plan')};
+// Главный риск (deskMainRisk) → текст.
+const DK_MR={knife:()=>RT('Падающий нож — новый вход заблокирован правилами SIG','Falling knife — new entries blocked by SIG rules'),
+  earnings:d=>RT(`Отчёт ${d!=null?'через '+d+' дн':'скоро'} — новый вход заблокирован правилами SIG`,`Earnings ${d!=null?'in '+d+' d':'soon'} — new entries blocked by SIG rules`),
+  squeeze:()=>RT('Риск шорт-сквиза','Short-squeeze risk'),'no-short':()=>RT('Шорт не подтверждён трендом','Short not confirmed by the trend'),
+  wide:()=>RT(`Широкий стоп (> ${SIG.CFG.wideAtr}·ATR) — меньше размер`,`Wide stop (> ${SIG.CFG.wideAtr}·ATR) — smaller size`),
+  'stale-target':()=>RT('Таргет аналитиков устарел — внешняя оценка ненадёжна','Analyst target is stale — the external valuation is unreliable'),
+  half:()=>RT('Тренд не подтверждён — размер ½','Trend not confirmed — ½ size'),
+  level:()=>RT('Высокая волатильность: уровень риска 4–5','High volatility: risk level 4–5'),
+  none:()=>RT('Явных флагов нет — риск ограничивают стоп и размер','No explicit flags — the stop and size limit the risk')};
+// Подпись кандидата (P0.5, signals-calibration §8; решение пользователя 2026-09-11 — текст как есть).
+const dkCandNote=()=>RT('Технический сетап по правилам SIG. На истории 2022–2026 такой вход не опережал случайный день той же бумаги — это повод проверить компанию и цену, а не сигнал купить.','Technical setup by SIG rules. In 2022–2026 history this entry did not beat a random day in the same stock — a reason to check the company and price, not a buy signal.');
+const DK_CRIT=['price-missing','price-unknown','price-stale','price-invalid','signal-stale','knife','earnings','squeeze','no-short','stale-target'];
+function deskDecisionHTML(it,m,held){
+  if(!m)return `<div class="dk-panel dk-empty">${RT('Анализ бумаги недоступен: нет доступа к портфелю или бумаги нет в разрешённых вкладках.','Stock analysis unavailable: no portfolio access or the stock is not in an allowed tab.')}</div>`;
+  const s=it.s,sec=it.sec,A=m.action,w=deskWatchGet(it.key),port=deskStockPort(held),earn=sigEarnDays(sec.sym);
+  const pa=A.source==='position'&&A.position?A.position.action:null;
+  const rule=w&&w.planId&&(PLAN_RULES||[]).find(r=>r.id===w.planId&&!r.done&&r.status!=='open');
+  const sug=held&&s&&s.plans&&s.plans[held.side],trail=held&&s&&held.calc?deskTrailStop(held.side,held.stop,held.calc.now,s.atr):null;
+  const bid=deskDecisionBtn({key:A.key,source:A.source,nextStep:A.nextStep,inList:!!w,zoneHi:w&&w.buyHi,ruleArmed:!!rule,
+    canPlan:can('action.edit_plan'),canTrade:can('action.edit_trades'),hasSug:!!sug,trail});
+  let title,tone,gid;const why=[];
+  if(pa){title=(DK_DEC_POS[pa.act]||DK_DEC_POS.hold)();tone=(DK_ACT[pa.act]||DK_ACT.hold)[2];gid='act-'+(DK_ACT[pa.act]?pa.act:'hold');why.push(dkEsc(pa.note));}
+  else{
+    const D=DK_DEC[A.key]||DK_DEC.study;title=D[0]();tone=D[1];gid='dec-'+(DK_DEC[A.key]?A.key:'study');
+    if(A.key==='refresh')why.push(dkEsc(A.reasonCodes.map(dkSelR).join(' · ')));
+    else if(A.key==='research')why.push(`${RT('Технический сетап','Technical setup')}: ${dkPill(m.timing.verdict,false)} · ${RT('не хватает','missing')}: ${dkEsc(A.reasonCodes.filter(c=>c!=='business-not-applicable').map(dkSelR).join(', ')||dkSelR('business-missing'))}`);
+    else if(A.key==='wait'&&m.timing.waitingLevel!=null)why.push(`${RT('Ждать цену','Wait for')} <b class="dk-num">${dkPx(m.timing.waitingLevel)} ${dkCcy(sec.ccy)}</b> — ${RT('лимит плана SIG','SIG plan limit')}${m.timing.plan&&m.timing.plan.dEntry!=null?` (${dkPct(m.timing.plan.dEntry,1)})`:''}`);
+    else if(A.key==='technical')why.push(RT('Шорт — только технический сценарий (экспериментальный): план, стоп и размер — в «Технике».','Short is only a technical scenario (experimental): plan, stop and size are in Technicals.'));
+    if(A.key!=='refresh'&&s&&s.why&&s.why[0])why.push(dkEsc(s.why[0]));
+  }
+  const shown=A.key==='refresh'?A.reasonCodes:[];
+  const crit=A.warnings.filter(c=>DK_CRIT.includes(c)&&!shown.includes(c)).map(c=>`<li${DK_FLAG[c]?dkG('fl-'+c):''}>⚠ ${dkEsc(c==='earnings'&&earn!=null?RT(`отчёт через ${earn} дн`,`earnings in ${earn} d`):dkSelR(c))}</li>`);
+  const note=!bid&&A.nextStep==='select-portfolio'?RT('Выберите портфель в шапке — сделка проверяется для конкретного портфеля.','Pick a portfolio in the header — a trade is checked for a specific portfolio.')
+    :!bid&&A.nextStep==='view-data-status'?RT('Обновление данных недоступно для вашей роли.','Refreshing data is not available for your role.')
+    :bid==='tech'&&A.nextStep==='view-level'&&rule?RT(`Уведомление уже взведено: ≤ ${dkPx(rule.level)} ${dkCcy(sec.ccy)}.`,`Alert already armed: ≤ ${dkPx(rule.level)} ${dkCcy(sec.ccy)}.`):'';
+  const concl=`<section class="dk-concl v-${tone}" aria-labelledby="dkConclT"><div class="dk-eyebrow">${RT('Решение','Decision')}${dkGi('decision')}${port?` · ${dkEsc(TAB_LABEL(port))}`:''}</div>
+      <h2 id="dkConclT"${dkG(gid)}>${dkEsc(title)}</h2>${why.map(x=>`<p>${x}</p>`).join('')}
+      ${A.key==='candidate'?`<p class="dk-note"${dkG('dec-candidate')}>${dkEsc(dkCandNote())}</p>`:''}
+      ${crit.length?`<ul class="dk-crit-list">${crit.join('')}</ul>`:''}
+      <div class="dk-row dk-mt14">${bid?dkDecBtn(bid,it,held,{trail,sug}):''}${!held&&bid!=='wadd'?dkWatchBtn(it.key):''}</div>${note?`<p class="dk-note">${dkEsc(note)}</p>`:''}</section>`;
+  const own=w&&w.thesis&&(w.thesis.title||w.thesis.text);
+  return concl+deskDimsHTML(it,m,w)+(own?`<p class="dk-own-thesis"><span class="dk-lbl"${dkG('thesis')}>${RT('Мой тезис','My thesis')}</span> ${dkEsc(own)} <button type="button" class="dk-link" data-a="view" data-v="company">${RT('Компания →','Company →')}</button></p>`:'')
+    +`<div class="dk-dec-grid">${held?deskPosPanel(held,it,true):''}${deskWhatIfPanel(it,deskStockSide(it),true)}</div>`;
+}
+// Primary-кнопка «Решения» по id из deskDecisionBtn (права уже учтены там; обработчики — общие с панелями).
+function dkDecBtn(id,it,p,x){
+  const k=dkEsc(it.key),t=p?dkEsc(p.tk):'',tab=p?dkEsc(p.tab):'',half=p?Math.max(1,Math.floor(p.qty/2)):0;
+  const b=(a,l,extra)=>`<button type="button" class="dk-btn pri" data-a="${a}"${extra||''}>${l}</button>`;
+  switch(id){
+    case 'refresh':{const busy=DESK_UI.r1===it.key;return `<button type="button" class="dk-btn pri" data-a="refresh1" data-k="${k}"${busy?' disabled':''}>${busy?'⏳ '+RT('Обновляю…','Refreshing…'):'⟳ '+RT('Обновить данные','Refresh data')}</button>`;}
+    case 'company':return b('view',RT('Проверить компанию →','Check the company →'),' data-v="company"');
+    case 'tech':return b('view',RT('Смотреть технику →','See the technicals →'),' data-v="tech"');
+    case 'trade':return b('wiopen',RT('Проверить сделку','Check the trade'));
+    case 'wadd':return b('wadd','＋ '+RT('Добавить в список','Add to the list'),` data-k="${k}"`);
+    case 'wnotify':return b('wnotify','🔔 '+RT('Уведомить','Alert'),` data-k="${k}"`);
+    case 'close':return b('close',p.side==='short'?RT('Откупить…','Cover…'):RT('Продать…','Sell…'),` data-tab="${tab}" data-k="${t}" data-key="${k}"`);
+    case 'trim':return b('close',RT(`Сократить… · ${half} шт`,`Trim… · ${half} sh`),` data-tab="${tab}" data-k="${t}" data-key="${k}" data-q="${half}"`);
+    case 'be':return b('pm-be',RT('Стоп в б/у','Stop to b/e')+' → '+dkPx(p.entry),` data-tab="${tab}" data-k="${t}"`);
+    case 'trail':return b('pm-trail',RT('Трейл 2·ATR','Trail 2·ATR')+' → '+dkPx(x.trail),` data-tab="${tab}" data-k="${t}" data-stop="${x.trail}"`);
+    case 'accept':return b('pm-accept',`${RT('Принять стоп','Accept stop')} ${dkPx(x.sug.stop)} · ${RT('цель','target')} ${dkPx(x.sug.target)}`,` data-tab="${tab}" data-k="${t}" data-stop="${x.sug.stop}" data-target="${x.sug.target}"`);
+    case 'stops':return b('pm-edit',RT('Стоп/цель…','Stop/target…'),` data-tab="${tab}" data-k="${t}"`);
+  }
+  return '';
+}
+// Четыре измерения (§3.2): компания · цена · момент · риск — разные вопросы, общего балла нет.
+function dkQualHTML(q){
+  if(!q)return {v:'—',d:''};
+  if(q.reasonCodes.includes('business-restricted'))return {v:'—',d:dkEsc(dkSelR('business-restricted'))};
+  if(q.mode==='full')return {v:`<b>${dkEsc(q.grade)}</b> <span class="dk-num">${dkN(q.value,1)}</span><small>/10</small>`,
+    d:RT(`по ${q.applicable} применимым столпам`,`over ${q.applicable} applicable pillars`)+(q.notApplicable.length?` · <span${dkG('selection-na')}>${RT('часть неприменима','some n/a')}</span>`:'')};
+  if(q.mode==='partial')return {v:`≈ <span class="dk-num">${dkN(q.value,1)}</span><small>/10</small>`,
+    d:`<span${dkG('selection-partial')}>${RT('предварительно','provisional')}</span> · ${RT(`${q.known} из ${q.applicable} столпов`,`${q.known} of ${q.applicable} pillars`)}`};
+  if(q.mode==='lite'){const f=q.facts||{},L=[f.roe!=null?'ROE '+dkN(f.roe,1)+' %':null,f.revenueGrowth!=null?RT('рост выручки ','revenue growth ')+dkPct(f.revenueGrowth,1):null].filter(Boolean);
+    return {v:`<span class="dk-mut"${dkG('selection-partial')}>${RT('предварительно','provisional')}</span>`,d:(L.length?dkEsc(L.join(' · '))+' · ':'')+RT('без рейтинга — отчётность не загружена','no rating — reports not loaded')};}
+  return {v:'—',d:RT('нет данных о бизнесе','no business data')};
+}
+function deskDimsHTML(it,m,w){
+  const s=it.s,sec=it.sec,ccy=dkCcy(sec.ccy),px=s?s.price:sec.price,q=dkQualHTML(m.quality),v=m.valuation,pe=v.peContext||{},t=m.timing;
+  const tile=(l,val,d,extra)=>`<div class="dk-panel dk-stat dk-dim"><div class="dk-lbl">${l}</div><div class="dk-dim-v">${val}</div><div class="dk-d">${d}</div>${extra||''}</div>`;
+  // Цена: сопоставимая оценка с источником/датой/статусом; без неё — P/E-контекст и «это не значит дорого».
+  let vv,vd;
+  if(v.value!=null&&v.status!=='incomparable'){
+    vv=`${dkPx(v.value)} <small>${ccy}</small>${v.upsidePct!=null?` <span class="dk-num ${v.upsidePct>=0?'dk-up':'dk-dn'}">${dkPct(v.upsidePct,Math.abs(v.upsidePct)<10?1:0)}</span>`:''}`;
+    vd=(v.source==='scenarios'?RT('ваши сценарии','your scenarios'):RT('аналитики','analysts'))+(v.asOf?' · '+dkEsc(String(v.asOf).slice(0,10)):'')
+      +(v.status==='stale'?` <span class="dk-flag"${dkG('fl-stale-target')}>${RT('таргет устарел','stale target')}</span>`:v.status==='undated'?' · '+RT('дата источника неизвестна','source date unknown'):'');
+  }else{
+    vv=pe.value>0&&pe.comparable!==false?`P/E <span class="dk-num">${dkN(pe.value,1)}</span>`:'—';
+    vd=dkEsc([v.reasonCodes.includes('valuation-restricted')?dkSelR('valuation-restricted'):v.status==='incomparable'?dkSelR('valuation-incomparable'):RT('оценки нет — это не значит «дорого»','no valuation — that does not mean “expensive”'),
+      v.reasonCodes.includes('cache-incomparable')?dkSelR('cache-incomparable'):null,(pe.reasonCodes||[]).includes('pe-nonpositive-eps')?dkSelR('pe-nonpositive-eps'):null].filter(Boolean).join(' · '));
+  }
+  // Момент: вердикт/фаза SIG, цена ожидания с источником; ручная зона списка — отдельной подписью.
+  let tv,td=[];
+  if(!s)tv=`<span class="dk-mut">${RT('сигнал считается…','signal loading…')}</span>`;
+  else{
+    tv=dkPill(t.verdict,!!(sec.held||[]).length)+' '+dkPhase(s);const p=t.plan;
+    if(t.waitingLevel!=null)td.push(`<span${dkG('wait-level')}>${RT('Ждать цену','Wait for')}</span> <b class="dk-num">${dkPx(t.waitingLevel)}</b> · ${RT('лимит плана SIG','SIG plan limit')}${p&&p.dEntry!=null?' '+dkPct(p.dEntry,1):''}`);
+    else if(p&&p.entry>0)td.push(`<span${dkG('market-limit')}>${RT('Вход по рынку','Market entry')}</span> ≈ <b class="dk-num">${dkPx(p.entry)}</b> · R/R ${dkRR(p)}`);
+    else td.push(dkEsc(dkSelR('level-not-calculated')));
+  }
+  if(w&&w.buyHi){const z=deskWatchZone(w,px);td.push(`<span${dkG('my-zone')}>${RT('Моя зона','My zone')}</span> <b class="dk-num">${dkZoneText(w)}</b> · ${w.buySrc==='signal'?RT('по сигналу','from the signal'):RT('вручную','manual')}${z?' · '+dkEsc(dkZoneNeed(w,z)):''}`);}
+  // Риск: уровень (ручной рядом с авто) и главный риск; ручной уровень не снимает блокеры.
+  const R={level:m.risk.level,auto:m.risk.auto,ovr:m.risk.override,word:deskRiskWord(m.risk.level),parts:m.risk.parts||[]};
+  const mr=deskMainRisk({user:w&&w.mainRisk&&w.mainRisk.title,blockers:t.blockers,flags:t.flags,level:m.risk.level});
+  const mrT=mr.k==='user'?dkEsc(mr.text):dkEsc(mr.k==='earnings'?DK_MR.earnings(sigEarnDays(sec.sym)):(DK_MR[mr.k]||DK_MR.none)());
+  const link=(v,l)=>`<button type="button" class="dk-link" data-a="view" data-v="${v}">${l} →</button>`;
+  return `<div class="dk-dims">
+    ${tile(RT('Компания','Company')+dkGi('selection-quality'),q.v,q.d,link('company',RT('Бизнес','Business')))}
+    ${tile(RT('Цена','Price')+dkGi('selection-valuation'),vv,vd,link('company',RT('Оценка','Valuation')))}
+    ${tile(RT('Момент','Timing')+dkGi('dim-timing'),tv,td.join('<br>'),link('tech',RT('Техника','Technicals')))}
+    ${tile(RT('Риск','Risk')+dkGi('risk-level'),dkRiskMeter(R),`<span${dkG('main-risk')}>${RT('Главный риск','Main risk')}</span>: ${mrT}${R.ovr&&R.auto&&R.ovr!==R.auto?' · '+RT(`авто ${R.auto}`,`auto ${R.auto}`):''}`,dkHow('risk',dkRiskHow(R,s)))}
+  </div>`;
+}
+
+// ── «Компания» (§4): тезис, бизнес, рост, оценка, события, инсайдеры, новости; AI — отдельным вторичным блоком ──
+function deskCompanyHTML(it,m){
+  const s=it.s,sec=it.sec,px=s?s.price:sec.price,w=deskWatchGet(it.key),val=can('view.valuation'),hl=can('view.health');
+  return deskThesisHTML(it,w,px,val)+`<div class="dk-cols"><div class="dk-col">${deskBizHTML(it,m)}${hl?deskFinHTML(it):''}${val?deskAnaHTML(it,px):''}</div>
+    <aside class="dk-aside">${deskEventsHTML(it)}${can('view.insider')?deskInsHTML(it):''}${deskNewsHTML(it)}</aside></div>${deskAiSectionHTML(it)}`;
+}
+function deskBizHTML(it,m){
+  const sec=it.sec,sym=sec.sym,q=m&&m.quality,h=`<h2>${RT('Бизнес','Business')}${dkGi('biz')}</h2>`;
+  if(!can('view.health'))return `<div class="dk-panel"><div class="dk-ph">${h}</div><div class="dk-empty">${dkEsc(dkSelR('business-restricted'))}</div></div>`;
+  const c=PF_FUND[sym],F=pf3FundFor(sym),busy=deskPoolBusy('fund|'+sym),Q=dkQualHTML(q),k=dkEsc(sym);
+  const sum=`<span class="dk-note dk-ml"${dkG('selection-quality')}>${RT('качество','quality')} ${Q.v}</span>`;
+  if(!F){
+    const body=busy?RT('Загружаю отчётность…','Loading reports…'):c&&!c.data?`${RT('Провайдеры (FMP/Yahoo) не дали отчётности по этой бумаге.','Providers (FMP/Yahoo) returned no reports for this stock.')} <button class="dk-btn dk-sm" data-a="fund" data-k="${k}">${RT('Повторить','Retry')}</button>`
+      :`${RT('Отчётность не загружена.','Reports not loaded.')} <button class="dk-btn dk-sm" data-a="fund" data-k="${k}">${RT('Загрузить','Load')}</button>`;
+    return `<div class="dk-panel"><div class="dk-ph">${h}${sum}</div><div class="dk-pad"><div class="dk-d">${Q.d}</div><div class="dk-empty dk-p0 dk-mt6">${body}</div></div></div>`;
+  }
+  const B=pf3Betyg(F,String(sec.tk||'').toUpperCase(),sec.sector),bank=!!(B&&B.fin),ccy=F.ccy;
+  const nm=typeof F.netIncome==='number'&&F.revenue>0?F.netIncome/F.revenue*100:null,fm=typeof F.freeCashFlow==='number'&&F.revenue>0?F.freeCashFlow/F.revenue*100:null;
+  const has=v=>typeof v==='number'&&isFinite(v);
+  const M={profit:[nm!=null?RT('чистая маржа ','net margin ')+dkN(nm,1)+' %':null,fm!=null?RT('FCF-маржа ','FCF margin ')+dkN(fm,1)+' %':null],
+    growth:[has(F.revenueCagr)?`CAGR ${F.revenueYears||'—'} ${RT('л','y')} ${dkPct(F.revenueCagr,1)}`:null,has(F.revenueYoY)?RT('г/г ','YoY ')+dkPct(F.revenueYoY,1):null,has(F.revenue)?RT('выручка ','revenue ')+pf3Bn(F.revenue,ccy):null],
+    balance:[has(F.debtToEquity)?'D/E '+dkN(F.debtToEquity,2):null,has(F.currentRatio)?RT('ликвидность ','current ratio ')+dkN(F.currentRatio,1):null,has(F.cash)?RT('кэш ','cash ')+pf3Bn(F.cash,ccy):null],
+    cash:[has(F.freeCashFlow)?'FCF '+pf3Bn(F.freeCashFlow,ccy):null,has(F.operatingCashFlow)?'OCF '+pf3Bn(F.operatingCashFlow,ccy):null]};
+  const rows=(B?B.pillars:[]).filter(p=>p.key!=='val').map(p=>{
+    const lv=pf3Lv(p.score),L=lv==null?null:PF3_LV[lv];
+    const txt=p.na?RT('неприменимо для банков и финансов','not applicable to banks and financials'):(M[p.key]||[]).filter(Boolean).join(' · ')||'—';
+    return `<div class="dk-biz-row"><span class="dk-biz-n">${p.icon} ${dkEsc(RT(p.label[0],p.label[1]))}</span><span class="dk-biz-l${L?' lv-'+L.c:''}"${p.na?dkG('selection-na'):''}>${p.na?RT('н/п','n/a'):L?`${dkEsc(T(L.l))} · <span class="dk-num">${dkN(p.score,1)}</span>`:'—'}</span><span class="dk-biz-m">${dkEsc(txt)}</span></div>`;
+  }).join('');
+  const W=PF3_BETYG_WEIGHTS,full=B&&B.score100!=null?`<b>${dkEsc(pf3Grade(B.total).g)}</b> ${B.score100}/100`:RT('не выставлен — мало применимых столпов','not assigned — too few applicable pillars');
+  const how=`<p>${RT('Качество компании — средневзвешенное известных применимых столпов без оценки цены','Company quality is the weighted mean of the known applicable pillars without valuation')}: ${(B?B.pillars:[]).filter(p=>p.key!=='val').map(p=>dkEsc(RT(p.label[0],p.label[1]))+' × '+W[p.key]).join(' + ')}. ${RT('Уровни столпов — шкала 0–10 классической карточки (формулы pf3Scores).','Pillar levels use the classic card 0–10 scale (pf3Scores formulas).')}</p>
+    <p>${RT('Полный Betyg (пять столпов, вместе с оценкой, вес 15 %)','Full Betyg (five pillars, including valuation at 15 %)')}: ${full}. ${RT('Он не участвует в подборках: оценка цены — отдельное измерение.','It is not used for picks: valuation is a separate dimension.')}</p>
+    <p>${RT('Источник','Source')}: ${F.source==='yahoo'?'Yahoo':'FMP'}${F.asOf?` · ${RT('отчёт от','report of')} ${dkEsc(F.asOf)}`:''}${c&&c.at?` · ${RT('загружено','fetched')} ${dkEsc(new Date(c.at).toLocaleString(LANG==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'}))}`:''}${ccy?` · ${RT('валюта отчётности','reporting currency')} ${dkEsc(ccy)}`:''}. ${RT('Кэш — 6 ч.','Cache — 6 h.')}</p>`;
+  return `<div class="dk-panel dk-biz"><div class="dk-ph">${h}${sum}</div><div class="dk-padx dk-biz-b"><div class="dk-d">${Q.d}${bank?' · '+RT('банк/финансы: баланс и денежный поток этой модели неприменимы','bank/financials: balance and cash flow do not apply in this model'):''}</div>${rows}${dkHow('biz',how)}</div></div>`;
+}
+// «Отчёт и ожидания»: дата — ?earnings= или календарь ?calendar=; консенсус и прошлый отчёт — ?earnings= (при входе в «Компанию»).
+const _deskEarn={};
+function deskEarnLoad(sym){
+  if(!sym||!PRICE_PROXY)return Promise.resolve();
+  const c=_deskEarn[sym];if(c&&Date.now()-c.at<(c.data?6*3600e3:5*60e3))return Promise.resolve();
+  return fetch(PRICE_PROXY+'?earnings='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null).then(j=>{_deskEarn[sym]={data:j&&typeof j==='object'&&(j.next||j.last)?j:null,at:Date.now()};});
+}
+function deskEventsHTML(it){
+  const sym=it.sec.sym,C=SIG.CFG,cal=pf3Cal&&pf3Cal.data&&pf3Cal.data[sym],e=_deskEarn[sym],E=e&&e.data,busy=deskPoolBusy('earn|'+sym);
+  const next=E&&E.next&&E.next.date?String(E.next.date).slice(0,10):cal&&cal.earnings?String(cal.earnings).slice(0,10):null;
+  const days=next?Math.round((Date.parse(next+'T00:00:00Z')-Date.parse(new Date().toISOString().slice(0,10)+'T00:00:00Z'))/864e5):null;
+  const eps=v=>v==null||!isFinite(v)?'—':dkN(v,2)+(E&&E.ccy?' '+dkEsc(E.ccy):''),sur=(a,x)=>a!=null&&x?` <span class="${a>=x?'dk-up':'dk-dn'}">${dkPct((a-x)/Math.abs(x)*100,1)}</span>`:'';
+  const L=E&&E.last;
+  const kv=[[RT('Отчёт','Earnings'),next?`${dkEsc(next)}${days!=null&&days>=0?` <span class="${days<=C.earnDays?'dk-flag':'dk-mut'}"${days<=C.earnDays?dkG('fl-earnings'):''}>${RT('через','in')} ${days} ${RT('дн','d')}</span>`:''}`:`<span class="dk-mut">${busy?RT('загрузка…','loading…'):RT('не объявлен','not announced')}</span>`]];
+  if(E&&E.next){kv.push([RT('Ожидание EPS','EPS estimate'),eps(E.next.epsEst)]);if(E.next.revEst!=null)kv.push([RT('Ожидание выручки','Revenue estimate'),pf3Bn(E.next.revEst,E.ccy)]);}
+  if(L)kv.push([RT('Прошлый отчёт','Last report'),`${dkEsc(String(L.date||'').slice(0,10))} · EPS ${eps(L.epsActual)}${sur(L.epsActual,L.epsEst)}`]);
+  return `<div class="dk-panel"><div class="dk-ph"><h2>${RT('Отчёт и ожидания','Earnings & expectations')}${dkGi('events')}</h2></div><div class="dk-kv">${kv.map(([l,v])=>`<span class="dk-lbl">${l}</span><span class="v">${v}</span>`).join('')}</div>
+    <div class="dk-note dk-padx dk-pb">${RT(`Ближе ${C.earnDays} дн до отчёта правила SIG не открывают новый вход.`,`Within ${C.earnDays} d of earnings SIG rules open no new entries.`)}${!E&&!busy&&e?' '+RT('Консенсуса у провайдеров нет.','Providers have no consensus.'):''}</div></div>`;
+}
+function deskInsHTML(it){
+  const tk=String(it.sec.tk||'').toUpperCase(),v=INSIDER[tk]||INSIDER[posTk(tk)],h=`<h2>${RT('Инсайдеры','Insiders')}${dkGi('insiders')}</h2>`;
+  const at=v&&v.at?`<span class="dk-note dk-ml">${RT('обновлено','updated')} ${dkEsc(String(v.at).slice(0,10))}${v.src==='fi'?' · FI':''}</span>`:'';
+  if(!v||v.err)return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-note dk-pad">${v&&v.err==='no-key'?RT('Для US-бумаг в воркере нужен FINNHUB_KEY.','FINNHUB_KEY is needed in the worker for US stocks.'):RT('Сводки нет. Её обновляет админ кнопкой «🕵 AI Insider» (US — Finnhub, SE — Finansinspektionen).','No summary. An admin refreshes it with “🕵 AI Insider” (US — Finnhub, SE — Finansinspektionen).')}</div></div>`;
+  if(!v.txCount)return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-note dk-pad">${RT('Сделок инсайдеров за 30 дней нет.','No insider trades in the last 30 days.')}</div></div>`;
+  const hl=insiderHeadline(v),cc=v.valCcy,tx=(v.tx||[]).filter(t=>t&&(t.code==='P'||t.code==='S')),routine=(v.tx||[]).length-tx.length;
+  const cls=hl.cls==='pf3-up'?'dk-up':hl.cls==='pf3-down'?'dk-dn':'';
+  return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-pad dk-ins">
+    <div class="dk-b ${cls}">${dkEsc(hl.txt)}</div>${v.cluster?`<span class="dk-tag dk-up">CLUSTER BUY · ${v.cluster.uniqueBuyers} ${RT('инсайд.','insiders')}</span>`:''}
+    <div class="dk-kv dk-p0 dk-mt6"><span class="dk-lbl">${RT('Покупки','Buys')}</span><span class="v dk-num dk-up">${dkEsc(insiderFmtUSD(v.buyUSD,cc))}</span><span class="dk-lbl">${RT('Продажи','Sales')}</span><span class="v dk-num dk-dn">${dkEsc(insiderFmtUSD(v.sellUSD,cc))}</span></div>
+    ${tx.length?`<details class="dk-how"${dkDetAttr('ins')}><summary>${RT('Покупки и продажи','Buys and sales')} · ${tx.length}${routine>0?` · ${RT('рутинных (опционы, гранты)','routine (options, grants)')} ${routine}`:''}</summary><div class="dk-how-b">${tx.slice(0,12).map(t=>`<div>${t.code==='P'?'▲':'▼'} ${dkEsc(t.name||'—')} · <span class="dk-num">${dkEsc(pf3Fmt(t.shares))} × ${t.price!=null?dkEsc(pf3Fmt(t.price,2)):'—'}</span> · ${dkEsc(t.date||'')}</div>`).join('')}</div></details>`:''}
+  </div></div>`;
+}
+function deskNewsHTML(it){
+  const sec=it.sec,tk=sec.tk,n=NEWS_LIVE[tk],busy=deskPoolBusy('news|'+tk)||!!(n&&n.loading),ni=NEWS_IMPACT&&NEWS_IMPACT[tk];
+  const items=n&&Array.isArray(n.items)?n.items:[];
+  const row=x=>{const u=safeUrl(x.link),pol=x.pol||0;return `<li><span class="dk-dot${pol>0?' hot':pol<0?' neg':''}" aria-hidden="true"></span>${u?`<a href="${dkEsc(u)}" target="_blank" rel="noopener">${dkEsc(x.title||'')}</a>`:dkEsc(x.title||'')}<span class="dk-mut dk-xs">${x.publisher?dkEsc(x.publisher)+' · ':''}${dkEsc(newsAgoLbl(x.time))}</span></li>`;};
+  const tone=items.length?`<span class="dk-note dk-ml">${items.length} · ${RT('тон','tone')} ${n.sent>0?'+':''}${dkN(n.sent,1)}</span>`:'';
+  const body=items.length?`<ul class="dk-news">${items.slice(0,5).map(row).join('')}</ul>${items.length>5?`<details class="dk-how dk-padx"><summary>${RT('Ещё','More')} ${items.length-5}</summary><ul class="dk-news">${items.slice(5,15).map(row).join('')}</ul></details>`:''}`
+    :`<div class="dk-note dk-pad">${busy?RT('Загрузка новостей…','Loading news…'):n?RT('Свежих новостей нет.','No recent news.'):RT('Новости загружаются при открытии «Компании».','News loads when Company opens.')}</div>`;
+  return `<div class="dk-panel"><div class="dk-ph"><h2>${RT('Новости','News')}${dkGi('news')}</h2>${tone}<button type="button" class="dk-btn dk-sm" data-a="newsre" data-k="${dkEsc(tk)}" data-ccy="${dkEsc(sec.ccy)}" aria-label="${RT('Обновить новости','Refresh news')}"${busy?' disabled':''}>⟳</button></div>
+    ${ni?`<div class="dk-note dk-padx dk-mt6">${ni.impact==='bull'?'📈':ni.impact==='bear'?'📉':'⚪'} ${dkEsc(((ni.hits||[])[0]||{}).sent||'').slice(0,120)}</div>`:''}${body}
+    <div class="dk-note dk-padx dk-pb">${RT('Yahoo Finance, кэш 10 мин. Тон — по словарю слов, справочно.','Yahoo Finance, 10-min cache. Tone is lexicon-based, for reference.')}</div></div>`;
+}
+// AI — отдельное мнение с датой и горизонтом; расхождение с вердиктом SIG показано явно (§3.3). Права — текущие.
+function deskAiSectionHTML(it){
+  const sec=it.sec,tk=String(sec.tk||'').toUpperCase(),s=it.s,v=AI_RECO[tk],M=v&&AI_RECO_META[v.verdict];
+  const diverge=!!(v&&v.verdict&&s&&((v.verdict==='buy')!==(s.verdict==='buy')));
+  const sum=v&&v.at?`${M?dkEsc(M[1]):''} · ${dkEsc(String(v.at).slice(0,10))}${diverge?` <span class="dk-flag"${dkG('ai-opinion')}>${RT('расходится с SIG','differs from SIG')}: ${dkEsc((DK_V[s.verdict]||DK_V.wait)[1]())}</span>`:''}`:RT('нет разбора','no analysis');
+  const reco=`<details class="dk-panel dk-mt14"${dkDetAttr('st-ai')}><summary class="dk-ph"><h2>🤖 ${RT('AI-разбор','AI analysis')}${dkGi('ai-opinion')}</h2><span class="dk-note dk-ml">${sum}</span></summary><div class="dk-ai">${it.r&&can('view.ai_reco')?aiRecoHTML(it.d,it.r):`<div class="dk-empty">${RT('Нет доступа к AI-разбору.','No access to AI analysis.')}</div>`}</div></details>`;
+  const stk=isAdmin()&&it.r?`<details class="dk-panel dk-mt14"${dkDetAttr('st-stkai')}><summary class="dk-ph"><h2>🔬 ${RT('AI-анализ акции','AI stock analysis')}</h2><span class="dk-note dk-ml">${RT('админ · пишется в обучающую базу','admin · saved to the learning log')}</span></summary><div class="dk-ai">${stockAiHTML(it.d,it.r)}</div></details>`:'';
+  const cm=it.r?cycleMonitorHTML(sec.tk):'';
+  const cyc=cm?`<details class="dk-panel dk-mt14"${dkDetAttr('st-cyc')}><summary class="dk-ph"><h2>🧭 ${RT('Тезис-монитор','Thesis monitor')}</h2><span class="dk-note dk-ml">${RT('метрики тезиса и пороги','thesis metrics and thresholds')}</span></summary><div class="dk-ai">${cm}</div></details>`:'';
+  return `<section class="dk-ai-sec"><div class="dk-sub-h dk-mt14">${RT('AI и заметки — отдельное мнение, правила SIG не меняет','AI and notes — a separate opinion, does not change SIG rules')}</div>${reco}${stk}${cyc}</section>`;
+}
+
+// ── «Техника» (§4): большой график, период/слои, план моделируемой стороны, уровни, фаза и история сигналов ──
+function deskTechHTML(it,held){
+  const s=it.s,sec=it.sec,side=deskSideFor(it),C=SIG.CFG;
   const lv=s&&s.levels,ladder=s?[...lv.res.filter(x=>x.kind!=='pivot').slice(0,3).reverse().map(x=>Object.assign({},x,{k:'res'})),{v:s.price,src:RT('цена','price'),k:'now'},...lv.sup.filter(x=>x.kind!=='pivot').slice(0,3).map(x=>Object.assign({},x,{k:'sup'}))]:[];
   const hc=_histCache[sigHistKey(sec.sym)];if(hc&&hc.bars&&!hc.rep&&hc.bars.length>=C.minBars){try{hc.rep=SIG.replay(hc.bars);}catch(e){}}
   const trades=hc&&hc.rep?hc.rep.trades.slice(-8).reverse():[],st=hc&&hc.rep?SIG.replayStats(hc.rep.trades,0):null;
-  const et=it.r&&it.d?pf3EffTarget(it.d,it.r):null,up=it.r&&it.d?pf3EffUpside(it.d,it.r):null,bt=it.r?pf3BetygRow(it.r,sec.sector):null;
-  const earn=sigEarnDays(sec.sym),cal=pf3Cal&&pf3Cal.data&&pf3Cal.data[sec.sym],ins=INSIDER[sec.tk]||INSIDER[posTk(sec.tk)];
-  const insTx=ins&&Array.isArray(ins.tx)?ins.tx.filter(t=>t&&t.date&&Date.now()-Date.parse(t.date)<90*864e5):[],insP=insTx.filter(t=>t.code==='P').length,insS=insTx.filter(t=>t.code==='S').length;
-  const ni=NEWS_IMPACT&&NEWS_IMPACT[sec.tk];
-  const posPanel=held?deskPosPanel(held,it):'';
-  const plan=s?(deskPlanFor(it,side)||s.plan):null,w=deskWatchGet(it.key);
-  return `<div class="dk-stock-hd"><span class="dk-tk dk-tk-xl">${dkEsc(sec.tk)}</span><div><div class="dk-b">${dkEsc(sec.name)}${w&&w.tag?` <span class="dk-wtag">${dkEsc(w.tag)}</span>`:''}</div><div class="dk-mut dk-xs">${dkEsc([sec.sector,sec.type,sec.tabs.map(TAB_LABEL).join(', '),sec.ccy].filter(Boolean).join(' · '))}</div></div>
-      <span class="dk-px dk-num">${dkPx(px)} ${dkCcy(sec.ccy)}</span>${dkDay(day)}${sec.live?`<span class="dk-tag"${dkG('live')}>live</span>`:`<span class="dk-tag dk-mut"${dkG('live')}>${RT('не live','not live')}</span>`}
-      ${s?dkPill(s.verdict,!!held)+dkPhase(s)+dkFlags(s):''}
-      <div class="dk-ctl"><div class="dk-seg side">${held&&held.stop?'':`<button class="${side==='long'?'on':''} long" data-a="side" data-v="long" data-k="${dkEsc(it.key)}">▲ ${RT('Лонг','Long')}</button><button class="${side==='short'?'on':''} short" data-a="side" data-v="short" data-k="${dkEsc(it.key)}">▼ ${RT('Шорт','Short')}</button>`}</div>
-        <div class="dk-seg"><button class="${DESK_UI.years===1?'on':''}" data-a="years" data-v="1">1${RT('Г','Y')}</button><button class="${DESK_UI.years===3?'on':''}" data-a="years" data-v="3">3${RT('Г','Y')}</button></div>
-        <button class="dk-toggle dk-earn-t${deskEarnOn()?' on':''}" data-a="earn" aria-pressed="${deskEarnOn()}"${dkG('earn-line')}><i aria-hidden="true"></i>${RT('Прибыль','Earnings')}</button>
-        <button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде','Full card in the classic view')}">${RT('Ещё','More')} ···</button></div></div>
-    ${deskThesisHTML(it,w,plan,side,px)}
-    <div class="dk-cols">
+  const lock=!!(held&&held.stop);
+  const ctl=`<div class="dk-tech-ctl">${lock?`<span class="dk-note">${RT('Сторона — открытой позиции','Side — of the open position')} ${dkSide(held.side)}</span>`:`<div class="dk-seg side" role="group" aria-label="${RT('Моделируемая сторона','Modelled side')}"${dkG('side')}><button type="button" class="${side==='long'?'on':''} long" data-a="side" data-v="long" data-k="${dkEsc(it.key)}" aria-pressed="${side==='long'}">▲ ${RT('Лонг','Long')}</button><button type="button" class="${side==='short'?'on':''} short" data-a="side" data-v="short" data-k="${dkEsc(it.key)}" aria-pressed="${side==='short'}">▼ ${RT('Шорт','Short')}</button></div>`}
+      <div class="dk-seg" role="group" aria-label="${RT('Период','Period')}"><button type="button" class="${DESK_UI.years===1?'on':''}" data-a="years" data-v="1" aria-pressed="${DESK_UI.years===1}">1${RT('Г','Y')}</button><button type="button" class="${DESK_UI.years===3?'on':''}" data-a="years" data-v="3" aria-pressed="${DESK_UI.years===3}">3${RT('Г','Y')}</button></div>
+      <button type="button" class="dk-toggle dk-earn-t${deskEarnOn()?' on':''}" data-a="earn" aria-pressed="${deskEarnOn()}"${dkG('earn-line')}><i aria-hidden="true"></i>${RT('Прибыль','Earnings')}</button>
+      ${lock?'':`<span class="dk-note">${RT('сторона здесь — только модель: позицию и «Решение» не меняет','the side here is a model only: it changes neither the position nor Decision')}</span>`}</div>`;
+  return `${ctl}<div class="dk-cols">
       <div>
-        <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${held&&held.stop?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}${deskEarnOn()?` · <span${dkG('earn-line')}>${RT('маджента — прибыль × P/E, пунктир — прогноз аналитиков','magenta — earnings × P/E, dashed — analyst forecast')}</span>`:''}</div></div>
-        ${deskFinHTML(it)}${deskAnaHTML(it,px)}
+        <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${lock?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}${deskEarnOn()?` · <span${dkG('earn-line')}>${RT('маджента — прибыль × P/E, пунктир — прогноз аналитиков','magenta — earnings × P/E, dashed — analyst forecast')}</span>`:''}</div></div>
         <details class="dk-panel dk-mt14"${held?'':' open'}><summary class="dk-ph"><h2>${RT('История сигналов','Signal history')}${dkGi('sig-history')}</h2><span class="dk-cnt">${hc&&hc.rep?hc.rep.trades.length:0}</span><span class="dk-note dk-ml">${st?dkEsc(chartStatsText(st)):RT('реплей вердикта v2 по свечам','verdict v2 replayed over candles')}</span></summary>
           ${trades.length?`<div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Вход','Entry')}</th><th>${RT('Сторона','Side')}</th><th class="r">${RT('Цена','Price')}</th><th class="r">${RT('Стоп','Stop')}</th><th class="r">${RT('Цель','Target')}</th><th>${RT('Выход','Exit')}</th><th class="r"${dkG('r-unit')}>R</th><th>${RT('Причина','Reason')}</th></tr></thead><tbody>${trades.map(t=>{const x=t.exits[t.exits.length-1];return `<tr><td class="dk-num">${t.d}</td><td>${dkSide(t.side)}</td><td class="r dk-num">${dkPx(t.entry)}</td><td class="r dk-num dk-dn">${dkPx(t.stop0)}</td><td class="r dk-num dk-up">${dkPx(t.target)}</td><td class="dk-num">${t.open?RT('открыта','open'):(x?x.d+' · '+dkEsc(x.why):'')}</td><td class="r dk-num dk-b ${t.R>=0?'dk-up':'dk-dn'}">${dkR(t.R)}</td><td class="dk-ink2">${dkEsc(t.why||'')}</td></tr>`;}).join('')}</tbody></table></div>`:`<div class="dk-empty">${RT('Входов по правилам v2 на истории не было (или свечи ещё грузятся).','No v2 entries over the history (or candles are loading).')}</div>`}</details>
-        <details class="dk-panel dk-mt14"><summary class="dk-ph"><h2>🤖 ${RT('AI-разбор','AI analysis')}</h2><span class="dk-note dk-ml">${AI_RECO[sec.tk]&&AI_RECO[sec.tk].at?RT('есть от ','from ')+dkEsc(String(AI_RECO[sec.tk].at).slice(0,10)):RT('свёрнут','collapsed')}</span></summary><div class="dk-ai">${it.r&&can('view.ai_reco')?aiRecoHTML(it.d,it.r):`<div class="dk-empty">${RT('Нет доступа к AI-разбору.','No access to AI analysis.')}</div>`}</div></details>
       </div>
       <aside class="dk-aside">
-        ${posPanel}
-        ${held&&held.stop?`<details class="dk-panel"><summary class="dk-ph"><h2>${RT('Новый вход','New entry')}${dkGi('trade-plan')}</h2>${dkSide(side)}</summary>${deskPlanBox(it,side)}</details>`:`<div class="dk-panel"><div class="dk-ph"><h2>${RT('План сделки','Trade plan')}${dkGi('trade-plan')}</h2>${dkSide(side)}</div>${deskPlanBox(it,side)}</div>`}
-        ${deskWhatIfPanel(it,side)}
+        ${lock?`<details class="dk-panel"><summary class="dk-ph"><h2>${RT('Новый вход','New entry')}${dkGi('trade-plan')}</h2>${dkSide(side)}</summary>${deskPlanBox(it,side)}</details>`:`<div class="dk-panel"><div class="dk-ph"><h2>${RT('План сделки','Trade plan')}${dkGi('trade-plan')}</h2>${dkSide(side)}</div>${deskPlanBox(it,side)}</div>`}
         ${s?`<details class="dk-panel"${dkDetAttr('st-sig')}><summary class="dk-ph"><h2>${RT('Сигнал','Signal')}${dkGi('sig-detail')}</h2><span class="dk-cnt"${dkG('score')}>${RT('балл','score')} ${s.score}</span></summary><div class="dk-why">${s.why.map(w=>`<div>${dkEsc(w)}</div>`).join('')}</div>
           <div class="dk-kv dk-bt"><span class="dk-lbl"${dkG('sma')}>${RT('Тренд','Trend')}</span><span class="v ${s.trendUp?'dk-up':'dk-dn'}">${s.trendUp?'↑ SMA50 > SMA200':'↓ SMA50 < SMA200'}</span><span class="dk-lbl"${dkG('sig-detail')}>RSI 14</span><span class="v dk-num">${dkN(s.rsi,0)}</span><span class="dk-lbl"${dkG('atr')}>ATR 14</span><span class="v dk-num">${dkPx(s.atr)} · ${dkN(s.atrPct,1)}%</span><span class="dk-lbl">${RT('Объём к среднему','Volume vs avg')}</span><span class="v dk-num">×${dkN(s.volX,2)}</span><span class="dk-lbl">${RT('К SMA200','To SMA200')}</span><span class="v dk-num">${s.s200?dkPct((s.price/s.s200-1)*100,1):'—'}</span></div></details>
         <details class="dk-panel"${dkDetAttr('st-lvl')}><summary class="dk-ph"><h2>${RT('Лестница уровней','Level ladder')}${dkGi('ladder')}</h2><span class="dk-note dk-ml">${RT('структурные, без пивотов','structural, no pivots')}</span></summary><div class="dk-ladder">${ladder.map(x=>`<div class="dk-lvl ${x.k}"><span class="z"></span><span class="src">${dkEsc(String(x.src).replace(/\+/g,' · '))}</span><span class="dk-num">${dkPx(x.v)}</span><span class="dist dk-num">${x.k==='now'?'':dkPct((x.v/s.price-1)*100,1)}</span></div>`).join('')}</div></details>`:''}
-        <details class="dk-panel"${dkDetAttr('st-fund')}><summary class="dk-ph"><h2>${RT('Фундаментал и события','Fundamentals & events')}${dkGi('fund')}</h2>${s&&s.flags.includes('stale-target')?`<span class="dk-flag dk-ml"${dkG('fl-stale-target')}>${RT('таргет устарел','stale target')}</span>`:''}${earn!=null&&earn<=C.earnDays?`<span class="dk-flag"${dkG('fl-earnings')}>${RT('отчёт через','earnings in')} ${earn} ${RT('дн','d')}</span>`:''}</summary><div class="dk-kv">
-          <span class="dk-lbl">${RT('Таргет (эфф.)','Target (eff.)')}</span><span class="v dk-num">${et&&et.target>0?dkPx(et.target)+(up!=null?` <span class="${up>=0?'dk-up':'dk-dn'}">${dkPct(up,0)}</span>`:''):'—'}</span>
-          ${et&&et.recent>0&&et.main>0?`<span class="dk-lbl">${RT('Свежий · средний','Fresh · average')}</span><span class="v dk-num">${dkPx(et.recent)} · <span class="dk-mut">${dkPx(et.main)}</span>${s&&s.flags.includes('stale-target')?` <span class="dk-flag">${RT('устар.','stale')}</span>`:''}</span>`:''}
-          <span class="dk-lbl">Betyg</span><span class="v">${bt?`<b>${dkEsc(bt.grade||'—')}</b> <span class="dk-mut dk-num">${bt.score100}/100</span>`:`<button class="dk-btn dk-sm" data-a="fund" data-k="${dkEsc(sec.sym)}">${RT('загрузить','load')}</button>`}</span>
-          <span class="dk-lbl">${RT('Отчёт','Earnings')}</span><span class="v dk-num">${cal&&cal.earnings?dkEsc(String(cal.earnings).slice(0,10))+(earn!=null?` <span class="${earn<=C.earnDays?'dk-flag':'dk-mut'}">${RT('через','in')} ${earn} ${RT('дн','d')}</span>`:''):'<span class="dk-mut">—</span>'}</span>
-          <span class="dk-lbl">${RT('Инсайдеры 90 дн','Insiders 90d')}</span><span class="v dk-num">${insTx.length?`<span class="dk-up">▲ ${insP}</span> · <span class="dk-dn">▼ ${insS}</span>`:'<span class="dk-mut">—</span>'}</span>
-          ${ni?`<span class="dk-lbl">${RT('Новости','News')}</span><span class="v">${ni.impact==='bull'?'📈':ni.impact==='bear'?'📉':'⚪'} ${dkEsc(((ni.hits||[])[0]||{}).sent||'').slice(0,90)}</span>`:''}
-        </div></details>
       </aside>
     </div>`;
 }
-// Верх «Акции» (§3.2): «Ключевой тезис» + «Моя зона покупки» (или «Что делать», если бумаги нет в списке),
-// три плитки оценки (цена на дату тезиса · справедливая стоимость · апсайд) и «Что покупаю / Главный риск».
-function deskThesisHTML(it,w,plan,side,px){
+// Верх «Компании» (§3.2 I1 → P2): «Ключевой тезис» + «Моя зона покупки» (если бумага в списке), три плитки оценки
+// (цена на дату тезиса · справедливая стоимость · апсайд; только с правом view.valuation) и «Что покупаю / Главный риск».
+// Карточка «Что делать» ушла в «Решение».
+function deskThesisHTML(it,w,px,val){
   const s=it.s,sec=it.sec,ccy=dkCcy(sec.ccy),canE=can('action.edit_plan'),k=dkEsc(it.key);
-  const R=deskRiskLevel(s,{plan:w?(s&&(deskPlanFor(it,'long')||s.plans.long)):plan,beta:deskBeta(it),riskOvr:w&&w.riskOvr});
+  const R=deskRiskLevel(s,{plan:s&&(deskPlanFor(it,'long')||s.plans.long),beta:deskBeta(it),riskOvr:w&&w.riskOvr});
   const riskBlock=dkRiskMeter(R)+dkHow('risk',dkRiskHow(R,s));
   const own=w&&w.thesis,thesis=`<div class="dk-thesis"><div class="dk-eyebrow">${RT('Ключевой тезис','Key thesis')}${dkGi('thesis')}${own?'':` · <span class="dk-accent-text">${RT('авто по сигналу','auto from the signal')}</span>`}</div>
       <h2>${dkEsc(own?(w.thesis.title||w.thesis.text):(s?s.why[0]||'':RT('Собираем историю цены и считаем сигнал.','Loading price history and computing the signal.')))}</h2>
@@ -1073,14 +1404,13 @@ function deskThesisHTML(it,w,plan,side,px){
       ${w.buyNote?`<p class="dk-note">${dkEsc(w.buyNote)}</p>`:''}${dkHow('zone',zHow)}
       <div class="dk-action-price">${riskBlock}</div>
       ${canE?`<div class="dk-row dk-mt6"><button class="dk-btn dk-sm" data-a="wedit" data-k="${k}" data-f="zone">✎ ${RT('Зона','Zone')}</button>${w.buyHi?`<button class="dk-btn dk-sm" data-a="wnotify" data-k="${k}">🔔 ${RT('Уведомить','Alert')}</button>`:''}</div>`:''}</div>`;
-  }else{
-    const action=s?(DK_V[s.verdict]||DK_V.wait)[1]():RT('Подождать','Wait');
-    side2=`<div class="dk-action-card v-${s?s.verdict:'wait'}"><div class="dk-eyebrow">${RT('Что делать','What to do')} · ${side==='short'?RT('шорт','short'):RT('лонг','long')}${dkGi('my-zone')}</div><h2>${dkEsc(action)}</h2>
-      <div class="dk-action-price"><span${dkG('market-limit')}>${plan&&plan.mode==='limit'?RT('Ждать цену','Wait for price'):RT('Цена входа','Entry price')}</span><b class="dk-num">${plan?dkPx(plan.entry):'—'} ${ccy}</b>${riskBlock}</div>
-      <div class="dk-row dk-mt6">${dkWatchBtn(it.key,true)}</div></div>`;
-  }
+  }else if(canE)side2=`<div class="dk-action-card dk-zone-card"><div class="dk-eyebrow">${RT('Моя зона покупки','My buy zone')}${dkGi('my-zone')}</div>
+      <p class="dk-note">${RT('Бумаги нет в списке покупок. Добавьте её — зона предложится по сигналу, тезис и сценарии можно дописать.','The stock is not in the shopping list. Add it — the zone is suggested from the signal; thesis and scenarios can be added.')}</p>
+      <div class="dk-action-price">${riskBlock}</div><div class="dk-row dk-mt6">${dkWatchBtn(it.key,true)}</div></div>`;
   // Справедливая стоимость и апсайд — от текущей цены; «цена на дату тезиса» — отдельно.
   const tg=TG_FULL[sec.tk]||TG_FULL[posTk(sec.tk)]||null,FV=deskFairValue(w,tg,px),stale=FV.src==='analysts'&&s&&s.flags.includes('stale-target');
+  // Таргеты без валюты листинга (старый кэш) показываются с оговоркой; «Решение» и подборки их не используют (§3.2).
+  const unconf=FV.src==='analysts'&&!deskSelectionCache(TG_FULL,sec).data;
   const fvMeta=[FV.n?RT(`${FV.n} аналитиков`,`${FV.n} analysts`):'',FV.at?RT('обновлено ','updated ')+FV.at:''].filter(Boolean).join(', ');
   const pn={bear:'bear',base:'base',bull:'bull',low:RT('минимум','low'),consensus:RT('консенсус','consensus'),high:RT('максимум','high')};
   const fvHow=FV.value==null?`<p>${RT('Нет сценариев (задайте bear/base/bull в идее) и таргетов аналитиков — справедливая стоимость не считается.','No scenarios (set bear/base/bull in the idea) and no analyst targets — fair value is not computed.')}</p>`
@@ -1090,12 +1420,12 @@ function deskThesisHTML(it,w,plan,side,px){
   const tile=(l,v,d,cls)=>`<div class="dk-panel dk-stat"><div class="dk-lbl">${l}</div><div class="dk-v dk-num ${cls||''}">${v}</div><div class="dk-d">${d}</div></div>`;
   const tiles=`<div class="dk-value-grid">
       ${w&&w.refPx?tile(RT('Цена на дату тезиса','Price at thesis date')+dkGi('ref-px'),`${dkPx(w.refPx)} <small>${ccy}</small>`,dkEsc(w.refAt||'')+(px?` · ${RT('с тех пор','since')} ${dkPct((px/w.refPx-1)*100,1)}`:'')):tile(RT('Текущая цена','Current price'),`${dkPx(px)} <small>${ccy}</small>`,w?RT('цена на дату тезиса не зафиксирована','thesis price not recorded'):RT('идеи в списке нет','not in the list'))}
-      ${tile(RT('Справедливая стоимость','Fair value')+dkGi('fair-value'),FV.value!=null?`${dkPx(FV.value)} <small>${ccy}</small>`:'—',(FV.src==='scenarios'?RT('ваши сценарии 25/50/25','your scenarios 25/50/25'):FV.src==='analysts'?RT('по аналитикам','by analysts'):RT('нет сценариев и таргетов','no scenarios or targets'))+(stale?` <span class="dk-flag"${dkG('fl-stale-target')}>${RT('таргет устарел','stale target')}</span>`:''),'dk-accent-text')}
+      ${tile(RT('Справедливая стоимость','Fair value')+dkGi('fair-value'),FV.value!=null?`${dkPx(FV.value)} <small>${ccy}</small>`:'—',(FV.src==='scenarios'?RT('ваши сценарии 25/50/25','your scenarios 25/50/25'):FV.src==='analysts'?RT('по аналитикам','by analysts'):RT('нет сценариев и таргетов','no scenarios or targets'))+(stale?` <span class="dk-flag"${dkG('fl-stale-target')}>${RT('таргет устарел','stale target')}</span>`:'')+(unconf?` <span class="dk-flag"${dkG('selection-valuation')}>${RT('валюта листинга не подтверждена','listing currency unconfirmed')}</span>`:''),'dk-accent-text')}
       ${tile(RT('Апсайд до справедливой','Upside to fair value')+dkGi('upside'),FV.upsidePct!=null?dkPct(FV.upsidePct,Math.abs(FV.upsidePct)<10?1:0):'—',RT('от текущей цены','from the current price'),FV.upsidePct==null?'':FV.upsidePct>=0?'dk-up':'dk-dn')}
     </div>${dkHow('fv',fvHow)}`;
   const card2=(l,c)=>c?`<div class="dk-panel dk-stat dk-card2"><div class="dk-lbl">${l}${dkGi('what-buy')}</div><div class="dk-b">${dkEsc(c.title||'')}</div>${c.text?`<div class="dk-note">${dkEsc(c.text)}</div>`:''}</div>`:'';
   const two=w&&(w.whatBuy||w.mainRisk)?`<div class="dk-two dk-mt14">${card2(RT('Что покупаю','What I buy'),w.whatBuy)}${card2(RT('Главный риск','Main risk'),w.mainRisk)}</div>`:'';
-  return `<section class="dk-stock-focus dk-mb">${thesis}${side2}</section><div class="dk-mb">${tiles}${two}</div>`;
+  return `<section class="dk-stock-focus dk-mb${side2?'':' solo'}">${thesis}${side2||''}</section>${val||two?`<div class="dk-mb">${val?tiles:''}${two}</div>`:''}`;
 }
 // ── «Рост бизнеса» (I3, §3.4): ленивый ?financials= одной бумаги — только по раскрытию блока (критерий §5#7).
 // Кэш клиента в памяти (в снапшот не пишется): ответ живёт fin.cacheMin, ошибка — fin.errMin.
@@ -1105,11 +1435,50 @@ function deskFinLoad(sym){
   const C=DESK_IDEA_CFG.fin,c=_deskFin[sym];
   if(c&&(c.loading||Date.now()-c.at<(c.data&&c.data.status!=='error'?C.cacheMin:C.errMin)*60e3))return;
   _deskFin[sym]={loading:true,at:Date.now(),data:(c&&c.data)||null};
-  fetch(PRICE_PROXY+'?financials='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null).then(j=>{
+  deskPoolRun('fin|'+sym,()=>fetch(PRICE_PROXY+'?financials='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null).then(j=>{
     const ok=j&&typeof j==='object'&&Array.isArray(j.annual);
     _deskFin[sym]={loading:false,at:Date.now(),data:ok?j:{sym,status:'error',annual:[],estimates:[],notes:['network']}};
-    deskRender();
-  });
+  }));
+}
+// ── P2 (§8): пул новых загрузок бумаги — не больше DESK_IDEA_CFG.selection.loadPool одновременно, дедуп по «тип|символ»
+// (второй вызов того же ключа возвращает тот же промис). TTL и негативный кэш — у самих загрузчиков. По завершении —
+// фоновая перерисовка: поздний ответ ложится в кэш своей бумаги и не переключает экран (ввод защищает deskRender).
+const _deskPool={q:[],run:0,live:{}};
+function deskPoolRun(key,fn){
+  const P=_deskPool;if(P.live[key])return P.live[key].p;
+  let done;const p=new Promise(r=>{done=r;});
+  P.live[key]={p,fn,done};P.q.push(key);deskPoolPump();
+  return p;
+}
+function deskPoolPump(){
+  const P=_deskPool,max=Math.max(1,(DESK_IDEA_CFG.selection||{}).loadPool||2);
+  while(P.run<max&&P.q.length){
+    const key=P.q.shift(),x=P.live[key];if(!x)continue;
+    P.run++;let pr;try{pr=Promise.resolve(x.fn());}catch(e){pr=Promise.resolve();}
+    pr.catch(()=>{}).then(()=>{P.run--;delete P.live[key];x.done();deskPoolPump();if(deskActive())deskRender();});
+  }
+}
+const deskPoolBusy=key=>!!_deskPool.live[key];
+// «Компания»: новые загрузки — только при входе в режим (не при каждой перерисовке и не на других экранах).
+function deskCompanyEnsure(){
+  if(DESK_UI.route!=='stock'||DESK_UI.stockView!=='company'){DESK_UI._compFor=null;return;}
+  const it=deskSecOf(DESK_UI.key);if(!it||DESK_UI._compFor===it.key)return;
+  DESK_UI._compFor=it.key;deskCompanyLoad(it);
+}
+function deskCompanyLoad(it){
+  const sec=it.sec,sym=sec.sym;
+  if(can('view.health')){deskPoolRun('fund|'+sym,()=>pf3FundFetch([sym]));deskFinLoad(sym);}
+  deskPoolRun('news|'+sec.tk,()=>pf3NewsEnsure(sec.tk,sec.ccy));
+  deskPoolRun('earn|'+sym,()=>deskEarnLoad(sym));
+}
+// «Обновить данные» одной бумаги: живая цена (?symbols=) и свечи сигнала — без массовых загрузок.
+async function deskRefreshOne(key){
+  const it=deskSecOf(key);if(!it||!it.r||!can('action.refresh_data')||DESK_UI.r1)return;
+  const sym=it.sec.sym;DESK_UI.r1=key;deskRender(true);
+  try{await Promise.all([deskPoolRun('px|'+sym,()=>pf3RefreshCardPrice(it.d,it.r,it.tab)),deskPoolRun('hist|'+sym,()=>sigEnsure([sym]))]);}catch(e){}
+  if(DESK_UI.r1===key)DESK_UI.r1=null;
+  const lv=PX_LIVE[sym];if(!(lv&&Date.now()-lv.at<PX_FRESH_MS))toast(RT('Цена не обновилась — воркер недоступен или бумаги нет у провайдера','The price did not refresh — worker unreachable or the provider lacks the stock'),true);
+  _deskItems=null;deskRender(true);
 }
 const DK_FIN_NOTE={'no-estimates':()=>RT('провайдер не дал прогноза','the provider gave no forecast'),'est-scale':()=>RT('прогноз отброшен: его масштаб не совпадает с отчётностью (другая валюта?)','forecast dropped: its scale does not match the reports (another currency?)'),
   'short-history':()=>RT('меньше 3 лет истории','under 3 years of history'),'no-fcf':()=>RT('FCF у провайдера нет','no FCF at the provider'),'no-eps':()=>RT('EPS у провайдера нет','no EPS at the provider'),
@@ -1217,7 +1586,8 @@ function deskFinTip(g,show){
   tip.style.left=Math.max(0,Math.min(fr.width-tip.offsetWidth,gr.left-fr.left+gr.width/2-tip.offsetWidth/2))+'px';
   tip.style.top=Math.max(0,gr.top-fr.top-tip.offsetHeight-6)+'px';
 }
-function deskPosPanel(p,it){
+// noPri — в «Решении» primary-кнопка одна (у вывода), кнопки панели — вторичные.
+function deskPosPanel(p,it,noPri){
   const c=p.calc,s=it.s;if(!c)return '';
   const act=deskPosAct(p,s,p.earn!=null?p.earn:sigEarnDays(p.sym)),trail=s?deskTrailStop(p.side,p.stop,c.now,s.atr):null,sug=s&&s.plans&&s.plans[p.side];
   const ed=DESK_UI.edit&&DESK_UI.edit.key===p.tab+'|'+p.tk;
@@ -1229,7 +1599,7 @@ function deskPosPanel(p,it){
         <div class="t"><div class="dk-lbl"${dkG('target')}>${RT('Цель','Target')}</div><b class="dk-num">${p.target?dkPx(p.target):'—'}</b><div class="dk-mut dk-xs dk-num">${c.toTargetPct!=null?RT('до цели ','to target ')+dkN(c.toTargetPct,1)+'%':''}</div></div></div>
       <div class="dk-kv dk-p0"><span class="dk-lbl"${dkG('pl-open')}>P&amp;L</span><span class="v dk-num ${c.plSEK>=0?'dk-up':'dk-dn'}">${dkPct(c.plPct)} · ${c.plSEK>=0?'+':''}${dkKr(c.plSEK)}</span><span class="dk-lbl"${dkG('r-now')}>${RT('R сейчас (от стопа входа)','R now (from entry stop)')}</span><span class="v dk-num">${dkR(c.rNow)}</span><span class="dk-lbl"${dkG('pos-risk')}>${RT('Открытый риск до стопа','Open risk to stop')}</span><span class="v dk-num">${c.riskSEK!=null?dkKr(c.riskSEK):'—'}</span></div>
       ${ed?deskEditForm(p):''}
-      ${canT?`<div class="dk-row">${!p.stop&&sug?`<button class="dk-btn pri dk-sm" data-a="pm-accept" data-tab="${k}" data-k="${t}" data-stop="${sug.stop}" data-target="${sug.target}" title="${RT('Стоп и цель из плана v2 этой стороны','Stop & target from the v2 plan of this side')}">${RT('Принять стоп','Accept stop')} ${dkPx(sug.stop)} · ${RT('цель','target')} ${dkPx(sug.target)}</button>`:''}
+      ${canT?`<div class="dk-row">${!p.stop&&sug?`<button class="dk-btn${noPri?'':' pri'} dk-sm" data-a="pm-accept" data-tab="${k}" data-k="${t}" data-stop="${sug.stop}" data-target="${sug.target}" title="${RT('Стоп и цель из плана v2 этой стороны','Stop & target from the v2 plan of this side')}">${RT('Принять стоп','Accept stop')} ${dkPx(sug.stop)} · ${RT('цель','target')} ${dkPx(sug.target)}</button>`:''}
         ${p.stop&&c.rNow!=null&&c.rNow>=1&&(p.side==='short'?p.stop>p.entry:p.stop<p.entry)?`<button class="dk-btn dk-sm" data-a="pm-be" data-tab="${k}" data-k="${t}">${RT('Стоп в б/у','Stop to b/e')}</button>`:''}
         ${p.stop&&trail!=null?`<button class="dk-btn dk-sm" data-a="pm-trail" data-tab="${k}" data-k="${t}" data-stop="${trail}">${RT('Трейл 2·ATR','Trail 2·ATR')} → ${dkPx(trail)}</button>`:''}
         <button class="dk-btn dk-sm" data-a="pm-edit" data-tab="${k}" data-k="${t}">${RT('Стоп/цель…','Stop/target…')}</button>
@@ -1348,9 +1718,9 @@ function deskModalHTML(){
 }
 function deskExecOpen(key,side,mode,tab,tk,qty){
   const it=deskSecOf(key);
-  if(mode==='close'){
+  if(mode==='close'){   // qty — подсказка частичного закрытия («Сократить… ½» из «Решения»), не больше позиции
     const p=bookPositions(tab).find(x=>x.tk===posTk(tk));if(!p)return;
-    DESK_UI.exec={key,side:p.side,mode,tab,tk:p.tk,sym:p.sym,ccy:p.ccy,qty:p.qty,price:p.calc?p.calc.now:p.entry};
+    DESK_UI.exec={key,side:p.side,mode,tab,tk:p.tk,sym:p.sym,ccy:p.ccy,qty:qty>0?Math.min(qty,p.qty):p.qty,price:p.calc?p.calc.now:p.entry};
   }else{
     if(!it||!it.s)return toast(RT('Сигнал ещё не посчитан','Signal not computed yet'),true);
     const p=deskPlanFor(it,side);
@@ -1526,7 +1896,7 @@ function deskWatchFocus(key){
 // ── Классика ──
 // Полная карточка/подвкладка в классическом виде (флаг desk остаётся; назад — плавающая кнопка).
 function deskClassic(tab,tk,sub){
-  DESK_UI.classic=true;DESK_UI.menu=false;deskChartsDrop();if(typeof deskGlossClose==='function'){deskGlossClose(true);deskTipHide(false);}
+  DESK_UI.classic=true;DESK_UI.menu=false;deskChartsDrop();deskScrollMode(false);if(typeof deskGlossClose==='function'){deskGlossClose(true);deskTipHide(false);}
   const de=document.documentElement;de.classList.remove('desk');
   de.classList.add('ui2');
   const t=tab&&DATA[tab]?tab:(deskRiskTab()||PF3_KEY);
@@ -1567,7 +1937,11 @@ function deskOnClick(e){
     case 'wname':{const l=DESK_WATCH.lists[0],v=prompt(RT('Название списка:','List name:'),l.name||RT('Список покупок','Shopping list'));if(v!=null&&can('action.edit_plan')){l.name=String(v).trim().slice(0,DESK_IDEA_CFG.len.list);DESK_WATCH=deskWatchNorm(DESK_WATCH);scheduleSave();deskRender(true);}break;}
     case 'wjump':if(DESK_UI.iv!=='watch'){DESK_UI.iv='watch';deskRender(true);setTimeout(()=>deskWatchFocus(k),80);}else deskWatchFocus(k);break;
     case 'nav':if(el.dataset.jt)DESK_UI.jt=el.dataset.jt;deskGo(el.dataset.r,el.dataset.r==='stock'?DESK_UI.key:null);break;
-    case 'open':deskGo('stock',k);break;
+    case 'open':deskGo('stock',k,'decision');break;
+    case 'view':deskStockView(el.dataset.v);break;
+    case 'wiopen':deskDetSave('st-wi',true);deskRender(true);setTimeout(()=>{const i=document.getElementById('dkWiV');if(i){i.focus();try{i.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});}catch(x){}}},40);break;
+    case 'refresh1':deskRefreshOne(k);break;
+    case 'newsre':if(NEWS_LIVE[k])NEWS_LIVE[k].at=0;deskPoolRun('news|'+k,()=>pf3NewsEnsure(k,el.dataset.ccy));deskRender(true);break;
     case 'sel':DESK_UI.sel=DESK_UI.sel===k?null:k;deskRender(true);break;
     case 'unsel':DESK_UI.sel=null;deskRender(true);break;
     case 'fv':DESK_UI.f.v=el.dataset.v;deskRender(true);break;
@@ -1584,7 +1958,7 @@ function deskOnClick(e){
     case 'wiplan':deskPlanAdd(k,el.dataset.side,+el.dataset.q);break;
     case 'wiexec':deskExecOpen(k,el.dataset.side,'open',el.dataset.tab,null,+el.dataset.q);break;
     case 'exec':deskExecOpen(k,el.dataset.side,'open');break;
-    case 'close':deskExecOpen(el.dataset.key,null,'close',el.dataset.tab,k);break;
+    case 'close':deskExecOpen(el.dataset.key,null,'close',el.dataset.tab,k,+el.dataset.q||0);break;
     case 'pm-accept':deskPosMeta(el.dataset.tab,k,{stop:+el.dataset.stop,stop0:+el.dataset.stop,target:+el.dataset.target},RT('Стоп и цель заданы','Stop & target set'));break;
     case 'pm-be':{const p=bookPositions(el.dataset.tab).find(x=>x.tk===posTk(k));if(p)deskPosMeta(el.dataset.tab,k,{stop:p.entry},RT('Стоп в безубыток','Stop to breakeven')+' '+pf3Fmt(p.entry,2));break;}
     case 'pm-trail':deskPosMeta(el.dataset.tab,k,{stop:+el.dataset.stop},RT('Трейлинг-стоп','Trailing stop')+' '+pf3Fmt(+el.dataset.stop,2));break;
@@ -1600,7 +1974,7 @@ function deskOnClick(e){
     case 'jt':DESK_UI.jt=el.dataset.v;deskRender(true);break;
     case 'finm':DESK_UI.finM=el.dataset.v;deskRender(true);break;
     case 'finre':if(_deskFin[k])_deskFin[k].at=0;deskFinLoad(k);deskRender(true);break;
-    case 'fund':pf3FundFetch([k]).then(()=>deskRender(true));toast(RT('Загружаю фундаментал…','Loading fundamentals…'));break;
+    case 'fund':if(PF_FUND[k]&&!PF_FUND[k].data)delete PF_FUND[k];deskPoolRun('fund|'+k,()=>pf3FundFetch([k]));deskRender(true);break;   // «Повторить» снимает негативный кэш
     case 'refresh':DESK_UI.load.at=0;deskQuotes(true);deskLoad(true);break;
     case 'menu':DESK_UI.menu=!DESK_UI.menu;deskRender(true);break;
     case 'theme':DESK_UI.menu=false;toggleTheme();deskRender(true);break;
@@ -1686,7 +2060,7 @@ function deskOnInputKey(e){
   const n=_deskSg.hits.length;
   if(e.key==='ArrowDown'&&n){_deskSg.cur=(_deskSg.cur+1)%n;deskSuggest(el.value);e.preventDefault();}
   else if(e.key==='ArrowUp'&&n){_deskSg.cur=(_deskSg.cur-1+n)%n;deskSuggest(el.value);e.preventDefault();}
-  else if(e.key==='Enter'&&n){const x=_deskSg.hits[_deskSg.cur];el.value='';el.blur();deskGo('stock',x.key);}
+  else if(e.key==='Enter'&&n){const x=_deskSg.hits[_deskSg.cur];el.value='';el.blur();deskGo('stock',x.key,'decision');}
   else if(e.key==='Escape'){el.value='';deskSuggest('');el.blur();}
 }
 function deskOnKey(e){
@@ -1698,8 +2072,16 @@ function deskOnKey(e){
   if((t==='input'||t==='select'||t==='textarea'||e.metaKey||e.ctrlKey||e.altKey)&&!modal)return;
   if(document.querySelector('.faq-overlay:not(.hidden),.auth-overlay:not(.hidden)'))return;
   if(e.key==='Escape'){if(DESK_UI.wedit){DESK_UI.wedit=null;deskRender(true);}else if(DESK_UI.wmenu){const k=DESK_UI.wmenu;DESK_UI.wmenu=null;deskRender(true);setTimeout(()=>{const b=document.querySelector(`#desk .dk-wmore[data-k="${CSS.escape(k)}"]`);if(b)b.focus();},0);}else if(DESK_UI.exec){DESK_UI.exec=null;deskRender(true);}else if(DESK_UI.menu){DESK_UI.menu=false;deskRender(true);}else if(DESK_UI.sel){DESK_UI.sel=null;deskRender(true);}return;}
+  // Вкладки режима «Акции» (роль tab): стрелки/Home/End — соседний режим с автоматической активацией.
+  const tb=e.target.closest&&e.target.closest('#desk .dk-views [role="tab"]');
+  if(tb&&['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){
+    e.preventDefault();const i=DK_VIEWS.indexOf(tb.dataset.v),n=DK_VIEWS.length;
+    const v=DK_VIEWS[e.key==='Home'?0:e.key==='End'?n-1:(i+(e.key==='ArrowRight'?1:n-1))%n];
+    const nb=document.getElementById('dkTab-'+v);if(nb)nb.focus();   // фокус переживёт перерисовку по id
+    deskStockView(v);return;
+  }
   const o=e.target.closest&&e.target.closest('#desk [data-a="open"]');
-  if(e.key==='Enter'&&o&&o.tagName!=='BUTTON'&&e.target.closest('[data-a]')===o){deskGo('stock',o.dataset.k);return;}
+  if(e.key==='Enter'&&o&&o.tagName!=='BUTTON'&&e.target.closest('[data-a]')===o){deskGo('stock',o.dataset.k,'decision');return;}
   if(e.key==='/'){e.preventDefault();const q=document.getElementById('dkQ');if(q)q.focus();return;}
   if(e.key==='?'&&typeof deskGlossOpen==='function'){e.preventDefault();if(DESK_UI.menu){DESK_UI.menu=false;deskRender(true);}deskGlossOpen();return;}
   if(/^[1-5]$/.test(e.key)){deskGo(['today','screen','stock','book','journal'][+e.key-1]);return;}
@@ -1717,7 +2099,8 @@ function deskBoot(){
   const F=deskFlagFrom(location.search,ls);
   if(F.set!=null)deskSetFlag(F.on);
   document.addEventListener('keydown',deskOnKey);
-  window.addEventListener('popstate',()=>{if(deskActive()){deskFromHash();deskRender(true);}});
+  // Back/Forward: экран, бумага и режим — из адреса, прокрутка — из history.state записи (deskHistSave).
+  window.addEventListener('popstate',e=>{if(deskActive()){deskFromHash();const y=e.state&&e.state.dkY;DESK_UI._restoreY=typeof y==='number'?y:null;deskRender(true);}});
   window.addEventListener('hashchange',()=>{if(deskActive()){deskFromHash();deskRender(true);}});
   document.addEventListener('click',e=>{if((DESK_UI.menu||DESK_UI.wmenu)&&deskActive()&&!e.target.closest('.dk-menu-w')&&!e.target.closest('#desk [data-a]')){DESK_UI.menu=false;DESK_UI.wmenu=null;deskRender(true);}});
   if(F.on){DESK_UI.on=true;document.documentElement.classList.add('desk');document.documentElement.classList.remove('ui2');deskEnable();}

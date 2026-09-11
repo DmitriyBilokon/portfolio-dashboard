@@ -1003,6 +1003,78 @@ function dkWatchBtn(key,big){
   if(deskWatchGet(key))return `<span class="dk-tag dk-inlist" title="${RT('Уже в списке покупок','Already in the shopping list')}">🛒 ${RT('в списке','listed')}</span>`;
   return can('action.edit_plan')?`<button class="dk-btn ${big?'':'dk-sm '}dk-wadd" data-a="wadd" data-k="${dkEsc(key)}" title="${RT('Добавить в список покупок: зона по сигналу, правка сразу','Add to the shopping list: zone from the signal, editable')}">＋ ${RT('В список','To list')}</button>`:'';
 }
+// ═══════════════════ Подборки (P3, §5): деривированы из модели P1, ничего не грузят и не пишут ═══════════════════
+const DK_BUCKET_DEF=[
+  ['candidates',()=>RT('Кандидаты сейчас','Candidates now'),
+    ()=>RT('SIG.buy, лонг, пригодная цена, полный бизнес-срез, без блокеров нового входа. Оценка не обязательна.','SIG.buy, long, usable price, full business slice, no entry blockers. Valuation not required.'),
+    ()=>RT('Нет технических кандидатов на вход сейчас.','No technical entry candidates right now.')],
+  ['near-zone',()=>RT('У зоны покупки','Near the buy zone'),
+    ()=>RT('Лонг с действительным лимитным планом у зоны входа; сломанный сетап не считается хорошим входом.','Long with a valid limit plan near the entry zone; a broken setup is not a good entry.'),
+    ()=>RT('Нет бумаг с действительным лимитом у зоны входа.','No stocks with a valid limit near the entry zone.')],
+  ['quality-growth',()=>RT('Качественный рост','Quality growth'),
+    ()=>RT('Полный бизнес-срез A/A+ и положительный фактический рост выручки; прогноз не заменяет факт.','Full business slice A/A+ and positive actual revenue growth; a forecast does not replace a fact.'),
+    ()=>RT('Нет бумаг A/A+ с подтверждённым фактическим ростом выручки.','No A/A+ stocks with confirmed actual revenue growth.')],
+  ['discount',()=>RT('Дисконт к оценке','Discount to valuation'),
+    ()=>RT('Сопоставимая внешняя оценка выше цены, известная дата, без «ножа»/устаревшего таргета.','Comparable external valuation above price, known date, no knife / stale target.'),
+    ()=>RT('Нет сопоставимых внешних оценок выше цены.','No comparable external valuations above price.')],
+  ['research',()=>RT('Нужно изучить','Needs research'),
+    ()=>RT('Почти кандидаты: лонг SIG.buy или лимит у зоны, которым до «Кандидатов»/«У зоны» не хватает только данных.','Almost candidates: long SIG.buy or a limit near the zone, missing only data to reach “Candidates”/“Near zone”.'),
+    ()=>RT('Нет почти-кандидатов, которым не хватает только данных.','No almost-candidates missing only data.')],
+  ['high-risk',()=>RT('Высокий риск','High risk'),
+    ()=>RT('Автоматический риск 4–5 или критический флаг; ручное снижение риска не исключает бумагу.','Automatic risk 4–5 or a critical flag; a manual risk override does not exclude the stock.'),
+    ()=>RT('Нет бумаг с высоким автоматическим риском или критическими флагами.','No stocks with high automatic risk or critical flags.')]
+];
+function deskBucketReason(m,key){
+  if(key==='research'){const rs=(m.selection.bucketReasons.research||[]).map(dkSelR);return dkEsc(rs.join(' · ')||dkSelR('business-missing'));}
+  if(key==='discount'){const up=dkPct(m.valuation.upsidePct,0);return dkEsc(RT(`${up} к оценке аналитиков`,`${up} vs analyst valuation`)+(m.valuation.asOf?' · '+String(m.valuation.asOf).slice(0,10):''));}
+  if(key==='quality-growth'){const g=(m.quality.facts||{}).revenueGrowth;return dkEsc(RT(`Рост выручки ${dkPct(g,1)}, качество ${m.quality.grade||'—'}`,`Revenue growth ${dkPct(g,1)}, quality ${m.quality.grade||'—'}`));}
+  if(key==='high-risk'){const mr=deskMainRisk({blockers:m.timing.blockers,flags:m.timing.flags,level:m.risk.level});
+    return dkEsc(mr.k==='earnings'?DK_MR.earnings(sigEarnDays(m.identity.sym)):(DK_MR[mr.k]||DK_MR.none)());}
+  return dkEsc((m.timing.why&&m.timing.why[0])||'');
+}
+function deskBucketQualBadge(q){
+  if(!q||!q.applicable)return '—';
+  if(q.mode==='full')return `<b>${dkEsc(q.grade)}</b>`;
+  if(q.mode==='partial')return `≈<b>${dkEsc(q.grade||'')}</b>`;
+  return `<span class="dk-mut">${RT('пред.','prov.')}</span>`;
+}
+function deskBucketValBadge(v){
+  if(v.value!=null&&v.status!=='incomparable')return `<span class="dk-num ${v.upsidePct>=0?'dk-up':'dk-dn'}">${dkPct(v.upsidePct,0)}</span>`;
+  const pe=v.peContext||{};
+  return pe.value>0&&pe.comparable!==false?`P/E <span class="dk-num">${dkN(pe.value,1)}</span>`:'<span class="dk-mut">—</span>';
+}
+// «Загрузить»/«Обновить» — только в «Нужно изучить», по типу пропуска (§5: причина и кнопка догрузки).
+function deskBucketLoadBtn(m){
+  const rs=m.selection.bucketReasons.research||[];
+  if(rs.some(c=>c.indexOf('business-')===0)&&can('view.health'))return `<button type="button" class="dk-btn dk-sm" data-a="fund" data-k="${dkEsc(m.identity.sym)}">${RT('Загрузить','Load')}</button>`;
+  if(rs.some(c=>c.indexOf('price-')===0||c==='signal-missing'||c==='signal-stale')&&can('action.refresh_data'))return `<button type="button" class="dk-btn dk-sm" data-a="refresh1" data-k="${dkEsc(m.identity.key)}">${RT('Обновить','Refresh')}</button>`;
+  return '';
+}
+function deskBucketCardHTML(m,key){
+  const sec=m.identity,s=m.signal,t=m.timing,px=m.price.value,level=t.waitingLevel!=null?t.waitingLevel:(t.plan&&t.plan.entry>0?t.plan.entry:null);
+  return `<article class="dk-idea v-${dkEsc(t.verdict||'wait')}" data-a="sel" data-k="${dkEsc(sec.key)}" tabindex="0">
+    <div class="dk-idea-head"><div><b class="dk-tk">${dkEsc(sec.tk)}</b><small>${dkEsc(sec.sector||'')}</small></div>${s?dkPill(t.verdict,!!(sec.held||[]).length):`<span class="dk-tag">${RT('считаем…','loading…')}</span>`}</div>
+    <div class="dk-idea-dims dk-note"><span>${RT('Кач.','Qual.')} ${deskBucketQualBadge(m.quality)}</span><span>${deskBucketValBadge(m.valuation)}</span><span>${RT('Риск','Risk')} <b>${deskRiskWord(m.risk.level)}</b></span></div>
+    <div class="dk-idea-route"><span><small>${RT('Сейчас','Now')}</small><b class="dk-num">${dkPx(px)}</b></span><i>→</i><span><small>${t.waitingLevel!=null?RT('Жду цену','Wait for'):RT('Вход','Entry')}</small><b class="dk-num ${t.side==='short'?'dk-dn':'dk-up'}">${level!=null?dkPx(level):'—'}</b></span></div>
+    <p>${deskBucketReason(m,key)}</p>
+    <div class="dk-idea-add">${key==='research'?deskBucketLoadBtn(m):''}${dkWatchBtn(sec.key)}</div>
+  </article>`;
+}
+function deskBucketSectionHTML(def,buckets){
+  const[key,label,rule,emptyTx]=def,B=buckets[key]||{items:[],total:0};
+  const cards=B.items.map(m=>deskBucketCardHTML(m,key)).join('');
+  const note=key==='candidates'?`<p class="dk-note">${dkEsc(dkCandNote())}</p>`
+    :key==='discount'?`<p class="dk-note">${RT('«Дисконт к оценке» не утверждает истинную недооценку.','“Discount to valuation” does not claim true undervaluation.')}</p>`:'';
+  return `<section class="dk-panel dk-mb"><div class="dk-ph"><h2>${label()}</h2><span class="dk-cnt">${B.total}</span></div><p class="dk-d">${rule()}</p>${note}
+    ${cards?`<div class="dk-ideas dk-mt6">${cards}</div>`:`<div class="dk-empty">${DESK_UI.load.busy?RT('Сигналы ещё считаются…','Signals are loading…'):emptyTx()}</div>`}</section>`;
+}
+// Подборки — только производные P1-модели: без fetch, без перезаписи ручного списка/сортировки таблицы (§3.4/§5).
+// Порядок карточек внутри подборки перевычисляется вместе со всем экраном (deskRender/deskPaint уже откладывают
+// перерисовку во время ввода и переживают фокус/прокрутку — новый общий механизм, не отдельный для подборок).
+function deskIdeaBucketsHTML(){
+  const buckets=deskSelectionBuckets(deskPort(),Date.now());
+  return `<div class="dk-buckets dk-mb">${DK_BUCKET_DEF.map(def=>deskBucketSectionHTML(def,buckets)).join('')}</div>`;
+}
 function deskIdeasAllHTML(){
   const I=deskItems(),f=DESK_UI.f,C=SIG.CFG,R=deskScreenRows(I.items,f,DESK_UI.sort);
   const tabs=[...new Set(I.items.reduce((a,x)=>a.concat(x.sec.tabs),[]))];
@@ -1020,7 +1092,7 @@ function deskIdeasAllHTML(){
     if(!s)return `<tr class="dk-tr${DESK_UI.sel===x.key?' on':''}" data-a="sel" data-k="${dkEsc(x.key)}"><td><span class="dk-tk">${dkEsc(sec.tk)}</span><span class="dk-nm">${dkEsc(sec.name)}</span></td><td class="r dk-num">${dkPx(sec.price)}</td><td class="r c-opt">${dkDay(sec.day)}</td><td colspan="6" class="dk-mut">${RT('свечи грузятся…','candles loading…')}</td></tr>`;
     const p=deskPlanFor(x,s.side)||s.plan;
     return `<tr class="dk-tr${DESK_UI.sel===x.key?' on':''}" data-a="sel" data-k="${dkEsc(x.key)}"><td><span class="dk-tk">${dkEsc(sec.tk)}</span><span class="dk-nm">${dkEsc(sec.name)}</span>${sec.held.length?` <span class="dk-tag">${RT('в книге','in book')}</span>`:''}</td><td class="r dk-num">${dkPx(s.price)}<span class="dk-mut dk-xs"> ${dkCcy(sec.ccy)}</span></td><td class="r c-opt">${dkDay(s.day)}</td><td>${dkPhase(s)}</td><td class="c-opt">${s.near?`<span class="dk-tag">${dkEsc(s.near.src.replace(/\+/g,' · '))}</span> <span class="dk-num dk-mut">${dkPct(s.near.dist,1)}</span>`:'<span class="dk-mut">—</span>'}</td><td class="r dk-num dk-xs c-opt">${p.mode==='limit'?`<span class="dk-tag">${RT('лим.','lim.')} ${dkPct(p.dEntry,1)}</span> `:''}${dkPx(p.entry)} · <span class="dk-dn">${dkPx(p.stop)}</span> · <span class="dk-up">${dkPx(p.target)}</span></td><td class="r dk-num dk-b">${dkRR(p)}</td><td class="r c-opt"><span class="dk-bar"><i style="width:${s.score}%"></i></span> <span class="dk-num">${s.score}</span></td><td>${dkPill(s.verdict,!!sec.held.length)} ${dkFlags(s)}</td></tr>`;}).join('');
-  return `<div class="dk-filters">
+  return deskIdeaBucketsHTML()+`<div class="dk-filters">
       <div class="dk-seg" role="group" aria-label="${RT('Вердикт','Verdict')}">${[['all',RT('Все','All')],['buy','▲ '+RT('Купить','Buy')],['short','▼ '+RT('Шорт','Short')],['trim','◆ '+RT('Перегрев','Overheated')],['wait','○ '+RT('Ждать','Wait')]].map(([v,l])=>`<button class="${f.v===v?'on':''}" data-a="fv" data-v="${v}">${l}</button>`).join('')}</div>
       <select class="dk-sel" data-c="fside" aria-label="${RT('Сторона','Side')}">${opt([['all',RT('Обе стороны','Both sides')],['long','▲ '+RT('Лонг','Long')],['short','▼ '+RT('Шорт','Short')]],f.side)}</select>
       <select class="dk-sel" data-c="fphase" aria-label="${RT('Фаза','Phase')}">${opt(ph,f.phase)}</select>

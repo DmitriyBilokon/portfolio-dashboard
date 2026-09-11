@@ -249,7 +249,7 @@
     const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16);
     return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
   }
-  // Тема из CSS-токенов styles.css; SMA — палитра плана §7 (проверена на CVD и контраст).
+  // Тема из CSS-токенов desk.css; SMA — палитра плана §7 (проверена на CVD и контраст).
   function chartTheme() {
     const de = document.documentElement, cs = getComputedStyle(de), g = (n, f) => cs.getPropertyValue(n).trim() || f, dark = de.dataset.theme === 'dark';
     const long = g('--green', '#16a34a'), short = g('--red', '#dc2626');

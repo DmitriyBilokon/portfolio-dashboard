@@ -1,6 +1,6 @@
 // Service worker: офлайн-оболочка приложения.
 //  • Навигации (HTML) — network-first: свежий index онлайн, кэш офлайн.
-//  • Статические ассеты того же origin (app*.js, styles.css, data.js, favicon, manifest)
+//  • Статические ассеты того же origin (app*.js, desk.css, data.js, favicon, manifest)
 //    — stale-while-revalidate: мгновенно из кэша + фоновое обновление.
 //  • Живые данные (Supabase, worker PRICE_PROXY, Yahoo, CDN-шрифты/supabase-js) —
 //    чужой origin → идут в сеть и НЕ кэшируются (офлайн показываем встроенные данные).

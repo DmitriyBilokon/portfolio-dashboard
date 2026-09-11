@@ -1306,8 +1306,8 @@ grp('S7b-3 shell', function(){
   __ok('index.html: no classic shell ids', !/id="(tabs|subTabs|smaBanner|toolbarEl|searchBox|statsBar|contentArea|tableArea|thead|tbody|rankingArea|pf3Area|deskBtn|hubHome|langBtn|themeToggle)"/.test(html));
   __ok('index.html: head script sets desk unconditionally (no dash_desk, no ?desk)', /classList\.add\('desk'\)/.test(html) && !/dash_desk|desk=\(|deskToggle|'ui2'/.test(html));
   __ok('index.html: skip-link → #dkMain', /class="skip-link" href="#dkMain"/.test(html));
-  // Токены --v3-acc/--v3-acc2 встроенных блоков (styles.css, body.v3) — до переноса в desk.css (S7b-4); раньше класс ставил классический renderAll.
-  __ok('index.html: body.v3 kept for embedded blocks', /<body class="v3">/.test(html));
+  // S7b-4: styles.css удалён, body.v3 больше не нужен — --v3-acc/--v3-acc2 встроенных блоков теперь в html.desk (desk.css).
+  __ok('index.html: no styles.css link, no body.v3', !/styles\.css/.test(html) && !/<body class="v3">/.test(html));
   __ok('index.html: overlays kept', ['authOverlay','faqOverlay','setOverlay','prmOverlay','onbOverlay','authEmail','authPassword'].every(function(id){return html.indexOf('id="'+id+'"')>0;}));
   var oLoc=globalThis.location;globalThis.location={protocol:'https:',hash:'',href:''};
   try{var menu=deskMenuHTML();__ok('menu: no «turn off Trade Desk», Hub kept', menu.indexOf('data-a="off"')<0 && menu.indexOf('../hub/')>0);}finally{globalThis.location=oLoc;}

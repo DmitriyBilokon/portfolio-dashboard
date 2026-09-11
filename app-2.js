@@ -146,19 +146,21 @@ let pf3Cal={data:null,loaded:0,loading:false,failed:false};
 async function pf3LoadCalendar(){
   if(pf3Cal.loading||(pf3Cal.data&&pf3Cal.key===v3Key&&Date.now()-pf3Cal.loaded<6*3600*1000))return;
   pf3Cal.loading=true;pf3Cal.failed=false;
+  const key=v3Key;   // портфель запуска: пока грузится, пользователь может переключить портфель (desk — в шапке)
   try{
-    const d=pf3D();
+    const d=DATA[key];
     const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
     // Чанки (лимит подзапросов Cloudflare) загружаются параллельно.
     const chunks=[];
     for(let i=0;i<syms.length;i+=40)chunks.push(syms.slice(i,i+40).join(','));
     const parts=await Promise.all(chunks.map(c=>fetch(PRICE_PROXY+'?calendar='+encodeURIComponent(c)).then(r=>r.json()).catch(()=>null)));
     const j=Object.assign({},...parts.filter(p=>p&&typeof p==='object'&&!p.error));
-    if(Object.keys(j).length){pf3Cal.data=j;pf3Cal.loaded=Date.now();pf3Cal.key=v3Key;}
+    // Слияние, а не замена: desk держит здесь же даты отчётов книги/списка/сетапов (deskCal) — их не терять.
+    if(Object.keys(j).length){pf3Cal.data=Object.assign({},pf3Cal.data||{},j);pf3Cal.loaded=Date.now();pf3Cal.key=key;}
     else pf3Cal.failed=true;
   }catch(e){pf3Cal.failed=true;}
   pf3Cal.loading=false;
-  if(isV3()&&pf3Tab==='cal')renderPF3();
+  if(isV3()&&pf3Tab==='cal'){if(key!==v3Key)pf3LoadCalendar();else renderPF3();}   // сменили портфель во время загрузки — догрузить его
 }
 
 function pf3CalendarHTML(){
@@ -1535,6 +1537,7 @@ function simTabHTML(all){
 }
 // Клик по строке теста — открыть карточку акции (на вкладке, где она есть).
 function simOpen(tk){
+  if(typeof deskActive==='function'&&deskActive())return deskOpenTk(tk);   // Trade Desk (S7b-2): календарь «Позиций» открывает «Акцию»
   const home=simHomeTab(tk);
   if(!home||!tabAllowed(home))return;
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();

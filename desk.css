@@ -403,6 +403,32 @@ details:not([open])>summary.dk-ph{border-bottom:0}
 /* Переиспользованные блоки классики внутри desk */
 #desk .pf3-panel{background:transparent;border:0;box-shadow:none;margin:0}
 #desk .sc-stats{color:var(--dk-ink2)}
+/* S7b-2: разделы книги/журнала/«Сервиса» из блоков классики (.dk-classic). Верхний уровень — как панель desk,
+   внутри панели desk — плоско. Стили самих блоков — styles.css (pf3-*, plan-*, tax-*, cal-*…) через алиасы токенов. */
+.dk-classic{display:flex;flex-direction:column;gap:14px;min-width:0}
+#desk .dk-classic>.pf3-panel,#desk .dk-classic>section.pf3-grid>.pf3-panel{background:var(--dk-panel);border:1px solid var(--dk-line);border-radius:var(--dk-r2);box-shadow:var(--dk-shadow);padding:12px 14px}
+#desk .dk-panel .dk-classic>.pf3-panel,#desk .dk-how .dk-classic>.pf3-panel{background:transparent;border:0;box-shadow:none;padding:0}
+.dk-classic input:not([type=checkbox]):not([type=radio]):not([type=file]),.dk-classic select,.dk-classic textarea{font:inherit;color:var(--dk-ink);background:var(--dk-panel);border:1px solid var(--dk-line2);border-radius:var(--dk-r);padding:5px 8px;max-width:100%}
+.dk-seg-wrap{flex-wrap:wrap}
+.dk-nowrap{white-space:nowrap}
+a.dk-mi{display:block;text-decoration:none}
+.dk-expo{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.dk-kpi-in{width:7.5em;max-width:100%;font-size:18px;font-weight:600;padding:1px 6px}.dk-kpi-sub .dk-kpi-in{font-size:12px;font-weight:400;width:7em}
+.dk-kpi-sub{margin-top:4px}
+.dk-strip{gap:6px 10px;align-items:center}.dk-strip .pfsum-pp:empty{display:none}.dk-strip .pfsum-pp{margin:0}
+.dk-pp-row{flex-basis:100%;display:flex;gap:6px 16px;flex-wrap:wrap;font-size:12px}.dk-pp-row .pf3-pp{margin:0;padding:0;background:none;border:0}.dk-pp-row .pf3-pp:empty{display:none}
+.dk-grp-h,.dk-grp>summary{display:grid;grid-template-columns:minmax(0,1.6fr) 44px minmax(90px,1fr) minmax(110px,1.2fr) minmax(90px,1fr);gap:10px;align-items:center;padding:8px 14px}
+.dk-grp-h{font-size:11px;color:var(--dk-muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--dk-line)}
+.dk-grp{border-bottom:1px solid var(--dk-line)}.dk-grp:last-child{border-bottom:0}
+.dk-grp>summary{cursor:pointer;list-style:none;font-size:13px}.dk-grp>summary::-webkit-details-marker{display:none}.dk-grp>summary:hover{background:var(--dk-raised)}
+.dk-grp-n{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dk-grp-w{display:flex;align-items:center;gap:8px}.dk-grp-w .dk-bar{flex:1}
+.dk-grp-b{padding:0 8px 8px 22px}
+.dk-svc{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;padding:12px 14px}
+.dk-svc-it{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.dk-svc-list{max-height:520px;overflow:auto}
+.dk-svc-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}.dk-svc-add .dk-inp{width:auto;min-width:0;flex:1 1 110px}
+@media (max-width:600px){.dk-grp-h,.dk-grp>summary{grid-template-columns:minmax(0,1fr) 36px minmax(0,1fr);}.dk-grp-h span:nth-child(4),.dk-grp-h span:nth-child(5),.dk-grp>summary>:nth-child(4),.dk-grp>summary>:nth-child(5){display:none}}
 
 /* Телефон: рельса → нижняя панель, строки решений → карточки */
 @media (max-width:900px){

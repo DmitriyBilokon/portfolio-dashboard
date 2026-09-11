@@ -514,7 +514,11 @@ async function aiLoadIdxHist(){
     }catch(e){}
   }));
 }
-function aiEnsureIdxHist(){ if(_idxHistLoading||(IDX_HIST['^OMX']&&IDX_HIST['^NDX']))return; _idxHistLoading=true; aiLoadIdxHist().then(()=>{_idxHistLoading=false;if(isV3()&&pf3Tab==='ai')renderPF3()}); }
+// Попытка загрузки истории индексов — не чаще раза в 5 мин: при ошибке сети блоки (трек-рекорд AI, cash-drag) звали бы
+// её на каждой перерисовке (в Trade Desk фоновые перерисовки частые).
+let _idxTryAt=0;
+const idxTryOk=()=>{if(Date.now()-_idxTryAt<5*60e3)return false;_idxTryAt=Date.now();return true;};
+function aiEnsureIdxHist(){ if(_idxHistLoading||(IDX_HIST['^OMX']&&IDX_HIST['^NDX'])||!idxTryOk())return; _idxHistLoading=true; aiLoadIdxHist().then(()=>{_idxHistLoading=false;if(isV3()&&pf3Tab==='ai')renderPF3()}); }
 function idxCloseOn(sym,dateStr){
   const m=IDX_HIST[sym];if(!m||!dateStr)return null;let d=dateStr;
   for(let k=0;k<7;k++){if(m[d]!=null)return m[d];const dt=new Date(d+'T00:00:00Z');dt.setUTCDate(dt.getUTCDate()-1);d=dt.toISOString().slice(0,10)}
@@ -3478,9 +3482,10 @@ let pf3Risk={key:null,data:null,loaded:0,loading:false,failed:false};
 async function pf3LoadRisk(){
   if(pf3Risk.loading||(pf3Risk.data&&pf3Risk.key===v3Key&&Date.now()-pf3Risk.loaded<6*3600*1000))return;
   pf3Risk.loading=true;pf3Risk.failed=false;
+  const key=v3Key;   // портфель запуска (см. pf3LoadCalendar)
   try{
-    const d=pf3D();
-    const pos=d.rows.map((r,i)=>{recalcPF(i,v3Key);return{sym:exSymbol(r[2],r[8]),w:parseFloat(r[13])||0}}).filter(x=>x.sym&&x.w>0);
+    const d=DATA[key];
+    const pos=d.rows.map((r,i)=>{recalcPF(i,key);return{sym:exSymbol(r[2],r[8]),w:parseFloat(r[13])||0}}).filter(x=>x.sym&&x.w>0);
     const tot=pos.reduce((a,x)=>a+x.w,0);
     if(!(tot>0)||pos.length<2)throw new Error('no positions');
     const hists=await Promise.all(pos.map(p=>fetch(PRICE_PROXY+'?history='+encodeURIComponent(p.sym)+'&range=1y').then(r=>r.json()).catch(()=>null)));
@@ -3503,10 +3508,10 @@ async function pf3LoadRisk(){
     const vol=Math.sqrt(rets.reduce((a,b)=>a+(b-mean)*(b-mean),0)/(n-1))*Math.sqrt(252);
     const cagr=Math.pow(rets.reduce((a,b)=>a*(1+b),1),252/n)-1;
     const rf=0.02;   // безрисковая ставка для Шарпа
-    pf3Risk={key:v3Key,data:{cagr:cagr*100,vol:vol*100,sharpe:vol>0?(cagr-rf)/vol:null,days:n},loaded:Date.now(),loading:false,failed:false};
+    pf3Risk={key,data:{cagr:cagr*100,vol:vol*100,sharpe:vol>0?(cagr-rf)/vol:null,days:n},loaded:Date.now(),loading:false,failed:false};
   }catch(e){pf3Risk.loading=false;pf3Risk.failed=true;}
   pf3Risk.loading=false;
-  if(isV3()&&pf3Tab==='health'){const b=document.getElementById('pf3RiskBox');if(b)b.innerHTML=pf3RiskHTML();}
+  if(isV3()&&pf3Tab==='health'){if(key!==v3Key){pf3LoadRisk();return;}const b=document.getElementById('pf3RiskBox');if(b)b.innerHTML=pf3RiskHTML();}
 }
 function pf3RiskCard(title,valTxt,lv,ref){
   return`<div class="pf3-hcard ${lv==null?'':PF3_LV[lv].c}"><div class="pf3-hcard-top"><span class="pf3-hcard-t">${title}</span><span class="pf3-verdict ${lv==null?'':PF3_LV[lv].c}">${lv==null?'—':PF3_LV[lv].e+' '+T(PF3_LV[lv].l)}</span></div><div class="pf3-hmetrics"><b class="pf3-risk-v">${valTxt}</b><br>${ref}</div></div>`;
@@ -3529,8 +3534,10 @@ const CASH_TARGET=[15,20];   // правило инвестора: целева�
 let cashDrag={period:'ytd',bench:null};   // bench null = авто по базовой валюте
 let _cashIdxLoading=false;
 function cashDragSet(k,v){cashDrag[k]=v;renderPF3();}
+// «→ к сигналам докупки» cash-drag: в Trade Desk — «Позиции» (S7b-2), в классике — список портфеля.
+function pf3GoList(){if(typeof deskActive==='function'&&deskActive()){DESK_UI.bt='pos';deskGo('book');return;}pf3Tab='list';renderAll();}
 function cashDragEnsureIdx(){
-  if((IDX_HIST['^OMX']&&IDX_HIST['^NDX'])||_cashIdxLoading)return;
+  if((IDX_HIST['^OMX']&&IDX_HIST['^NDX'])||_cashIdxLoading||!idxTryOk())return;
   _cashIdxLoading=true;
   aiLoadIdxHist().then(()=>{_cashIdxLoading=false;if(isV3()&&pf3Tab==='health')renderPF3();});
 }
@@ -3589,7 +3596,7 @@ function cashDragHTML(d,rows){
     ? `<div class="cd-counter">${m.counterKr>=0?RT('Недополучено на избытке','Forgone on excess'):RT('Сэкономлено на избытке','Saved on excess')} ≈ <b>${pf3Fmt(Math.abs(m.counterKr),0)} ${unit}</b> ${RT('за','over')} ${({day:RT('день','day'),month:RT('месяц','month'),ytd:'YTD','1y':RT('1 год','1Y')})[period]}</div>`:'';
   // Вклад кэша в доходность по всем периодам (день/мес/YTD/год) — мини-ряд.
   const perRow=PERIODS.map(([k,l])=>{const br=idxReturnPct(bench,k);const dg=br==null?null:-(m.cashPct/100)*br;return`<div class="cd-pp"><span class="cd-pp-l">${l}</span><b class="${dg==null?'cd-dim':dg>=0?'pf3-up':'pf3-down'}">${dg==null?'…':(dg>=0?'+':'')+dg.toFixed(1)+'%'}</b></div>`;}).join('');
-  const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" onclick="pf3Tab='list';renderAll()">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
+  const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" onclick="pf3GoList()">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')} ${infoBtn('cashdrag')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
     <div class="cd-grid">

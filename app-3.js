@@ -879,6 +879,7 @@ function insiderHomeTab(tk){
   return null;
 }
 function insiderOpenCard(tk){
+  if(typeof deskActive==='function'&&deskActive())return deskOpenTk(tk);   // Trade Desk (S7b-2): «Акция» бумаги вместо классической карточки
   const home=insiderHomeTab(tk);
   if(!home){toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);return}
   curIdx=home;v3Key=home;pf3Sel=tk;pf3Tab='list';renderAll();

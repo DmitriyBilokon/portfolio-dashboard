@@ -1571,6 +1571,70 @@ grp('desk universe src', function(){
   __eq('src: own row', U.bySym['AAPL|USD'].src, {tab:'Nasdaq 100',i:0});
   DATA=_D;userRole=_role;
 });
+// ── S7b-2 (plans/s7b-map.md): перенос классики в Trade Desk — чистые части и контекст встроенных блоков ──
+grp('S7b-2 structure groups & sector filter', function(){
+  var G=deskGroups([{g:'Tech',valueSEK:100,plSEK:10},{g:' Tech ',valueSEK:-50,plSEK:-5},{g:'',valueSEK:50,plSEK:1},null]);
+  __eq('groups: short by absolute value, empty → «—», order by value', G.map(function(x){return [x.g,x.n,x.valueSEK,x.plSEK];}), [['Tech',2,150,5],['—',1,50,1]]);
+  __eq('groups: weight of the absolute total', G.map(function(x){return x.weightPct;}), [75,25]);
+  __eq('groups: empty input', deskGroups([]), []);
+  __eq('groups: zero value → no weight', deskGroups([{g:'X',valueSEK:0}])[0].weightPct, null);
+  var it=[{sec:{tk:'AAA',sector:'Tech',tabs:['T']},s:null},{sec:{tk:'BBB',sector:' ',tabs:['T']},s:null},{sec:{tk:'CCC',sector:'—',tabs:['T']},s:null}];
+  var tk=function(R){return R.map(function(x){return x.sec.tk;});};
+  __eq('sector filter: exact sector', tk(deskScreenRows(it,{sector:'Tech'},{k:'tk',d:1})), ['AAA']);
+  __eq('sector filter: «—» = no sector (blank or dash)', tk(deskScreenRows(it,{sector:'—'},{k:'tk',d:1})), ['BBB','CCC']);
+  __eq('sector filter: all', tk(deskScreenRows(it,{sector:'all'},{k:'tk',d:1})).length, 3);
+  __eq('service route in the address', [deskHashParse('#desk/service').route,deskHashOf('service','X|USD')], ['service','#desk/service']);
+});
+grp('S7b-2 classic context, AI portfolio filter, position fix', function(){
+  var _D=DATA,_pm=POS_META,_tr=PF_TRADES,_role=userRole,_ui=JSON.stringify({port:DESK_UI.port,route:DESK_UI.route}),_ctx=[curIdx,v3Key,pf3Tab,pf3Sel],_ap=AI_PORT;
+  userRole='admin';POS_META={};PF_TRADES=[{id:'t1',tab:'BK',tk:'ACME',name:'Acme',ccy:'USD',act:'buy',qty:10,price:100,date:'2026-09-01'}];
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Прибыль %','Стоимость'];
+  DATA={};DATA[PF3_KEY]={headers:h,v3:'1',port:'1',cashFree:1000,rows:[]};
+  DATA.BK={headers:h,v3:'1',port:'1',cashFree:500,rows:[[1,'Acme','ACME','','Tech','Рост',10,110,'USD',100,0,0,0,0]]};
+  __ok('deskCtx binds curIdx/v3Key/pf3Tab/pf3Sel', deskCtx('BK','tax','ACME') && [curIdx,v3Key,pf3Tab,pf3Sel].join()===['BK','BK','tax','ACME'].join());
+  __eq('deskCtx: unknown tab refused, context kept', [deskCtx('NOPE','cal'),v3Key], [false,'BK']);
+  deskCtx(PF3_KEY,'list');
+  var seen=deskWithCtx('BK',function(){return v3Key;});
+  __eq('deskWithCtx: inner context, then restored', [seen,v3Key,curIdx], ['BK',PF3_KEY,PF3_KEY]);
+  var html=deskWithCtx('BK',function(){return pfTradesHTML('ACME');});
+  __ok('stock trade history from another portfolio', /10 × 100/.test(html) && v3Key===PF3_KEY);
+  // AI-портфель — только фильтр «Позиций»: вне книги не выбирается, в риск не идёт.
+  DESK_UI.port=AIP_KEY;DESK_UI.route='today';
+  __ok('AI portfolio not selectable outside the book', deskPort()!==AIP_KEY);
+  DESK_UI.route='book';
+  __eq('AI portfolio in the book; risk tab stays a real portfolio', [deskPort(),deskRiskTab()!==AIP_KEY], [AIP_KEY,true]);
+  __eq('book sections of the AI portfolio: view-only set', deskBookSecs(AIP_KEY).map(function(x){return x[0];}), ['pos','struct','health','trades','ai']);
+  DESK_UI.port='all';
+  __ok('«All portfolios»: one-portfolio sections use a real portfolio', deskOnePort()!=='all' && !!DATA[deskOnePort()]);
+  // «Исправить позицию…»: только строка (кол-во/средняя), журнал и кэш не трогаются; 0 шт снимает мету.
+  posMetaSet('BK','ACME',{side:'long',stop:90,stop0:90,target:130});
+  __eq('fix: bad input refused', [!!deskPosFix('BK','ACME',-1,100).err,!!deskPosFix('BK','ACME',5,0).err,!!deskPosFix('BK','NOPE',5,100).err,!!deskPosFix(PF3_KEY+'x','ACME',5,100).err], [true,true,true,true]);
+  var r=deskPosFix('BK','acme',12,95.5),row=DATA.BK.rows[0];
+  __eq('fix: qty/avg written, journal and cash untouched, meta kept', [!!r.ok,row[6],row[9],PF_TRADES.length,DATA.BK.cashFree,!!posMetaGet('BK','ACME')], [true,12,95.5,1,500,true]);
+  __ok('fix: row recalculated', Math.abs(parseFloat(row[13])-12*110)<1e-6 || parseFloat(row[13])>0);
+  var _pr=PLAN_RULES;PLAN_RULES=[planRuleNorm({id:'plF',tab:'BK',tk:'ACME',act:'buy',side:'long',level:100,stop:90,target:130,status:'open'})];
+  posMetaSet('BK','ACME',{planId:'plF'});
+  deskPosFix('BK','ACME',0,0);
+  __eq('fix to 0: position closed, meta removed, plan rule done', [row[6],!!posMetaGet('BK','ACME'),row[9],PLAN_RULES[0].done,PLAN_RULES[0].status], [0,false,95.5,true,'done']);
+  PLAN_RULES=_pr;
+  var u=JSON.parse(_ui);DESK_UI.port=u.port;DESK_UI.route=u.route;
+  DATA=_D;POS_META=_pm;PF_TRADES=_tr;userRole=_role;AI_PORT=_ap;curIdx=_ctx[0];v3Key=_ctx[1];pf3Tab=_ctx[2];pf3Sel=_ctx[3];
+});
+grp('S7b-2 service screen smoke', function(){
+  var _D=DATA,_role=userRole,_ctx=[curIdx,v3Key,pf3Tab,pf3Sel],_svc=DESK_UI.svcTab;
+  userRole='admin';
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+  DATA={};DATA[PF3_KEY]={headers:h,v3:'1',port:'1',rows:[[1,'Micron','MU','','Semis','',5,100,'USD',80,0]]};
+  DATA.Mine={headers:h,v3:'1',custom:'1',rows:[[1,'Apple','AAPL','','Tech','',0,200,'USD',0,0]]};
+  DESK_UI.svcTab='Mine';
+  var s=deskServiceHTML();
+  __ok('service: data buttons with progress ids (admin)', /id="homeUpdBtn"/.test(s)&&/id="valBtn"/.test(s)&&/id="insiderBtn"/.test(s));
+  __ok('service: custom tab can be deleted, portfolio cannot', /data-a="svcdel" data-v="Mine"/.test(s)&&s.indexOf('data-a="svcdel" data-v="'+PF3_KEY.replace(/"/g,'&quot;')+'"')<0);
+  __ok('service: add form of a watchlist tab has no qty/price', /id="pf3AddTicker"/.test(s)&&!/id="pf3AddQty"/.test(s)&&v3Key==='Mine');
+  userRole='viewer';
+  __ok('service: viewer sees no admin tools', !/id="valBtn"/.test(deskServiceHTML()));
+  DATA=_D;userRole=_role;DESK_UI.svcTab=_svc;curIdx=_ctx[0];v3Key=_ctx[1];pf3Tab=_ctx[2];pf3Sel=_ctx[3];
+});
 
 // ── I1: список покупок, справедливая стоимость, уровень риска (plans/reference-features-implementation.md §2.1–2.3) ──
 grp('deskWatch', function(){

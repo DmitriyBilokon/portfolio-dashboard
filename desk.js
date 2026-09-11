@@ -2,8 +2,9 @@
 // (localStorage; ?desk=1 включает, ?desk=0 выключает). Пять экранов: Сегодня · Скринер · Акция · Позиции · Журнал.
 // Данные — глобалы приложения (DATA, POS_META, PLAN_RULES, PF_TRADES, DESK, FX), вселенная — deskUniverse,
 // сигналы — SIG через адаптер sigSnapRow (свечи ?history= в общем кэше _histCache), график — stockChartDraw.
-// Грузится после app-5.js и чистого desk-selection.js, перед desk-gloss.js. Старые экраны живут до S7: при активном desk renderAll/renderPF3
-// перерисовывают его (deskRender), классический вид открывается через deskClassic() и возвращается кнопкой.
+// Грузится после app-5.js и чистого desk-selection.js, перед desk-gloss.js. Старые экраны живут до S7b-3: при активном desk
+// renderAll/renderPF3 перерисовывают его (deskRender). С S7b-2 ни один экран desk в классику не ведёт — её блоки встроены
+// в разделы (deskCtx, plans/s7b-map.md §9); запасной путь — только «⋯ → Выключить Trade Desk».
 // Чистые функции (ядро ниже) покрыты тестами в tests/cases-app.js; DOM — после маркера «── DOM ──».
 
 // ── Ядро (чистые функции) ──────────────────────────────────────────────────
@@ -63,14 +64,17 @@ function deskTodayBuckets(items,pos){
   const P=pos||[];
   return {entries,waiting,rest,why,attn:P.filter(p=>p.act&&p.act!=='hold'),trims:P.filter(p=>p.act==='trim'||p.act==='take'||p.act==='earn'),pending:L.length};
 }
-// Строки скринера: фильтры f = {v, side, phase, tab, near, rr, held, q}, сортировка {k, d}. Бумаги без снимка
-// (свечи ещё грузятся) видны только без сигнальных фильтров и идут в конце.
+// Строки скринера: фильтры f = {v, side, phase, tab, sector, near, rr, held, q}, сортировка {k, d}. Бумаги без снимка
+// (свечи ещё грузятся) видны только без сигнальных фильтров и идут в конце. Сектор — как в строке бумаги (S7b-2:
+// замена Live Sector Tracker); бумаги без сектора — значение «—».
+const deskSectorOf=sec=>{const s=String((sec&&sec.sector)||'').trim();return s&&s!=='—'?s:'—';};
 function deskScreenRows(items,f,sort){
   f=f||{};const q=String(f.q||'').trim().toLowerCase(),sigF=(f.v&&f.v!=='all')||(f.side&&f.side!=='all')||(f.phase&&f.phase!=='all')||f.near||f.rr;
   const R=(items||[]).filter(x=>{
     const s=x.s,sec=x.sec||{};
     if(q&&!(String(sec.tk||'').toLowerCase().includes(q)||String(sec.name||'').toLowerCase().includes(q)))return false;
     if(f.tab&&f.tab!=='all'&&!(sec.tabs||[]).includes(f.tab))return false;
+    if(f.sector&&f.sector!=='all'&&deskSectorOf(sec)!==f.sector)return false;
     if(f.held&&!((sec.held||[]).length))return false;
     if(!s)return !sigF;
     if(f.v==='buy'&&s.verdict!=='buy')return false;
@@ -123,6 +127,15 @@ function deskJournalStats(trips,fx){
   const pos=C.filter(t=>t.pl>0).reduce((a,t)=>a+kr(t),0),neg=-C.filter(t=>t.pl<0).reduce((a,t)=>a+kr(t),0),P=C.filter(t=>t.plPct!=null);
   return {n:C.length,open:(trips||[]).length-C.length,win:C.filter(t=>t.pl>0).length,winRate:C.length?C.filter(t=>t.pl>0).length/C.length*100:null,
     avgPct:P.length?P.reduce((a,t)=>a+t.plPct,0)/P.length:null,pf:neg>0?pos/neg:(pos>0?Infinity:null),sumSEK:pos-neg};
+}
+// «Позиции → Структура» (S7b-2): группы позиций по полю g (сектор/тип). items: [{g, valueSEK, plSEK}] — стоимость
+// по модулю (шорт тоже занимает капитал), доля — от суммы модулей. Пустая группа → «—». Порядок — по стоимости, затем имени.
+function deskGroups(items){
+  const by={};let tot=0;
+  (items||[]).forEach(x=>{if(!x)return;const g=String(x.g||'').trim()||'—',v=Math.abs(+x.valueSEK||0),pl=+x.plSEK||0;
+    const o=by[g]||(by[g]={g,n:0,valueSEK:0,plSEK:0});o.n++;o.valueSEK+=v;o.plSEK+=pl;tot+=v;});
+  return Object.values(by).map(o=>Object.assign(o,{weightPct:tot>0?o.valueSEK/tot*100:null}))
+    .sort((a,b)=>(b.valueSEK-a.valueSEK)||(a.g<b.g?-1:a.g>b.g?1:0));
 }
 // Гистограмма результатов в R: корзины −3…+5 (крайние собирают хвосты).
 function deskRBins(Rs){
@@ -338,7 +351,7 @@ function deskHashOf(route,key,view){
 function deskHashParse(h){
   h=String(h||'');if(!/^#desk\//.test(h))return null;
   const [r,k,v]=h.slice(6).split('/');
-  const route=['today','screen','stock','book','journal','compare'].includes(r)?r:null;
+  const route=['today','screen','stock','book','journal','compare','service'].includes(r)?r:null;
   let key=null;if(k)try{key=decodeURIComponent(k);}catch(e){key=null;}
   return {route,key,view:route==='stock'&&DK_VIEWS.includes(v)?v:'decision'};
 }
@@ -377,7 +390,8 @@ function deskMainRisk(o){
 // ── DOM ────────────────────────────────────────────────────────────────────
 const DESK_LS='dash_desk';
 let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},years:1,port:null,jt:'mine',
-  f:{v:'all',side:'all',phase:'all',tab:'all',near:false,rr:false,held:false,q:''},sort:{k:'verdict',d:-1},
+  f:{v:'all',side:'all',phase:'all',tab:'all',sector:'all',near:false,rr:false,held:false,q:''},sort:{k:'verdict',d:-1},
+  bt:'pos',bai:'proto',planTab:null,svcTab:null,fix:null,draft:{},   // S7b-2: раздел книги, раздел AI книги, портфель редактора плана, вкладка «Сервиса», правка позиции, черновики полей встроенных блоков
   riskOvr:{},exec:null,edit:null,menu:false,load:{busy:false,done:0,total:0,at:0},calAt:0,qAt:0,_t:0,_pending:false,_timer:null,
   iv:'all',wmenu:null,wedit:null,drag:null,   // I1: вид «Идей» (all|watch|final), меню карточки списка, форма идеи, перетаскивание
   wiRaw:null,   // I2: вводимое в «Что если?» значение до подтверждения (change) — пересчёт на месте
@@ -469,8 +483,23 @@ function deskOpenRisk(){
 
 // Мои портфели (редактируемые, разрешённые RBAC) и выбранный для риска/книги.
 function deskPorts(){return Object.keys(DATA||{}).filter(k=>pf3MyPort(k)&&tabAllowed(k));}
-function deskPort(){const P=deskPorts();if(DESK_UI.port&&(DESK_UI.port==='all'||P.includes(DESK_UI.port)))return DESK_UI.port;return P.includes(PF3_KEY)?PF3_KEY:(P[0]||null);}
-function deskRiskTab(){const p=deskPort();return p&&p!=='all'?p:(deskPorts()[0]||null);}
+// AI-портфель (S7b-2, §3.2 карты) — только фильтр «Позиций» и только просмотр: в риск, «Что если?», исполнение не идёт.
+const deskAipOk=()=>can('view.ai_portfolio')&&!!(DATA[PF3_KEY]);
+function deskPort(){const P=deskPorts();if(DESK_UI.port&&(DESK_UI.port==='all'||P.includes(DESK_UI.port)||DESK_UI.port===AIP_KEY&&DESK_UI.route==='book'&&deskAipOk()))return DESK_UI.port;return P.includes(PF3_KEY)?PF3_KEY:(P[0]||null);}
+function deskRiskTab(){const p=deskPort();return p&&p!=='all'&&p!==AIP_KEY?p:(deskPorts()[0]||null);}
+// Разделы книги/журнала про один портфель: выбранный, а из «Все портфели» — портфель риска (подпись это говорит).
+function deskOnePort(){const p=deskPort();return p&&p!=='all'?p:deskRiskTab();}
+// Контекст встроенных блоков классики (S7b-2, карта §6): они читают v3Key/curIdx/pf3Tab, их асинхронные хвосты
+// (календарь, риск, развитие портфелей, AI, пре/пост) сверяют isV3()/pf3Tab и зовут renderPF3 → deskRender.
+function deskCtx(tab,sub,sel){if(!tab||!DATA[tab])return false;curIdx=tab;v3Key=tab;pf3Tab=sub||'list';pf3Sel=sel==null?null:sel;return true;}
+// Разовая отрисовка блока классики в чужом контексте (история сделок бумаги из «Решения») — контекст возвращается.
+function deskWithCtx(tab,fn){const o=[curIdx,v3Key,pf3Tab,pf3Sel];try{return deskCtx(tab,o[2],o[3])?fn():'';}finally{[curIdx,v3Key,pf3Tab,pf3Sel]=o;}}
+// Открыть «Акцию» по тикеру из встроенного блока классики (пиры оценки, календарь, новости) — вместо классической карточки.
+function deskOpenTk(tk){
+  const U=posTk(tk),I=deskItems(),it=I.items.find(x=>x.sec.tk===U)||I.items.find(x=>posTk(x.sec.tk)===U);
+  if(!it)return toast(RT('Бумага не найдена во вкладках','Stock not found in tabs'),true);
+  deskGo('stock',it.key,'decision');
+}
 function deskRiskKr(){const t=deskRiskTab();let k=0;try{k=t?bookRiskState(t).riskKr:0;}catch(e){}return k>0?k:5000;}
 // Вселенная + снимки v2 (мемо sigSnapRow). Кэшируется на один проход отрисовки.
 let _deskItems=null;
@@ -687,7 +716,7 @@ function deskEnable(){
   deskLoad();deskQuotes();
   if(!DESK_UI._timer)DESK_UI._timer=setInterval(()=>{if(deskActive()&&!document.hidden){deskQuotes();deskLoad();}},5*60e3);
 }
-function deskStopTimers(){if(DESK_UI._timer){clearInterval(DESK_UI._timer);DESK_UI._timer=null;}deskChartsDrop();deskScrollMode(false);}
+function deskStopTimers(){if(DESK_UI._timer){clearInterval(DESK_UI._timer);DESK_UI._timer=null;}deskChartsDrop();deskScrollMode(false);try{cardPPStop();pfSumPPStop();aipStop();}catch(e){}}
 function deskMount(){
   let el=document.getElementById('desk');
   if(el)return el;
@@ -698,9 +727,21 @@ function deskMount(){
   el.addEventListener('change',deskOnChange);
   el.addEventListener('input',deskOnInput);
   el.addEventListener('keydown',deskOnInputKey);
+  // S7b-2: черновики полей встроенных блоков классики (форма плана, записи сделки, чат AI…) — см. deskDraftRestore.
+  // Сброс — только если обработчик блока (inline onclick/onsubmit) запросил перерисовку, т.е. действие прошло; отказ с
+  // тостом («укажите тикер») перерисовку не зовёт — черновик остаётся. Счётчик DESK_UI._rq растит deskRender.
+  el.addEventListener('input',deskDraftNote);el.addEventListener('change',deskDraftNote);
+  const act='.dk-classic button,.dk-classic [type="submit"],.dk-classic a[onclick]';
+  el.addEventListener('click',e=>{DESK_UI._rq0=DESK_UI._rq;},true);
+  el.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest(act);if(b&&DESK_UI._rq!==DESK_UI._rq0)DESK_UI.draft={};});
+  el.addEventListener('submit',e=>{DESK_UI._rq0=DESK_UI._rq;},true);
+  el.addEventListener('submit',e=>{if(!(e.target.closest&&e.target.closest('.dk-classic')))return;
+    if(DESK_UI._rq!==DESK_UI._rq0){DESK_UI.draft={};const a=document.activeElement;if(a&&e.target.contains(a))a.blur();}});   // Enter в поле (чат AI): снять фокус — отложенная перерисовка покажет «думаю…»
   el.addEventListener('toggle',e=>{const d=e.target;if(!d||!d.dataset)return;   // toggle не всплывает
     if(d.dataset.det)deskDetSave(d.dataset.det,d.open);
     if(d.dataset.det==='st-ana'&&d.open)deskFanAttach();
+    // Ленивые блоки (S7b-2): тело рисуется только раскрытым — сценарии (запрос implied move), подробная оценка.
+    if(d.dataset.lazy&&d.open&&!d.querySelector('.dk-lazy-b'))deskRender(true);
     // «Рост бизнеса»: запрос — только по раскрытию; перерисовка — лишь при смене состояния (иначе toggle от
     // перерисованного open-блока зациклил бы рендер).
     const fk=d.dataset.fin;if(fk==null)return;
@@ -723,6 +764,7 @@ const deskTyping=()=>{const a=document.activeElement,el=document.getElementById(
 // в поле desk, она откладывается до ухода фокуса. force — действие пользователя, рисуем сразу.
 function deskRender(force){
   if(!deskActive())return;
+  DESK_UI._rq=(DESK_UI._rq||0)+1;   // S7b-2: признак «действие перерисовало экран» для черновиков (deskMount)
   if(!force&&deskTyping()){DESK_UI._pending=true;return;}
   clearTimeout(DESK_UI._t);
   DESK_UI._t=setTimeout(deskPaint,force?0:60);
@@ -742,7 +784,7 @@ function deskGo(r,key,view){
   if(key)DESK_UI.key=key;
   if(r==='compare'&&DESK_UI.route!=='compare')DESK_UI._cmpFrom=DESK_UI.route;   // «← Назад» сравнения — history.back() к этому экрану
   if(r==='stock')DESK_UI.stockView=DK_VIEWS.includes(view)?view:(key&&key!==prev?'decision':DESK_UI.stockView||'decision');
-  DESK_UI.route=r;DESK_UI.menu=false;DESK_UI.exec=null;DESK_UI.edit=null;DESK_UI.wiRaw=null;
+  DESK_UI.route=r;DESK_UI.menu=false;DESK_UI.exec=null;DESK_UI.edit=null;DESK_UI.wiRaw=null;DESK_UI.fix=null;DESK_UI.draft={};
   if(typeof deskTipHide==='function')deskTipHide(false);
   const h=deskHashOf(r,DESK_UI.key,DESK_UI.stockView);
   if(location.hash!==h){deskHistSave();try{history.pushState({dk:1},'',h);}catch(e){location.hash=h;}}
@@ -769,8 +811,9 @@ function deskPaint(){
   DESK_UI._pending=false;_deskItems=null;
   const root=deskMount(),main=document.getElementById('dkMain'),rail=document.getElementById('dkRail');
   rail.innerHTML=deskRailHTML();
-  const keep={};['dkChart','dkMini','dkFan'].forEach(id=>{const e=document.getElementById(id);if(e&&e.firstChild)keep[id]=e;});
+  const keep={};['dkChart','dkMini','dkFan','pfPerfBox'].forEach(id=>{const e=document.getElementById(id);if(e&&e.firstChild)keep[id]=e;});
   const scr=DESK_UI._restoreY!=null?DESK_UI._restoreY:(window.scrollY||0);DESK_UI._restoreY=null;   // Back/Forward — место из history.state
+  {const cb=document.getElementById('aiChatBox');DESK_UI._chat=cb?{top:cb.scrollTop,bottom:cb.scrollHeight-cb.scrollTop-cb.clientHeight<24,n:cb.children.length}:null;}   // S7b-2: прокрутка чата AI
   // Фокус клавиатуры переживает перерисовку (фоновые догрузки свечей/котировок перерисовывают экран): тот же id
   // или тот же data-a/data-k/data-v в новом DOM.
   const ae=document.activeElement,q=v=>CSS.escape(String(v));
@@ -778,15 +821,15 @@ function deskPaint(){
   const fi=fk?[...root.querySelectorAll(fk)].indexOf(ae):-1;   // одинаковых (две ⓘ с одним id) — та же по счёту
   deskCompareKeys();   // P4: выбор сравнения сверяется с аккаунтом и доступом до того, как чекбоксы экрана его прочитают
   let html='';
-  try{html=({today:deskTodayHTML,screen:deskScreenHTML,stock:deskStockHTML,book:deskBookHTML,journal:deskJournalHTML,compare:deskCompareHTML})[DESK_UI.route]();}
+  try{html=({today:deskTodayHTML,screen:deskScreenHTML,stock:deskStockHTML,book:deskBookHTML,journal:deskJournalHTML,compare:deskCompareHTML,service:deskServiceHTML})[DESK_UI.route]();}
   catch(e){console.error(e);html=`<div class="dk-panel dk-empty">${RT('Ошибка экрана: ','Screen error: ')}${dkEsc(e.message||e)}</div>`;}
   main.innerHTML=deskTopHTML()+html+deskCmpTrayHTML();
   // Вселенная сменилась (вход/синк/RBAC/новые вкладки) — догрузить свечи новых бумаг (кэшированные пропускаются).
   const L=DESK_UI.load,I=deskItems();
   if(!L.busy&&L.at&&L.key!==I.items.length+'|'+I.tabsN)setTimeout(()=>deskLoad(true),0);
   document.getElementById('dkModal').innerHTML=deskModalHTML();
-  deskChartsAttach(keep);
-  deskCompanyEnsure();deskCompareEnsure();deskJournalEnsure();
+  deskChartsAttach(keep);deskPerfAttach(keep.pfPerfBox);deskDraftRestore();
+  deskCompanyEnsure();deskCompareEnsure();deskJournalEnsure();deskClassicAfter();
   if(fk&&document.activeElement!==ae){const L=root.querySelectorAll(fk),n=L[fi]||L[0];if(n)try{n.focus({preventScroll:true});}catch(e){}}
   try{window.scrollTo(0,scr);}catch(e){}
   document.title=RT('Trade Desk','Trade Desk')+' · '+deskRouteLabel(DESK_UI.route);
@@ -874,20 +917,21 @@ async function deskCal(){
     if(j&&typeof j==='object'&&!j.error){pf3Cal.data=Object.assign({},pf3Cal.data||{},j);if(!pf3Cal.key)pf3Cal.key='__desk';if(deskActive())deskRender();}
   }catch(e){DESK_UI.calAt=0;}
 }
-// Живые котировки моих портфелей (цена позиций, P&L, стопы) + сверка плана.
+// Живые котировки моих портфелей (цена позиций, P&L, стопы) + сверка плана. S7b-2 (карта §4): и аналитические
+// таргеты/метрики/типы моих портфелей — раз в сутки на вкладку (гейт внутри pf3RefreshTargets), как автообновление классики.
 async function deskQuotes(manual){
   if(!PRICE_PROXY)return;
   if(!manual&&Date.now()-DESK_UI.qAt<4*60e3)return;
   DESK_UI.qAt=Date.now();
   let n=0;
-  for(const tab of deskPorts()){try{n+=await pf3FetchPrices(DATA[tab],tab);pf3LastRefresh[tab]=Date.now();}catch(e){}}
+  for(const tab of deskPorts()){try{n+=await pf3FetchPrices(DATA[tab],tab);pf3LastRefresh[tab]=Date.now();}catch(e){}try{await pf3RefreshTargets(DATA[tab]);}catch(e){}}
   try{planCheck();}catch(e){}
   if(manual)toast('🔄 '+RT(`Котировки: ${n} обновлено`,`Quotes: ${n} updated`),!n);
   if(deskActive())deskRender();
 }
 
 // ── Каркас: рельса, шапка, меню ──
-function deskRouteLabel(r){return ({today:RT('Сегодня','Today'),screen:RT('Идеи','Ideas'),stock:RT('Акция','Stock'),book:RT('Позиции','Positions'),journal:RT('Журнал','Journal'),compare:RT('Сравнение','Comparison')})[r]||r;}
+function deskRouteLabel(r){return ({today:RT('Сегодня','Today'),screen:RT('Идеи','Ideas'),stock:RT('Акция','Stock'),book:RT('Позиции','Positions'),journal:RT('Журнал','Journal'),compare:RT('Сравнение','Comparison'),service:RT('Сервис','Service')})[r]||r;}
 function deskRailHTML(){
   const I=[['today','<path d="M4 7h16M4 12h10M4 17h7"/>'],['screen','<path d="M4 5h16l-6 8v6l-4-2v-4z"/>'],['stock','<path d="M3 17l5-6 4 4 5-8 4 5"/>'],['book','<path d="M5 4h14v16H5zM9 4v16M5 9h4M5 14h4"/>'],['journal','<path d="M6 3h9l4 4v14H6zM9 12h6M9 16h6"/>']];
   const ready=(PLAN_RULES||[]).filter(r=>!r.done&&planStatus(r).ready).length;
@@ -913,7 +957,7 @@ function deskTopHTML(){
 }
 function deskSubHTML(I,snaps){
   const port=deskPort(),rk=deskRiskKr();
-  const ports=deskPorts(),sel=ports.length?`<select data-c="port" class="dk-sel" aria-label="${RT('Портфель','Portfolio')}">${DESK_UI.route==='book'||DESK_UI.route==='journal'?`<option value="all"${port==='all'?' selected':''}>${RT('Все портфели','All portfolios')}</option>`:''}${ports.map(k=>`<option value="${dkEsc(k)}"${k===port?' selected':''}>${dkEsc(TAB_LABEL(k))}</option>`).join('')}</select>`:'';
+  const ports=deskPorts(),aip=DESK_UI.route==='book'&&deskAipOk(),sel=ports.length?`<select data-c="port" class="dk-sel" aria-label="${RT('Портфель','Portfolio')}">${DESK_UI.route==='book'||DESK_UI.route==='journal'?`<option value="all"${port==='all'?' selected':''}>${RT('Все портфели','All portfolios')}</option>`:''}${ports.map(k=>`<option value="${dkEsc(k)}"${k===port?' selected':''}>${dkEsc(TAB_LABEL(k))}</option>`).join('')}${aip?`<option value="${dkEsc(AIP_KEY)}"${port===AIP_KEY?' selected':''}>🤖 ${RT('AI-портфель (просмотр)','AI portfolio (view)')}</option>`:''}</select>`:'';
   const d=new Date().toLocaleDateString(LANG==='en'?'en-GB':'ru-RU',{weekday:'long',day:'numeric',month:'long'});
   return `${dkEsc(d)} · ${RT('вселенная','universe')} <b class="dk-num">${I.items.length}</b> ${RT('бумаг из','stocks from')} ${I.tabsN} ${RT('вкладок','tabs')}${snaps<I.items.length?` · ${RT('сигналы','signals')} ${snaps}/${I.items.length}`:''} · ${sel} <span${dkG('risk-cfg')}>${RT('риск на сделку','risk per trade')}</span> <b class="dk-num">${dkKr(rk)}</b>`;
 }
@@ -925,12 +969,12 @@ function deskMenuHTML(){
     ${it('lang','🌐 '+(LANG==='ru'?'English':'Русский'))}
     ${it('risk','⚖️ '+RT('Риск: ','Risk: ')+deskNorm(DESK).riskPct+'% · '+RT('лимит книги ','book cap ')+deskNorm(DESK).riskCapPct+'%')}
     ${it('tg','📨 '+RT('Telegram-алерты: ','Telegram alerts: ')+(deskNorm(DESK).tg?RT('вкл','on'):RT('выкл','off')),` title="${RT('Воркер по крону шлёт в Telegram пробой стопа, достижение цели и срабатывание лимита плана — даже при закрытой странице','The worker cron sends stop hits, targets and plan limits to Telegram — even with the page closed')}"`)}
-    ${it('classic','🗂 '+RT('Классический вид','Classic view'))}
-    ${it('classic-plan','🎯 '+RT('План (классика)','Plan (classic)'))}
+    ${it('service','🧰 '+RT('Сервис: вкладки и данные','Service: tabs & data'),` title="${RT('Вкладки и бумаги, сбор данных вселенной, оценки и инсайдеров','Tabs and stocks, universe data, valuation and insider refresh')}"`)}
     ${can('action.manage_users')?it('settings','⚙️ '+RT('Доступ','Access')):''}
     ${isAdmin()?it('prompts','📜 '+RT('AI-промпты','AI prompts')):''}
     ${it('gloss','📖 '+RT('Словарь','Glossary'),` title="${RT('Что значит каждый термин и число Trade Desk — клавиша ?','What every Trade Desk term and number means — key ?')}"`)}
     ${it('faq','❓ '+RT('Справка','Help'))}
+    <a class="dk-mi" role="menuitem" href="${location.protocol==='file:'?'../hub/index.html':'../hub/'}" title="${RT('Назад в Hub','Back to Hub')}">🏠 Hub</a>
     ${it('off','↩ '+RT('Выключить Trade Desk','Turn off Trade Desk'))}
     ${currentUser?it('logout','⏻ '+RT('Выйти','Log out')):''}
   </div>`;
@@ -1068,7 +1112,7 @@ function deskTodayHTML(){
         <div class="dk-panel"><div class="dk-ph"><h2>${RT('План','Plan')}${dkGi('plan')}</h2><span class="dk-cnt">${plansArmed.length}</span>${fired.length?`<span class="dk-flag dk-ml"${dkG('plan')}>🔔 ${fired.length}</span>`:''}</div>
           ${plansArmed.length?plansArmed.slice(0,8).map(r=>deskPlanRuleRow(r)).join(''):`<div class="dk-empty">${RT('Взведённых планов нет — «В план» на сетапе или «Взвести» у лимита.','No armed plans — “Add to plan” on a setup or “Arm” at a limit.')}</div>`}
           <div class="dk-pad"><button class="dk-btn dk-sm" data-a="nav" data-r="journal" data-jt="plans">${RT('Все планы →','All plans →')}</button></div></div>
-        ${can('view.ai_proto')?`<div class="dk-panel dk-pad"><div class="dk-lbl dk-mb6">AI</div><button class="dk-btn" data-a="classic" data-tab="${dkEsc(deskRiskTab()||PF3_KEY)}" data-sub="ai">🤖 ${RT('AI Proto: разбор портфеля','AI Proto: portfolio review')}</button><div class="dk-note dk-mt6">${RT('Откроется в классическом виде; разбор бумаги — в «Акции».','Opens in the classic view; per-stock AI is on the Stock screen.')}</div></div>`:''}
+        ${can('view.ai_proto')?`<div class="dk-panel dk-pad"><div class="dk-lbl dk-mb6">AI</div><button class="dk-btn" data-a="booksec" data-v="ai" data-sub="proto">🤖 ${RT('AI Proto: разбор портфеля','AI Proto: portfolio review')}</button><div class="dk-note dk-mt6">${RT('«Позиции → AI» выбранного портфеля; разбор бумаги — в «Акции».','“Positions → AI” of the selected portfolio; per-stock AI is on the Stock screen.')}</div></div>`:''}
       </aside>
     </div>`;
 }
@@ -1175,6 +1219,9 @@ function deskIdeaBucketsHTML(){
 function deskIdeasAllHTML(){
   const I=deskItems(),f=DESK_UI.f,C=SIG.CFG,R=deskScreenRows(I.items,f,DESK_UI.sort);
   const tabs=[...new Set(I.items.reduce((a,x)=>a.concat(x.sec.tabs),[]))];
+  // Сектора (S7b-2, решение 4 карты — вместо Live Sector Tracker): по числу бумаг, «—» (без сектора) в конце.
+  const secN={};I.items.forEach(x=>{const s=deskSectorOf(x.sec);secN[s]=(secN[s]||0)+1;});
+  const secs=Object.keys(secN).sort((a,b)=>(a==='—')-(b==='—')||secN[b]-secN[a]||a.localeCompare(b));
   const ph=[['all',RT('Все фазы','All phases')],['up','↑ '+T('Аптренд')],['imp','⇈ '+T('Импульс')],['heat','△ '+T('Перегрев')],['undr','◇ '+T('Недооценка')],['corr','↓ '+T('Коррекция')],['rev','↗ '+T('Разворот')],['flat','→ '+T('Боковик')],['down','↘ '+T('Даунтренд')],['knife','⤓ '+T('Падающий нож')]];
   const opt=(arr,cur)=>arr.map(([v,l])=>`<option value="${dkEsc(v)}"${v===cur?' selected':''}>${dkEsc(l)}</option>`).join('');
   const cols=[['tk',RT('Бумага','Stock')],['price',RT('Цена','Price'),'r'],['day',RT('1д','1d'),'r c-opt'],['phase',RT('Фаза · тренд','Phase · trend')],['near',RT('Ближайший уровень','Nearest level'),'c-opt'],['dEntry',RT('Вход · Стоп · Цель','Entry · Stop · Target'),'r c-opt'],['rr','R/R','r'],['score',RT('Балл','Score'),'r c-opt'],['verdict',RT('Вердикт','Verdict')]];
@@ -1194,6 +1241,7 @@ function deskIdeasAllHTML(){
       <select class="dk-sel" data-c="fside" aria-label="${RT('Сторона','Side')}">${opt([['all',RT('Обе стороны','Both sides')],['long','▲ '+RT('Лонг','Long')],['short','▼ '+RT('Шорт','Short')]],f.side)}</select>
       <select class="dk-sel" data-c="fphase" aria-label="${RT('Фаза','Phase')}">${opt(ph,f.phase)}</select>
       <select class="dk-sel" data-c="ftab" aria-label="${RT('Вкладка','Tab')}">${opt([['all',RT('Все вкладки','All tabs')]].concat(tabs.map(t=>[t,TAB_LABEL(t)])),f.tab)}</select>
+      <select class="dk-sel" data-c="fsector" aria-label="${RT('Сектор','Sector')}">${opt([['all',RT('Все сектора','All sectors')]].concat(secs.map(s=>[s,(s==='—'?RT('без сектора','no sector'):T(s))+' · '+secN[s]])),f.sector||'all')}</select>
       <button class="dk-toggle${f.near?' on':''}" data-a="fnear" aria-pressed="${f.near}"${dkG('near')}>${RT(`у уровня ≤ ${C.nearPct} %`,`at level ≤ ${C.nearPct} %`)}</button>
       <button class="dk-toggle${f.rr?' on':''}" data-a="frr" aria-pressed="${f.rr}"${dkG('rr')}>R/R ≥ ${C.rrMin}</button>
       <button class="dk-toggle${f.held?' on':''}" data-a="fheld" aria-pressed="${f.held}">${RT('в книге','in book')}</button>
@@ -1503,7 +1551,8 @@ function deskStockHTML(){
   if(!it){const B=deskTodayBuckets(I.items,[]);it=B.entries[0]||I.items.find(x=>x.sec.held.length)||I.items[0];if(it)DESK_UI.key=it.key;}
   if(!it)return `<div class="dk-panel dk-empty">${RT('Бумаг нет — добавьте тикеры во вкладки или откройте поиск «/».','No stocks — add tickers to tabs or use search “/”.')}</div>`;
   // AI-блоки и тезис-монитор классики читают бумагу из v3Key/pf3Sel; их ответы привязаны к тикеру запуска, не к текущему выбору.
-  if(it.tab&&it.r){v3Key=it.tab;pf3Sel=String(it.r[2]||'');}
+  // S7b-2: и curIdx — поллер пре/пост (cardPPLoad) и обновление цены карточки сверяют isV3()&&pf3Sel.
+  if(it.tab&&it.r)deskCtx(it.tab,'list',String(it.r[2]||''));
   const view=DK_VIEWS.includes(DESK_UI.stockView)?DESK_UI.stockView:'decision',held=deskHeld(it);
   // «Компания» той же бумаги открывается с раскрытым «Ростом бизнеса»; сами запросы — deskCompanyEnsure после отрисовки.
   if(view==='company'&&DESK_UI._compFor!==it.key&&can('view.health'))DESK_UI.finOpen=it.key;
@@ -1529,7 +1578,8 @@ function deskStockHeadHTML(it,held,view){
   return `<div class="dk-stock-hd"><span class="dk-tk dk-tk-xl">${dkEsc(sec.tk)}</span><div class="dk-stock-id"><div class="dk-b">${dkEsc(sec.name)}${w&&w.tag?` <span class="dk-wtag">${dkEsc(w.tag)}</span>`:''}</div><div class="dk-mut dk-xs">${dkEsc([sec.sector,sec.type,sec.tabs.map(TAB_LABEL).join(', '),sec.ccy].filter(Boolean).join(' · '))}</div></div>
       <span class="dk-px dk-num">${dkPx(px)} ${dkCcy(sec.ccy)}</span>${dkDay(day)}${sec.live?`<span class="dk-tag"${dkG('live')}>live${age!=null?` · ${age} ${RT('мин','min')}`:''}</span>`:`<span class="dk-tag dk-mut"${dkG('live')}>${RT('не live','not live')}</span>`}
       ${s?dkPill(s.verdict,!!held)+dkPhase(s)+dkFlags(s):''}${pos}
-      <div class="dk-ctl">${dkCmpBox(it.key)}<button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(it.tab||'')}" data-k="${dkEsc(String((it.r&&it.r[2])||''))}" title="${RT('Полная карточка в классическом виде — временно, до переноса всех блоков (S7b)','Full card in the classic view — temporary, until every block is moved (S7b)')}">${RT('Ещё','More')} ···</button></div></div>`;
+      <div class="dk-ctl">${dkCmpBox(it.key)}</div>
+      ${it.r?`<div class="dk-pp-row"><span id="pf3PrePost" class="pf3-pp">${cardPPInner(sec.sym)}</span><span id="pf3Vol" class="pf3-pp">${cardVolInner(String(it.r[2]||''))}</span></div>`:''}</div>`;
 }
 function deskStockTabsHTML(view){
   const L=[['decision',RT('Решение','Decision')],['company',RT('Компания','Company')],['tech',RT('Техника','Technicals')]];
@@ -1556,7 +1606,7 @@ const DK_SEL_R={
   'valuation-incomparable':()=>RT('оценка несопоставима с ценой (валюта или листинг)','valuation not comparable with the price (currency or listing)'),
   'valuation-date-unknown':()=>RT('дата источника оценки неизвестна','valuation source date unknown'),
   'valuation-restricted':()=>RT('нет доступа к оценке','no access to valuation'),
-  'cache-incomparable':()=>RT('старый кэш без валюты листинга — нужен перезапуск «📐 Оценка»','old cache without listing currency — rerun “📐 Valuation”'),
+  'cache-incomparable':()=>RT('старый кэш без валюты листинга — нужен перезапуск «📐 Оценка» (⋯ → «Сервис»)','old cache without listing currency — rerun “📐 Valuation” (⋯ → “Service”)'),
   'level-not-calculated':()=>RT('уровень входа не рассчитан','entry level not calculated'),
   'pe-missing':()=>RT('P/E нет','no P/E'),'pe-nonpositive-eps':()=>RT('EPS ≤ 0 — P/E не сравнивается','EPS ≤ 0 — P/E not comparable')
 };
@@ -1676,7 +1726,7 @@ function deskDimsHTML(it,m,w){
   const link=(v,l)=>`<button type="button" class="dk-link" data-a="view" data-v="${v}">${l} →</button>`;
   return `<div class="dk-dims">
     ${tile(RT('Компания','Company')+dkGi('selection-quality'),q.v,q.d,link('company',RT('Бизнес','Business')))}
-    ${tile(RT('Цена','Price')+dkGi('selection-valuation'),vv,vd,link('company',RT('Оценка','Valuation')))}
+    ${tile(RT('Цена','Price')+dkGi('selection-valuation'),vv,vd,link('company',RT('Оценка','Valuation'))+(isAdmin()&&(v.reasonCodes||[]).includes('cache-incomparable')?` <button type="button" class="dk-link" data-a="nav" data-r="service">🧰 ${RT('Сервис → «📐 Оценка»','Service → “📐 Valuation”')} →</button>`:''))}
     ${tile(RT('Момент','Timing')+dkGi('dim-timing'),tv,td.join('<br>'),link('tech',RT('Техника','Technicals')))}
     ${tile(RT('Риск','Risk')+dkGi('risk-level'),dkRiskMeter(R),`<span${dkG('main-risk')}>${RT('Главный риск','Main risk')}</span>: ${mrT}${R.ovr&&R.auto&&R.ovr!==R.auto?' · '+RT(`авто ${R.auto}`,`auto ${R.auto}`):''}`,dkHow('risk',dkRiskHow(R,s)))}
   </div>`;
@@ -1738,7 +1788,7 @@ function deskEventsHTML(it){
 function deskInsHTML(it){
   const tk=String(it.sec.tk||'').toUpperCase(),v=INSIDER[tk]||INSIDER[posTk(tk)],h=`<h2>${RT('Инсайдеры','Insiders')}${dkGi('insiders')}</h2>`;
   const at=v&&v.at?`<span class="dk-note dk-ml">${RT('обновлено','updated')} ${dkEsc(String(v.at).slice(0,10))}${v.src==='fi'?' · FI':''}</span>`:'';
-  if(!v||v.err)return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-note dk-pad">${v&&v.err==='no-key'?RT('Для US-бумаг в воркере нужен FINNHUB_KEY.','FINNHUB_KEY is needed in the worker for US stocks.'):RT('Сводки нет. Её обновляет админ кнопкой «🕵 AI Insider» (US — Finnhub, SE — Finansinspektionen).','No summary. An admin refreshes it with “🕵 AI Insider” (US — Finnhub, SE — Finansinspektionen).')}</div></div>`;
+  if(!v||v.err)return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-note dk-pad">${v&&v.err==='no-key'?RT('Для US-бумаг в воркере нужен FINNHUB_KEY.','FINNHUB_KEY is needed in the worker for US stocks.'):RT('Сводки нет. Её обновляет админ: ⋯ → «Сервис» → «🕵 Инсайдеры» (US — Finnhub, SE — Finansinspektionen).','No summary. An admin refreshes it: ⋯ → “Service” → “🕵 Insiders” (US — Finnhub, SE — Finansinspektionen).')}</div></div>`;
   if(!v.txCount)return `<div class="dk-panel"><div class="dk-ph">${h}${at}</div><div class="dk-note dk-pad">${RT('Сделок инсайдеров за 30 дней нет.','No insider trades in the last 30 days.')}</div></div>`;
   const hl=insiderHeadline(v),cc=v.valCcy,tx=(v.tx||[]).filter(t=>t&&(t.code==='P'||t.code==='S')),routine=(v.tx||[]).length-tx.length;
   const cls=hl.cls==='pf3-up'?'dk-up':hl.cls==='pf3-down'?'dk-dn':'';
@@ -1787,6 +1837,7 @@ function deskTechHTML(it,held){
         <div class="dk-panel dk-chart-panel"><div id="dkChart" class="dk-chart">${it.r?'':RT('Нет строки бумаги','No row')}</div><div class="dk-note dk-padx">${lock?RT('линии — средняя, стоп и цель открытой позиции','lines — average, stop and target of the open position'):RT('линии — план выбранной стороны','lines — plan of the selected side')} · ATR ${RT('по High/Low (Wilder 14)','by High/Low (Wilder 14)')}${deskEarnOn()?` · <span${dkG('earn-line')}>${RT('маджента — прибыль × P/E, пунктир — прогноз аналитиков','magenta — earnings × P/E, dashed — analyst forecast')}</span>`:''}</div></div>
         <details class="dk-panel dk-mt14"${held?'':' open'}><summary class="dk-ph"><h2>${RT('История сигналов','Signal history')}${dkGi('sig-history')}</h2><span class="dk-cnt">${hc&&hc.rep?hc.rep.trades.length:0}</span><span class="dk-note dk-ml">${st?dkEsc(chartStatsText(st)):RT('реплей вердикта v2 по свечам','verdict v2 replayed over candles')}</span></summary>
           ${trades.length?`<div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Вход','Entry')}</th><th>${RT('Сторона','Side')}</th><th class="r">${RT('Цена','Price')}</th><th class="r">${RT('Стоп','Stop')}</th><th class="r">${RT('Цель','Target')}</th><th>${RT('Выход','Exit')}</th><th class="r"${dkG('r-unit')}>R</th><th>${RT('Причина','Reason')}</th></tr></thead><tbody>${trades.map(t=>{const x=t.exits[t.exits.length-1];return `<tr><td class="dk-num">${t.d}</td><td>${dkSide(t.side)}</td><td class="r dk-num">${dkPx(t.entry)}</td><td class="r dk-num dk-dn">${dkPx(t.stop0)}</td><td class="r dk-num dk-up">${dkPx(t.target)}</td><td class="dk-num">${t.open?RT('открыта','open'):(x?x.d+' · '+dkEsc(x.why):'')}</td><td class="r dk-num dk-b ${t.R>=0?'dk-up':'dk-dn'}">${dkR(t.R)}</td><td class="dk-ink2">${dkEsc(t.why||'')}</td></tr>`;}).join('')}</tbody></table></div>`:`<div class="dk-empty">${RT('Входов по правилам v2 на истории не было (или свечи ещё грузятся).','No v2 entries over the history (or candles are loading).')}</div>`}</details>
+        ${it.r?deskScenarioHTML(it):''}
       </div>
       <aside class="dk-aside">
         ${lock?`<details class="dk-panel"><summary class="dk-ph"><h2>${RT('Новый вход','New entry')}${dkGi('trade-plan')}</h2>${dkSide(side)}</summary>${deskPlanBox(it,side)}</details>`:`<div class="dk-panel"><div class="dk-ph"><h2>${RT('План сделки','Trade plan')}${dkGi('trade-plan')}</h2>${dkSide(side)}</div>${deskPlanBox(it,side)}</div>`}
@@ -1795,6 +1846,15 @@ function deskTechHTML(it,held){
         <details class="dk-panel"${dkDetAttr('st-lvl')}><summary class="dk-ph"><h2>${RT('Лестница уровней','Level ladder')}${dkGi('ladder')}</h2><span class="dk-note dk-ml">${RT('структурные, без пивотов','structural, no pivots')}</span></summary><div class="dk-ladder">${ladder.map(x=>`<div class="dk-lvl ${x.k}"><span class="z"></span><span class="src">${dkEsc(String(x.src).replace(/\+/g,' · '))}</span><span class="dk-num">${dkPx(x.v)}</span><span class="dist dk-num">${x.k==='now'?'':dkPct((x.v/s.price-1)*100,1)}</span></div>`).join('')}</div></details>`:''}
       </aside>
     </div>`;
+}
+// «Техника → Сценарии» (карта §3.4, решение 1): bull/base/bear и implied move опционов — блок классики pf3ScenarioHTML.
+// Тело рисуется только раскрытым: блок сам запрашивает implied move (pf3OptEnsure).
+function deskScenarioHTML(it){
+  const open=deskDetOpen('st-scn');
+  let body='';
+  if(open){try{body=pf3ScenarioHTML(it.d,it.r);}catch(e){console.warn('scenarios',e);}}
+  return `<details class="dk-panel dk-mt14" data-lazy="scn"${dkDetAttr('st-scn')}><summary class="dk-ph"><h2>📊 ${RT('Сценарии bull/base/bear','Bull/base/bear scenarios')}</h2><span class="dk-note dk-ml">${RT('цели по уровням и таргетам, implied move опционов · загрузка по раскрытию','targets from levels and analysts, options implied move · loads on open')}</span></summary>
+    ${open?`<div class="dk-lazy-b dk-padx dk-pb">${body?deskClassicBox(body):`<div class="dk-empty">${RT('Нет цены бумаги — сценарии не считаются.','No stock price — no scenarios.')}</div>`}<p class="dk-note">${RT('Сценарии — ориентир по уровням и таргетам, не правила входа: план, стоп и размер — у SIG выше.','Scenarios are a guide from levels and targets, not entry rules: plan, stop and size come from SIG above.')}</p></div>`:''}</details>`;
 }
 // Верх «Компании» (§3.2 I1 → P2): «Ключевой тезис» + «Моя зона покупки» (если бумага в списке), три плитки оценки
 // (цена на дату тезиса · справедливая стоимость · апсайд; только с правом view.valuation) и «Что покупаю / Главный риск».
@@ -1957,7 +2017,7 @@ function deskAnaHTML(it,px){
   const caps={};deskItems().items.forEach(x=>{const c=deskRowNum(x,'Кап-я');if(c>0)caps[String(x.sec.tk||'').toUpperCase()]=c;});
   const P=deskPeers(vk,VAL,caps);
   let peers='';
-  if(!(pe>0))peers=`<div class="dk-note">${RT('P/E нет (компания убыточна или мультипликаторы не загружены — «📐 Оценка» на Home).','No P/E (loss-making or multiples not loaded — “📐 Valuation” on Home).')}</div>`;
+  if(!(pe>0))peers=`<div class="dk-note">${RT('P/E нет (компания убыточна или мультипликаторы не загружены — ⋯ → «Сервис» → «📐 Оценка»).','No P/E (loss-making or multiples not loaded — ⋯ → “Service” → “📐 Valuation”).')}</div>`;
   else if(P.reason)peers=`<div class="dk-note">${P.reason==='nosector'?RT('Сектор бумаги неизвестен — пиров нет.','Sector unknown — no peers.'):RT(`В секторе «${dkEsc(P.sector)}» с P/E только ${P.n} бум. (нужно ≥ ${DESK_IDEA_CFG.ana.peersMin}).`,`Only ${P.n} peer(s) with P/E in “${dkEsc(P.sector)}” (need ≥ ${DESK_IDEA_CFG.ana.peersMin}).`)}</div>`;
   else{
     const all=P.peers.map(p=>p.pe).concat(pe),lo=Math.min(...all),hi=Math.max(...all),pos=v=>hi>lo?(v-lo)/(hi-lo)*100:50,D=deskMultDev(pe,P.median);
@@ -1975,7 +2035,13 @@ function deskAnaHTML(it,px){
     <p>${RT(`Пиры — до ${DESK_IDEA_CFG.ana.peersMax} бумаг того же сектора с P/E > 0, крупнейшие по капитализации; веер — последний год цены и линии к минимуму/консенсусу/максимуму через 12 мес.`,`Peers — up to ${DESK_IDEA_CFG.ana.peersMax} same-sector stocks with P/E > 0, largest by market cap; fan — the last year of price and lines to low/consensus/high in 12 months.`)}</p>`;
   const sum=tgt?`${RT('цель','target')} ${dkPx(tgt)} ${ccy}${up!=null?` <span class="${up>=0?'dk-up':'dk-dn'}">${dkPct(up,0)}</span>`:''}${pe>0?' · P/E '+dkN(pe,1):''}`:pe>0?'P/E '+dkN(pe,1):RT('нет таргетов и мультипликаторов','no targets or multiples');
   return `<details class="dk-panel dk-mt14 dk-ana"${dkDetAttr('st-ana')}><summary class="dk-ph" id="dkAnaSum"><h2>${RT('Аналитики и оценка','Analysts & valuation')}${dkGi('analysts')}</h2><span class="dk-note dk-ml">${sum}</span></summary>
-    <div class="dk-padx dk-ana-b">${metrics}${ratings}${fan}<div class="dk-sub-h">${RT('P/E против пиров','P/E vs peers')}${P.sector?` <span class="dk-mut">· ${dkEsc(P.sector)}</span>`:''}</div>${peers}${own.length?`<div class="dk-pe-own">${RT('Против своей истории','Vs own history')}: ${own.join(' · ')}</div>`:''}${dkHow('ana',how)}</div></details>`;
+    <div class="dk-padx dk-ana-b">${metrics}${ratings}${fan}<div class="dk-sub-h">${RT('P/E против пиров','P/E vs peers')}${P.sector?` <span class="dk-mut">· ${dkEsc(P.sector)}</span>`:''}</div>${peers}${own.length?`<div class="dk-pe-own">${RT('Против своей истории','Vs own history')}: ${own.join(' · ')}</div>`:''}${it.r?deskValDetailHTML(it):''}${dkHow('ana',how)}</div></details>`;
+}
+// «Оценка подробно» (карта §3.4, решение 1): EV/EBITDA, PEG, «ловушка стоимости», Fwd/TTM, пиры (valHTML) и изменения
+// таргетов за 30 дн (targetsBlockHTML) — блоки классики, тело только раскрытым; клик по пиру открывает его «Акцию».
+function deskValDetailHTML(it){
+  const open=deskDetOpen('st-val');
+  return `<details class="dk-how" data-lazy="val"${dkDetAttr('st-val')}><summary>📐 ${RT('Оценка подробно: EV/EBITDA, PEG, ловушка стоимости, пиры, изменения таргетов','Detailed valuation: EV/EBITDA, PEG, value trap, peers, target changes')}</summary>${open?`<div class="dk-lazy-b dk-how-b">${deskClassicBox(valHTML(it.d,it.r)+targetsBlockHTML(it.d,it.r))}</div>`:''}</details>`;
 }
 function deskFanAttach(kept){
   const box=document.getElementById('dkFan'),det=box&&box.closest('details'),it=DESK_UI.route==='stock'?deskSecOf(DESK_UI.key):null;
@@ -2011,13 +2077,42 @@ function deskPosPanel(p,it,noPri){
         <div class="s"><div class="dk-lbl"><span${dkG('stop')}>${RT('Стоп','Stop')}</span>${p.stop0&&p.stop0!==p.stop?` · <span${dkG('stop0')}>${RT('был ','was ')}${dkPx(p.stop0)}</span>`:''}</div><b class="dk-num">${p.stop?dkPx(p.stop):'—'}</b><div class="dk-mut dk-xs dk-num">${c.toStopPct!=null?RT('до стопа ','to stop ')+dkN(c.toStopPct,1)+'%':''}</div></div>
         <div class="t"><div class="dk-lbl"${dkG('target')}>${RT('Цель','Target')}</div><b class="dk-num">${p.target?dkPx(p.target):'—'}</b><div class="dk-mut dk-xs dk-num">${c.toTargetPct!=null?RT('до цели ','to target ')+dkN(c.toTargetPct,1)+'%':''}</div></div></div>
       <div class="dk-kv dk-p0"><span class="dk-lbl"${dkG('pl-open')}>P&amp;L</span><span class="v dk-num ${c.plSEK>=0?'dk-up':'dk-dn'}">${dkPct(c.plPct)} · ${c.plSEK>=0?'+':''}${dkKr(c.plSEK)}</span><span class="dk-lbl"${dkG('r-now')}>${RT('R сейчас (от стопа входа)','R now (from entry stop)')}</span><span class="v dk-num">${dkR(c.rNow)}</span><span class="dk-lbl"${dkG('pos-risk')}>${RT('Открытый риск до стопа','Open risk to stop')}</span><span class="v dk-num">${c.riskSEK!=null?dkKr(c.riskSEK):'—'}</span></div>
-      ${ed?deskEditForm(p):''}
+      ${ed?deskEditForm(p):''}${DESK_UI.fix&&DESK_UI.fix.key===p.tab+'|'+p.tk?deskFixForm(p):''}
       ${canT?`<div class="dk-row">${!p.stop&&sug?`<button class="dk-btn${noPri?'':' pri'} dk-sm" data-a="pm-accept" data-tab="${k}" data-k="${t}" data-stop="${sug.stop}" data-target="${sug.target}" title="${RT('Стоп и цель из плана v2 этой стороны','Stop & target from the v2 plan of this side')}">${RT('Принять стоп','Accept stop')} ${dkPx(sug.stop)} · ${RT('цель','target')} ${dkPx(sug.target)}</button>`:''}
         ${p.stop&&c.rNow!=null&&c.rNow>=1&&(p.side==='short'?p.stop>p.entry:p.stop<p.entry)?`<button class="dk-btn dk-sm" data-a="pm-be" data-tab="${k}" data-k="${t}">${RT('Стоп в б/у','Stop to b/e')}</button>`:''}
         ${p.stop&&trail!=null?`<button class="dk-btn dk-sm" data-a="pm-trail" data-tab="${k}" data-k="${t}" data-stop="${trail}">${RT('Трейл 2·ATR','Trail 2·ATR')} → ${dkPx(trail)}</button>`:''}
         <button class="dk-btn dk-sm" data-a="pm-edit" data-tab="${k}" data-k="${t}">${RT('Стоп/цель…','Stop/target…')}</button>
-        <button class="dk-btn dk-sm" data-a="close" data-tab="${k}" data-k="${t}" data-key="${dkEsc(it.key)}">${p.side==='short'?RT('Откупить…','Cover…'):RT('Продать…','Sell…')}</button></div>`:''}
+        <button class="dk-btn dk-sm" data-a="close" data-tab="${k}" data-k="${t}" data-key="${dkEsc(it.key)}">${p.side==='short'?RT('Откупить…','Cover…'):RT('Продать…','Sell…')}</button>
+        <button class="dk-btn dk-sm" data-a="pos-fix" data-tab="${k}" data-k="${t}" title="${RT('Кол-во и средняя без записи сделки — сверка с брокером','Qty and average without a trade record — broker reconciliation')}">${RT('Исправить позицию…','Fix position…')}</button></div>`:''}
+      ${can('view.trades')?deskPosTradesHTML(p):''}
     </div></div>`;
+}
+// История сделок бумаги в её портфеле (карта §3.4): блок классики pfTradesHTML(tk) — записи журнала с удалением.
+function deskPosTradesHTML(p){
+  const n=(PF_TRADES||[]).filter(t=>(t.tab||PF3_KEY)===p.tab&&String(t.tk||'').toUpperCase()===String(p.tk).toUpperCase()).length;
+  return `<details class="dk-how"${dkDetAttr('st-trades')}><summary>${RT('История сделок','Trade history')} · ${n}</summary><div class="dk-how-b">${deskClassicBox(deskWithCtx(p.tab,()=>pfTradesHTML(p.tk)))}</div></details>`;
+}
+// «Исправить позицию…» (карта §3.4, решение 1 — ✏️ «Моя позиция» классики): кол-во и средняя в строке портфеля без
+// записи сделки. Журнал, налоги и кэш не меняются; кол-во 0 закрывает позицию и снимает её мету (стоп/цель/сторона).
+function deskPosFix(tab,tk,qty,avg){
+  if(!can('action.edit_trades'))return {err:RT('Нет права вносить сделки','No permission to record trades')};
+  const d=DATA[tab],t=posTk(tk);if(!d||!pf3MyPort(tab))return {err:RT('Выберите портфель','Select a portfolio')};
+  const ri=d.rows.findIndex(r=>posTk(r[2])===t);if(ri<0)return {err:RT('Нет позиции','No position')};
+  if(!(qty>=0)||(qty>0&&!(avg>0)))return {err:RT('Кол-во ≥ 0, средняя > 0','Qty ≥ 0, average > 0')};
+  const r=d.rows[ri];r[6]=Math.round(qty*1e6)/1e6;if(qty>0)r[9]=avg;
+  if(!(qty>0)){   // как закрытие в deskExecApply: правило плана позиции исполнено, мета снята (иначе bookcheck слал бы алерты по нему)
+    const m=posMetaGet(tab,t),rule=m&&m.planId&&(PLAN_RULES||[]).find(x=>x.id===m.planId);
+    if(rule){rule.done=true;rule.hitAt=0;planRuleNorm(rule);}
+    posMetaDel(tab,t);
+  }
+  recalcPF(ri,tab);scheduleSave();
+  return {ok:true};
+}
+function deskFixForm(p){
+  const F=DESK_UI.fix||{},qv=F.qty!=null?F.qty:p.qty,av=F.avg!=null?F.avg:p.entry;
+  return `<div class="dk-edit"><label>${RT('Кол-во','Qty')} <input class="dk-inp dk-num" id="dkFxQty" type="number" step="any" min="0" value="${dkEsc(qv)}"></label><label>${RT('Средняя','Average')} (${dkEsc(p.ccy)}) <input class="dk-inp dk-num" id="dkFxAvg" type="number" step="any" min="0" value="${dkEsc(av)}"></label>
+    <button class="dk-btn pri dk-sm" data-a="pos-fix-save" data-tab="${dkEsc(p.tab)}" data-k="${dkEsc(p.tk)}">${RT('Сохранить','Save')}</button><button class="dk-btn dk-sm" data-a="pos-fix-x">${RT('Отмена','Cancel')}</button>
+    <div class="dk-warn">⚠ ${RT('Без записи сделки: журнал, налоги (K4) и кэш не меняются — только сверка с брокером. Покупку или продажу вносите через «Исполнить…» / «Продать…».','No trade record: the journal, tax (K4) and cash stay unchanged — broker reconciliation only. Record a buy or sale via “Execute…” / “Sell…”.')}</div></div>`;
 }
 function deskEditForm(p){
   const E=DESK_UI.edit||{},sv=E.stop!=null?E.stop:(p.stop||''),tv=E.target!=null?E.target:(p.target||'');
@@ -2027,21 +2122,103 @@ function deskEditForm(p){
 }
 
 // ═══════════════════ Позиции ═══════════════════
+// S7b-2 (plans/s7b-map.md §3.3): разделы книги вместо под-вкладок классики. Разделы про один портфель (всё, кроме
+// «Позиций» и «Структуры») из «Все портфели» показывают портфель риска — подпись deskOneNote это говорит.
+function deskBookSecs(port){
+  const aip=port===AIP_KEY;
+  return [['pos','📋 '+RT('Позиции','Positions'),true],
+    ['struct','🏭 '+RT('Структура','Breakdown'),can('view.sectors')||can('view.type')||can('view.diversification')],
+    ['cal','📅 '+RT('Дивиденды и отчёты','Dividends & earnings'),!aip&&can('view.dividends')],
+    ['health','🩺 '+RT('Состояние','Health'),can('view.health')],
+    ['stats','📊 '+RT('Статистика','Statistics'),!aip&&isAdmin()&&deskOnePort()===PF3_KEY],
+    ['trades','📜 '+RT('Сделки AI','AI trades'),aip&&can('view.trades')],
+    ['ai','🤖 AI',aip?can('view.ai_proto')||isAdmin():can('view.ai_proto')||can('view.suggestion')||isAdmin()]].filter(x=>x[2]);
+}
+const deskOneNote=()=>deskPort()==='all'?`<p class="dk-note dk-mb">${RT(`Раздел ведётся по одному портфелю — показан «${dkEsc(TAB_LABEL(deskOnePort()))}». Другой — в выборе портфеля в шапке.`,`This section covers one portfolio — showing “${dkEsc(TAB_LABEL(deskOnePort()))}”. Pick another in the header.`)}</p>`:'';
+const deskClassicBox=(html,cls)=>`<div class="dk-classic${cls?' '+cls:''}">${html}</div>`;
 function deskBookHTML(){
-  const P=deskBook(),port=deskPort(),tabs=port==='all'?deskPorts():(port?[port]:[]);
+  const port=deskPort();
+  if(port===AIP_KEY)try{aipSyncTab();}catch(e){}   // позиции AI-портфеля материализуются в DATA[AIP_KEY] (как на вкладке классики)
+  const tabs=port==='all'?deskPorts():(port?[port]:[]);
   if(!tabs.length)return `<div class="dk-panel dk-empty">${RT('Нет доступных портфелей.','No portfolios available.')}</div>`;
+  const S=deskBookSecs(port),bt=S.some(x=>x[0]===DESK_UI.bt)?DESK_UI.bt:'pos';
+  const seg=`<div class="dk-seg dk-mb dk-seg-wrap" role="tablist" aria-label="${RT('Раздел книги','Book section')}">${S.map(([v,l])=>`<button class="${bt===v?'on':''}" data-a="bt" data-v="${v}" role="tab" aria-selected="${bt===v}">${l}</button>`).join('')}</div>`;
+  const one=deskOnePort();
+  let body='';
+  try{
+    if(bt==='pos')body=deskBookPosHTML(tabs,port);
+    else if(bt==='struct')body=deskStructHTML(tabs,port);
+    else if(bt==='cal'){deskCtx(one,'cal');body=deskOneNote()+deskClassicBox(pf3CalendarHTML());}
+    else if(bt==='health'){deskCtx(one,'health');body=deskOneNote()+deskClassicBox(pf3HealthTab());}
+    else if(bt==='stats'){deskCtx(PF3_KEY,'stats');body=deskClassicBox(pfPerfHTML()+pfCmpHTML()+pfDeepCmpHTML());}
+    else if(bt==='trades'){deskCtx(AIP_KEY,'trades');body=deskClassicBox(pfTradesHTML());}
+    else if(bt==='ai')body=deskBookAiHTML(port===AIP_KEY?AIP_KEY:one);
+  }catch(e){console.error(e);body=`<div class="dk-panel dk-empty">${RT('Ошибка раздела: ','Section error: ')}${dkEsc(e.message||e)}</div>`;}
+  return seg+body;
+}
+// «Позиции → AI» (карта §3.3): AI Proto, Предложение, Анализ воркера, AI-прогноз; у AI-портфеля — AI-прогноз и Управление AI.
+function deskBookAiHTML(tab){
+  const aip=tab===AIP_KEY;
+  const L=(aip?[['fcast','✨ '+RT('AI-прогноз','AI forecast'),isAdmin()],['aim','🤖 '+RT('Управление AI','AI controls'),can('view.ai_proto')||isAdmin()]]
+    :[['proto','🤖 AI Proto',can('view.ai_proto')],['prop','⚖️ '+RT('Предложение','Proposal'),can('view.suggestion')],['analysis','📈 '+RT('Анализ','Analysis'),can('view.ai_proto')],['fcast','✨ '+RT('AI-прогноз','AI forecast'),isAdmin()]]).filter(x=>x[2]);
+  if(!L.length)return `<div class="dk-panel dk-empty">${RT('Нет доступа к AI-разделам.','No access to AI sections.')}</div>`;
+  const v=L.some(x=>x[0]===DESK_UI.bai)?DESK_UI.bai:L[0][0];
+  const seg=L.length>1?`<div class="dk-seg dk-mb" role="tablist" aria-label="AI">${L.map(([k,l])=>`<button class="${v===k?'on':''}" data-a="bai" data-v="${k}" role="tab" aria-selected="${v===k}">${l}</button>`).join('')}</div>`:'';
+  deskCtx(tab,v==='proto'?'ai':v);
+  const d=DATA[tab];
+  const html=v==='proto'?pf3AiHTML():v==='prop'?pf3PropHTML():v==='analysis'?pf3AnalysisHTML():v==='fcast'?`<section class="pf3-panel">${pf3FcastAiHTML(d)}</section>`:aipManageHTML();
+  return seg+(aip?'':deskOneNote())+`<p class="dk-note dk-mb">${RT('AI — отдельное мнение: правила SIG и вердикты «Решения» оно не меняет.','AI is a separate opinion: it changes neither SIG rules nor Decision verdicts.')}</p>`+deskClassicBox(html);
+}
+// «Позиции → Структура»: группы по сектору и типу — строки desk (не классический список с колонками старых движков),
+// диверсификация по GICS — блок классики для одного портфеля.
+function deskStructHTML(tabs,port){
+  const P=deskBook(),row=p=>{const d=DATA[p.tab];return d&&d.rows.find(r=>posTk(r[2])===p.tk);};
+  const X=P.map(p=>{const r=row(p);return {p,sec:r?String(r[4]||''):'',typ:r?String(r[5]||''):''};});
+  const val=x=>x.p.calc?x.p.calc.valueSEK:0,pl=x=>x.p.calc?x.p.calc.plSEK:0;
+  const block=(key,title,ico)=>{
+    const G=deskGroups(X.map(x=>({g:key==='sec'?x.sec:x.typ,valueSEK:val(x),plSEK:pl(x)})));
+    const rows=G.map(g=>{const mem=X.filter(x=>((key==='sec'?x.sec:x.typ).trim()||'—')===g.g).sort((a,b)=>Math.abs(val(b))-Math.abs(val(a)));
+      return `<details class="dk-grp"><summary><span class="dk-grp-n">${ico(g.g)} ${dkEsc(T(g.g))}</span><span class="dk-num dk-mut">${g.n}</span><span class="dk-num">${dkKr(g.valueSEK)}</span><span class="dk-grp-w"><span class="dk-bar"><i style="width:${dkCssPct(g.weightPct)}%"></i></span><b class="dk-num">${g.weightPct!=null?dkN(g.weightPct,1)+' %':'—'}</b></span><span class="dk-num ${g.plSEK>=0?'dk-up':'dk-dn'}">${g.plSEK>=0?'+':''}${dkKr(g.plSEK)}</span></summary>
+        <div class="dk-grp-b">${mem.map(x=>`<div class="dk-att" data-a="open" data-k="${dkEsc(x.p.sym+'|'+x.p.ccy)}"><div class="dk-row"><span class="dk-tk">${dkEsc(x.p.tk)}</span><span class="dk-nm">${dkEsc(x.p.name)}</span>${x.p.side==='short'?dkSide('short'):''}${port==='all'?`<span class="dk-note">${dkEsc(TAB_LABEL(x.p.tab))}</span>`:''}<span class="dk-num dk-ml">${dkKr(val(x))}</span><span class="dk-num ${x.p.calc&&x.p.calc.plPct>=0?'dk-up':'dk-dn'}">${x.p.calc?dkPct(x.p.calc.plPct):'—'}</span></div></div>`).join('')}</div></details>`;}).join('');
+    return `<div class="dk-panel dk-mb"><div class="dk-ph"><h2>${title}</h2><span class="dk-cnt">${G.length}</span><span class="dk-note dk-ml">${RT('стоимость по модулю · доля от суммы позиций','absolute value · share of all positions')}</span></div>
+      ${G.length?`<div class="dk-grp-h"><span>${RT('Группа','Group')}</span><span>${RT('Поз.','Pos.')}</span><span>${RT('Стоимость','Value')}</span><span>${RT('Доля','Share')}</span><span>P&amp;L</span></div>${rows}`:`<div class="dk-empty">${RT('Открытых позиций нет.','No open positions.')}</div>`}</div>`;
+  };
+  const one=deskOnePort(),dv=can('view.diversification')&&pf3IsPort(one);
+  if(dv)deskCtx(one,'alloc');
+  return (can('view.sectors')?block('sec','🏭 '+RT('По секторам','By sector'),g=>secIcon(g)):'')
+    +(can('view.type')?block('typ','🏷 '+RT('По типам','By type'),g=>PF3_TYPE_META[g]?PF3_TYPE_META[g][0]:'🏷'):'')
+    +(dv?deskOneNote()+deskClassicBox(pf3DiversHTML()):'');
+}
+// Сводка «Позиций» одного портфеля (карта §3.3 «Сводка»): кэш и плечо с правкой, P/L за всё время с реализованным,
+// пре/пост баланса (поллер pfSumPP — deskClassicAfter), курсы. Для «Все портфели» — суммы без правки.
+function deskBookPosHTML(tabs,port){
+  const P=deskBook();
   const L=P.filter(p=>p.side!=='short'),S=P.filter(p=>p.side==='short'),sum=(a,f)=>a.reduce((x,p)=>x+(f(p)||0),0);
   const lv=sum(L,p=>p.calc&&p.calc.valueSEK),sv=sum(S,p=>p.calc&&p.calc.valueSEK),pl=sum(P,p=>p.calc&&p.calc.plSEK);
   const rs=tabs.map(t=>bookRiskState(t)),risk=sum(rs,r=>r.openRiskSEK),cap=sum(rs,r=>r.capSEK),eq=sum(rs,r=>r.equitySEK),riskPct=eq>0?risk/eq*100:0,capPct=deskNorm(DESK).riskCapPct;
   const cash=tabs.reduce((a,t)=>a+(parseFloat(DATA[t].cashFree)||0)*pf3BaseFx(DATA[t]),0),noStop=P.filter(p=>!p.stop).length;
   const kpi=(l,v,d,cls)=>`<div class="dk-panel dk-stat"><div class="dk-lbl">${l}</div><div class="dk-v dk-num ${cls||''}">${v}</div><div class="dk-d">${d}</div></div>`;
+  const one=port!=='all'?port:null,d1=one&&DATA[one],edit=!!(d1&&pf3MyPort(one)&&can('action.edit_trades'));
+  if(one)deskCtx(one,'list');   // pf3SetNum пишет в pf3D()
+  // P/L за всё время — как сводка классики: открытые + реализованные по журналу, % — от всех вложений (себестоимость
+  // текущих позиций + проданных лотов).
+  const realized=tabs.reduce((a,t)=>a+pfTotalRealizedSEK(t),0),allTime=pl+realized;
+  const allCost=sum(P,p=>(p.entry||0)*p.qty*(FX[p.ccy]||1))+tabs.reduce((a,t)=>a+pfTotalRealizedCostSEK(t),0);
+  const unit=d1?pf3BaseUnit(d1):'kr',free=d1?(parseFloat(d1.cashFree)||0):0,lev=one===PF3_KEY?(parseFloat(d1.leverage)||0):0;
+  const numIn=(key,v,lbl)=>`<input class="dk-inp dk-num dk-kpi-in" type="number" step="any" min="0" value="${dkEsc(v)}" onchange="pf3SetNum('${key}',this.value)" aria-label="${dkEsc(lbl)}">`;
+  const cashV=edit?`${numIn('cashFree',free,RT('Свободный кэш','Free cash'))} <small>${dkEsc(unit)}</small>`:dkKr(cash);
+  // Плечо — только «Портфель 3.0» (как сводка классики): строкой в KPI «Кэш», не отдельной плиткой.
+  const levL=one===PF3_KEY&&can('data.show_leverage')?`<div class="dk-kpi-sub">${RT('плечо','leverage')} ${edit?numIn('leverage',lev,RT('Кредитное плечо','Leverage'))+' '+dkEsc(unit):dkKr(lev*pf3BaseFx(d1))} · ${RT('с плечом ','with leverage ')}${dkKr(eq+lev*pf3BaseFx(d1))}</div>`:'';
+  const fxChip=c=>typeof FX[c]==='number'?`<span class="dk-chip dk-num">1 ${c} = ${dkN(FX[c],2)} kr</span>`:'';
+  const strip=port===AIP_KEY?'':`<div class="dk-row dk-mb dk-strip">${one?`<div id="pfSumPP" class="pf3-pp pfsum-pp">${pfSumPPInner(d1)}</div>`:''}<span class="dk-lbl">💱 ${RT('Курсы','FX')}</span>${fxChip('USD')+fxChip('EUR')+fxChip('NOK')+fxChip('DKK')+fxChip('GBP')}<span class="dk-note">${RT('ECB · база SEK','ECB · SEK base')}${dkEsc(fxFreshLbl())}</span></div>`;
   return `<div class="dk-expo">
       ${kpi(RT('Нетто экспозиция','Net exposure')+dkGi('net'),dkKr(lv-sv),RT('лонг − шорт','long − short'))}
       ${kpi(RT('Брутто','Gross')+dkGi('gross'),dkKr(lv+sv),`${L.length} ${RT('лонг','long')} · ${S.length} ${RT('шорт','short')}`)}
       ${kpi(RT('P&L открытых','Open P&L')+dkGi('pl-open'),(pl>=0?'+':'')+dkKr(pl),RT('по текущим ценам','at current prices'),pl>=0?'dk-up':'dk-dn')}
+      ${kpi(RT('P/L за всё время','All-time P/L')+dkGi('pl-all'),(allTime>=0?'+':'')+dkKr(allTime),(allCost>0?dkPct(allTime/allCost*100,1)+' '+RT('от всех вложений','on all invested')+' · ':'')+RT('реализовано ','realized ')+(realized>=0?'+':'')+dkKr(realized),allTime>=0?'dk-up':'dk-dn')}
       ${kpi(RT('Открытый риск','Open risk')+dkGi('open-risk'),dkKr(risk),`${dkN(riskPct,1)}% ${RT('капитала · лимит','of equity · cap')} ${capPct}% <span class="dk-bar"><i style="width:${cap>0?Math.min(100,risk/cap*100).toFixed(0):0}%;${risk>cap?'background:var(--dk-short)':''}"></i></span>${noStop?`<br><span class="dk-flag">${noStop} ${RT('без стопа — риск не учтён','without stop — risk not counted')}</span>`:''}`,risk>cap?'dk-dn':'')}
-      ${kpi(RT('Кэш','Cash')+dkGi('equity'),dkKr(cash),RT('капитал ','equity ')+dkKr(eq))}
-    </div>
+      ${kpi(RT('Кэш','Cash')+dkGi('equity'),cashV,RT('капитал ','equity ')+dkKr(eq)+(edit?' · '+RT('правка — без сделки','edit — no trade'):'')+levL)}
+    </div>${strip}${port===AIP_KEY?`<p class="dk-note dk-mb">🤖 ${RT('AI-портфель ведёт воркер по своей стратегии — здесь только просмотр: без исполнения, правки и риска книги.','The worker runs the AI portfolio by its strategy — view only here: no execution, edits or book risk.')}</p>`:''}
     <div class="dk-panel dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Бумага','Stock')}</th><th>${RT('Сторона','Side')}</th><th class="r">${RT('Кол-во','Qty')}</th><th class="r"${dkG('avg')}>${RT('Средняя','Avg')}</th><th class="r">${RT('Сейчас','Now')}</th><th class="r"${dkG('pl-open')}>P&amp;L</th><th class="r"${dkG('stop')}>${RT('Стоп','Stop')}</th><th class="r"${dkG('target')}>${RT('Цель','Target')}</th><th${dkG('progress')}>${RT('Стоп ◆ цена → цель','Stop ◆ price → target')}</th><th class="r"${dkG('r-now')}>${RT('R сейчас','R now')}</th><th class="r"${dkG('pos-risk')}>${RT('Риск','Risk')}</th><th${dkG('pos-act')}>${RT('Действие','Action')}</th></tr></thead><tbody>
       ${P.length?P.map(p=>{const c=p.calc||{};const prog=c.progress,pe=p.stop&&p.target&&p.target!==p.stop?Math.max(0,Math.min(1,(p.side==='short'?-1:1)*(p.entry-p.stop)/Math.abs(p.target-p.stop))):null;
         return `<tr class="dk-tr" data-a="open" data-k="${dkEsc(p.sym+'|'+p.ccy)}"><td><span class="dk-tk">${dkEsc(p.tk)}</span><span class="dk-nm">${dkEsc(p.name)}</span>${port==='all'?`<div class="dk-note">${dkEsc(TAB_LABEL(p.tab))}</div>`:''}</td><td>${dkSide(p.side)}</td><td class="r dk-num">${dkN(p.qty,0)}</td><td class="r dk-num">${dkPx(p.entry)}</td><td class="r dk-num">${dkPx(c.now)}</td>
@@ -2050,15 +2227,27 @@ function deskBookHTML(){
           <td>${prog!=null?`<span class="dk-track"${dkG('progress')}>${pe!=null?`<b style="left:${Math.round(pe*100)}%"></b>`:''}<i class="${c.toStopPct!=null&&c.toStopPct<=2?'danger':''}" style="left:${Math.round(prog*100)}%"></i></span>`:'<span class="dk-mut">—</span>'}</td>
           <td class="r dk-num">${dkR(c.rNow)}</td><td class="r dk-num">${c.riskSEK!=null?dkKr(c.riskSEK):'—'}</td><td>${dkActPill(p.act)}<div class="dk-note">${dkEsc(p.note)}</div></td></tr>`;}).join(''):`<tr><td colspan="12" class="dk-empty">${RT('Открытых позиций нет.','No open positions.')}</td></tr>`}
     </tbody></table></div>
-    <div class="dk-row dk-mt14">${tabs.length===1?`<button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(tabs[0])}" data-sub="alloc">🏭 ${RT('Структура','Breakdown')}</button>${isAdmin()&&tabs[0]===PF3_KEY?`<button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(tabs[0])}" data-sub="stats">📊 ${RT('Статистика','Statistics')}</button>`:''}<button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(tabs[0])}" data-sub="tax">🧾 ${RT('Налоги','Tax')}</button><button class="dk-btn dk-sm" data-a="classic" data-tab="${dkEsc(tabs[0])}" data-sub="health">🩺 ${RT('Состояние','Health')}</button>`:''}</div>
     <p class="dk-note dk-mt14">${RT('Позиция = строка портфеля (кол-во и средняя — как в налоге, genomsnittsmetoden) + сторона/стоп/цель. P&L шорта зеркальный; «R сейчас» — ход в единицах начального риска (средняя − стоп входа), перенос стопа его не меняет. Открытый риск считается до текущих стопов и сравнивается с лимитом книги; позиции без стопа в нём не учтены.','Position = portfolio row (qty and average as in tax, genomsnittsmetoden) + side/stop/target. Short P&L is mirrored; “R now” is the move in units of the initial risk (average − entry stop), moving the stop does not change it. Open risk is measured to current stops against the book cap; positions without a stop are not counted.')}</p>`;
 }
 
 // ═══════════════════ Журнал ═══════════════════
+// S7b-2: «Записи» (журнал PF_TRADES с ручной записью, удалением и импортом CSV), «Налоги» (K4, genomsnittsmetoden),
+// «AI-разборы» (админ) — блоки классики для одного портфеля; «Планы» — таблица desk + редактор классики.
 function deskJournalHTML(){
-  const jt=DESK_UI.jt;
-  const seg=`<div class="dk-seg dk-mb" role="tablist">${[['mine',RT('Мои сделки','My trades'),dkG('trips')],['plans',RT('Планы','Plans'),dkG('plans')],['rules',RT('Бэктест правил','Rules backtest'),dkG('backtest')],['ideas',RT('Наблюдения','Tracked ideas'),dkG('journal-ideas')]].map(([v,l,g])=>`<button class="${jt===v?'on':''}" data-a="jt" data-v="${v}" role="tab" aria-selected="${jt===v}"${g}>${l}</button>`).join('')}</div>`;
-  return seg+(jt==='rules'?deskRulesHTML():jt==='plans'?deskPlansHTML():jt==='ideas'?deskJournalIdeasHTML():deskMineHTML());
+  const T=[['mine',RT('Мои сделки','My trades'),dkG('trips'),true],['trades',RT('Записи','Records'),'',can('view.trades')],['plans',RT('Планы','Plans'),dkG('plans'),true],
+    ['tax',RT('Налоги','Tax'),'',can('view.trades')],['rules',RT('Бэктест правил','Rules backtest'),dkG('backtest'),true],['ideas',RT('Наблюдения','Tracked ideas'),dkG('journal-ideas'),true],
+    ['stkai',RT('AI-разборы','AI reviews'),'',isAdmin()]].filter(x=>x[3]);
+  const jt=T.some(x=>x[0]===DESK_UI.jt)?DESK_UI.jt:'mine';
+  const seg=`<div class="dk-seg dk-mb dk-seg-wrap" role="tablist">${T.map(([v,l,g])=>`<button class="${jt===v?'on':''}" data-a="jt" data-v="${v}" role="tab" aria-selected="${jt===v}"${g}>${l}</button>`).join('')}</div>`;
+  let body='';
+  try{
+    const noPort=`<div class="dk-panel dk-empty">${RT('Нет доступных портфелей.','No portfolios available.')}</div>`;
+    if(jt==='trades')body=deskCtx(deskOnePort(),'trades')?deskOneNote()+deskClassicBox(pfTradesHTML()):noPort;
+    else if(jt==='tax')body=deskCtx(deskOnePort(),'tax')?deskOneNote()+deskClassicBox(pfTaxHTML()):noPort;
+    else if(jt==='stkai')body=deskClassicBox(stkLogHTML());
+    else body=jt==='rules'?deskRulesHTML():jt==='plans'?deskPlansHTML():jt==='ideas'?deskJournalIdeasHTML():deskMineHTML();
+  }catch(e){console.error(e);body=`<div class="dk-panel dk-empty">${RT('Ошибка раздела: ','Section error: ')}${dkEsc(e.message||e)}</div>`;}
+  return seg+body;
 }
 // ── P5b: «Наблюдения» — исходы явно отмеченных идей (§7): группы по версиям/стороне/горизонту и записи ──
 const DK_J_WHY={
@@ -2155,9 +2344,20 @@ function deskPlansHTML(){
     ${R.length?R.map(r=>{const st=planStatus(r),rr=planRR(r,st.price),key=exSymbol(r.tk,r.ccy||'USD')+'|'+String(r.ccy||'USD').toUpperCase();
       const stat=r.done?RT('исполнено','done'):r.status==='open'?RT('позиция открыта','position open'):st.invalid?'✖ '+RT('сетап сломан','setup broken'):st.ready?'🔔 '+RT('пора','now'):st.gapPct!=null?RT('до уровня ','to level ')+dkN(Math.abs(st.gapPct),1)+'%':RT('взведено','armed');
       return `<tr class="dk-tr${r.done?' dk-done':''}" data-a="open" data-k="${dkEsc(key)}"><td><span class="dk-tk">${dkEsc(r.tk)}</span><span class="dk-nm">${dkEsc(r.name||'')}</span>${r.note?`<div class="dk-note">${dkEsc(String(r.note).slice(0,100))}</div>`:''}</td><td>${planActIcon(r.act,r.side)} ${planActLabel(r.act,r.side)}</td><td class="r dk-num">${st.lvl>0?dkPx(st.lvl):'—'}</td><td class="r dk-num dk-dn">${r.stop?dkPx(r.stop):'—'}</td><td class="r dk-num dk-up">${r.target?dkPx(r.target):'—'}</td><td class="r dk-num">${rr!=null?dkN(rr,1):'—'}</td><td class="r dk-num">${r.qty||'—'}</td><td>${stat}</td><td class="dk-note">${dkEsc(TAB_LABEL(r.tab||PF3_KEY))}</td>
-        <td>${can('action.edit_plan')?`${r.done?'':`<button class="dk-btn dk-sm" data-a="plandone" data-id="${dkEsc(r.id)}" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}<button class="dk-btn dk-sm" data-a="planx" data-id="${dkEsc(r.id)}" title="${RT('Удалить','Delete')}">🗑</button>`:''}</td></tr>`;}).join(''):`<tr><td colspan="10" class="dk-empty">${RT('Планов нет.','No plans.')}</td></tr>`}
+        <td class="dk-nowrap">${can('action.edit_plan')?`<button class="dk-btn dk-sm" data-a="planed" data-id="${dkEsc(r.id)}" title="${RT('Редактировать','Edit')}" aria-label="${RT('Редактировать','Edit')}">✏</button>${r.done?'':`<button class="dk-btn dk-sm" data-a="plandone" data-id="${dkEsc(r.id)}" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}<button class="dk-btn dk-sm" data-a="planx" data-id="${dkEsc(r.id)}" title="${RT('Удалить','Delete')}">🗑</button>`:''}</td></tr>`;}).join(''):`<tr><td colspan="10" class="dk-empty">${RT('Планов нет — новое правило или импорт из совета AI: «✏️ Редактор плана» ниже.','No plans — add a rule or import AI advice: “✏️ Plan editor” below.')}</td></tr>`}
   </tbody></table></div>
-  <p class="dk-note dk-mt14">${RT('Правила проверяются при каждом обновлении котировок (тост и push в браузере); Telegram без открытой страницы — в S8 (bookcheck).','Rules are checked on every quote refresh (toast and browser push); Telegram without an open page — in S8 (bookcheck).')}</p>`;
+  ${deskPlanEditorHTML()}
+  <p class="dk-note dk-mt14">${RT('Правила проверяются при каждом обновлении котировок (тост и push в браузере), а воркер по крону шлёт в Telegram стоп, цель и лимиты плана даже при закрытой странице (⋯ → «Telegram-алерты»).','Rules are checked on every quote refresh (toast and browser push); the worker cron also sends plan stops, targets and limits to Telegram with the page closed (⋯ → “Telegram alerts”).')}</p>`;
+}
+// Редактор плана (карта §3.3 «План»): создание, правка, «📍 Открыта», импорт из совета AI, уведомления — блок классики
+// planRulesHTML для одного портфеля (правила привязаны к вкладке). ✏ в таблице открывает его на правиле и его портфеле.
+function deskPlanEditorHTML(){
+  if(!can('view.plan'))return '';
+  const P=deskPorts(),tab=DESK_UI.planTab&&P.includes(DESK_UI.planTab)?DESK_UI.planTab:deskOnePort();
+  if(!tab||!deskCtx(tab,'plan'))return '';
+  const sel=P.length>1?`<select class="dk-sel dk-ml" data-c="plantab" aria-label="${RT('Портфель редактора','Editor portfolio')}">${P.map(k=>`<option value="${dkEsc(k)}"${k===tab?' selected':''}>${dkEsc(TAB_LABEL(k))}</option>`).join('')}</select>`:'';
+  return `<details class="dk-panel dk-mt14" id="dkPlanEd"${dkDetAttr('j-plan-ed')}><summary class="dk-ph"><h2>✏️ ${RT('Редактор плана','Plan editor')}</h2><span class="dk-note dk-ml">${RT('новое правило, правка, «📍 Открыта», импорт из совета AI','new rule, edit, “📍 Opened”, import from AI advice')}</span></summary>
+    <div class="dk-pad"><div class="dk-row dk-mb6"><span class="dk-lbl">${RT('Портфель','Portfolio')}</span>${sel||`<b>${dkEsc(TAB_LABEL(tab))}</b>`}</div>${deskClassicBox(planRulesHTML())}</div></details>`;
 }
 // Бэктест правил: реплей вердикта v2 по всем бумагам с загруженными свечами (мемо на записи кэша).
 function deskRulesHTML(){
@@ -2180,6 +2380,44 @@ function deskRulesHTML(){
       ${rows.length?rows.map(t=>{const x=t.exits[t.exits.length-1];return `<tr class="dk-tr" data-a="open" data-k="${dkEsc(t.key)}"><td><span class="dk-tk">${dkEsc(t.tk)}</span><span class="dk-nm">${dkEsc(t.name)}</span></td><td>${dkSide(t.side)}</td><td class="dk-num">${t.d}</td><td class="dk-num">${t.open?RT('открыта','open'):(x?x.d+' · '+dkEsc(x.why):'')}</td><td class="r dk-num">${dkPx(t.entry)}</td><td class="r dk-num dk-dn">${dkPx(t.stop0)}</td><td class="r dk-num dk-up">${dkPx(t.target)}</td><td class="r dk-num dk-b ${t.R>=0?'dk-up':'dk-dn'}">${dkR(t.R)}</td><td class="dk-ink2">${dkEsc(t.why||'')}</td></tr>`;}).join(''):`<tr><td colspan="9" class="dk-empty">${DESK_UI.load.busy?RT('Свечи грузятся…','Candles loading…'):RT('Сделок по правилам нет.','No rule trades.')}</td></tr>`}
     </tbody></table></div>
     <p class="dk-note dk-mt14">${RT('Проверка правил, а не мои сделки: вход — бар, где вердикт v2 впервые стал «Купить»/«Шорт» (без таргетов и отчётов в истории); выход — стоп, ½ на цели, +1R → безубыток, +2R → трейлинг 2·ATR. Показаны последние 80.','A rules check, not my trades: entry — the bar where verdict v2 first turned Buy/Short (no targets/earnings in history); exit — stop, ½ at target, +1R → breakeven, +2R → 2·ATR trail. Last 80 shown.')}</p>`;
+}
+
+// ═══════════════════ Сервис (S7b-2, карта §3.3/§4): вкладки и бумаги, сбор данных ═══════════════════
+// Мутаторы — функции классики (pf3Add/pf3Delete/pf3NewTab/pf3RenameTab/pf3TabDelete/pf3ForceTypes, homeUpdateAll/
+// valUpdateAll/insiderUpdateAll) в контексте выбранной вкладки; их прогресс пишется в кнопки по id (homeUpdBtn…).
+function deskSvcTab(){const T=v3Tabs().filter(tabAllowed);return DESK_UI.svcTab&&T.includes(DESK_UI.svcTab)?DESK_UI.svcTab:(T.includes(PF3_KEY)?PF3_KEY:T[0]||null);}
+function deskServiceHTML(){
+  const tabs=v3Tabs().filter(tabAllowed),adm=isAdmin(),cur=deskSvcTab(),refresh=can('action.refresh_data');
+  const at=v=>v?new Date(v).toLocaleString(LANG==='en'?'en-GB':'ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
+  const last=o=>Object.values(o||{}).reduce((m,v)=>{const t=v?(typeof v.at==='number'?v.at:Date.parse(v.at||'')):0;return t>m?t:m;},0);
+  const btn=(id,fn,busy,l,title)=>`<button type="button" class="dk-btn${id==='homeUpdBtn'?' pri':''}" id="${id}" data-a="svcrun" data-v="${fn}"${busy?' disabled':''} title="${dkEsc(title)}">${busy?'⏳ '+RT('идёт…','running…'):l}</button>`;
+  const data=`<div class="dk-panel dk-mb"><div class="dk-ph"><h2>🔄 ${RT('Сбор данных','Data collection')}</h2><span class="dk-note dk-ml">${RT('⟳ в шапке обновляет только мои портфели и свечи','⟳ in the header refreshes only my portfolios and candles')}</span></div>
+    <div class="dk-svc">
+      ${refresh?`<div class="dk-svc-it">${btn('homeUpdBtn','homeUpdateAll',typeof _homeUpd!=='undefined'&&_homeUpd,'🔄 '+RT('Обновить данные вселенной','Refresh universe data'),RT('Цены, SMA, уровни, таргеты и метрики всех вкладок + курсы валют','Prices, SMA, levels, targets and metrics of every tab + FX'))}<div class="dk-note">${RT(`Цены и уровни ${tabs.length} вкладок, аналитические таргеты и метрики (раз в сутки на вкладку), курсы. Долго: сотни бумаг.`,`Prices and levels of ${tabs.length} tabs, analyst targets and metrics (daily per tab), FX. Slow: hundreds of stocks.`)}</div></div>`:''}
+      ${adm?`<div class="dk-svc-it">${btn('valBtn','valUpdateAll',typeof _valBusy!=='undefined'&&_valBusy,'📐 '+RT('Оценка','Valuation'),RT('Мультипликаторы vs медиана сектора и собственная история','Multiples vs sector median and own history'))}<div class="dk-note">${RT('Мультипликаторы и история P/E (VAL) и агрегированные таргеты (TG_FULL) — от них зависят измерение «Цена» и «Аналитики и оценка».','Multiples and P/E history (VAL) and aggregated targets (TG_FULL) — the Price dimension and “Analysts & valuation” use them.')} ${RT('Последнее','Last')}: ${at(last(VAL))}</div></div>
+      <div class="dk-svc-it">${btn('insiderBtn','insiderUpdateAll',typeof _insiderBusy!=='undefined'&&_insiderBusy,'🕵 '+RT('Инсайдеры','Insiders'),RT('Инсайдерские сделки по всем вкладкам (US: Finnhub · SE: Finansinspektionen)','Insider transactions across all tabs (US: Finnhub · SE: Finansinspektionen)'))}<div class="dk-note">${RT('Сделки инсайдеров за 30 дней по всем вкладкам — блок «Инсайдеры» в «Компании».','Insider trades over 30 days across all tabs — the Insiders block in Company.')} ${RT('Последнее','Last')}: ${at(last(INSIDER))}</div></div>`:''}
+      ${!refresh&&!adm?`<div class="dk-empty">${RT('Сбор данных недоступен для вашей роли.','Data collection is not available for your role.')}</div>`:''}
+    </div></div>`;
+  if(!cur)return data+`<div class="dk-panel dk-empty">${RT('Вкладок нет.','No tabs.')}</div>`;
+  deskCtx(cur,'list');
+  const kind=k=>k===PF3_KEY||pf3MyPort(k)?RT('портфель','portfolio'):DATA[k].custom==='1'?RT('своя','custom'):RT('индекс','index');
+  const list=`<div class="dk-panel dk-mb"><div class="dk-ph"><h2>🗂 ${RT('Вкладки','Tabs')}</h2><span class="dk-cnt">${tabs.length}</span>${adm?`<button type="button" class="dk-btn dk-sm dk-ml" data-a="svcnew">➕ ${RT('Новая вкладка','New tab')}</button>`:''}</div>
+    <div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Вкладка','Tab')}</th><th>${RT('Тип','Kind')}</th><th class="r">${RT('Бумаг','Stocks')}</th><th>${RT('Таргеты','Targets')}</th><th></th></tr></thead><tbody>
+    ${tabs.map(k=>{const d=DATA[k],ek=dkEsc(k);return `<tr class="dk-tr${k===cur?' on':''}" data-a="svctab" data-v="${ek}"><td><b>${dkEsc(TAB_LABEL(k))}</b></td><td class="dk-note">${kind(k)}</td><td class="r dk-num">${(d.rows||[]).length}</td><td class="dk-num dk-note">${at(d.targetsAt)}</td>
+      <td class="dk-nowrap">${refresh?`<button type="button" class="dk-btn dk-sm" data-a="svctypes" data-v="${ek}" title="${RT('Обновить таргеты, метрики и типы сейчас','Refresh targets, metrics and types now')}">🔁</button>`:''}${adm?`<button type="button" class="dk-btn dk-sm" data-a="svcren" data-v="${ek}" title="${RT('Переименовать','Rename')}" aria-label="${RT('Переименовать','Rename')}">✏</button>`:''}${adm&&d.custom==='1'?`<button type="button" class="dk-btn dk-sm" data-a="svcdel" data-v="${ek}" title="${RT('Удалить вкладку','Delete tab')}" aria-label="${RT('Удалить вкладку','Delete tab')}">🗑</button>`:''}</td></tr>`;}).join('')}
+    </tbody></table></div></div>`;
+  const d=DATA[cur],port=pf3IsPort(cur),addOk=can('action.add_position')&&cur!==AIP_KEY,delOk=adm&&cur!==AIP_KEY,mine=pf3MyPort(cur);   // 🗑 строки — только админ, как в классике
+  const rows=(d.rows||[]).map(r=>{const tk=String(r[2]||'');return `<tr><td><span class="dk-tk">${dkEsc(tk)}</span><span class="dk-nm">${dkEsc(String(r[1]||''))}</span></td><td class="dk-note">${dkEsc(String(r[4]||''))}</td>${port?`<td class="r dk-num">${dkN(parseFloat(r[6])||0,0)}</td><td class="r dk-num">${dkPx(parseFloat(r[9])||null)} ${dkCcy(r[8])}</td>`:`<td class="dk-note">${dkEsc(String(r[8]||''))}</td>`}<td>${delOk?`<button type="button" class="dk-btn dk-sm" data-a="svcrm" data-v="${dkEsc(tk)}" title="${RT('Удалить из вкладки','Remove from tab')}" aria-label="${RT('Удалить','Delete')} ${dkEsc(tk)}">🗑</button>`:''}</td></tr>`;}).join('');
+  const add=addOk?`<div class="dk-classic"><form class="pf3-add dk-svc-add" onsubmit="pf3Add(event)">
+      <input id="pf3AddTicker" class="dk-inp" placeholder="${T('Тикер')}" autocomplete="off" aria-label="${T('Тикер')}">
+      ${mine?`<input id="pf3AddQty" class="dk-inp dk-num" type="number" step="any" min="0" placeholder="${T('Кол-во')}" aria-label="${T('Кол-во')}"><input id="pf3AddBuy" class="dk-inp dk-num" type="number" step="any" min="0" placeholder="${T('Цена покупки')}" aria-label="${T('Цена покупки')}">`:''}
+      <select id="pf3AddCcy" class="dk-sel" aria-label="${RT('Валюта','Currency')}">${['USD','EUR','SEK','NOK','DKK','GBP'].map(c=>`<option${(mine?'SEK':'USD')===c?' selected':''}>${c}</option>`).join('')}</select>
+      <button class="dk-btn pri" type="submit">➕ ${RT('Добавить акцию','Add stock')}</button></form>
+      <div class="dk-note">${mine?RT('В портфель: кол-во и цена покупки списывают сумму со свободного кэша (как в классике). Сделку с журналом и комиссией вносите через «Исполнить…».','Into a portfolio: qty and buy price debit the free cash (as in classic). Record a trade with journal and fee via “Execute…”.'):RT('В список вкладки: только тикер — имя, сектор, цена и уровни подтянутся сами.','Into a watchlist tab: ticker only — name, sector, price and levels fill in automatically.')}</div></div>`:'';
+  const stocks=`<div class="dk-panel"><div class="dk-ph"><h2>${dkEsc(TAB_LABEL(cur))}</h2><span class="dk-cnt">${(d.rows||[]).length}</span><span class="dk-note dk-ml">${kind(cur)}</span></div>
+    <div class="dk-pad">${add}</div>
+    <div class="dk-wrap dk-svc-list"><table class="dk-tbl"><thead><tr><th>${RT('Бумага','Stock')}</th><th>${RT('Сектор','Sector')}</th>${port?`<th class="r">${RT('Кол-во','Qty')}</th><th class="r">${RT('Средняя','Avg')}</th>`:`<th>${RT('Валюта','Ccy')}</th>`}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="5" class="dk-empty">${RT('Бумаг нет.','No stocks.')}</td></tr>`}</tbody></table></div></div>`;
+  return data+list+stocks;
 }
 
 // ── Модальное окно исполнения ──
@@ -2381,6 +2619,54 @@ function deskWatchFocus(key){
   if(el){el.focus();try{el.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});}catch(e){}}
 }
 
+// ── S7b-2: обвязка встроенных блоков классики ──
+// Черновики: поля с id внутри .dk-classic (форма плана, записи сделки, чат AI, «Добавить акцию»…) переживают фоновые
+// перерисовки (свечи, котировки, пул загрузок). Сбрасываются кнопкой/отправкой блока (его обработчик уже прочитал поля)
+// и сменой экрана — иначе после «Добавить» форма заполнилась бы старым вводом.
+function deskDraftNote(e){
+  const el=e.target;if(!el||!el.id||!el.closest||!el.closest('.dk-classic'))return;
+  if(el.type==='file'||el.type==='checkbox'||el.type==='radio')return;
+  DESK_UI.draft[el.id]=el.value;
+}
+function deskDraftRestore(){
+  // Другой экран/раздел/портфель (в т.ч. Back/Forward и адрес) — черновики не переносятся.
+  const sk=[DESK_UI.route,DESK_UI.bt,DESK_UI.bai,DESK_UI.jt,DESK_UI.svcTab,DESK_UI.planTab,deskPort(),DESK_UI.key,planEditId].join('|');
+  if(sk!==DESK_UI._draftKey){DESK_UI._draftKey=sk;DESK_UI.draft={};return;}
+  const D=DESK_UI.draft;if(!D)return;
+  Object.keys(D).forEach(id=>{const el=document.getElementById(id);if(el&&el.closest('#dkMain .dk-classic')&&el.value!==D[id])el.value=D[id];});
+}
+// «Позиции → Статистика»: график развития портфелей (pfPerfDraw) переживает фоновые перерисовки — канвас переносится,
+// пока не сменились данные/настройки; иначе рисуется заново. Без графика (загрузка/ошибка) при том же ключе — ничего
+// не делаем: в ключе нет failed/loading, поэтому неудачная загрузка повторяется только при новом входе в раздел.
+let _deskPerfKey=null;
+function deskPerfAttach(kept){
+  const box=document.getElementById('pfPerfBox');if(!box){_deskPerfKey=null;return;}
+  let col='';try{col=localStorage.getItem('dash_pfpcol')||'';}catch(e){}
+  const key=[pfPerf.loaded,!!pfPerf.hist,pfPerf.range,JSON.stringify(pfPerf.on),col,document.documentElement.dataset.theme,LANG].join('|');
+  if(key===_deskPerfKey){if(kept)box.replaceWith(kept);return;}
+  // pfPerfDraw берёт контейнер до await loadLWC — пока библиотека грузится, фоновая перерисовка оставила бы его пустым.
+  if(!(window.LightweightCharts&&window.LightweightCharts.createChart)){loadLWC().then(()=>deskRender(),()=>{});return;}
+  _deskPerfKey=key;pfPerfDraw();
+}
+// После отрисовки: поллеры пре/пост (бумага «Акции», баланс «Позиций»), синк AI-портфеля, прокрутка чата AI и
+// загрузки раздела — один раз на вход в раздел (у неудачной загрузки нет кэша: каждая перерисовка грузила бы заново).
+function deskClassicAfter(){
+  const r=DESK_UI.route,port=deskPort();
+  try{const it=r==='stock'?deskSecOf(DESK_UI.key):null;if(it&&it.r&&document.getElementById('pf3PrePost'))cardPPStart(String(it.r[2]||''),it.sec.sym);else cardPPStop();}catch(e){}
+  try{if(document.getElementById('pfSumPP')&&port&&port!=='all'&&port!==AIP_KEY)pfSumPPStart(port);else pfSumPPStop();}catch(e){}
+  // aipStart тянет состояние воркера ДО проверки таймера, а ответ зовёт renderPF3 → deskRender: звать только без таймера.
+  try{if(r==='book'&&port===AIP_KEY&&isAdmin()){if(!_aipTimer)aipStart();}else aipStop();}catch(e){}
+  // Цены позиций AI-портфеля (его строки — производная вкладка): как автообновление классики — не чаще раза в 5 мин.
+  if(r==='book'&&port===AIP_KEY&&DATA[AIP_KEY]&&PRICE_PROXY&&Date.now()-(pf3LastRefresh[AIP_KEY]||0)>5*60e3){
+    pf3LastRefresh[AIP_KEY]=Date.now();pf3FetchPrices(DATA[AIP_KEY],AIP_KEY).then(()=>deskRender(),()=>{});}
+  {const cb=document.getElementById('aiChatBox'),c=DESK_UI._chat;
+    if(cb){if(c&&!c.bottom&&cb.children.length===c.n)cb.scrollTop=c.top;else try{aiChatScroll();}catch(e){}}}
+  const sk=r==='book'?'book|'+DESK_UI.bt+'|'+deskOnePort():null;
+  if(sk===DESK_UI._secFor)return;DESK_UI._secFor=sk;
+  if(r==='book'&&DESK_UI.bt==='cal'&&document.querySelector('#dkMain .dk-classic'))pf3LoadCalendar();
+  if(r==='book'&&DESK_UI.bt==='health'&&document.getElementById('pf3RiskBox'))pf3LoadRisk();
+}
+
 // ── Классика ──
 // Полная карточка/подвкладка в классическом виде (флаг desk остаётся; назад — плавающая кнопка).
 function deskClassic(tab,tk,sub){
@@ -2480,8 +2766,28 @@ function deskOnClick(e){
     case 'risk':DESK_UI.menu=false;deskRiskEdit();break;
     case 'tg':{if(!can('action.edit_plan'))return;DESK_UI.menu=false;DESK=deskNorm(Object.assign({},DESK,{tg:!deskNorm(DESK).tg}));scheduleSave();deskRender(true);
       toast('📨 '+(DESK.tg?RT('Telegram по стопам и лимитам включён','Telegram stop & limit alerts on'):RT('Telegram по стопам и лимитам выключен','Telegram stop & limit alerts off')));break;}
-    case 'classic':deskClassic(el.dataset.tab,k,el.dataset.sub);break;
-    case 'classic-plan':deskClassic(deskRiskTab()||PF3_KEY,null,'plan');break;
+    // S7b-2: разделы книги, редактор плана, «Сервис», правка позиции
+    case 'bt':DESK_UI.bt=el.dataset.v;DESK_UI.draft={};deskRender(true);break;
+    case 'bai':DESK_UI.bai=el.dataset.v;DESK_UI.draft={};deskRender(true);break;
+    case 'booksec':DESK_UI.bt=el.dataset.v;if(el.dataset.sub)DESK_UI.bai=el.dataset.sub;if(DESK_UI.port===AIP_KEY||DESK_UI.port==='all')DESK_UI.port=deskRiskTab();deskGo('book');break;
+    case 'planed':{const r=(PLAN_RULES||[]).find(x=>x.id===el.dataset.id);if(!r||!can('action.edit_plan'))break;
+      planEditId=r.id;DESK_UI.planTab=r.tab||PF3_KEY;DESK_UI.draft={};deskDetSave('j-plan-ed',true);deskRender(true);
+      setTimeout(()=>{const e2=document.getElementById('planE_lvl')||document.getElementById('dkPlanEd');if(e2){try{e2.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});}catch(x){}if(e2.focus)e2.focus({preventScroll:true});}},40);break;}
+    case 'service':DESK_UI.menu=false;deskGo('service');break;
+    case 'svctab':DESK_UI.svcTab=el.dataset.v;DESK_UI.draft={};deskRender(true);break;
+    case 'svcnew':{if(!isAdmin())break;const before=Object.keys(DATA).length;pf3NewTab();if(Object.keys(DATA).length>before&&DATA[v3Key])DESK_UI.svcTab=v3Key;deskRender(true);break;}
+    case 'svcren':if(isAdmin()&&deskCtx(el.dataset.v,'list'))pf3RenameTab();break;
+    case 'svcdel':if(isAdmin())pf3TabDelete(el.dataset.v);break;
+    case 'svctypes':if(can('action.refresh_data')&&deskCtx(el.dataset.v,'list'))pf3ForceTypes();break;
+    case 'svcrm':if(isAdmin()&&deskSvcTab()!==AIP_KEY&&deskCtx(deskSvcTab(),'list'))pf3Delete(el.dataset.v);break;
+    case 'svcrun':{const v=el.dataset.v;   // прогресс функции пишут в кнопку по id; по завершении — renderAll → deskRender
+      if(v==='homeUpdateAll'&&can('action.refresh_data'))homeUpdateAll();else if(v==='valUpdateAll'&&isAdmin())valUpdateAll();else if(v==='insiderUpdateAll'&&isAdmin())insiderUpdateAll();break;}
+    case 'pos-fix':if(!can('action.edit_trades'))break;DESK_UI.fix={key:el.dataset.tab+'|'+posTk(k)};DESK_UI.edit=null;deskRender(true);setTimeout(()=>{const i=document.getElementById('dkFxQty');if(i)i.focus();},30);break;
+    case 'pos-fix-x':DESK_UI.fix=null;deskRender(true);break;
+    case 'pos-fix-save':{const q=parseFloat(String((document.getElementById('dkFxQty')||{}).value).replace(',','.')),av=parseFloat(String((document.getElementById('dkFxAvg')||{}).value).replace(',','.'));
+      if(!confirm(RT(`Исправить позицию ${posTk(k)}: ${q} шт по средней ${av}? Сделка не записывается — журнал, налоги и кэш не меняются.`,`Fix position ${posTk(k)}: ${q} sh at average ${av}? No trade is recorded — journal, tax and cash stay unchanged.`)))break;
+      const r=deskPosFix(el.dataset.tab,k,q,av);if(r.err){toast(r.err,true);break;}
+      DESK_UI.fix=null;toast('✏️ '+posTk(k)+': '+RT('позиция исправлена','position fixed'));deskRender(true);break;}
     case 'settings':DESK_UI.menu=false;deskRender(true);toggleSettings();break;
     case 'prompts':DESK_UI.menu=false;deskRender(true);togglePrompts();break;
     case 'gloss':DESK_UI.menu=false;deskRender(true);deskGlossOpen();break;
@@ -2504,7 +2810,9 @@ function deskRiskEdit(){
 }
 function deskOnChange(e){
   const el=e.target,c=el.dataset&&el.dataset.c;if(!c)return;
-  if(c==='port'){DESK_UI.port=el.value;_deskItems=null;deskRender(true);}
+  if(c==='port'){DESK_UI.port=el.value;DESK_UI.planTab=null;DESK_UI.draft={};_deskItems=null;deskRender(true);}
+  else if(c==='plantab'){DESK_UI.planTab=el.value;planEditId=null;DESK_UI.draft={};deskRender(true);}
+  else if(c==='fsector'){DESK_UI.f.sector=el.value;deskRender(true);}
   else if(c==='expo'&&DESK_UI.exec){DESK_UI.exec.tab=el.value;deskExecRisk();}
   else if(c==='wiport'){deskWiSave({port:el.value});deskWhatIfRecalc();}
   else if(c==='wiv'){   // подтверждение ввода: нормализованное значение сохраняется (синк), поле показывает его
@@ -2528,6 +2836,7 @@ function deskOnInput(e){
     if(f){DESK_UI.exec[f]=f==='tab'||f==='date'?el.value:(parseFloat(el.value)||0);deskExecRisk();}
   }
   else if(DESK_UI.edit&&(el.id==='dkEdStop'||el.id==='dkEdTgt'))DESK_UI.edit[el.id==='dkEdStop'?'stop':'target']=el.value;
+  else if(DESK_UI.fix&&(el.id==='dkFxQty'||el.id==='dkFxAvg'))DESK_UI.fix[el.id==='dkFxQty'?'qty':'avg']=el.value;
 }
 // Строка риска и блокировка кнопки в окне исполнения — на месте, без перерисовки (фокус не прыгает).
 function deskExecRisk(){

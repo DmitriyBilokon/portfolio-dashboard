@@ -50,14 +50,14 @@
   "cardPPStop",
   "cardPPInner",
   "cardVolInner",
-  "pf3Edit",
   "valHTML",
   "targetsBlockHTML",
   "pf3ScenarioHTML",
   "pfSumPPStart",
   "pfSumPPStop",
   "pfSumPPInner",
-  "fxFreshLbl"
+  "fxFreshLbl",
+  "deskOpenTk"
  ],
  "dropEdges": [
   [

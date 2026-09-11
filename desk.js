@@ -308,16 +308,23 @@ function deskRatings(r){
   segs.forEach(x=>{x.pct=x.n/total*100;});
   return {segs:segs.filter(x=>x.n),total,consensus:r.consensus||null};
 }
-// «Нормальный» P/E для линии прибыли (plans/earnings-line.md): своя медиана 5 лет → 3 года → медиана сектора
-// (n ≥ 2) → текущий P/E; первый в [earn.peMin, earn.peMax]. val/secMed — для тестов (по умолчанию VAL и медианы).
-// → {pe, src:'pe5'|'pe3'|'sector'|'cur'} или null.
-function deskEarnPe(tk,val,secMed){
+// «Нормальный» P/E для линии прибыли (plans/earnings-line.md, аудит 2026-09-11 по 379 бумагам). own — своя история P/E
+// (chartEarnPe: на тех же EPS и ценах, что и линия). Порядок: своя медиана, если устойчива (разброс по годам ≤ earn.dispX)
+// и не дальше earn.histX раз от текущего → медиана сектора (n ≥ 2), если текущий известен и она не дальше ×histX →
+// текущий по последнему FY (линия показывает только динамику). Текущий для сверки — TTM из «Оценки» (VAL.pe), без неё — по FY.
+// Все P/E — в [peMin, peMax]. val/secMed — для тестов. → {pe, src:'own'|'sector'|'cur', cur, skip:[{src,why,pe,disp?}], own} или null.
+function deskEarnPe(tk,own,val,secMed){
   const C=DESK_IDEA_CFG.earn,Vm=val||VAL||{},t=String(tk||'').toUpperCase(),V=Vm[t]||Vm[posTk(t)]||null;
-  if(!V)return null;
-  const S=secMed||_valSecCache||valSectorMedians(),med=V.sector?S[V.sector]:null,h=V.hist||{};
-  const c=[['pe5',h.pe5],['pe3',h.pe3],['sector',med&&med.n>=2?med.pe:null],['cur',V.pe]];
-  for(const [src,v] of c){if(v>0&&+v>=C.peMin&&+v<=C.peMax)return {pe:+v,src};}
-  return null;
+  const inR=v=>v>0&&v>=C.peMin&&v<=C.peMax,curFY=own&&inR(own.curFY)?own.curFY:null,cur=V&&V.pe>0?+V.pe:curFY,skip=[];
+  const near=v=>!cur||(v/cur<=C.histX&&cur/v<=C.histX);
+  if(own&&inR(own.pe)){
+    if(own.disp>C.dispX)skip.push({src:'own',why:'disp',pe:own.pe,disp:own.disp});
+    else if(!near(own.pe))skip.push({src:'own',why:'far',pe:own.pe});
+    else return {pe:own.pe,src:'own',cur,skip,own};
+  }
+  const S=secMed||_valSecCache||valSectorMedians(),med=V&&V.sector?S[V.sector]:null;
+  if(cur&&med&&med.n>=2&&inR(med.pe)){if(near(+med.pe))return {pe:+med.pe,src:'sector',cur,skip,own};skip.push({src:'sector',why:'far',pe:+med.pe});}
+  return curFY?{pe:curFY,src:'cur',cur,skip,own}:null;
 }
 
 // ── DOM ────────────────────────────────────────────────────────────────────
@@ -370,13 +377,19 @@ function deskEarnOn(){try{return localStorage.getItem(DESK_EARN_LS)!=='0';}catch
 function deskEarnSet(on){try{localStorage.setItem(DESK_EARN_LS,on?'1':'0');}catch(e){}}
 // Параметры линии для stockChartDraw (state.earn) и ключ готовности: сменился ответ ?financials= или P/E — график
 // перерисовывается (иначе канвас переносится как есть и линия не появилась бы до смены периода).
+const _deskEarnBars={};   // 5 лет свечей для своей истории P/E: ключ → {at, fail} последней попытки (ошибка — повтор через 5 мин)
 function deskEarnFor(it){
   if(!deskEarnOn())return {earn:null,key:'off'};
-  const sym=it.sec.sym,P=deskEarnPe(it.sec.tk);
-  if(P)deskFinLoad(sym);   // без P/E линии не будет — квоту FMP не тратим
-  const c=_deskFin[sym],fin=(c&&c.data)||null;
-  const earn=Object.assign({fin,pe:P&&P.pe,peSrc:P&&P.src,ccy:it.sec.ccy,fx:FX},DESK_IDEA_CFG.earn);
-  return {earn,key:(fin?(fin.fetchedAt||'')+'|'+fin.status:'wait')+'|'+(P?P.src+P.pe:'-')};
+  const C=DESK_IDEA_CFG.earn,sym=it.sec.sym,hk=sym+':5y',hc=_histCache[hk],bars=hc&&hc.bars;deskFinLoad(sym);
+  const L=_deskEarnBars[hk];
+  if(!bars&&!(L&&(!L.fail||Date.now()-L.at<5*60e3))){const x=_deskEarnBars[hk]={at:Date.now(),fail:false};histBars(sym,'5y').catch(()=>{x.fail=true;}).then(()=>deskRender());}
+  const c=_deskFin[sym],fin=(c&&c.data)||null,barsDone=!!bars||!!(_deskEarnBars[hk]&&_deskEarnBars[hk].fail);   // свечей нет — сектор/текущий без своей истории
+  // P/E считается по отчётности и 5 годам цены; пока свечи грузятся — «загрузка» (fin не передаём).
+  const ready=!!fin&&fin.status!=='error'&&barsDone;
+  const own=ready&&bars?chartEarnPe(bars,fin,{ccy:it.sec.ccy,fx:FX,peMin:C.peMin,peMax:C.peMax,years:C.ownYears,minYears:C.ownMin}):null;
+  const P=ready?deskEarnPe(it.sec.tk,own):null;
+  const earn=Object.assign({},C,{fin:ready||(fin&&fin.status==='error')?fin:null,pe:P&&P.pe,peSrc:P&&P.src,peCur:P&&P.cur,peSkip:P?P.skip:[],peOwn:own,ccy:it.sec.ccy,fx:FX});
+  return {earn,key:(fin?(fin.fetchedAt||'')+'|'+fin.status:'wait')+'|'+(ready?'r':'-')+'|'+(P?P.src+P.pe:'-')};
 }
 const dkHow=(id,body,title)=>`<details class="dk-how"${dkDetAttr(id)}><summary>${title||RT('Как рассчитано','How it’s calculated')}</summary><div class="dk-how-b">${body}</div></details>`;
 // Уровень риска 1–5 (deskRiskLevel): пять делений + слово; «вручную» — если перекрыт в идее.

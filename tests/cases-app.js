@@ -1632,7 +1632,7 @@ function __vi(view,d){for(var i=0;i<view.length;i++)if(view[i].d===d)return i;re
 grp('earnings line', function(){
   var view=__wdays('2023-06-01','2025-06-30'),L=view.length,C=DESK_IDEA_CFG.earn;
   var fin={status:'ok',ccy:'SEK',fiscalYearEnd:'12-31',annual:[{year:2022,eps:5},{year:2023,eps:6},{year:2024,eps:8}],estimates:[{year:2024,eps:99,n:1},{year:2025,eps:10,n:30},{year:2026,eps:11,n:25}]};
-  var o={pe:20,peSrc:'pe5',ccy:'SEK',fx:{SEK:1,USD:10},futureBars:C.futureBars,scaleX:C.scaleX};
+  var o={pe:20,peSrc:'own',ccy:'SEK',fx:{SEK:1,USD:10},futureBars:C.futureBars,scaleX:C.scaleX};
   var M=chartEarningsModel(view,fin,o);
   __eq('state ok', M.state, 'ok');
   __eq('факт: точки на концах FY (31.12.2023 — воскресенье → бар 01.01.2024), значение = EPS × P/E', M.hist.filter(function(p){return !p.interp;}).map(function(p){return [p.time,p.value,p.eps,p.year];}), [['2024-01-01',120,6,2023],['2024-12-31',160,8,2024]]);
@@ -1677,24 +1677,60 @@ grp('earnings line', function(){
   __eq('с курсом — пересчёт: 2 USD × 10 × P/E 20 = 400 kr', chartEarningsModel(view,fu,o).hist[0].value, 400);
   __approx('USD-отчётность, торги в GBP (ANTO.L): курс USD/GBP', chartEarningsModel(view,fu,Object.assign({},o,{ccy:'GBP',fx:{SEK:1,USD:10,GBP:12.5}})).hist[0].value, 2*0.8*20, 1e-9);
   __approx('отчётность в пенсах (GBp) → фунты', chartEarningsModel(view,{status:'ok',ccy:'GBp',annual:[{year:2024,eps:150}]},Object.assign({},o,{ccy:'GBP'})).hist[0].value, 1.5*20, 1e-9);
-  __eq('нет P/E → nope (и без отчётности: desk её тогда не запрашивает)', [chartEarningsModel(view,fin,Object.assign({},o,{pe:null})).state,chartEarningsModel(view,null,Object.assign({},o,{pe:0})).state], ['nope','nope']);
+  __eq('нет P/E → nope; без отчётности — nofin (P/E считается по ней)', [chartEarningsModel(view,fin,Object.assign({},o,{pe:null})).state,chartEarningsModel(view,null,Object.assign({},o,{pe:0})).state], ['nope','nofin']);
   __eq('P/E текущий → заметка «только динамика»', chartEarningsModel(view,fin,Object.assign({},o,{peSrc:'cur'})).notes, ['pe-cur']);
   var M6=chartEarningsModel(view,fin,Object.assign({},o,{pe:60}));
+  var MJ=chartEarningsModel(view,{status:'ok',ccy:'SEK',annual:[{year:2023,eps:6},{year:2024,eps:0.6}],estimates:[{year:2025,eps:6.4,n:20}]},o);
+  __eq('прогноз в 10+ раз выше отчёта → заметка fcst-jump (прогноз не отброшен)', [MJ.notes.indexOf('fcst-jump')>=0,MJ.jump.year,MJ.jump.from,Math.round(MJ.jump.x*10)/10,MJ.fcst.length>0], [true,2025,2024,10.7,true]);
+  __ok('заметка про скачок', chartEarnNote(MJ,o).indexOf('прогноз FY2025 в 10.7 раза выше отчёта FY2024')>0, chartEarnNote(MJ,o));
+  __eq('скачок ×1,5 — без заметки', chartEarningsModel(view,{status:'ok',ccy:'SEK',annual:[{year:2024,eps:6}],estimates:[{year:2025,eps:9}]},o).notes.indexOf('fcst-jump'), -1);
   __eq('линия далеко от цены → вне автомасштаба', [M6.fit,M6.notes], [false,['off-scale']]);
   __ok('заметка под графиком: отклонение и источник P/E', chartEarnNote(M,Object.assign({fin:fin},o)).indexOf('ниже линии прибыли · P/E 20')>0);
   __ok('заметка: убыточна / нет P/E в пределах', chartEarnNote({state:'loss',notes:[]},o).indexOf('убыточна')>0 && chartEarnNote({state:'nope',notes:[]},{peMin:5,peMax:60}).indexOf('5–60')>0);
 });
+grp('chartEarnPe', function(){
+  // Цена 100 весь 2022, 200 весь 2023 и т.д.; EPS подобраны под P/E 10 / 12,5 / 20 на концах FY.
+  var bars=[],px={2021:80,2022:100,2023:150,2024:200,2025:210};
+  __wdays('2021-01-04','2025-12-31').forEach(function(b){bars.push({d:b.d,c:px[+b.d.slice(0,4)]});});
+  var fin={status:'ok',ccy:'SEK',fiscalYearEnd:'12-31',annual:[{year:2021,eps:-1},{year:2022,eps:10},{year:2023,eps:12},{year:2024,eps:10},{year:2025,eps:14}]};
+  var o={ccy:'SEK',fx:{SEK:1,USD:10,GBP:12.5},peMin:5,peMax:60,years:5,minYears:2};
+  var P=chartEarnPe(bars,fin,o);
+  __eq('P/E на концах FY = закрытие ÷ EPS (убыточный год пропущен)', P.pts.map(function(p){return [p.year,p.pe];}), [[2022,10],[2023,12.5],[2024,20],[2025,15]]);
+  __eq('медиана, число лет, разброс, текущий по последнему FY', [P.pe,P.n,P.disp,P.curFY], [13.75,4,2,15]);
+  __eq('years 2 → только последние 2 года', chartEarnPe(bars,fin,Object.assign({},o,{years:2})).pts.map(function(p){return p.year;}), [2024,2025]);
+  __eq('P/E вне [peMin, peMax] не берётся; меньше minYears → pe null', [chartEarnPe(bars,fin,Object.assign({},o,{peMax:14})).pts.map(function(p){return p.year;}),chartEarnPe(bars,fin,Object.assign({},o,{peMax:11})).pe], [[2022,2023],null]);
+  var fu={status:'ok',ccy:'USD',fiscalYearEnd:'12-31',annual:[{year:2024,eps:1},{year:2025,eps:1.4}]};
+  __eq('валюта отчётности пересчитывается: 200 ÷ (1 USD × 10) = 20', chartEarnPe(bars,fu,o).pts[0].pe, 20);
+  __eq('пенсы (GBp) → фунты', chartEarnPe(bars,{status:'ok',ccy:'GBp',annual:[{year:2024,eps:1000},{year:2025,eps:1400}]},Object.assign({},o,{ccy:'GBP'})).pts[0].pe, 20);
+  __eq('ADR/другая база EPS сокращается: линия = EPS × медиана(цена ÷ EPS) — та же цена', chartEarnPe(bars,{status:'ok',annual:[{year:2024,eps:5},{year:2025,eps:7}]},o).pe, 35);
+  __eq('нет курса / свечей / отчётности → null', [chartEarnPe(bars,fu,Object.assign({},o,{fx:{SEK:1}})),chartEarnPe([],fin,o),chartEarnPe(bars,null,o)], [null,null,null]);
+  __eq('свечей на конец года нет (история короче) — год пропущен', chartEarnPe(bars.slice(-200),fin,o).pts.map(function(p){return p.year;}), [2025]);
+});
 grp('deskEarnPe', function(){
-  var V={AAA:{sector:'Tech',pe:30,hist:{pe5:22,pe3:25}},BBB:{sector:'Tech',pe:12,hist:{pe3:70}},CCC:{sector:'Tech',pe:8},DDD:{sector:'Solo',pe:2},'INVE B':{sector:'Fin',pe:15}};
-  var S={Tech:{pe:18,n:3},Solo:{pe:2,n:1},Fin:{pe:14,n:1}};
-  __eq('приоритет: медиана 5 лет', deskEarnPe('aaa',V,S), {pe:22,src:'pe5'});
-  __eq('pe3 вне [peMin, peMax] → медиана сектора', deskEarnPe('BBB',V,S), {pe:18,src:'sector'});
-  __eq('сектор из 1 бумаги не годится → текущий', deskEarnPe(' inve b ',V,S), {pe:15,src:'cur'});
-  __eq('ничего подходящего → null; нет бумаги → null', [deskEarnPe('DDD',V,S),deskEarnPe('ZZZ',V,S)], [null,null]);
-  var C=DESK_IDEA_CFG.earn,m0=C.peMax;
-  try{ C.peMax=24; __eq('peMax 24 → pe5 22 проходит', deskEarnPe('AAA',V,S).src, 'pe5'); C.peMax=20; __eq('peMax 20 → pe5/pe3/текущий отпадают → сектор 18', deskEarnPe('AAA',V,S), {pe:18,src:'sector'}); }
-  finally{ C.peMax=m0; }
-  __eq('конфиг восстановлен', C.peMax, m0);
+  var V={AAA:{sector:'Tech',pe:15},DIS:{sector:'Comm',pe:21.8},VOW:{sector:'Auto',pe:7.8},NOV:{sector:'Solo'},TSLA:{sector:'Auto',pe:336}};
+  var S={Tech:{pe:37.7,n:40},Comm:{pe:16.7,n:12},Auto:{pe:21,n:9},Solo:{pe:10,n:1}};
+  var own=function(pe,disp,curFY){return {pe:pe,n:4,disp:disp,pts:[],curFY:curFY};};
+  var src=function(P){return P&&[P.src,Math.round(P.pe*10)/10];};
+  __eq('своя медиана устойчива и рядом с текущим → own', src(deskEarnPe('aaa',own(12,1.5,14),V,S)), ['own',12]);
+  var D=deskEarnPe('DIS',own(35.4,3.3,15.4),V,S);
+  __eq('DIS: своя история нестабильна (×3,3 > dispX) → медиана сектора 16,7', [D.src,D.pe,D.cur,D.skip], ['sector',16.7,21.8,[{src:'own',why:'disp',pe:35.4,disp:3.3}]]);
+  var W=deskEarnPe('VOW',null,V,S);
+  __eq('VW: ни своей истории, ни P/E по FY → null (сектор 21 дальше ×2 от 7,8)', W, null);
+  var W2=deskEarnPe('VOW',own(null,null,6.1),V,S);
+  __eq('…с ценой ÷ EPS последнего FY = 6,1 → cur', [W2.src,W2.pe,W2.skip], ['cur',6.1,[{src:'sector',why:'far',pe:21}]]);
+  __eq('своя и сектор далеко от текущего 15 → обе в skip, линия по FY', deskEarnPe('AAA',own(40,1.3,14),V,S).skip, [{src:'own',why:'far',pe:40},{src:'sector',why:'far',pe:37.7}]);
+  __eq('без «Оценки» сверка идёт с P/E по последнему FY', src(deskEarnPe('ZZZ',own(12,1.2,14),{},{})), ['own',12]);
+  __eq('без «Оценки» и с FY P/E вне пределов (быстрый рост) — своя берётся без сверки', src(deskEarnPe('ZZZ',own(11.5,2.1,129),{},{})), ['own',11.5]);
+  __eq('сектор из 1 бумаги не годится', src(deskEarnPe('NOV',own(null,null,9),V,S)), ['cur',9]);
+  __eq('TSLA: P/E 336 — ни своя (далеко), ни сектор, ни текущий → null', deskEarnPe('TSLA',own(45.8,1.7,300),V,S), null);
+  var C=DESK_IDEA_CFG.earn,d0=C.dispX,h0=C.histX;
+  try{ C.dispX=4; __eq('dispX 4 → у DIS проходит своя 35,4 (×1,6 от 21,8)', src(deskEarnPe('DIS',own(35.4,3.3,15.4),V,S)), ['own',35.4]);
+    C.histX=1.5; __eq('histX 1,5 → своя 35,4 далеко от 21,8', deskEarnPe('DIS',own(35.4,3.3,15.4),V,S).src, 'sector'); }
+  finally{ C.dispX=d0; C.histX=h0; }
+  __eq('конфиг восстановлен', [C.dispX,C.histX], [d0,h0]);
+  var N=chartEarnNote({state:'ok',notes:[],pe:16.7,peSrc:'sector',last:{dev:-8}},{peSkip:D.skip,peCur:21.8});
+  __ok('заметка: источник и почему своя история не взята', N.indexOf('P/E 16.7 — медиана сектора')>0 && N.indexOf('своя история P/E 35.4 нестабильна (разброс по годам ×3.3) — не взята')>0, N);
+  __ok('заметка: своя медиана — за сколько лет', chartEarnNote({state:'ok',notes:[],pe:12,peSrc:'own',last:null},{peOwn:{n:4},peSkip:[]}).indexOf('своя медиана за 4 года')>0);
 });
 grp('desk glossary: линия прибыли', function(){
   var it=deskGlossItem('earn-line'),X=deskGlossEarnEx();

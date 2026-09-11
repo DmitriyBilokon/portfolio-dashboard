@@ -63,7 +63,7 @@
     const pf = st.pf == null ? '—' : st.pf === Infinity ? '∞' : st.pf.toFixed(2);
     return tr('Сигналы v2 на истории окна: ', 'Signals v2 over the window: ') + (st.n ? `${st.n} ${tr('сделок', 'trades')} · ${Math.round(st.win / st.n * 100)} % ${tr('в плюсе', 'won')} · ${tr('средний', 'avg')} ${fmtR(st.avgR)} · PF ${pf}` : tr('закрытых нет', 'none closed')) + (st.open ? ` · ${tr('открыта', 'open')} ${st.open}` : '');
   }
-  const EARN_SRC = { pe5: ['медиана 5 лет', '5-yr median'], pe3: ['медиана 3 лет', '3-yr median'], sector: ['медиана сектора', 'sector median'], cur: ['текущий', 'current'] };
+  const EARN_SRC = { own: ['своя медиана', 'own median'], sector: ['медиана сектора', 'sector median'], cur: ['текущий', 'current'] };
   const earnSrc = s => tr(...(EARN_SRC[s] || ['—', '—']));
   // Строка под графиком о линии прибыли: отклонение цены от линии или почему линии нет (eo — opts.earn).
   function earnNote(M, eo) {
@@ -72,14 +72,19 @@
     if (M.state === 'noeps') return h + tr('EPS у провайдера нет — линии нет', 'no EPS at the provider — no line');
     if (M.state === 'loss') return h + tr('компания убыточна — линии нет', 'the company is loss-making — no line');
     if (M.state === 'ccy') return h + tr(`нет курса ${(eo && eo.fin && eo.fin.ccy) || '?'} → ${(eo && eo.ccy) || '?'} — линии нет`, `no ${(eo && eo.fin && eo.fin.ccy) || '?'} → ${(eo && eo.ccy) || '?'} rate — no line`);
-    if (M.state === 'nope') return h + tr(`нет P/E в пределах ${eo && eo.peMin}–${eo && eo.peMax} (своя история, сектор, текущий) — линии нет; мультипликаторы — «📐 Оценка» на Home`, `no P/E within ${eo && eo.peMin}–${eo && eo.peMax} (own history, sector, current) — no line; multiples — “📐 Valuation” on Home`);
+    if (M.state === 'nope') return h + tr(`нет P/E в пределах ${eo && eo.peMin}–${eo && eo.peMax} (своя история, сектор, текущий) — линии нет`, `no P/E within ${eo && eo.peMin}–${eo && eo.peMax} (own history, sector, current) — no line`);
     if (M.state === 'nowin') return h + tr('годовые точки раньше окна — выберите 3Г', 'annual points precede the window — pick 3Y');
     const d = M.last && M.last.dev, parts = [];
     if (d != null) parts.push(Math.abs(d) < 0.5 ? tr('цена на линии прибыли', 'price on the earnings line') : tr(`цена на ${Math.abs(d).toFixed(0)} % ${d > 0 ? 'выше' : 'ниже'} линии прибыли`, `price ${Math.abs(d).toFixed(0)}% ${d > 0 ? 'above' : 'below'} the earnings line`));
-    parts.push('P/E ' + fmtN(M.pe, 1) + ' — ' + earnSrc(M.peSrc));
+    const own = eo && eo.peOwn, sk = (eo && eo.peSkip) || [];
+    parts.push('P/E ' + fmtN(M.pe, 1) + ' — ' + earnSrc(M.peSrc) + (M.peSrc === 'own' && own ? tr(` за ${own.n} ${own.n < 5 ? 'года' : 'лет'}`, ` over ${own.n} yrs`) : ''));
+    sk.forEach(k => parts.push(k.why === 'disp'
+      ? tr(`своя история P/E ${fmtN(k.pe, 1)} нестабильна (разброс по годам ×${fmtN(k.disp, 1)}) — не взята`, `own P/E history ${fmtN(k.pe, 1)} is unstable (×${fmtN(k.disp, 1)} spread) — not used`)
+      : tr(`${k.src === 'sector' ? 'медиана сектора' : 'своя история'} P/E ${fmtN(k.pe, 1)} далеко от текущего ${fmtN(eo.peCur, 1)} — не взята`, `${k.src === 'sector' ? 'sector median' : 'own history'} P/E ${fmtN(k.pe, 1)} is far from the current ${fmtN(eo.peCur, 1)} — not used`)));
     if (n.includes('pe-cur')) parts.push(tr('по текущему P/E линия показывает только динамику прибыли', 'at the current P/E the line shows only the earnings trend'));
     if (n.includes('no-fcst')) parts.push(tr('прогноза аналитиков нет', 'no analyst forecast'));
     else parts.push(tr('пунктир — прогноз аналитиков', 'dashed — analyst forecast'));
+    if (n.includes('fcst-jump') && M.jump) { const J = M.jump, up = J.x > 1, k = fmtN(up ? J.x : 1 / J.x, 1); parts.push(tr(`прогноз FY${J.year} в ${k} раза ${up ? 'выше' : 'ниже'} отчёта FY${J.from} — отчёт считается с разовыми статьями, консенсус аналитиков обычно без них; скачок может быть не ростом бизнеса`, `FY${J.year} forecast is ${k}× ${up ? 'above' : 'below'} the FY${J.from} report — reports include one-offs, analyst consensus usually does not; the jump may not be business growth`)); }
     if (n.includes('off-scale')) parts.push(tr('линия далеко от цены — вне автомасштаба (потяните шкалу цены, чтобы увидеть; двойной клик по шкале — вернуть)', 'the line is far from the price — excluded from autoscale (drag the price scale to see it; double-click the scale to reset)'));
     return h + parts.join(' · ');
   }
@@ -126,12 +131,10 @@
   // state: ok · nofin (нет ответа/ошибка) · noeps · loss (все годы ≤ 0) · ccy (нет курса) · nope (нет P/E) · nowin
   // (все точки раньше окна). fit — линия в пределах [min/scaleX, max×scaleX] цены окна (иначе не в автомасштабе).
   function chartEarningsModel(view, fin, o) {
-    o = Object.assign({ pe: null, peSrc: null, ccy: null, fx: null, futureBars: 520, scaleX: 1.5 }, o || {});
+    o = Object.assign({ pe: null, peSrc: null, ccy: null, fx: null, futureBars: 520, scaleX: 1.5, jumpX: 2 }, o || {});
     const M = { state: 'nofin', hist: [], fcst: [], future: [], line: [], pe: o.pe > 0 ? +o.pe : null, peSrc: o.peSrc || null, fx: null, last: null, fit: true, notes: [] };
     const V = view || [], L = V.length, num = v => v != null && v !== '' && isFinite(v);
-    if (!L) return M;
-    if (!M.pe) return Object.assign(M, { state: 'nope' });   // без P/E линии не будет — отчётность и не запрашивается
-    if (!fin || typeof fin !== 'object') return M;
+    if (!L || !fin || typeof fin !== 'object') return M;
     if (fin.status === 'error') { M.notes.push('error'); return M; }
     const A = (Array.isArray(fin.annual) ? fin.annual : []).filter(x => x && num(x.eps) && +x.year > 1900).map(x => ({ year: +x.year, eps: +x.eps })).sort((a, b) => a.year - b.year);
     if (!A.length) return Object.assign(M, { state: 'noeps' });
@@ -139,6 +142,7 @@
     const fx = earnRate(fin.ccy, o.ccy, o.fx);
     if (!(fx > 0)) return Object.assign(M, { state: 'ccy' });
     M.fx = fx;
+    if (!M.pe) return Object.assign(M, { state: 'nope' });
     const f0 = String(fin.fiscalYearEnd || ''), fye = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(f0) ? (f0 === '02-29' ? '02-28' : f0) : '12-31';
     const last = A[A.length - 1], val = eps => (eps > 0 ? eps * fx * M.pe : null);
     const E = (Array.isArray(fin.estimates) ? fin.estimates : []).filter(x => x && num(x.eps) && +x.year > last.year).map(x => ({ year: +x.year, eps: +x.eps, n: x.n || null })).sort((a, b) => a.year - b.year);
@@ -182,6 +186,10 @@
     if (E.length) {
       const link = P[P.length - 1];
       M.fcst = place((link.v != null ? [link] : []).concat(E.map(x => ({ date: `${x.year}-${fye}`, year: x.year, eps: x.eps, n: x.n, v: val(x.eps) }))));
+      // Скачок прогноза к последнему отчёту больше чем в jumpX раз — часто разные базы (отчёт с разовыми статьями,
+      // консенсус — без них): прогноз не отбрасываем (бывает и настоящий рост, MU ×9,7), но подписываем.
+      const j0 = last.eps > 0 && E.length && E[0].eps > 0 ? E[0].eps / last.eps : null;
+      if (j0 && (j0 > o.jumpX || j0 < 1 / o.jumpX)) { M.notes.push('fcst-jump'); M.jump = { x: j0, year: E[0].year, from: last.year }; }
     } else M.notes.push('no-fcst');
     const hi = M.hist.length ? M.hist[M.hist.length - 1].i : -1;
     M.line = M.hist.concat(M.fcst.filter(p => p.i > hi)).map(p => { const q = Object.assign({}, p); delete q.date; return q; });
@@ -196,6 +204,31 @@
     M.fit = Math.min(...ev) >= pl / o.scaleX && Math.max(...ev) <= ph * o.scaleX;
     if (!M.fit) M.notes.push('off-scale');
     return M;
+  }
+  // Своя история P/E на тех же данных, что и линия (plans/earnings-line.md, аудит 2026-09-11): P/E года = закрытие на конец
+  // FY ÷ (EPS × курс) по последним o.years годам с EPS > 0; берутся значения в [peMin, peMax]. Валюта отчётности, ADR и
+  // пенсы сокращаются — база та же, что у линии. bars — свечи [{d,c}] (5 лет). → {pe (медиана), n, disp (max ÷ min),
+  // pts:[{year,pe}], curFY (цена ÷ EPS последнего FY × курс; null при убытке)} или null (нет EPS/курса/свечей).
+  function chartEarnPe(bars, fin, o) {
+    o = Object.assign({ ccy: null, fx: null, peMin: 5, peMax: 60, years: 5, minYears: 2 }, o || {});
+    const B = (bars || []).filter(b => b && b.d && b.c > 0);
+    if (!B.length || !fin || !Array.isArray(fin.annual)) return null;
+    const A = fin.annual.filter(x => x && x.eps != null && isFinite(x.eps) && +x.year > 1900).map(x => ({ year: +x.year, eps: +x.eps })).sort((a, b) => a.year - b.year);
+    const k = earnRate(fin.ccy, o.ccy, o.fx);
+    if (!A.length || !(k > 0)) return null;
+    const f0 = String(fin.fiscalYearEnd || ''), fye = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(f0) ? f0 : '12-31';
+    const pxAt = d => { let lo = 0, hi = B.length; while (lo < hi) { const m = (lo + hi) >> 1; if (B[m].d <= d) lo = m + 1; else hi = m; } return lo ? B[lo - 1] : null; };   // последнее закрытие ≤ даты
+    const pts = [];
+    A.filter(x => x.eps > 0).slice(-o.years).forEach(x => {
+      const d = `${x.year}-${fye}`, b = pxAt(d);
+      if (!b || (dayMs(d) - dayMs(b.d)) / 864e5 > 7) return;   // свечей на конец года нет (история короче)
+      const pe = b.c / (x.eps * k);
+      if (pe >= o.peMin && pe <= o.peMax) pts.push({ year: x.year, pe });
+    });
+    const last = A[A.length - 1], curFY = last.eps > 0 ? B[B.length - 1].c / (last.eps * k) : null;
+    if (pts.length < o.minYears) return { pe: null, n: pts.length, disp: null, pts, curFY };
+    const v = pts.map(p => p.pe).sort((a, b) => a - b), m = v.length >> 1;
+    return { pe: v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2, n: v.length, disp: v[v.length - 1] / v[0], pts, curFY };
   }
   // Значение линии на логическом индексе i (интерполяция между соседними точками по индексу — как рисует линия)
   // + точка года, к которой идёт отрезок (at): {value, at, fcst}; null — вне линии или на разрыве.
@@ -415,5 +448,5 @@
   }
   root.chartModel = chartModel; root.chartTheme = chartTheme; root.renderStockChart = renderStockChart;
   root.chartStatsText = statsText; root.chartBarAt = barAt; root.chartFanModel = chartFanModel; root.renderTargetFan = renderTargetFan;
-  root.chartEarningsModel = chartEarningsModel; root.chartEarnAt = chartEarnAt; root.chartEarnNote = earnNote;
+  root.chartEarningsModel = chartEarningsModel; root.chartEarnAt = chartEarnAt; root.chartEarnPe = chartEarnPe; root.chartEarnNote = earnNote;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

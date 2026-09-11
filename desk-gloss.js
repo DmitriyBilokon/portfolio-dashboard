@@ -611,7 +611,6 @@ function deskGlossList(){
 }
 // Открыть словарь (id — прокрутить к записи и подсветить её на 1,5 с; нужно подсказкам G2).
 function deskGlossOpen(id){
-  if(typeof deskActive==='function'&&!deskActive())return;
   deskTipHide(false);
   const G=DESK_UI.gloss||(DESK_UI.gloss={open:false,q:'',id:null});
   const root=deskMount();let el=document.getElementById('dkGloss');
@@ -638,14 +637,12 @@ function deskGlossJump(domId,hl){
   try{n.scrollIntoView({block:'start'});}catch(e){}
   if(hl){n.classList.add('hl');setTimeout(()=>n.classList.remove('hl'),1500);}
 }
-// silent — закрытие при уходе из desk (классика/выключение): фокус не возвращаем.
-function deskGlossClose(silent){
+function deskGlossClose(){
   const G=DESK_UI.gloss;if(!G||!G.open)return;
   G.open=false;G.id=null;
   const el=document.getElementById('dkGloss');if(el){el.hidden=true;el.innerHTML='';}
   ['dkRail','dkMain','dkModal'].forEach(k=>{const n=document.getElementById(k);if(n)n.inert=false;});
   document.documentElement.classList.remove('dk-gl-lock');
-  if(silent)return;
   const r=G.ret&&G.ret!==document.body&&document.contains(G.ret)?G.ret:document.querySelector('#desk [data-a="menu"]');G.ret=null;   // пункт меню к этому моменту перерисован — тогда кнопка ⋯
   if(r)try{r.focus({preventScroll:true});}catch(e){}
 }
@@ -665,11 +662,8 @@ function deskGlossOnInput(e){
   const v=e.target.value;clearTimeout(_dgT);
   _dgT=setTimeout(()=>{if(DESK_UI.gloss){DESK_UI.gloss.q=v;deskGlossList();}},80);
 }
-// Кнопка из «❓ Справки» (faqHTML): словарь живёт в Trade Desk — вне него подсказываем, как включить.
-function deskGlossFromFaq(){
-  if(typeof deskActive==='function'&&deskActive()){toggleFaq();deskGlossOpen();return;}
-  toast('📖 '+RT('Словарь — в Trade Desk: включите 🖥 в шапке, затем ⋯ → «Словарь» или клавиша ?','The glossary lives in Trade Desk: turn on 🖥 in the header, then ⋯ → “Glossary” or the ? key'));
-}
+// Кнопка из «❓ Справки» (faqHTML): закрыть справку и открыть словарь.
+function deskGlossFromFaq(){toggleFaq();deskGlossOpen();}
 
 // ── Подсказки (G2): одна всплывашка #dkTip внутри #desk (вне #dkMain — перерисовка экрана её не стирает).
 // Мышь — наведение на [data-g] 400 мс, уход с метки и подсказки — скрыть через 150 мс; касание — долгое нажатие
@@ -696,7 +690,7 @@ function deskTipEl(){
 }
 function deskTipShow(a,pinned){
   const id=a&&a.dataset&&a.dataset.g,T=_dkTip;
-  if(!id||!deskGlossItem(id)||deskGlossIsOpen()||!deskActive())return;
+  if(!id||!deskGlossItem(id)||deskGlossIsOpen())return;
   const el=deskTipEl();clearTimeout(T.tShow);clearTimeout(T.tHide);
   if(T.anchor&&T.anchor!==a&&T.anchor.tagName==='BUTTON')T.anchor.setAttribute('aria-expanded','false');
   if(T.id!==id||el.hidden)el.innerHTML=deskGlossTipHTML(id);
@@ -747,7 +741,7 @@ function deskTipBoot(){
   const T=_dkTip,tipEl=()=>document.getElementById('dkTip');
   // Мышь (pointerType, а не hover-медиа: касание шлёт совместимые mouseover, их не ловим).
   document.addEventListener('pointerover',e=>{
-    if(e.pointerType!=='mouse'||!deskActive()||deskGlossIsOpen())return;
+    if(e.pointerType!=='mouse'||deskGlossIsOpen())return;
     const el=tipEl(),open=deskTipIsOpen();
     if(open&&el.contains(e.target)){clearTimeout(T.tHide);return;}
     const a=deskTipAnchorOf(e.target);if(!a)return;
@@ -765,7 +759,7 @@ function deskTipBoot(){
   document.addEventListener('pointerdown',e=>{
     if(e.pointerType!=='touch')return;
     T.touchAt=Date.now();clearTimeout(T.tHold);T.hold=null;
-    const a=deskTipAnchorOf(e.target);if(!a||!deskActive()||deskGlossIsOpen())return;
+    const a=deskTipAnchorOf(e.target);if(!a||deskGlossIsOpen())return;
     T.hold={a,x:e.clientX,y:e.clientY};
     T.tHold=setTimeout(()=>{const h=T.hold;T.hold=null;if(h&&h.a===a&&a.isConnected){T.lp=true;deskTipShow(a,true);}},DK_TIP.holdMs);
   },{passive:true});

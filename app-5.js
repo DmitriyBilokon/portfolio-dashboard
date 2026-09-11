@@ -1,91 +1,5 @@
 // ── 📜 Сделки портфеля: купля/продажа с реализованным P&L по продаже ──
 const pfPortShort=tab=>{const k=tab||PF3_KEY;return k===AIP_KEY?'AI':String(TAB_LABEL(k)||k).replace(/^Portfolio\s*\((.+)\)$/i,'$1')};
-// Лайв-превью комиссии в блоке «💸 Сделка» карточки.
-function pfTrPreview(ccy){
-  const el=document.getElementById('pfTrFee');if(!el)return;
-  const q=parseFloat((document.getElementById('pfTrQty')||{}).value),p=parseFloat((document.getElementById('pfTrPrice')||{}).value);
-  if(!(q>0)||!(p>0)){el.textContent='';return;}
-  const amt=q*p,fb=tradeFeeNative(ccy,amt,true),fs=tradeFeeNative(ccy,amt,false);
-  el.innerHTML=`${RT('Сумма','Amount')}: <b>${pf3Fmt(amt,2)} ${ccy}</b> · ${RT('комиссия','fee')} ${RT('покупка','buy')} ~${pf3Fmt(fb.total,2)} ${ccy} → ${RT('итого','total')} ${pf3Fmt(amt+fb.total,2)} ${ccy} · ${RT('продажа','sell')} ~${pf3Fmt(fs.total,2)} ${ccy}`;
-}
-function pfTrade(act){
-  const ri=pf3SelIdx(),d=pf3D();if(ri<0||!d)return;const r=d.rows[ri];if(!r)return;
-  const qty=parseFloat((document.getElementById('pfTrQty')||{}).value),price=parseFloat((document.getElementById('pfTrPrice')||{}).value);
-  if(!(qty>0)||!(price>0)){toast(RT('Укажите количество и цену сделки','Enter trade quantity and price'),true);return;}
-  const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD',fx=FX[ccy]||1;
-  const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
-  let plNative=null,tq=qty,feeNative=0;
-  if(act==='sell'){
-    tq=Math.min(qty,curQty);
-    if(!(tq>0)){toast(RT('Нет позиции для продажи','No position to sell'),true);return;}
-    feeNative=tradeFeeNative(ccy,tq*price,false).total;
-    plNative=Math.round(((price-avg)*tq-feeNative)*100)/100;   // P&L нетто, за вычетом комиссии продажи
-    r[6]=Math.round((curQty-tq)*1e6)/1e6;   // уменьшаем позицию, средняя не меняется
-    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)+pf3Cv(d,(tq*price-feeNative)*fx))*100)/100;   // выручка − комиссия → кэш
-  }else{
-    feeNative=tradeFeeNative(ccy,qty*price,true).total;
-    const nq=curQty+qty;
-    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя (без комиссии)
-    r[6]=nq;
-    if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,(qty*price+feeNative)*fx))*100)/100;   // сумма + комиссия с кэша
-  }
-  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,feeNative,date:new Date().toISOString().slice(0,10)});
-  recalcPF(ri,v3Key);scheduleSave();renderPF3();
-  toast((act==='sell'?'🔴 '+RT('Продано','Sold'):'🟢 '+RT('Куплено','Bought'))+` ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(feeNative?` · ${RT('комиссия','fee')} ${pf3Fmt(feeNative,2)} ${ccy}`:'')+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*fx)}`:''));
-}
-// ── 🛒 Покупка с карточки в ВЫБРАННЫЙ портфель (любая акция, в т.ч. из индексных вкладок) ──
-// Чистая функция средней (genomsnittsmetoden, без учёта комиссии — паритет с pfTrade): покрыта тестом.
-function pfApplyBuy(cur, qty, price){
-  const curQty=parseFloat(cur&&cur.qty)||0, avg=parseFloat(cur&&cur.avg)||0;
-  const nq=curQty+qty;
-  return {qty:Math.round(nq*1e6)/1e6, avg:nq>0?Math.round((avg*curQty+price*qty)/nq*100)/100:0};
-}
-// Список целевых портфелей (мои/семейные, без AI) для выпадашки.
-function pfBuyTargets(){return Object.keys(DATA).filter(k=>pf3MyPort(k)).map(k=>({key:k,label:TAB_LABEL(k)||k}));}
-// Живое превью: сумма + комиссия + итого; эквивалент в базовой валюте портфеля и предупреждение по кэшу.
-function pfCardBuyPreview(ccy){
-  const el=document.getElementById('pfBuyPreview');if(!el)return;
-  const g=id=>document.getElementById(id);
-  const d=DATA[(g('pfBuyPort')||{}).value];
-  let qty=parseFloat((g('pfBuyQty')||{}).value),price=parseFloat((g('pfBuyPrice')||{}).value);
-  const amt=parseFloat((g('pfBuyAmt')||{}).value);
-  if(!(price>0)&&amt>0&&qty>0)price=amt/qty;
-  if(!(qty>0)||!(price>0)){el.textContent='';return;}
-  const fee=tradeFeeNative(ccy,qty*price,true).total,total=qty*price+fee,fx=FX[ccy]||1;
-  let s=`${RT('Сумма','Amount')}: <b>${pf3Fmt(qty*price,2)} ${ccy}</b> · ${RT('комиссия','fee')} ~${pf3Fmt(fee,2)} ${ccy} → ${RT('итого','total')} <b>${pf3Fmt(total,2)} ${ccy}</b>`;
-  if(d){const cash=parseFloat(d.cashFree);if(isFinite(cash)){const after=cash-pf3Cv(d,total*fx);s+=` · ${RT('кэш после','cash after')} ${pf3Fmt(after,0)} ${pf3Base(d)}`+(after<0?` <span class="pf3-down">⚠️ ${RT('в минус','negative')}</span>`:'');}}
-  el.innerHTML=s;
-}
-// Исполнение: найти/создать позицию в выбранном портфеле, обновить кэш, записать сделку.
-function pfCardBuy(){
-  if(!can('action.add_position'))return;
-  const g=id=>document.getElementById(id);
-  const key=(g('pfBuyPort')||{}).value,d=DATA[key];
-  if(!d||!pf3MyPort(key)){toast(RT('Выберите портфель','Select a portfolio'),true);return;}
-  const cr=pf3D().rows[pf3SelIdx()];if(!cr)return;
-  const tk=String(cr[2]||'').trim().toUpperCase();if(!tk)return;
-  let qty=parseFloat((g('pfBuyQty')||{}).value),price=parseFloat((g('pfBuyPrice')||{}).value);
-  const amt=parseFloat((g('pfBuyAmt')||{}).value);
-  if(!(price>0)&&amt>0&&qty>0)price=Math.round(amt/qty*1e6)/1e6;
-  if(!(qty>0)||!(price>0)){toast(RT('Укажите количество и цену (или сумму)','Enter quantity and price (or amount)'),true);return;}
-  const date=(g('pfBuyDate')||{}).value||new Date().toISOString().slice(0,10);
-  let ri=(d.rows||[]).findIndex(r=>String(r[2]||'').trim().toUpperCase()===tk);
-  const ccy=(ri>=0?(d.rows[ri][8]||cr[8]):cr[8])||'USD';
-  if(ri<0){   // создать новую позицию (паттерн pf3-строки; метрики дозаполнятся при обновлении цен)
-    const row=new Array(d.headers.length).fill('');
-    row[0]=d.rows.length+1;row[1]=String(cr[1]||tk);row[2]=tk;row[3]=cr[3]||'';row[4]=cr[4]||'';row[5]=cr[5]||'';
-    row[6]=0;row[7]=parseFloat(cr[7])||price;row[8]=ccy;row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;
-    d.rows.push(row);d.count=d.rows.length;ri=d.rows.length-1;
-  }
-  const r=d.rows[ri],fee=tradeFeeNative(ccy,qty*price,true).total,fx=FX[ccy]||1;
-  const res=pfApplyBuy({qty:parseFloat(r[6])||0,avg:parseFloat(r[9])||0},qty,price);
-  r[9]=res.avg;r[6]=res.qty;
-  if(!(parseFloat(r[7])>0))r[7]=price;   // дать цену, пока не обновили живую
-  if(d.cashFree!=null&&d.cashFree!=='')d.cashFree=Math.round(((parseFloat(d.cashFree)||0)-pf3Cv(d,(qty*price+fee)*fx))*100)/100;   // сумма + комиссия с кэша
-  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:key,tk,name:String(r[1]||tk),ccy,act:'buy',qty,price,plNative:null,feeNative:fee,date});
-  recalcPF(ri,key);scheduleSave();renderPF3();
-  toast('🟢 '+RT('Куплено','Bought')+` ${pf3Fmt(qty)} × ${pf3Fmt(price,2)} ${ccy} → ${TAB_LABEL(key)}`+(fee?` · ${RT('комиссия','fee')} ${pf3Fmt(fee,2)} ${ccy}`:''));
-}
 function pfTradeDel(id){
   const i=PF_TRADES.findIndex(t=>t.id===id);if(i<0)return;
   if(!confirm(RT('Удалить запись о сделке? (позиция и кэш НЕ изменятся)','Delete this trade record? (position & cash stay)')))return;
@@ -333,8 +247,6 @@ function planStatus(rule){
   else if(ready) hit=hasLvl?'level':'deadline';
   return {price,lvl,hasLvl,priceReady,gapPct,dleft,overdue,dueSoon,ready,side,stop,target,stopHit,targetHit,hit,invalid,open};
 }
-function planReadyCount(tab){ return (PLAN_RULES||[]).filter(r=>(!tab||(r.tab||PF3_KEY)===tab)&&!r.done&&planStatus(r).ready).length; }
-function planBadge(tab){ const n=planReadyCount(tab); return n?` 🔔${n}`:''; }
 function planActIcon(act,side){ if(side==='short')return act==='sell'?'🔻':'🔺'; return act==='sell'?'🔴':act==='watch'?'👁':'🟢'; }
 function planActLabel(act,side){ if(side==='short')return act==='sell'?RT('Шорт','Short'):RT('Откупить шорт','Cover short'); return act==='sell'?RT('Сократить','Trim'):act==='watch'?RT('Наблюдать','Watch'):RT('Купить','Buy'); }
 // Значение селекта формы ↔ (act, side): short = открыть шорт продажей, cover = закрыть покупкой.
@@ -350,7 +262,7 @@ function planNotify(title,body){
 function planAskNotify(silent){
   try{
     if(typeof Notification==='undefined'){ if(!silent)toast(RT('Браузер не поддерживает уведомления','Browser has no notifications'),true); return; }
-    if(Notification.permission==='default'){ Notification.requestPermission().then(()=>{ if(!silent&&isV3()&&pf3Tab==='plan')renderPF3(); }); }
+    if(Notification.permission==='default'){ Notification.requestPermission().then(()=>{ if(!silent)renderPF3(); }); }
     else if(Notification.permission==='denied'){ if(!silent)toast(RT('Уведомления заблокированы в браузере','Notifications blocked in browser'),true); }
     else if(!silent){ toast(RT('Уведомления уже включены','Alerts already on')); }
   }catch(e){}
@@ -376,7 +288,7 @@ function planCheck(){
     planNotify(RT('🎯 План действий — пора исполнять','🎯 Action plan — act now'), msg+(rule.note?`\n${rule.note}`:''));
   });
   if(changed)scheduleSave();
-  if(fired.length&&isV3()&&pf3Tab==='plan')renderPF3();
+  if(fired.length)renderPF3();
 }
 let planEditId=null;   // id правила, открытого на редактирование (инлайн)
 // Сколько ЦЕЛЫХ акций влезает в сумму kr по цене (валюта бумаги). Акции
@@ -947,20 +859,54 @@ function deskUniverse(now){
   });
   return {list,bySym,tabsN};
 }
-// 📡 Сигналы v2 в тени (S4, слой 3 plans/redesign-integration.md). signals.js (глобал SIG) считает вердикт
-// по дневным свечам ?history=; старые движки (pf3Criterion/pf3Reco/pf3RecoHorizons) не меняются — v2
-// показывается рядом (доп. колонка «Вердикт v2», столбец v2 в «🏆 общем рейтинге» Home), расхождения
-// пишутся в журнал тени для калибровки порогов (plans/signals-calibration.md). Свечи — общий с графиком
-// карточки кэш _histCache (ключ sym:2y, 10 мин): открытая карточка и колонка не качают историю дважды.
+// 📡 Сигналы v2 (S4, слой 3 plans/redesign-integration.md) — единственный движок решений с S7b-3 (старые pf3Criterion/
+// «Рекомендация» с горизонтами и теневой журнал удалены). signals.js (глобал SIG) считает вердикт по дневным свечам
+// ?history=; свечи — общий с графиком кэш _histCache (ключ sym:2y, 10 мин).
 let SIGNALS={};                 // sym → {k: ключ входных данных, s: снимок без ind/markers}
-let _sigFail={},_sigBusy={},_sigCalAt={};   // _sigCalAt: вкладка → последний запрос календаря
+let _sigFail={},_sigBusy={};
 const SIG_TTL=10*60e3,SIG_POOL=4;
 const sigHistKey=sym=>sym+':2y';
-// Фаза v2 по данным строки — мост паритета с pf3Criterion: те же входы (цена, день %, SMA из колонок,
-// «Поддержка», апсайд к эффективному таргету). После теневого режима заменит pf3Criterion (S7).
+// Фаза по данным строки (без свечей): SIG.phase на цене, дне %, SMA из колонок, «Поддержке» и апсайде к эффективному
+// таргету — порт прежнего pf3Criterion 1:1 (тест «phase parity»). Без цены/SMA50/SMA200 — «—» (не «Боковик»), как было.
+// Потребители: AI-снапшоты (фаза позиций и marketContext), AI-прогноз, cash-drag.
 function sigRowPhase(d,r){
-  const {s50,s100,s200}=smaIdx(d),g=i=>i>=0?(parseFloat(r[i])||0):0;
-  return SIG.phase(parseFloat(r[7])||0,parseFloat(r[10])||0,g(s50),g(s100),g(s200),g(d.headers.indexOf('Поддержка')),pf3EffUpside(d,r));
+  const {s50,s100,s200}=smaIdx(d),g=i=>i>=0?(parseFloat(r[i])||0):0,p=parseFloat(r[7])||0;
+  if(!(p>0)||!(g(s50)>0)||!(g(s200)>0))return {key:'flat',label:'—',rank:3};
+  return SIG.phase(p,parseFloat(r[10])||0,g(s50),g(s100),g(s200),g(d.headers.indexOf('Поддержка')),pf3EffUpside(d,r));
+}
+// ── Адаптеры SIG для AI (S7b-3, plans/s7b-map.md §5) — вместо вердикта старой «Рекомендации» ──
+// Снимок строки только для чтения (мемо SIGNALS не пишется): риск — как у deskItems (deskRiskKr), чтобы попасть
+// в мемо, иначе каждый вызов пересчитывал бы SIG.snapshot. null — свечей ещё нет.
+function sigRowRead(d,r){try{return sigSnapRow(d,r,typeof deskRiskKr==='function'?deskRiskKr():null,null,true);}catch(e){return null;}}
+// Снимок бумаги строки: из deskItems (тот же, что на экране «Решения»; строка-источник — первая с ценой; мемо), иначе —
+// снимок самой строки. sigRowVerdict — его вердикт.
+function sigRowSnap(d,r){
+  try{const tk=posTk(r&&r[2]),ccy=String(r[8]||'USD').trim().toUpperCase(),it=tk&&typeof deskSecOf==='function'?deskSecOf(exSymbol(tk,ccy)+'|'+ccy):null;
+    if(it&&it.s)return it.s;}catch(e){}
+  return sigRowRead(d,r);
+}
+function sigRowVerdict(d,r){const s=sigRowSnap(d,r);return s?s.verdict:null;}
+// «У уровня» (вместо pf3SignalInfo): ближайший структурный уровень снимка в пределах SIG.CFG.nearPct.
+function sigNearText(s){const n=s&&s.near;if(!n||!isFinite(n.dist))return null;return `${n.v<=s.price?'support':'resistance'} ${n.src} ${n.dist>=0?'+':''}${n.dist.toFixed(1)}%`;}
+// Легенда вердикта для AI (порог R/R — из SIG.CFG). Промпты воркера описывают прежнюю шкалу buy/wait/sell/avoid —
+// соответствие дано явно.
+const SIG_AI_LEGEND=`recoVerdict — вердикт «Решения» Trade Desk (сигналы v2 по дневным свечам 2 года; тот же, что инвестор видит на экране): buy — вход в лонг сейчас (откат к поддержке, R/R ≥ ${SIG.CFG.rrMin}); short — шорт-сетап (даунтренд у сопротивления); trim — перегрев, фиксировать часть, новых покупок нет; hold — тренд без сетапа, держать и не догонять; wait — сетапа нет, ждать уровня/подтверждения; null — свечей нет. В прежней шкале: buy ≈ buy, hold/wait ≈ wait, trim ≈ sell, short ≈ avoid для лонга. Это КРАТКОСРОЧНО-технический вердикт.`;
+// Карта для AI Proto по всем тикерам вкладок (первая строка с ценой): ТИКЕР → [вердикт SIG|null, апсайд к таргету %,
+// % от SMA50, % от SMA200, P/E, в этом портфеле 1|0]. verdictOf — для тестов (по умолчанию sigRowVerdict).
+function sigRecoMap(portKey,verdictOf){
+  const vOf=verdictOf||sigRowVerdict,seen=new Set(),out={};
+  const portTks=new Set(((DATA[portKey||PF3_KEY]&&DATA[portKey||PF3_KEY].rows)||[]).map(r=>String(r[2]||'').trim().toUpperCase()));
+  v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
+    const {s50,s200}=smaIdx(d),peC=d.headers.indexOf('P/E');
+    d.rows.forEach((r,i)=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[7])||0;if(!(price>0))return;recalcPF(i,k);seen.add(tk);
+      const num=c=>{const x=c>=0?parseFloat(r[c]):NaN;return isFinite(x)?x:null};
+      const D=c=>{const x=num(c);return(x&&x>0)?Math.round((price/x-1)*1000)/10:null};
+      const up=pf3EffUpside(d,r);
+      out[tk]=[vOf(d,r)||null,up!=null?Math.round(up):null,D(s50),D(s200),num(peC),portTks.has(tk)?1:0];
+    });
+  });
+  return out;
 }
 // Дней до ближайшего отчёта из календаря ?calendar= (pf3Cal); null — неизвестно или уже прошёл.
 function sigEarnDays(sym,now){
@@ -994,7 +940,7 @@ function sigSnapRow(d,r,riskKr,now,readOnly){
   if(!readOnly&&!hc.bars)hc.bars=bars;
   const full=SIG.snapshot(bars,o);
   const s=full?Object.assign({},full,{ind:null,ohlc:Array.isArray(hc.j.h)}):null;
-  if(!readOnly){SIGNALS[sym]={k,s};if(s)sigShadowRecord(d,r,sym,s,now);}
+  if(!readOnly)SIGNALS[sym]={k,s};
   return s;
 }
 // Догрузка свечей (2 года, дневные) пулом по SIG_POOL; неудача — повтор не раньше SIG_TTL (без петли
@@ -1022,123 +968,13 @@ async function sigEnsure(syms){
   await Promise.all(Array.from({length:Math.min(SIG_POOL,need.length)},work));
   return got;
 }
-// Колонка «Вердикт v2» включена → свечи всех бумаг вкладки + календарь отчётов (не чаще раза в 10 мин),
-// затем один перерендер, если что-то пришло.
-function sigLoadTab(tab){
-  const d=DATA[tab];if(!d||!Array.isArray(d.rows))return;
-  const calAt=pf3Cal.loaded;let cal=null;
-  if(tab===v3Key&&Date.now()-(_sigCalAt[tab]||0)>SIG_TTL){_sigCalAt[tab]=Date.now();cal=pf3LoadCalendar();}
-  Promise.all([sigEnsure(d.rows.map(r=>exSymbol(r[2],r[8]))),cal]).then(([n])=>{
-    if((n||pf3Cal.loaded!==calAt)&&curIdx===tab&&isV3())renderPF3();
-  }).catch(()=>{});
-}
 // Числовой ключ сортировки колонки (по убыванию = как SIG.cmp): группа вердикта → R/R → балл.
 function sigSortVal(s){
   if(!s)return -1;
   const g=({buy:3,short:3,trim:2,hold:1,wait:1})[s.verdict]||0,rr=s.plan&&s.plan.rr!=null?Math.max(0,Math.min(9.99,s.plan.rr)):0;
   return g*1e4+Math.round(rr*100)*10+(s.score||0)/10;
 }
-// Старый ↔ новый вердикт: грубые классы «вход / выход / вне рынка». avoid старого совпадает с любым
-// «не покупать» v2. null — сравнить нечего.
-const SIG_COARSE_OLD={buy:'in',sell:'out',wait:'flat',avoid:'avoid'},SIG_COARSE_NEW={buy:'in',short:'out',trim:'out',hold:'flat',wait:'flat'};
-function sigAgree(oldV,newV){
-  const a=SIG_COARSE_OLD[oldV],b=SIG_COARSE_NEW[newV];if(!a||!b)return null;
-  return a===b||(a==='avoid'&&b!=='in');
-}
-// Пилюля вердикта v2: глиф + слово (не только цвет). trim вне книги — «Перегрев» (сокращать нечего).
-// «≈» перед R/R — цель расчётная (±2·ATR, флаг atr-target), структурного уровня в коридоре нет.
-function sigPillHTML(s,held,oldV){
-  if(!s)return'<span class="pf3-sig pf3-sig-none">—</span>';
-  const V={buy:['▲',RT('Купить','Buy')],short:['▼',RT('Шорт','Short')],trim:['◆',held?RT('Сократить','Trim'):RT('Перегрев','Overheated')],hold:['●',RT('Держать','Hold')],wait:['○',RT('Ждать','Wait')]}[s.verdict]||['○',s.verdict];
-  const p=s.plan,f=x=>pf3Fmt(x,x>=500?0:2),agree=oldV?sigAgree(oldV,s.verdict):null;
-  const sub=p&&p.rr!=null?`R/R ${(p.flags||[]).includes('atr-target')?'≈':''}${p.rr.toFixed(1)}${p.mode==='limit'?' · '+RT('лим.','lim.')+' '+f(p.entry):''}`:'';
-  const tip=[s.why.join('\n'),p?`${s.side==='short'?RT('Шорт','Short'):RT('Лонг','Long')}: ${RT('вход','entry')} ${f(p.entry)} · ${RT('стоп','stop')} ${f(p.stop)} (${p.stopSrc}) · ${RT('цель','target')} ${f(p.target)} (${p.targetSrc}) · ${p.qty} ${RT('шт','sh')}`:'',
-    s.flags.length?RT('Флаги: ','Flags: ')+s.flags.join(', '):'',agree===false?RT('≠ расходится со старой «Рекомендацией»','≠ differs from the old «Recommendation»'):''].filter(Boolean).join('\n');
-  return`<span class="sig2 sig2-${s.verdict}" title="${tip.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}"><b>${V[0]} ${V[1]}${agree===false?' <i class="sig2-ne">≠</i>':''}</b>${sub?`<small>${sub}</small>`:''}</span>`;
-}
 
-// 📓 Журнал тени: день → sym → {старые вердикты/фаза, v2}. Только этот браузер (localStorage), 14 дней.
-// Пишется при каждом новом снимке v2 (последний за день перезаписывает). Отчёт — sigShadowReport().
-const SIG_SHADOW_LS='dash_sig_shadow',SIG_SHADOW_DAYS=14;
-let SIG_SHADOW=null,_sigShadowT=0;
-function sigShadowLoad(){
-  if(SIG_SHADOW)return SIG_SHADOW;
-  try{SIG_SHADOW=JSON.parse(localStorage.getItem(SIG_SHADOW_LS)||'null');}catch(e){SIG_SHADOW=null;}
-  if(!SIG_SHADOW||typeof SIG_SHADOW!=='object'||!SIG_SHADOW.days||typeof SIG_SHADOW.days!=='object')SIG_SHADOW={v:1,days:{}};
-  return SIG_SHADOW;
-}
-function sigShadowPrune(L,today){
-  const cut=new Date(Date.parse(today+'T00:00:00Z')-SIG_SHADOW_DAYS*864e5).toISOString().slice(0,10);
-  Object.keys(L.days).forEach(k=>{if(k<cut)delete L.days[k];});
-  return L;
-}
-function sigShadowRecord(d,r,sym,s,now){
-  let o=null,oh=null,po=null;
-  try{o=pf3Reco(d,r).v;}catch(e){}
-  try{oh=pf3RecoHorizons(d,r).now.v;}catch(e){}
-  try{po=pf3Criterion(d,r).cls;}catch(e){}
-  const L=sigShadowLoad(),day=new Date(now||Date.now()).toISOString().slice(0,10),p=s.plan||{},agree=sigAgree(o,s.verdict);
-  (L.days[day]=L.days[day]||{})[sym]={tk:posTk(r[2]),o,oh,po,n:s.verdict,sd:s.side,pn:s.phase.key,st:!!s.setup,
-    rr:p.rr!=null?Math.round(p.rr*100)/100:null,m:p.mode||null,f:s.flags.slice(),sc:s.score,px:s.price,bd:s.d||'',ohlc:s.ohlc!==false,cv:SIG.VER||'',
-    w:agree===false||po!==s.phase.key?String(s.why[0]||'').slice(0,90):''};
-  clearTimeout(_sigShadowT);_sigShadowT=setTimeout(sigShadowSave,1500);
-}
-function sigShadowSave(){
-  const L=sigShadowPrune(sigShadowLoad(),new Date().toISOString().slice(0,10));
-  try{localStorage.setItem(SIG_SHADOW_LS,JSON.stringify(L));}catch(e){}
-}
-// Отчёт расхождений (markdown) по журналу тени — чистая функция: вставляется в plans/signals-calibration.md.
-function sigShadowReport(L){
-  const days=Object.keys((L&&L.days)||{}).sort();
-  if(!days.length)return'# Отчёт тени v2\n\nЖурнал пуст — включите доп. колонку «Вердикт v2» во вкладках.\n';
-  const last={},hist={};let obs=0;
-  days.forEach(dy=>Object.entries(L.days[dy]).forEach(([sym,e])=>{obs++;last[sym]=Object.assign({sym,day:dy},e);(hist[sym]=hist[sym]||[]).push(e);}));
-  const E=Object.values(last),n=E.length,pct=(a,b)=>b?Math.round(a/b*100)+' %':'—';
-  const OV=['buy','wait','sell','avoid',null],NV=['buy','short','trim','hold','wait'];
-  const cmpd=E.filter(e=>sigAgree(e.o,e.n)!==null),agr=cmpd.filter(e=>sigAgree(e.o,e.n)),ph=E.filter(e=>e.po&&e.po===e.pn);
-  const cnt=(arr,f)=>arr.filter(f).length;
-  const out=[`# Отчёт тени v2 — ${days[0]} … ${days[days.length-1]}`,'',
-    `Бумаг: **${n}**, наблюдений: ${obs}, дней: ${days.length}. Совпадение с «Рекомендацией» (список, pf3Reco): **${pct(agr.length,cmpd.length)}** (${agr.length}/${cmpd.length}); фаза v2 = «Критерий»: **${pct(ph.length,n)}**.`,'',
-    '## Матрица: старая «Рекомендация» (строки) × вердикт v2 (столбцы), последний снимок бумаги','',
-    '| старый \\ v2 | '+NV.join(' | ')+' |','|---|'+NV.map(()=>'---:').join('|')+'|'];
-  OV.forEach(ov=>{const row=E.filter(e=>(e.o||null)===ov);if(row.length)out.push(`| ${ov||'—'} | `+NV.map(nv=>cnt(row,e=>e.n===nv)||'').join(' | ')+' |');});
-  const pairs={};E.filter(e=>e.po!==e.pn).forEach(e=>{const k=(e.po||'—')+' → '+e.pn;pairs[k]=(pairs[k]||0)+1;});
-  const pl=Object.entries(pairs).sort((a,b)=>b[1]-a[1]);
-  out.push('','## Фаза: «Критерий» (колонки листа) → phase v2 (свечи)','',pl.length?pl.map(([k,v])=>`- ${k}: ${v}`).join('\n'):'- расхождений нет');
-  const fl={};E.forEach(e=>(e.f||[]).forEach(f=>{fl[f]=(fl[f]||0)+1;}));
-  const rrs=E.filter(e=>e.rr!=null);
-  out.push('','## Пороги (для калибровки)','',
-    `- R/R плана: < ${SIG.CFG.rrWeak}: ${cnt(rrs,e=>e.rr<SIG.CFG.rrWeak)} · ${SIG.CFG.rrWeak}–${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrWeak&&e.rr<SIG.CFG.rrMin)} · ≥ ${SIG.CFG.rrMin}: ${cnt(rrs,e=>e.rr>=SIG.CFG.rrMin)}; цель без уровня (atr-target, R/R ≈): ${cnt(E,e=>(e.f||[]).includes('atr-target'))}`,
-    `- Режим входа: по рынку ${cnt(E,e=>e.m==='market')} · лимит ${cnt(E,e=>e.m==='limit')}; сетап «у уровня ≤ ${SIG.CFG.nearPct} %»: ${cnt(E,e=>e.st)}`,
-    `- Вердикты v2: `+NV.map(v=>`${v} ${cnt(E,e=>e.n===v)}`).join(' · ')+`; сторона шорт: ${cnt(E,e=>e.sd==='short')}`,
-    `- Флаги: `+(Object.keys(fl).length?Object.entries(fl).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${v}`).join(' · '):'нет'),
-    `- Без OHLC (старый формат воркера): ${cnt(E,e=>!e.ohlc)}`);
-  // Смена вердикта из-за смены правил (калибровка) — не нестабильность: v2 сравнивается в пределах версии правил.
-  const cvs={};E.forEach(e=>{const k=e.cv||'до калибровки';cvs[k]=(cvs[k]||0)+1;});
-  const flips=Object.entries(hist).filter(([sym,h])=>new Set(h.filter(e=>(e.cv||'')===(last[sym].cv||'')).map(e=>e.n)).size>1).length,flipsO=Object.entries(hist).filter(([,h])=>new Set(h.map(e=>e.o)).size>1).length;
-  out.push(`- Версии правил v2 (последний снимок): `+Object.entries(cvs).map(([k,v])=>`${k} ${v}`).join(' · '),
-    `- Стабильность (бумаг со сменой вердикта за период; v2 — в пределах версии правил): v2 ${flips} · старый ${flipsO} из ${Object.keys(hist).length}`);
-  const diff=E.filter(e=>sigAgree(e.o,e.n)===false).sort((a,b)=>(NV.indexOf(a.n)-NV.indexOf(b.n))||String(a.tk).localeCompare(String(b.tk)));
-  out.push('','## Расхождения вердикта (последний снимок)','');
-  if(!diff.length)out.push('Нет.');
-  else{
-    out.push('| тикер | день | старый (список) | старый (карточка «сейчас») | v2 | R/R | вход | фаза старая → v2 | флаги | почему (v2) |','|---|---|---|---|---|---:|---|---|---|---|');
-    diff.slice(0,60).forEach(e=>out.push(`| ${e.tk} | ${e.day} | ${e.o||'—'} | ${e.oh||'—'} | ${e.n}${e.sd==='short'?' (шорт)':''} | ${e.rr!=null?e.rr.toFixed(2):'—'} | ${e.m||'—'} | ${e.po||'—'} → ${e.pn} | ${(e.f||[]).join(', ')} | ${String(e.w||'').replace(/\|/g,'/')} |`));
-    if(diff.length>60)out.push('',`… и ещё ${diff.length-60}.`);
-  }
-  return out.join('\n')+'\n';
-}
-// «📋 Отчёт расхождений v2»: markdown в буфер обмена + окно с текстом (на телефоне — выделить и скопировать).
-function sigShadowShow(ev){
-  if(ev)ev.stopPropagation();
-  const md=sigShadowReport(sigShadowLoad());
-  try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(md).then(()=>toast(RT('Отчёт скопирован ✓','Report copied ✓')),()=>{});}catch(e){}
-  const o=document.getElementById('faqOverlay'),c=document.getElementById('faqCard');if(!o||!c)return;
-  c.innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>📋 ${RT('Отчёт тени: вердикт v2 vs старые движки','Shadow report: verdict v2 vs old engines')}</h2><div class="faq-body"><p class="pf3-asof">${RT('Журнал этого браузера за 14 дней. Вставьте в plans/signals-calibration.md.','This browser’s log, 14 days. Paste into plans/signals-calibration.md.')}</p><textarea class="sig2-report" readonly onclick="this.select()">${md.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>`;
-  o.classList.remove('hidden');
-}
-function pf3SetYears(y){pf3State.years=y;renderPF3()}
-function pf3SetSide(sd){pf3State.side=sd;stockChartTools(pf3State,'pf3cs');if(pf3State.ch)pf3State.ch.setSide(sd)}
 // Цены + дневное изменение + SMA (обе серии) + поддержка/сопротивление для
 // ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —
 // 0 обновлено, без ошибки.
@@ -1153,15 +989,13 @@ async function pf3FetchPrices(d,key){
     if(!(q&&typeof q.price==='number'))return;
     r[7]=q.price;pxMarkLive(exSymbol(r[2],r[8]),q.price);
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
-    // Обе серии SMA (дневные и недельные) — в SMA_TF; в видимые колонки
-    // идёт набор выбранного периода (1Г/3Г), а не всегда дневной. От этих
-    // колонок считаются «Критерий» и «Сигнал» при перерисовке.
+    // Обе серии SMA (дневные и недельные) — в SMA_TF (снапшот; режим 3Г с S7b-3 не используется), в колонки —
+    // всегда дневные: от них считаются фаза (sigRowPhase) и AI-снапшоты.
     const tk=String(r[2]||'');
-    const mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
-    SMA_TF[tk]={mode,
+    SMA_TF[tk]={mode:'1Y',
       d:[q.sma50??null,q.sma100??null,q.sma200??null],
       w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
-    const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
+    const set=SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
     if(s100>=0&&set[1]!=null)r[s100]=set[1];
     if(s200>=0&&set[2]!=null)r[s200]=set[2];
@@ -1170,7 +1004,6 @@ async function pf3FetchPrices(d,key){
     recalcPF(i,key);updated++;
   });
   if(updated){
-    pf3WriteReco(d);
     // База «Я vs AI» — стоимость МОЕГО портфеля по живым ценам. Ставится один
     // раз (myStartLive); базы, посчитанные по устаревшему сид-блобу до этого
     // флага, перефиксируются здесь же.
@@ -1181,22 +1014,6 @@ async function pf3FetchPrices(d,key){
     scheduleSave();
   }
   return updated;
-}
-async function pf3Refresh(silent){
-  const d=pf3D();
-  const btn=document.getElementById('pf3RefreshBtn');
-  if(btn&&!silent){btn.disabled=true;btn.textContent='⏳ Обновляю…';}
-  try{
-    const updated=await pf3FetchPrices(d,v3Key);
-    if(updated)pf3LastRefresh[v3Key]=Date.now();
-    try{await pf3RefreshTargets(d)}catch(e){}   // аналит. таргеты — раз в сутки, тем же батч-паттерном
-    try{planCheck()}catch(e){}                  // 🎯 сверить уровни плана и уведомить о достигнутых
-    try{scnAlertCheck()}catch(e){}              // 📊 Блок D: сценарные алерты (триггеры/R/R/RSI)
-    if(!silent)toast(`🔄 ${updated}/${d.rows.length} обновлено`,!updated);
-  }catch(e){if(!silent)toast('Прокси цен недоступен',true);}
-  // Don't redraw under the user's cursor while they edit qty / buy price.
-  const ae=document.activeElement,area=document.getElementById('pf3Area');
-  if(!(silent&&ae&&ae.tagName==='INPUT'&&area&&area.contains(ae)))renderPF3();
 }
 
 // Живая цена ОДНОЙ бумаги при открытии карточки — чтобы «потенциал роста»
@@ -1218,10 +1035,10 @@ async function pf3RefreshCardPrice(d,r,tab){
     const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
     r[7]=q.price;pxMarkLive(sym,q.price);
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
-    const tk=String(r[2]||''),mode=(SMA_TF[tk]&&SMA_TF[tk].mode)||'1Y';
+    const tk=String(r[2]||'');
     CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,day:typeof q.pct==='number'?q.pct:null,at:Date.now()};   // объём торгов + дневное движение (лайв)
-    SMA_TF[tk]={mode,d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
-    const set=mode==='3Y'?SMA_TF[tk].w:SMA_TF[tk].d;
+    SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};   // в колонки — дневные (S7b-3)
+    const set=SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
     if(s100>=0&&set[1]!=null)r[s100]=set[1];
     if(s200>=0&&set[2]!=null)r[s200]=set[2];
@@ -1398,104 +1215,21 @@ async function pf3RefreshTargets(d){
   if(n){
     // Свежие метрики → пересчитать типы по скорингу (методологии MSCI/S&P).
     d.rows.forEach(r=>{const t=pf3DeriveType(String(r[2]||'').trim().toUpperCase(),r[4],r[5],d,r);if(t&&r[5]!==t)r[5]=t});
-    pf3WriteReco(d);
     d.targetsAt=Date.now();scheduleSave();
   }
 }
 
-// Auto-refresh while the Портфель 3.0 tab is open: immediately when stale, then every 5 min.
-let pf3Timer=null,pf3LastRefresh={};   // время последнего обновления ПО ВКЛАДКАМ (раньше было общим → индексные вкладки показывали устаревшие seed-цены)
-const PF3_REFRESH_MS=5*60*1000;
-function pf3EnsureAutoRefresh(){
-  if(!pf3Timer)pf3Timer=setInterval(()=>{if(isV3())pf3Refresh(true)},PF3_REFRESH_MS);
-  const last=pf3LastRefresh[v3Key]||0;
-  if(Date.now()-last>PF3_REFRESH_MS)pf3Refresh(true);   // открыли вкладку, чьи цены устарели → обновить сразу
-}
-function pf3StopAutoRefresh(){if(pf3Timer){clearInterval(pf3Timer);pf3Timer=null}}
-
-async function refreshLivePrices(){
-  if(!isAnalysis()){ toast('Обновление цен доступно на вкладках 💼 Портфель и Nasdaq 100'); return; }
-  const d = DATA[curIdx];
-  const priceC = d.headers.findIndex(x=>/^цена/i.test(x));   // price column (position varies by tab schema)
-  const dayC = d.headers.findIndex(x=>/1д|день/i.test(x));   // 1-day % column
-  const supIdx = ensurePFCol(d, 'Поддержка');        // Support level (rolling 3-month low)
-  const resIdx = ensurePFCol(d, 'Сопротивление');    // Resistance level (rolling 3-month high)
-  const tfExisted = d.headers.includes(SMA_TF_COL);
-  ensurePFCol(d, SMA_TF_COL);                        // per-stock 1Г/3Г SMA timeframe toggle
-  if(!tfExisted) positionAfter(d, d.headers.indexOf(SMA_TF_COL), /sma.?200/i);   // place right after SMA 200
-  const btn = document.getElementById('refreshPricesBtn');
-  if(btn){ btn.disabled = true; btn.textContent = '⏳ …'; }
-  let updated = 0, manual = 0;
-  manualPriceRows.clear();
-
-  // Чанками через fetchQuotes (US + Nordic/EU via Yahoo) — большие вкладки (S&P 500)
-  // не упираются в лимит подзапросов воркера.
-  const symbols = [...new Set(d.rows.map(r => exSymbol(r[2], rowCcy(r))).filter(Boolean))];
-  let prices = {};
-  try{
-    prices = await fetchQuotes(symbols);
-  }catch(e){
-    if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
-    toast('Прокси цен недоступен — проверьте PRICE_PROXY', true); return;
-  }
-  d.rows.forEach((row, i) => {
-    const p = prices[exSymbol(row[2], rowCcy(row))];
-    const price = (p && typeof p === 'object') ? p.price : p;   // worker now returns {price,pct}; tolerate legacy number
-    if(price != null){
-      if(priceC>=0) row[priceC] = price;
-      pxMarkLive(exSymbol(row[2], rowCcy(row)), price);
-      if(p && typeof p === 'object'){
-        if(dayC>=0 && typeof p.pct === 'number') row[dayC] = Math.round(p.pct * 100) / 100;   // 1д %
-        if(typeof p.support === 'number') row[supIdx] = p.support;                    // Поддержка
-        if(typeof p.resistance === 'number') row[resIdx] = p.resistance;              // Сопротивление
-        // Store both daily (1Y) and weekly (3Y) SMA sets; show the one matching this stock's toggle.
-        const tk = String(row[2] || ''), mode = (SMA_TF[tk] && SMA_TF[tk].mode) || '1Y';
-        SMA_TF[tk] = { mode,
-          d: [p.sma50 ?? null, p.sma100 ?? null, p.sma200 ?? null],
-          w: [p.sma50w ?? null, p.sma100w ?? null, p.sma200w ?? null] };
-        applySmaTF(d, i);
-      }
-      updated++;
-    } else { manual++; manualPriceRows.add(i); }
-  });
-
-  renderTable(); scheduleSave();
-  if(btn){ btn.disabled = false; btn.textContent = '🔄 Цены'; }
-  toast(`🔄 ${updated} обновлено · ${manual} вручную` + (manual ? ' (выделены жёлтым)' : ''));
-}
-
-/* ===== Column visibility (per-tab, synced) ===== */
-function toggleColsMenu(){
-  const ex = document.getElementById('colsMenu');
-  if(ex){ ex.remove(); document.removeEventListener('click', closeColsOnOutside); return; }
-  const m = document.createElement('div'); m.id = 'colsMenu'; m.className = 'cols-menu';
-  const hdrs = DATA[curIdx].headers, hid = hiddenCols[curIdx] || [];
-  let html = '<div class="cols-menu-hd"><span>Колонки</span><button onclick="showAllCols()">Все</button></div>';
-  hdrs.forEach((h, ci) => {
-    html += `<label><input type="checkbox" ${hid.includes(ci) ? '' : 'checked'} onchange="toggleCol(${ci})"> ${h || '—'}</label>`;
-  });
-  m.innerHTML = html;
-  document.body.appendChild(m);
-  const btn = document.getElementById('colsBtn'), r = btn.getBoundingClientRect();
-  m.style.top = (r.bottom + 6) + 'px';
-  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - m.offsetWidth - 8)) + 'px';
-  setTimeout(() => document.addEventListener('click', closeColsOnOutside), 0);
-}
-function closeColsOnOutside(e){
-  const m = document.getElementById('colsMenu');
-  if(m && !m.contains(e.target) && e.target.id !== 'colsBtn'){
-    m.remove(); document.removeEventListener('click', closeColsOnOutside);
-  }
-}
-function toggleCol(ci){
-  if(!hiddenCols[curIdx]) hiddenCols[curIdx] = [];
-  const arr = hiddenCols[curIdx], i = arr.indexOf(ci);
-  if(i >= 0) arr.splice(i, 1); else arr.push(ci);
-  scheduleSave(); renderTable();
-}
-function showAllCols(){
-  hiddenCols[curIdx] = []; scheduleSave(); renderTable();
-  const m = document.getElementById('colsMenu'); if(m) m.remove();
+let pf3LastRefresh={};   // время последнего обновления цен ПО ВКЛАДКАМ (deskQuotes, pf3RefreshTab, AI-портфель)
+// Свежие цены/уровни + таргеты (гейт — сутки) одной вкладки и сверка плана — перед AI-прогоном, после «Добавить акцию»,
+// по 🔄 «Статистики» (S7b-3: вместо классического pf3Refresh с кнопкой вкладки). Экран — renderPF3 → deskRender.
+async function pf3RefreshTab(key){
+  const d=DATA[key];if(!d)return 0;
+  let n=0;
+  try{n=await pf3FetchPrices(d,key);if(n)pf3LastRefresh[key]=Date.now();}catch(e){}
+  try{await pf3RefreshTargets(d);}catch(e){}   // аналит. таргеты — раз в сутки на вкладку (гейт внутри)
+  try{planCheck();}catch(e){}                  // 🎯 сверить уровни плана и уведомить о достигнутых
+  renderPF3();
+  return n;
 }
 
 boot();

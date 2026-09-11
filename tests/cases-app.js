@@ -157,12 +157,12 @@ grp('P1 sorting, isolation and glossary',function(){
 });
 // Адаптер (§15 #1, #3): листинг таргета, строка по sec.src.i, риск как у deskItems → мемо SIGNALS без SIG.snapshot.
 grp('P1 selection adapter',function(){
-  var _D=DATA,_hc=_histCache,_S=SIGNALS,_L=SIG_SHADOW,_tg=TG_FULL,_val=VAL,_pf=PF_FUND,_px=PX_LIVE,_role=userRole,_desk=DESK,_port=DESK_UI.port,_cal=pf3Cal,_fx=FX,_pm=POS_META,_snap=SIG.snapshot,_sfr=secFromRow;
+  var _D=DATA,_hc=_histCache,_S=SIGNALS,_tg=TG_FULL,_val=VAL,_pf=PF_FUND,_px=PX_LIVE,_role=userRole,_desk=DESK,_port=DESK_UI.port,_cal=pf3Cal,_fx=FX,_pm=POS_META,_snap=SIG.snapshot,_sfr=secFromRow;
   try{
     var now=Date.parse('2026-09-10T12:00:00Z');
     var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м'];
     userRole='admin';FX={SEK:1,USD:10};POS_META={};pf3Cal={data:{},loaded:1,loading:false,failed:false};PF_FUND={};VAL={};PX_LIVE={};
-    DESK=deskNorm({riskPct:1,riskCapPct:6});DESK_UI.port='all';SIG_SHADOW={v:1,days:{}};
+    DESK=deskNorm({riskPct:1,riskCapPct:6});DESK_UI.port='all';
     DATA={};
     DATA[PF3_KEY]={headers:h,v3:'1',cashFree:100000,rows:[[1,'Volvo','VOLV B','🇸🇪','Auto','Акция',0,250,'SEK',0,0,'','','','','','',''],[2,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',10,1527.5,'SEK',1400,-0.8,1614,1650,1717,1500,1600,1900,2600]]};
     DATA['OMXS30']={headers:h,v3:'1',rows:[[1,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',0,1527.5,'SEK',0,-0.8,1614,1650,1717,1500,1600,1900,2600]]};
@@ -192,11 +192,11 @@ grp('P1 selection adapter',function(){
     var ms=deskSelectionModels('all',now);deskSelectionModels(PF3_KEY,now);
     __eq('P1 adapter: warm memo → no SIG.snapshot (all + portfolio)',n,0);
     __ok('P1 adapter: memo snapshot reused',ms.some(function(x){return x.identity.key==='AZN.ST|SEK'&&x.timing.verdict===it.s.verdict;}));
-    SIGNALS={};n=0;var sh=JSON.stringify(SIG_SHADOW);deskSelectionModels('all',now);
-    __eq('P1 adapter: cold memo computes read-only (no memo/shadow writes)',[n>=1,!!SIGNALS['AZN.ST'],JSON.stringify(SIG_SHADOW)===sh],[true,false,true]);
+    SIGNALS={};n=0;deskSelectionModels('all',now);
+    __eq('P1 adapter: cold memo computes read-only (no memo writes)',[n>=1,!!SIGNALS['AZN.ST']],[true,false]);
   }finally{
     SIG.snapshot=_snap;secFromRow=_sfr;_deskItems=null;
-    DATA=_D;_histCache=_hc;SIGNALS=_S;SIG_SHADOW=_L;TG_FULL=_tg;VAL=_val;PF_FUND=_pf;PX_LIVE=_px;userRole=_role;DESK=_desk;DESK_UI.port=_port;pf3Cal=_cal;FX=_fx;POS_META=_pm;
+    DATA=_D;_histCache=_hc;SIGNALS=_S;TG_FULL=_tg;VAL=_val;PF_FUND=_pf;PX_LIVE=_px;userRole=_role;DESK=_desk;DESK_UI.port=_port;pf3Cal=_cal;FX=_fx;POS_META=_pm;
   }
 });
 
@@ -223,38 +223,16 @@ grp('currency helpers', function(){
   __ok('pf3Money USD unit', /USD$/.test(pf3Money(dUsd,1000)));
 });
 
-// 4) Таргет/апсайд/прогноз 12м (по таргету)
-grp('forecast 12m (target)', function(){
-  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK','Аналит. таргет'];
-  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',90,0,0,0,0, 120];
+// 4) Эффективный таргет и апсайд (детерминированный прогноз 12м удалён в S7b-3; таргет/апсайд живут — фаза, AI, скринер)
+grp('pf3EffTarget', function(){
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK','Аналит. таргет','Таргет 3м'];
+  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',90,0,0,0,0,120,''];
   var d={headers:h, rows:[r], baseCcy:'USD'};
   __eq('pf3EffTarget', pf3EffTarget(d,r).target, 120);
   __approx('pf3EffUpside +20%', pf3EffUpside(d,r), 20);
-  var f=pf3Fcast12(d,r);
-  __eq('pf3Fcast12 src=tgt', f.src, 'tgt');
-  __approx('pf3Fcast12 e=20', f.e, 20);
-});
-
-// 5) Прогноз 12м без таргета — fund/flat, число e
-grp('forecast 12m (fund)', function(){
-  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK'];
-  var r=[1,'NoTgt','NT','🇺🇸','Tech','Рост',5,50,'USD',50,0,0,0,0];
-  var d={headers:h, rows:[r], baseCcy:'USD'};
-  var f=pf3Fcast12(d,r);
-  __ok('pf3Fcast12 returns number', typeof f.e==='number');
-  __ok('pf3Fcast12 src is fund/flat', f.src==='fund'||f.src==='flat');
-});
-
-// 6) Сектора → подсветка портфеля (sectPortfolioSet)
-grp('sectPortfolioSet', function(){
-  DATA = { 'Portfolio (Anna)': { port:'1', v3:'1', headers:[], rows:[
-    [1,'Nvidia','NVDA','🇺🇸','Технологии','Рост',10,170,'USD',150,0,0,0,17850],
-    [2,'Exxon','XOM','🇺🇸','Энергетика','Дивидендная',5,110,'USD',100,0,0,0,5500]
-  ] } };
-  var set = sectPortfolioSet();
-  __ok('XLK from Технологии', set.has('XLK'));
-  __ok('XLE from Энергетика', set.has('XLE'));
-  __ok('XLV not present', !set.has('XLV'));
+  var r2=r.slice();r2[15]=150;
+  __eq('stale main (fresh 3m ≥ 10 % away) → fresh', [pf3EffTarget(d,r2).target,pf3EffTarget(d,r2).stale], [150,true]);
+  __eq('no price → no upside', pf3EffUpside(d,[1,'','','','','',0,0,'USD',0,0,0,0,0,120,'']), null);
 });
 
 // 7) Трек-рекорд разборов (направление цены)
@@ -294,11 +272,18 @@ grp('pfRecentTrades', function(){
 
 // 9) Покрытие ключей синка: ПОЛНЫЙ список ключей snapshotState (tests-quality#5) —
 // новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
-var SNAP_KEYS=['data','rankings','sma','fx','colOrders','theme','hiddenCols','smaTf','sim','pfTrades','aiChat','tgAlerts','tabGroups','tabOrder','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+// S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (классические таблицы и навигация) удалены из снапшота.
+var SNAP_KEYS=['data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
   __ok('snapshot has no apiKey (Finnhub removed)', !Object.prototype.hasOwnProperty.call(s,'apiKey'));
+  __ok('S7b-3: no classic table/nav keys', ['rankings','sma','colOrders','hiddenCols','tabGroups','tabOrder'].every(function(k){return !Object.prototype.hasOwnProperty.call(s,k);}));
+  // Снапшот старого клиента с этими ключами применяется без ошибок и без их чтения.
+  var _init=init,_mig=migrateState;init=function(){};migrateState=function(){};
+  try{var o=JSON.parse(JSON.stringify(s));o.rankings={X:[1]};o.tabGroups=[{name:'g',tabs:[]}];o.colOrders={X:[1]};applyRemoteState(o);
+    __ok('S7b-3: old-client keys ignored on apply', !Object.prototype.hasOwnProperty.call(snapshotState(),'rankings')&&typeof RANK==='undefined'&&typeof TAB_GROUPS==='undefined');}
+  finally{init=_init;migrateState=_mig;applyRemoteState(s);}
 });
 
 // 🔄 Синк: детект отклонённой триггером записи по вернувшемуся rev (data-model-sync#1)
@@ -351,37 +336,6 @@ grp('valuation peers', function(){
   VAL.FFF = { pe: 13, ps: 2, sector: 'Health' };
   __eq('no industry → group by sector = 2', valPeerGroup('EEE').length, 2);
   VAL = _VAL;
-});
-
-// 9f) 🕵 Insider: классификация типов сделок (значимое vs шум)
-grp('insider tx kind', function(){
-  __ok('P = meaningful', insiderTxKind('P').routine === false && insiderTxKind('P').cls === 'p');
-  __ok('S = meaningful', insiderTxKind('S').routine === false);
-  __ok('M (option) = routine', insiderTxKind('M').routine === true);
-  __ok('A (grant) = routine', insiderTxKind('A').routine === true);
-  __ok('unknown = routine', insiderTxKind('Z').routine === true);
-});
-
-// 9g) 🧭 Составной сигнальный балл (инсайдеры × оценка)
-grp('signal score', function(){
-  var sec = { pe: 30, ps: 5, evEbitda: 15 };
-  // кластер инсайдеров + недооценка по сектору и истории → высокий балл
-  var s = signalScore(
-    { cluster: { uniqueBuyers: 3 }, netUSD: 1e6 },
-    { pe: 10, fwdPe: 8, ps: 2, evEbitda: 7, sector: 'X', hist: { pe5: 20, ps5: 4, ev5: 12 } },
-    sec,
-  );
-  __ok('cluster + undervalued → n>=4', s.n >= 4);
-  // нетто-продажа + дорого → отрицательный
-  var s2 = signalScore({ netUSD: -5e5 }, { pe: 60, fwdPe: 70, ps: 30, sector: 'X' }, { pe: 30, ps: 10 });
-  __ok('selling + rich → n<0', s2.n < 0);
-  // value-trap: дёшево, но EPS падает → не плюсуем
-  var s3 = signalScore(
-    null,
-    { pe: 10, fwdPe: 20, ps: 2, sector: 'X', hist: { pe5: 30, ps5: 5 } },
-    { pe: 30, ps: 6 },
-  );
-  __ok('value trap not rewarded', s3.n <= 0);
 });
 
 // 9h) 💵 Cash-drag модель
@@ -503,36 +457,6 @@ grp('scenario v1.4', function(){
   __eq('RSI of all-up series = 100', rsiFromCloses(up), 100);
 });
 
-// 9q) 🏆 homeCompositeScore — единый балл из всех сигналов (чистая функция)
-grp('homeCompositeScore', function(){
-  // сильный кандидат: апсайд 30, аптренд, ROE 20, рост 18, P/E 15, у входа, buy, недооценка
-  var strong = homeCompositeScore({up:30,roe:20,revg:18,pe:15,entry:2,upTrend:true,phase:'undr',reco:'buy',sigN:3,insBuy:true,aiV:'buy',undervalued:true});
-  // слабый: падающий нож, апсайд −20, ROE −5, avoid
-  var weak = homeCompositeScore({up:-20,roe:-5,revg:-3,pe:60,entry:null,upTrend:false,phase:'knife',reco:'avoid',sigN:-2,insBuy:false,aiV:'avoid',undervalued:false});
-  __ok('сильный балл > слабого', strong.score > weak.score);
-  __ok('сильный близок к 100', strong.score >= 90);
-  __ok('слабый близок к 0', weak.score <= 15);
-  __ok('балл в [0..100]', strong.score <= 100 && weak.score >= 0);
-  __ok('почему-чипы у сильного', strong.why.length > 0 && strong.why.length <= 3);
-  // нейтрал/нет данных → ~50, без штрафов
-  var empty = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
-  __eq('пустой вход → нейтральные 50', empty.score, 50);
-  // отсутствие данных не штрафует сильнее, чем плохие данные
-  __ok('пустой ≥ слабого', empty.score >= weak.score);
-  // 📰 новостной фон двигает балл в нужную сторону
-  var nPos = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false,newsSent:3});
-  var nNeg = homeCompositeScore({up:null,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'flat',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false,newsSent:-3});
-  __ok('позитивные новости > нейтрал', nPos.score > empty.score);
-  __ok('негативные новости < нейтрал', nNeg.score < empty.score);
-  // ⚠ ловушка устаревшего таргета: большой апсайд при даунтренде НЕ должен задирать балл как при аптренде
-  var upTrendBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:true,phase:'up',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
-  var downTrendBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'down',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
-  var knifeBig = homeCompositeScore({up:30,roe:null,revg:null,pe:null,entry:null,upTrend:false,phase:'knife',reco:null,sigN:0,insBuy:false,aiV:null,undervalued:false});
-  __ok('апсайд при даунтренде НЕ награждается как при аптренде', downTrendBig.score < upTrendBig.score);
-  __ok('падающий нож с «апсайдом» — низкий балл', knifeBig.score < empty.score);
-  __ok('даунтренд+апсайд помечается флагом устаревшего таргета', downTrendBig.why.some(function(w){return /устар|stale/i.test(w);}));
-});
-
 // 9s) 📚 aiPlaybookEnsure — миграция плейбука на v3 (автономия + новые практики)
 grp('playbook v3 migration', function(){
   var savedRemote = (typeof applyingRemote!=='undefined')?applyingRemote:false;
@@ -570,26 +494,6 @@ grp('newsSentiment', function(){
   __ok('вес убывает со временем', newsRecencyWeight(2) > newsRecencyWeight(10));
   // пусто → 0
   __eq('пусто → sent 0', newsSentiment([], now).sent, 0);
-});
-
-// 9l) 📊 Блок D — детектор сценарных алертов
-grp('scenario alerts', function(){
-  // первое наблюдение (нет prev) → без событий
-  __eq('no prev → no events', scnAlertEvents(null, { rrShort: 1.3, rsi: 75, stretch: true, priceAboveBull: true, priceBelowBear: false }).length, 0);
-  // касание bull-триггера
-  var a = scnAlertEvents({ priceAboveBull: false, rrShort: 1.3, rsi: 60, stretch: false }, { priceAboveBull: true, priceBelowBear: false, rrShort: 1.3, rsi: 60, stretch: false });
-  __ok('bull trigger touch', a.some(function(e){ return e.kind === 'bull'; }));
-  // смена знака R/R через 1.0
-  var b = scnAlertEvents({ rrShort: 1.3, rsi: 60, stretch: false, priceAboveBull: false, priceBelowBear: false }, { rrShort: 0.7, rsi: 60, stretch: false, priceAboveBull: false, priceBelowBear: false });
-  __ok('R/R crossed 1.0', b.some(function(e){ return e.kind === 'rr'; }));
-  // выход RSI из >70 на «растяжении»
-  var c = scnAlertEvents({ rsi: 75, stretch: true, rrShort: 1.0, priceAboveBull: false, priceBelowBear: false }, { rsi: 68, stretch: true, rrShort: 1.0, priceAboveBull: false, priceBelowBear: false });
-  __ok('RSI exits 70 on stretch', c.some(function(e){ return e.kind === 'rsi'; }));
-  // без изменений → без событий
-  var same = { rrShort: 1.2, rsi: 55, stretch: false, priceAboveBull: false, priceBelowBear: false };
-  __eq('no change → no events', scnAlertEvents(same, same).length, 0);
-  // RSI-выход без «растяжения» не алертит
-  __eq('RSI exit without stretch ignored', scnAlertEvents({ rsi: 75, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }, { rsi: 68, stretch: false, rrShort: 1, priceAboveBull: false, priceBelowBear: false }).length, 0);
 });
 
 // 9m) 📰 Бесплатный новостной разбор (детерминированный)
@@ -677,16 +581,6 @@ grp('plan ticker match & AI rule fix (v2)', function(){
   DATA=_D;
 });
 
-// 10) Рекомендация «сейчас»: вердикт — валидная строка, не падает
-grp('pf3RecoHorizons.now', function(){
-  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK','Аналит. таргет','Поддержка','Сопротивление'];
-  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',90,0.5,0,0,0,120,95,130];
-  var d={headers:h, rows:[r], baseCcy:'USD'};
-  var hz = pf3RecoHorizons(d,r);
-  __ok('now verdict valid', ['buy','wait','sell','avoid'].indexOf(hz.now.v) >= 0);
-  __ok('has mid & long', hz.mid && hz.long && true);
-});
-
 // 11) Общая таблица прогноза рендерится (smoke) и считает итоги
 grp('pf3FcTable smoke', function(){
   var d={baseCcy:'SEK', cashFree:1000};
@@ -707,43 +601,6 @@ grp('exSymbol', function(){
   __eq('простая подмена не зависит от валюты', [exSymbol('RHM','EUR'), exSymbol('FIGMA','USD'), exSymbol('NDB','SEK')], ['RHM.DE','FIG','NDA-SE.ST']);
   __eq('GBP → Лондон .L (паритет с воркером)', [exSymbol('ANTO','GBP'), exSymbol('ANTO.L','GBP')], ['ANTO.L','ANTO.L']);
   __ok('живые курсы включают GBP', FX_CCYS.indexOf('GBP')>=0);
-});
-
-// 12) Торговая математика pfTrade: позиция / средняя / кэш / журнал (кэш МЕНЯЕТСЯ)
-grp('pfTrade math', function(){
-  renderPF3 = function(){}; toast = function(){};   // изолируем побочки рендера/тостов
-  var origGet = document.getElementById, inputs = {};
-  document.getElementById = function(id){ return Object.prototype.hasOwnProperty.call(inputs,id) ? {value:inputs[id]} : origGet(id); };
-  FX.USD = 10;
-  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK'];
-  var r=[1,'Acme','ACME','🇺🇸','Tech','Рост',10,100,'USD',100,0,0,0,10000];
-  DATA = { 'TP': { headers:h, rows:[r], baseCcy:'SEK', cashFree:100000, v3:'1', port:'1' } };
-  v3Key='TP'; pf3Sel='ACME'; PF_TRADES=[];
-
-  // BUY 5 @ 120 → avg=(1000+600)/15=106.67, qty=15, fee USD600=7.5, cash-=(600+7.5)*10
-  inputs.pfTrQty='5'; inputs.pfTrPrice='120';
-  pfTrade('buy');
-  __eq('buy qty 10->15', r[6], 15);
-  __approx('buy avg recompute 106.67', r[9], 106.67, 0.02);
-  __approx('buy cash -=(600+fee)*10', DATA.TP.cashFree, 100000-(600+7.5)*10, 0.5);
-  __eq('journal 1 entry', PF_TRADES.length, 1);
-  __approx('buy fee 7.5', PF_TRADES[0].feeNative, 7.5);
-
-  // SELL 5 @ 130 → qty=10, fee USD650=7.625, P&L=(130-106.67)*5-7.625
-  inputs.pfTrQty='5'; inputs.pfTrPrice='130';
-  var cashBefore = DATA.TP.cashFree;
-  pfTrade('sell');
-  __eq('sell qty 15->10', r[6], 10);
-  __approx('sell P&L net of fee', PF_TRADES[1].plNative, (130-106.67)*5-7.625, 0.15);
-  __approx('sell cash +=(650-fee)*10', DATA.TP.cashFree, cashBefore+(650-7.625)*10, 0.5);
-  __eq('journal 2 entries', PF_TRADES.length, 2);
-
-  // SELL больше, чем есть → ограничивается позицией (не уходит в минус)
-  inputs.pfTrQty='999'; inputs.pfTrPrice='130';
-  pfTrade('sell');
-  __eq('sell capped → qty 0', r[6], 0);
-
-  document.getElementById = origGet;   // restore
 });
 
 // 13) pfTradeAddRecord (ручное восстановление): меняет позицию, НЕ трогает кэш
@@ -804,26 +661,6 @@ grp('fund betyg', function(){
   __ok('bank P/S отброшен (val null)', pf3ValScore(bank,'NDA','Финансы и недвижимость',true)==null);
 });
 
-// 🛒 Покупка с карточки в портфель — чистая средняя (genomsnittsmetoden, без комиссии)
-grp('pfApplyBuy', function(){
-  // новая позиция с нуля: средняя = цена покупки
-  var a=pfApplyBuy({qty:0,avg:0}, 10, 100);
-  __eq('new pos qty', a.qty, 10);
-  __eq('new pos avg', a.avg, 100);
-  // докупка: средневзвешенная цена
-  var b=pfApplyBuy({qty:10,avg:100}, 10, 200);
-  __eq('add qty', b.qty, 20);
-  __eq('add avg (150)', b.avg, 150);
-  // докупка дробным: 5 @ 90 к 10 @ 120 → (1200+450)/15 = 110
-  var c=pfApplyBuy({qty:10,avg:120}, 5, 90);
-  __eq('add frac qty', c.qty, 15);
-  __eq('add frac avg (110)', c.avg, 110);
-  // строковые входы (из инпутов) не ломают
-  var e=pfApplyBuy({qty:'2',avg:'50'}, 2, 150);
-  __eq('string inputs avg (100)', e.avg, 100);
-});
-
-
 // ── S3: слой данных редизайна ────────────────────────────────────────────────
 // 🔄 Round-trip синка: каждый ключ snapshotState восстанавливается applyRemoteState
 // (ловит забытую ветку — тихая потеря данных на втором устройстве).
@@ -837,7 +674,7 @@ grp('sync round-trip', function(){
     if(k==='theme') mk[k]='dark';
     else if(k==='desk') mk[k]=deskNorm({riskPct:2,riskCapPct:8,shortOk:{'MU':true},whatIf:{mode:'weight',amountSEK:25000,weightPct:3,port:'TP'}});
     else if(k==='deskWatch') mk[k]=deskWatchNorm({items:[{key:'MU|USD',tk:'MU',name:'Micron',buyLo:90,buyHi:100,thesis:{title:'HBM',text:'t'},createdAt:1,updatedAt:2}]});
-    else if(Array.isArray(v)||k==='tabGroups') mk[k]=['__'+k];   // tabGroups по умолчанию null, но хранится массивом
+    else if(Array.isArray(v)) mk[k]=['__'+k];
     else if(typeof v==='number') mk[k]=7;
     else if(typeof v==='boolean') mk[k]=!v;
     else if(typeof v==='string') mk[k]='__'+k;
@@ -1132,7 +969,8 @@ grp('signals core', function(){
   __eq('isBreakout', [SIG.isBreakout({v:99.9,src:'R2+R20'},100),SIG.isBreakout({v:99.9,src:'H52w+R60'},100),SIG.isBreakout({v:99.9,src:'SMA50+R20'},100),SIG.isBreakout({v:99.9,src:'S20'},100),SIG.isBreakout({v:100.1,src:'S1+S20'},100),SIG.isBreakout({v:100.1,src:'R20'},100),SIG.isBreakout({v:99.9,src:'S1'},100),SIG.isBreakout(null,100)], [true,true,false,false,true,false,false,false]);
 });
 
-// phase() — порт pf3Criterion 1:1: те же входы строки → тот же ключ и rank (20 строк по всем веткам).
+// phase() — порт pf3Criterion 1:1 (паритет доказан до S7b-3 на этих 20 строках по всем веткам; старый движок удалён,
+// ожидания зафиксированы). sigRowPhase: без цены/SMA50/SMA200 — «—», как было у pf3Criterion.
 grp('phase parity', function(){
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м'];
   var d={headers:h,rows:[]};
@@ -1159,13 +997,11 @@ grp('phase parity', function(){
     [110,1,100,95,90,0,100,150],      // свежий таргет +36% → недооценка
     [100,1,100,95,90,0,200,95]        // свежий таргет ниже цены на 5% → перегрев
   ];
-  var bad=[];
-  C.forEach(function(c,i){
-    var r=[i+1,'X'+i,'X'+i,'','Tech','Рост',0,c[0],'USD',0,c[1],c[2],c[3],c[4],c[5],'',c[6]||'',c[7]||''];
-    var o=pf3Criterion(d,r),n=sigRowPhase(d,r);
-    if(o.cls!==n.key||o.rank!==n.rank)bad.push(i+': '+o.cls+'/'+o.rank+' vs '+n.key+'/'+n.rank);
-  });
-  __eq('pf3Criterion ≡ SIG.phase on 20 rows', bad, []);
+  var EXP=['knife/0','knife/0','down/1','heat/8','heat/8','imp/7','imp/7','undr/5','undr/5','down/1','up/6','corr/2','rev/4','flat/3','flat/3','flat/3','up/6','up/6','undr/5','heat/8'];
+  var got=C.map(function(c,i){var n=sigRowPhase(d,[i+1,'X'+i,'X'+i,'','Tech','Рост',0,c[0],'USD',0,c[1],c[2],c[3],c[4],c[5],'',c[6]||'',c[7]||'']);return n.key+'/'+n.rank;});
+  __eq('SIG.phase on 20 rows = fixed pf3Criterion parity', got, EXP);
+  var lbl=function(c){return sigRowPhase(d,[1,'X','X','','Tech','Рост',0,c[0],'USD',0,c[1],c[2],c[3],c[4],c[5],'',c[6]||'',c[7]||'']).label;};
+  __eq('sigRowPhase labels: no data → «—», flat on SMA → «Боковик», knife', [lbl(C[14]),lbl(C[15]),lbl(C[13]),lbl(C[0])], ['—','—','Боковик','Падающий нож']);
   var keys={};C.forEach(function(c,i){keys[sigRowPhase(d,[0,'','','','','',0,c[0],'USD',0,c[1],c[2],c[3],c[4],c[5],'',c[6]||'',c[7]||'']).key]=1;});
   __eq('all 9 phases covered', Object.keys(keys).sort(), ['corr','down','flat','heat','imp','knife','rev','undr','up']);
 });
@@ -1353,8 +1189,8 @@ grp('knife by prior S60', function(){
   __eq('intraday pierce, close above → down', n.phase.key, 'down');
 });
 
-grp('signals shadow adapter', function(){
-  var _hc=_histCache,_S=SIGNALS,_L=SIG_SHADOW,_cal=pf3Cal,_desk=DESK;
+grp('signals adapter', function(){
+  var _hc=_histCache,_S=SIGNALS,_cal=pf3Cal,_desk=DESK;
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м'];
   var d={headers:h,rows:[]};
   var r=[1,'AstraZeneca','AZN','🇸🇪','Pharma','Стабильная',0,1527.5,'SEK',0,-0.8,1614,1650,1717,1500,1600,1900,2600];
@@ -1369,7 +1205,6 @@ grp('signals shadow adapter', function(){
   __eq('no bars → null snapshot', (_histCache={},SIGNALS={},sigSnapRow(d,r,4000)), null);
   var F=SIG_FIX['AZN.ST'],j={t:F.map(function(b){return Date.parse(b[0]+'T00:00:00Z')/1000;}),o:F.map(function(b){return b[1];}),h:F.map(function(b){return b[2];}),l:F.map(function(b){return b[3];}),c:F.map(function(b){return b[4];}),v:F.map(function(b){return b[5];})};
   _histCache={'AZN.ST:2y':{j:j,t:1000}};
-  SIG_SHADOW={v:1,days:{}};
   var now=Date.parse('2026-09-10T12:00:00Z');
   var s=sigSnapRow(d,r,4000,now);
   __eq('adapter snapshot = SIG.snapshot on same bars', [s.verdict,s.side,s.phase.key], ['wait','short','down']);
@@ -1378,58 +1213,121 @@ grp('signals shadow adapter', function(){
   __ok('memo: same inputs → same object', sigSnapRow(d,r,4000,now)===s);
   _histCache['AZN.ST:2y'].t=2000;
   __ok('memo: fresh candles → recompute', sigSnapRow(d,r,4000,now)!==s);
-  var e=SIG_SHADOW.days['2026-09-10']['AZN.ST'];
-  __eq('shadow log entry', [e.tk,e.n,e.sd,e.pn,e.po,e.m,e.cv], ['AZN','wait','short','down',pf3Criterion(d,r).cls,'limit',SIG.VER]);
-  __ok('shadow log keeps old verdicts', ['buy','wait','sell','avoid'].indexOf(e.o)>=0 && ['buy','wait','sell','avoid'].indexOf(e.oh)>=0);
-  __eq('sigAgree coarse classes', [sigAgree('buy','buy'),sigAgree('sell','trim'),sigAgree('sell','short'),sigAgree('wait','hold'),sigAgree('avoid','wait'),sigAgree('avoid','buy'),sigAgree('buy','wait'),sigAgree(null,'wait')], [true,true,true,true,true,false,false,null]);
   __ok('sigSortVal orders like SIG.cmp', sigSortVal({verdict:'buy',plan:{rr:2.1},score:40})>sigSortVal({verdict:'trim',plan:{rr:5},score:99}) && sigSortVal({verdict:'trim',plan:{rr:1},score:0})>sigSortVal({verdict:'wait',plan:{rr:9},score:99}) && sigSortVal(null)<0);
-  var pill=sigPillHTML({verdict:'buy',side:'long',why:['a "b"'],flags:[],plan:{rr:2.4,mode:'market',entry:10,stop:9,target:12.4,stopSrc:'S',targetSrc:'R',qty:5}},false,'sell');
-  __ok('pill: glyph+word, ≠ on disagreement, escaped title', /▲/.test(pill) && /sig2-ne/.test(pill) && /&quot;b&quot;/.test(pill) && !/title="[^"]*"b"/.test(pill));
-  __ok('pill: «≈» before R/R for atr-target', /R\/R ≈2\.0/.test(sigPillHTML({verdict:'buy',side:'long',why:[],flags:['atr-target'],plan:{rr:2,mode:'market',entry:10,stop:9,target:12,stopSrc:'S',targetSrc:'+2·ATR',qty:5,flags:['atr-target']}},false,null)) && !/≈/.test(pill));
-  __ok('pill: trim outside book = «Перегрев»', /Перегрев/.test(sigPillHTML({verdict:'trim',side:'long',why:[],flags:[],plan:null},false,null)));
-  // Отчёт: 3 бумаги, 2 дня; одна расходится
-  var L={v:1,days:{'2026-09-09':{'A':{tk:'A',o:'buy',n:'wait',sd:'long',pn:'up',po:'up',rr:1.5,m:'limit',f:[],st:false,ohlc:true,w:''}},
-    '2026-09-10':{'A':{tk:'A',o:'buy',n:'buy',sd:'long',pn:'up',po:'up',rr:2.2,m:'market',f:[],st:true,ohlc:true,w:''},
-      'B':{tk:'B',o:'buy',oh:'wait',n:'short',sd:'short',pn:'down',po:'corr',rr:2.1,m:'market',f:['no-short'],st:true,ohlc:true,w:'даунтренд'},
-      'C':{tk:'C',o:'wait',n:'hold',sd:'long',pn:'up',po:'up',rr:2,m:'limit',f:['wide','atr-target'],st:false,ohlc:false,w:''}}}};
-  var md=sigShadowReport(L);
-  __ok('report: header + counts', /2026-09-09 … 2026-09-10/.test(md) && /Бумаг: \*\*3\*\*, наблюдений: 4, дней: 2/.test(md));
-  __ok('report: agreement 2/3 and phase 2/3', /\*\*67 %\*\* \(2\/3\)/.test(md) && /«Критерий»: \*\*67 %\*\*/.test(md));
-  __ok('report: phase pair corr → down', /- corr → down: 1/.test(md));
-  __ok('report: disagreement row for B', /\| B \| 2026-09-10 \| buy \| wait \| short \(шорт\) \| 2\.10 \|/.test(md));
-  __ok('report: stability — A flipped in v2', /v2 1 · старый 0 из 3/.test(md));
-  __ok('report: atr-target counted', /цель без уровня \(atr-target, R\/R ≈\): 1/.test(md));
-  __ok('report: rules versions (no cv = до калибровки)', /Версии правил v2 \(последний снимок\): до калибровки 3/.test(md));
-  // Смена вердикта из-за смены правил — не нестабильность.
-  var Lc=JSON.parse(JSON.stringify(L));Lc.days['2026-09-10'].A.cv='2026-09-10-c1';
-  __ok('report: flip across rule versions not counted', /v2 0 · старый 0 из 3/.test(sigShadowReport(Lc)));
-  __ok('report: old-format bars counted', /Без OHLC \(старый формат воркера\): 1/.test(md));
-  __ok('empty log → hint', /Журнал пуст/.test(sigShadowReport({v:1,days:{}})));
-  var P={v:1,days:{'2026-08-01':{},'2026-09-01':{}}};
-  __eq('prune keeps 14 days', Object.keys(sigShadowPrune(P,'2026-09-10').days), ['2026-09-01']);
-  _histCache=_hc;SIGNALS=_S;SIG_SHADOW=_L;pf3Cal=_cal;DESK=_desk;
+  _histCache=_hc;SIGNALS=_S;pf3Cal=_cal;DESK=_desk;
 });
 
-// pf3SignalInfo — «Сигнал» списка (tests-quality#2: ядро старых решений без тестов). Эталон для
-// сравнения с nearLevel v2 в теневом режиме.
-grp('pf3SignalInfo', function(){
-  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление'];
-  var d={headers:h,rows:[]},row=function(p,a,b,c,s,res){return [1,'X','X','','','',0,p,'USD',0,0,a,b,c,s,res];};
-  __eq('buy at SMA50 (≤2%)', (function(x){return [x.type,x.n];})(pf3SignalInfo(d,row(101,100,90,80,85,120))), ['buy','SMA 50']);
-  __eq('sell at resistance', (function(x){return [x.type,x.n];})(pf3SignalInfo(d,row(119,100,90,80,85,120))), ['sell','Сопр.']);
-  var w=pf3SignalInfo(d,row(110,100,90,80,85,130));
-  __eq('wait → nearest buy level below', [w.type,w.n,Math.round(w.dist*100)/100], ['wait','SMA 50',9.09]);
-  __eq('below all levels', pf3SignalInfo(d,row(50,100,90,80,85,130)).type, 'below');
-  __eq('no data → none', pf3SignalInfo(d,row(0,100,90,80,85,130)).type, 'none');
+// 🧹 S7b-3: классика удалена — Trade Desk без флага, index.html без классической разметки, перерисовки → deskRender.
+grp('S7b-3 shell', function(){
+  var gone=['deskFlagFrom','deskActive','deskToggle','deskSetFlag','deskClassic','deskBack','deskBackBtn','deskStopTimers','pf3Reco','pf3RecoHorizons','pf3Criterion','pf3SignalInfo',
+    'homeBestComposite','homeHTML','renderTable','renderRanking','pf3DetailHTML','pf3Summary','pf3ListHTML','scnAlertCheck','sigShadowRecord','SIG_SHADOW','btCompute','dashRecoMap',
+    'simTabHTML','dupHTML','sectHTML','aiDashHTML','pf3Refresh','pf3WriteReco','openStockChart','insiderOpenCard','simOpen','RANK','SMA_IDX','TAB_GROUPS','HOME_KEY'];
+  __eq('removed names are gone', gone.filter(function(n){return eval('typeof '+n)!=='undefined';}), []);
+  __ok('DESK_UI has no flag fields', !('on' in DESK_UI) && !('classic' in DESK_UI));
+  var html=rd('index.html');
+  __ok('index.html: no classic shell ids', !/id="(tabs|subTabs|smaBanner|toolbarEl|searchBox|statsBar|contentArea|tableArea|thead|tbody|rankingArea|pf3Area|deskBtn|hubHome|langBtn|themeToggle)"/.test(html));
+  __ok('index.html: head script sets desk unconditionally (no dash_desk, no ?desk)', /classList\.add\('desk'\)/.test(html) && !/dash_desk|desk=\(|deskToggle|'ui2'/.test(html));
+  __ok('index.html: skip-link → #dkMain', /class="skip-link" href="#dkMain"/.test(html));
+  // Токены --v3-acc/--v3-acc2 встроенных блоков (styles.css, body.v3) — до переноса в desk.css (S7b-4); раньше класс ставил классический renderAll.
+  __ok('index.html: body.v3 kept for embedded blocks', /<body class="v3">/.test(html));
+  __ok('index.html: overlays kept', ['authOverlay','faqOverlay','setOverlay','prmOverlay','onbOverlay','authEmail','authPassword'].every(function(id){return html.indexOf('id="'+id+'"')>0;}));
+  var oLoc=globalThis.location;globalThis.location={protocol:'https:',hash:'',href:''};
+  try{var menu=deskMenuHTML();__ok('menu: no «turn off Trade Desk», Hub kept', menu.indexOf('data-a="off"')<0 && menu.indexOf('../hub/')>0);}finally{globalThis.location=oLoc;}
+  var n=0,_r=deskRender;deskRender=function(){n++;};
+  try{renderAll();}finally{deskRender=_r;}
+  __eq('renderAll → deskRender', n, 1);
+  // renderPF3 подменяют заглушкой соседние группы (pfTradeAddRecord…) — проверяем исходник.
+  __ok('renderPF3 → deskRender only', /\nfunction renderPF3\(\)\{if\(typeof deskRender==='function'\)deskRender\(\);\}\n/.test(rd('app-2.js')));
+  var ids=[],_g=document.getElementById,_ra=renderAll,m=0;document.getElementById=function(id){ids.push(id);return _g(id);};renderAll=function(){m++;};
+  try{init();}finally{document.getElementById=_g;renderAll=_ra;}
+  __eq('init: no classic DOM, one render', [ids,m], [[],1]);
+  var go=[],_dg=deskGo,_bt=DESK_UI.bt;deskGo=function(r){go.push(r);};
+  try{DESK_UI.bt='cal';pf3GoList();__eq('cash-drag → «Позиции»', [go,DESK_UI.bt], [['book'],'pos']);}finally{deskGo=_dg;DESK_UI.bt=_bt;}
 });
 
-// 🖥 Trade Desk (S6): чистое ядро desk.js — флаг, лимит книги, сделки лонг/шорт, действия по позиции,
-// корзины «Сегодня», фильтры скринера, журнал сделок «туда-обратно».
+// S7b-3: следы удалённых движков — «Реком. скоринг» очищается (воркер добивает пустую aipVerdict), прото-сигналы бэктеста
+// удаляются (воркер слал бы их AI замороженными) на КАЖДЫЙ проход migrateState: клиент до S7b-3 на другом устройстве
+// пишет их снова. SMA в колонках — только дневные: одноразовый шаг схемы v3.
+grp('migrate v3 (S7b-3)', function(){
+  var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Реком. скоринг'];
+  var mk=function(){return {A:{headers:h,v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,95,90,80,'buy'],[2,'Y','YY','','','',0,50,'USD',0,0,45,44,40,'']],btSignals:{XX:{s:1}},btRuleAcc:{r:50},btJournal:[{tk:'XX'}],btConfig:{H:20}},
+    B:{headers:h.slice(0,14),v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,70,60,50]]},bad:{rows:[1]}};};
+  var data=mk(),n=migrateDropReco(data);
+  __eq('reco column cleared', data.A.rows.map(function(r){return r[14];}), ['','']);
+  __ok('bt signals dropped, journal/config frozen', !('btSignals' in data.A)&&!('btRuleAcc' in data.A)&&data.A.btJournal.length===1&&data.A.btConfig.H===20);
+  __eq('reco: changes counted, SMA untouched', [n,data.A.rows[0].slice(11,14)], [3,[95,90,80]]);
+  __eq('reco: idempotent', migrateDropReco(data), 0);
+  __eq('empty inputs', [migrateDropReco({}),migrateDropReco(null),migrateSmaDaily({},{}),migrateSmaDaily(null,null)], [0,0,0,0]);
+  var tf={XX:{mode:'3Y',d:[96,91,81],w:[70,60,50]},YY:{mode:'1Y',d:[46,null,41],w:[1,2,3]},ZZ:{mode:'3Y',d:[1,2,3],w:[4,5,6]}};
+  data=mk();var m=migrateSmaDaily(data,tf);
+  __eq('3Y rows get daily SMA in every tab', [data.A.rows[0].slice(11,14),data.B.rows[0].slice(11,14)], [[96,91,81],[96,91,81]]);
+  __eq('1Y rows untouched', data.A.rows[1].slice(11,14), [45,44,40]);
+  __eq('modes reset (also tickers without rows)', [tf.XX.mode,tf.YY.mode,tf.ZZ.mode], ['1Y','1Y','1Y']);
+  __ok('sma: changes counted, reco column untouched', m>0 && data.A.rows[0][14]==='buy');
+  __eq('sma: idempotent', migrateSmaDaily(data,tf), 0);
+  var _D=DATA,_V=STATE_V,_T=SMA_TF,_P=PLAN_RULES,_s=scheduleSave,saves=0;scheduleSave=function(){saves++;};
+  try{
+    DATA={A:{headers:h,v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,95,90,80,'sell']]}};SMA_TF={XX:{mode:'3Y',d:[96,91,81],w:[1,2,3]}};PLAN_RULES=[];STATE_V=2;
+    migrateState();
+    __eq('schema 2→3: column cleared, daily SMA, schemaV 3', [DATA.A.rows[0][14],DATA.A.rows[0].slice(11,14),SMA_TF.XX.mode,STATE_V,SCHEMA_V], ['',[96,91,81],'1Y',3,3]);
+    // Клиент до S7b-3 снова записал колонку и прото-сигналы, режим 3Г — на следующей загрузке колонка и сигналы
+    // чистятся (и уходят в облако), одноразовый шаг SMA не повторяется.
+    DATA.A.rows[0][14]='buy';DATA.A.btSignals={XX:{s:1}};SMA_TF.XX.mode='3Y';DATA.A.rows[0][11]=70;saves=0;
+    migrateState();
+    __eq('old client refill → cleaned again, saved; SMA step one-time', [DATA.A.rows[0][14],'btSignals' in DATA.A,saves>0,SMA_TF.XX.mode,DATA.A.rows[0][11]], ['',false,true,'3Y',70]);
+    saves=0;migrateState();
+    __eq('nothing to clean → no save', saves, 0);
+  }finally{DATA=_D;STATE_V=_V;SMA_TF=_T;PLAN_RULES=_P;scheduleSave=_s;}
+});
+
+// S7b-3 (карта §5): адаптеры SIG для AI вместо удалённых «Рекомендации», фазы и «сигнала у уровня».
+grp('SIG adapters for AI (S7b-3)', function(){
+  __eq('sigNearText support/resistance/none', [sigNearText({price:100,near:{v:98,src:'SMA50',dist:2.04}}),sigNearText({price:100,near:{v:101,src:'R20',dist:-0.99}}),sigNearText({price:100,near:null}),sigNearText(null)], ['support SMA50 +2.0%','resistance R20 -1.0%',null,null]);
+  __ok('legend: all SIG verdicts + old scale, R/R from SIG.CFG', ['buy','short','trim','hold','wait','avoid','sell'].every(function(v){return SIG_AI_LEGEND.indexOf(v)>=0;}) && SIG_AI_LEGEND.indexOf('R/R ≥ '+SIG.CFG.rrMin+')')>0);
+  var _D=DATA,_hc=_histCache,_S=SIGNALS,_cal=pf3Cal,_desk=DESK,_port=DESK_UI.port,_pm=POS_META,_role=userRole,_reco=AI_RECO,_sec=deskSecOf;
+  var H=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','Прибыль','Приб%','СтоимостьSEK','SMA 50','SMA 100','SMA 200','Поддержка','Сопротивление','Аналит. таргет','Таргет 3м','P/E'];
+  try{
+    userRole='admin';POS_META={};pf3Cal={data:{},loaded:1,loading:false,failed:false};DESK=deskNorm({riskPct:1,riskCapPct:6});DESK_UI.port='all';
+    DATA={};DATA[PF3_KEY]={headers:H,v3:'1',cashFree:10000,rows:[[1,'A','AAA','','','',5,100,'USD',90,0,0,0,0,90,85,80,'','',125,'',20]]};
+    DATA['IDX']={headers:H,v3:'1',rows:[[1,'A','AAA','','','',0,100,'USD',0,0,0,0,0,90,85,80,'','',125,'',20],[2,'B','BBB','','','',0,0,'USD',0,0,0,0,0,'','','','','','','',''],
+      [3,'C','CCC','','','',0,50,'USD',0,0,0,0,0,'','',40,'','','','',''],[4,'AstraZeneca','AZN','','Pharma','',0,1527.5,'SEK',0,-0.8,0,0,0,1614,1650,1717,1500,1600,1900,2600,'']]};
+    // Карта: дедуп по тикеру (первая строка с ценой, портфель первым), вердикт из verdictOf, флаг портфеля
+    __eq('sigRecoMap', sigRecoMap(PF3_KEY,function(d,r){return r[2]==='AAA'?'buy':null;}), {AAA:['buy',25,11.1,25,20,1],CCC:[null,null,null,25,null,0],AZN:[null,70,-5.4,-11,null,0]});
+    // Вердикт: без свечей — null; со свечами — как у бумаги на экране (deskItems), иначе — снимок строки
+    _histCache={};SIGNALS={};_deskItems=null;
+    var az=DATA.IDX.rows[3];
+    __eq('sigRowVerdict: no candles → null', sigRowVerdict(DATA.IDX,az), null);
+    var F=SIG_FIX['AZN.ST'],j={t:F.map(function(b){return Date.parse(b[0]+'T00:00:00Z')/1000;}),o:F.map(function(b){return b[1];}),h:F.map(function(b){return b[2];}),l:F.map(function(b){return b[3];}),c:F.map(function(b){return b[4];}),v:F.map(function(b){return b[5];})};
+    _histCache={'AZN.ST:2y':{j:j,t:Date.now()-60e3}};SIGNALS={};_deskItems=null;
+    var it=deskItems().byKey['AZN.ST|SEK'];
+    __ok('sigRowVerdict = desk item verdict', !!(it&&it.s) && sigRowVerdict(DATA.IDX,az)===it.s.verdict);
+    deskSecOf=function(){return null;};
+    __eq('sigRowVerdict fallback: own row snapshot (memo hit)', [sigRowVerdict(DATA.IDX,az),sigRowSnap(DATA.IDX,az)===sigRowRead(DATA.IDX,az)], [it.s.verdict,true]);
+    deskSecOf=_sec;
+    // AI-снапшот вкладки-индекса: фаза — sigRowPhase, «у уровня» — снимок SIG (без свечей — null)
+    var W=pf3AiSnapshot('IDX');
+    __eq('watchlist snapshot: phase/signal via SIG', W.stocks.map(function(x){return [x.ticker,x.phase,x.signal];}),
+      [['AAA',sigRowPhase(DATA.IDX,DATA.IDX.rows[0]).label,null],['BBB','—',null],['CCC','—',null],['AZN',sigRowPhase(DATA.IDX,az).label,sigNearText(sigRowSnap(DATA.IDX,az))]]);
+    var P=pf3AiSnapshot(PF3_KEY),mc=P.marketContext.filter(function(x){return x.index==='IDX';})[0];
+    __eq('portfolio snapshot: market phases via sigRowPhase', mc&&mc.phases['—'], 2);
+    // AI-рекомендация бумаги: бейдж «устарел» только при sigAt ≠ текущему вердикту SIG; у записи до S7b-3 (recoAt) — нет
+    var v=it.s.verdict,other=v==='buy'?'wait':'buy';
+    AI_RECO={AZN:{verdict:'buy',text:'x',at:'2026-09-10T10:00:00Z',sigAt:other}};
+    __ok('aiRecoHTML: stale when SIG changed', /ai-stale/.test(aiRecoHTML(DATA.IDX,az)));
+    AI_RECO={AZN:{verdict:'buy',text:'x',at:'2026-09-10T10:00:00Z',sigAt:v}};
+    __ok('aiRecoHTML: no badge when same', !/ai-stale/.test(aiRecoHTML(DATA.IDX,az)));
+    AI_RECO={AZN:{verdict:'buy',text:'x',at:'2026-09-10T10:00:00Z',recoAt:'sell'}};
+    __ok('aiRecoHTML: old record (recoAt) → no badge', !/ai-stale/.test(aiRecoHTML(DATA.IDX,az)));
+    var snap=stockAiSnapshot(DATA.IDX,az);
+    __eq('stockAiSnapshot: recoVerdict = SIG, legend attached', [snap.recoVerdict,snap.recoLegend===SIG_AI_LEGEND], [v,true]);
+  }finally{DATA=_D;_histCache=_hc;SIGNALS=_S;pf3Cal=_cal;DESK=_desk;DESK_UI.port=_port;POS_META=_pm;userRole=_role;AI_RECO=_reco;deskSecOf=_sec;_deskItems=null;}
+  __eq('stale badge: none without sigAt / same verdict', [aiStaleBadge(null,'buy'),aiStaleBadge('wait','wait'),aiStaleBadge('wait',null)], ['','','']);
+  __ok('stale badge: SIG labels', /Ждать → Купить/.test(aiStaleBadge('wait','buy')));
+});
+
+// 🖥 Trade Desk (S6): чистое ядро desk.js — лимит книги, сделки лонг/шорт, действия по позиции,
+// корзины «Сегодня», фильтры скринера, журнал сделок «туда-обратно». Флага dash_desk с S7b-3 нет.
 grp('desk core', function(){
-  __eq('flag ?desk=1 → on, remembered', deskFlagFrom('?desk=1',null), {on:true,set:'1'});
-  __eq('flag ?desk=0 overrides stored', deskFlagFrom('?a=1&desk=0','1'), {on:false,set:'0'});
-  __eq('flag from storage', deskFlagFrom('','1'), {on:true,set:null});
-  __eq('flag ?desk=10 is not a flag', deskFlagFrom('?desk=10','0').on, false);
   var rs={openRiskSEK:2000,capSEK:3660};
   __ok('cap: +1000 fits', deskCapCheck(rs,1000).ok);
   __ok('cap: +2000 blocked', !deskCapCheck(rs,2000).ok);

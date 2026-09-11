@@ -1,18 +1,12 @@
-// 🖥 Trade Desk — новая оболочка (S6 редизайна, слой 5 plans/redesign-integration.md) за флагом dash_desk
-// (localStorage; ?desk=1 включает, ?desk=0 выключает). Пять экранов: Сегодня · Скринер · Акция · Позиции · Журнал.
-// Данные — глобалы приложения (DATA, POS_META, PLAN_RULES, PF_TRADES, DESK, FX), вселенная — deskUniverse,
-// сигналы — SIG через адаптер sigSnapRow (свечи ?history= в общем кэше _histCache), график — stockChartDraw.
-// Грузится после app-5.js и чистого desk-selection.js, перед desk-gloss.js. Старые экраны живут до S7b-3: при активном desk
-// renderAll/renderPF3 перерисовывают его (deskRender). С S7b-2 ни один экран desk в классику не ведёт — её блоки встроены
-// в разделы (deskCtx, plans/s7b-map.md §9); запасной путь — только «⋯ → Выключить Trade Desk».
+// 🖥 Trade Desk — единственный интерфейс (S6 редизайна, слой 5 plans/redesign-integration.md; с S7b-3 классики нет,
+// флага dash_desk и ?desk=0 тоже — старые значения игнорируются). Экраны: Сегодня · Идеи · Акция · Позиции · Журнал
+// (+ Сравнение, Сервис). Данные — глобалы приложения (DATA, POS_META, PLAN_RULES, PF_TRADES, DESK, FX), вселенная —
+// deskUniverse, сигналы — SIG через адаптер sigSnapRow (свечи ?history= в общем кэше _histCache), график — stockChartDraw.
+// Грузится после app-5.js и чистых desk-selection.js/desk-journal.js, перед desk-gloss.js; renderAll/renderPF3 зовут
+// deskRender. Блоки прежней классики встроены в разделы (deskCtx, plans/s7b-map.md §9).
 // Чистые функции (ядро ниже) покрыты тестами в tests/cases-app.js; DOM — после маркера «── DOM ──».
 
 // ── Ядро (чистые функции) ──────────────────────────────────────────────────
-// Флаг из URL/локального хранилища: ?desk=1|0 перекрывает и запоминается (set), иначе — сохранённое значение.
-function deskFlagFrom(search,ls){
-  const m=/[?&]desk=([01])(?:&|$)/.exec(String(search||''));
-  return m?{on:m[1]==='1',set:m[1]}:{on:ls==='1',set:null};
-}
 // Лимит открытого риска книги: можно ли добавить риск addSEK к состоянию bookRiskState.
 function deskCapCheck(rs,addSEK){
   const add=Math.max(0,+addSEK||0),open=(rs&&rs.openRiskSEK)||0,cap=(rs&&rs.capSEK)||0;
@@ -388,8 +382,7 @@ function deskMainRisk(o){
 }
 
 // ── DOM ────────────────────────────────────────────────────────────────────
-const DESK_LS='dash_desk';
-let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},years:1,port:null,jt:'mine',
+let DESK_UI={route:'today',key:null,sel:null,side:{},years:1,port:null,jt:'mine',
   f:{v:'all',side:'all',phase:'all',tab:'all',sector:'all',near:false,rr:false,held:false,q:''},sort:{k:'verdict',d:-1},
   bt:'pos',bai:'proto',planTab:null,svcTab:null,fix:null,draft:{},   // S7b-2: раздел книги, раздел AI книги, портфель редактора плана, вкладка «Сервиса», правка позиции, черновики полей встроенных блоков
   riskOvr:{},exec:null,edit:null,menu:false,load:{busy:false,done:0,total:0,at:0},calAt:0,qAt:0,_t:0,_pending:false,_timer:null,
@@ -402,7 +395,6 @@ let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},year
   _jClean:null,_jErr:null};   // P5b: для какого аккаунта уже прошла ретенция журнала наблюдений в этой сессии, последняя ошибка записи расчёта
 let _deskFan=null;   // I3: веер цели {key, ch}
 let _deskChart=null,_deskMini=null;   // состояния stockChartDraw: {key,tab,row,ccy,years,side,ch}
-const deskActive=()=>!!(DESK_UI.on&&!DESK_UI.classic);
 const dkEsc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const dkN=(v,d)=>v==null||!isFinite(v)?'—':(+v).toLocaleString(LANG==='en'?'en-US':'ru-RU',{minimumFractionDigits:d,maximumFractionDigits:d});
 const dkPx=v=>v==null||!isFinite(v)?'—':dkN(v,v>=500?0:v>=20?1:2);
@@ -670,7 +662,7 @@ function deskJournalSeries(sym,rg,sess){
   const S=deskJournalBars({t:hc.j.t,c:hc.j.c,at:hc.t},sess,DESK_JOURNAL_CFG);_deskJBars[key]={at:hc.t,tz:sess.tz,S};return S;
 }
 function deskJournalEnsure(){
-  if(!deskActive()||DESK_UI.route!=='journal'||DESK_UI.jt!=='ideas'||!PRICE_PROXY||!can('view.portfolio'))return;
+  if(DESK_UI.route!=='journal'||DESK_UI.jt!=='ideas'||!PRICE_PROXY||!can('view.portfolio'))return;
   const k=deskJournalKey();if(!k)return;
   const now=Date.now();
   if(DESK_UI._jClean!==k){DESK_UI._jClean=k;const c=deskJournalCleanupAndSave(now);_deskJ=null;
@@ -696,33 +688,23 @@ function deskJournalEnsure(){
   if(s.ok||DESK_UI._jErr!==s.error){DESK_UI._jErr=s.ok?null:s.error;deskRender();}
 }
 
-// ── Флаг, монтирование, перерисовка ──
-function deskSetFlag(on){try{localStorage.setItem(DESK_LS,on?'1':'0');}catch(e){}}
-function deskToggle(on){
-  DESK_UI.on=!!on;DESK_UI.classic=false;deskSetFlag(on);
-  const de=document.documentElement;de.classList.toggle('desk',!!on);
-  de.classList.toggle('ui2',!on);   // классика — всегда ui2 (тумблер удалён в S7a)
-  if(on)deskEnable();else{if(typeof deskGlossClose==='function'){deskGlossClose(true);deskTipHide(false);}deskStopTimers();deskBackBtn(false);init();}
-}
-// Прокрутку при Back/Forward в desk ставит deskPaint (экран рисуется асинхронно); классика — браузер, как раньше.
+// ── Монтирование, перерисовка ──
+// Прокрутку при Back/Forward ставит deskPaint (экран рисуется асинхронно), не браузер.
 function deskScrollMode(manual){try{if('scrollRestoration' in history)history.scrollRestoration=manual?'manual':'auto';}catch(e){}}
 function deskEnable(){
   deskMount();deskScrollMode(true);
-  try{homeFutStop();sectStop();aipStop();pfSumPPStop();pf3StopAutoRefresh();}catch(e){}
-  // Старые экраны не рисуются, пока desk активен; их устаревший DOM убираем, чтобы id не дублировались.
-  ['pf3Area','rankingArea'].forEach(id=>{const e=document.getElementById(id);if(e)e.innerHTML='';});
-  const tb=document.getElementById('tbody');if(tb)tb.innerHTML='';
-  deskFromHash();deskBackBtn(false);deskRender(true);
+  deskFromHash();deskRender(true);
   deskLoad();deskQuotes();
-  if(!DESK_UI._timer)DESK_UI._timer=setInterval(()=>{if(deskActive()&&!document.hidden){deskQuotes();deskLoad();}},5*60e3);
+  if(!DESK_UI._timer)DESK_UI._timer=setInterval(()=>{if(!document.hidden){deskQuotes();deskLoad();}},5*60e3);
 }
-function deskStopTimers(){if(DESK_UI._timer){clearInterval(DESK_UI._timer);DESK_UI._timer=null;}deskChartsDrop();deskScrollMode(false);try{cardPPStop();pfSumPPStop();aipStop();}catch(e){}}
 function deskMount(){
   let el=document.getElementById('desk');
   if(el)return el;
   el=document.createElement('div');el.id='desk';el.className='dk-app';
   el.innerHTML=`<nav class="dk-rail" aria-label="${RT('Навигация','Navigation')}" id="dkRail"></nav><main class="dk-main" id="dkMain" tabindex="-1"></main><div id="dkModal"></div>`;
-  document.body.insertBefore(el,document.body.firstChild);
+  // Skip-link (index.html) — первым в порядке табуляции, #desk сразу за ним.
+  const sk=document.querySelector('body>.skip-link');
+  document.body.insertBefore(el,sk?sk.nextSibling:document.body.firstChild);
   el.addEventListener('click',deskOnClick);
   el.addEventListener('change',deskOnChange);
   el.addEventListener('input',deskOnInput);
@@ -763,7 +745,6 @@ const deskTyping=()=>{const a=document.activeElement,el=document.getElementById(
 // Перерисовка с дебаунсом (renderAll/renderPF3 зовут её часто). Фоновая перерисовка не ломает ввод: пока фокус
 // в поле desk, она откладывается до ухода фокуса. force — действие пользователя, рисуем сразу.
 function deskRender(force){
-  if(!deskActive())return;
   DESK_UI._rq=(DESK_UI._rq||0)+1;   // S7b-2: признак «действие перерисовало экран» для черновиков (deskMount)
   if(!force&&deskTyping()){DESK_UI._pending=true;return;}
   clearTimeout(DESK_UI._t);
@@ -805,9 +786,7 @@ function deskStockView(v){
 // Брошенное состояние гасится: destroy (канвас + ResizeObserver) и сдвиг _tok — поздний ответ stockChartDraw
 // этого состояния сверяет токен и ничего не рисует (иначе он лёг бы вторым канвасом в новый контейнер).
 function deskChartKill(st){if(!st)return;st._tok=(st._tok||0)+1;st._loading=false;if(st.ch){try{st.ch.destroy();}catch(e){}st.ch=null;}}
-function deskChartsDrop(){[_deskChart,_deskMini].forEach(deskChartKill);if(_deskFan&&_deskFan.ch){try{_deskFan.ch.destroy();}catch(e){}}_deskChart=null;_deskMini=null;_deskFan=null;}
 function deskPaint(){
-  if(!deskActive())return;
   DESK_UI._pending=false;_deskItems=null;
   const root=deskMount(),main=document.getElementById('dkMain'),rail=document.getElementById('dkRail');
   rail.innerHTML=deskRailHTML();
@@ -897,12 +876,12 @@ async function deskLoad(force){
     for(let i=0;i<syms.length;i+=16){
       await sigEnsure(syms.slice(i,i+16));
       L.done=Math.min(L.total,i+16);
-      if(deskActive())deskRender();
+      deskRender();
     }
   }catch(e){console.warn('desk load',e);}
   L.busy=false;L.done=L.total;
   deskCal();
-  if(deskActive())deskRender();
+  deskRender();
 }
 // Календарь отчётов — только для бумаг, где он меняет решение: книга, список покупок и сетапы на вход (≤ 40 → 1 запрос).
 async function deskCal(){
@@ -914,7 +893,7 @@ async function deskCal(){
   DESK_UI.calAt=Date.now();
   try{
     const j=await fetch(PRICE_PROXY+'?calendar='+encodeURIComponent(syms.join(','))).then(r=>r.json());
-    if(j&&typeof j==='object'&&!j.error){pf3Cal.data=Object.assign({},pf3Cal.data||{},j);if(!pf3Cal.key)pf3Cal.key='__desk';if(deskActive())deskRender();}
+    if(j&&typeof j==='object'&&!j.error){pf3Cal.data=Object.assign({},pf3Cal.data||{},j);if(!pf3Cal.key)pf3Cal.key='__desk';deskRender();}
   }catch(e){DESK_UI.calAt=0;}
 }
 // Живые котировки моих портфелей (цена позиций, P&L, стопы) + сверка плана. S7b-2 (карта §4): и аналитические
@@ -927,7 +906,7 @@ async function deskQuotes(manual){
   for(const tab of deskPorts()){try{n+=await pf3FetchPrices(DATA[tab],tab);pf3LastRefresh[tab]=Date.now();}catch(e){}try{await pf3RefreshTargets(DATA[tab]);}catch(e){}}
   try{planCheck();}catch(e){}
   if(manual)toast('🔄 '+RT(`Котировки: ${n} обновлено`,`Quotes: ${n} updated`),!n);
-  if(deskActive())deskRender();
+  deskRender();
 }
 
 // ── Каркас: рельса, шапка, меню ──
@@ -975,7 +954,6 @@ function deskMenuHTML(){
     ${it('gloss','📖 '+RT('Словарь','Glossary'),` title="${RT('Что значит каждый термин и число Trade Desk — клавиша ?','What every Trade Desk term and number means — key ?')}"`)}
     ${it('faq','❓ '+RT('Справка','Help'))}
     <a class="dk-mi" role="menuitem" href="${location.protocol==='file:'?'../hub/index.html':'../hub/'}" title="${RT('Назад в Hub','Back to Hub')}">🏠 Hub</a>
-    ${it('off','↩ '+RT('Выключить Trade Desk','Turn off Trade Desk'))}
     ${currentUser?it('logout','⏻ '+RT('Выйти','Log out')):''}
   </div>`;
 }
@@ -1928,7 +1906,7 @@ function deskPoolPump(){
   while(P.run<max&&P.q.length){
     const key=P.q.shift(),x=P.live[key];if(!x)continue;
     P.run++;let pr;try{pr=Promise.resolve(x.fn());}catch(e){pr=Promise.resolve();}
-    pr.catch(()=>{}).then(()=>{P.run--;delete P.live[key];x.done();deskPoolPump();if(deskActive())deskRender();});
+    pr.catch(()=>{}).then(()=>{P.run--;delete P.live[key];x.done();deskPoolPump();deskRender();});
   }
 }
 const deskPoolBusy=key=>!!_deskPool.live[key];
@@ -2667,29 +2645,6 @@ function deskClassicAfter(){
   if(r==='book'&&DESK_UI.bt==='health'&&document.getElementById('pf3RiskBox'))pf3LoadRisk();
 }
 
-// ── Классика ──
-// Полная карточка/подвкладка в классическом виде (флаг desk остаётся; назад — плавающая кнопка).
-function deskClassic(tab,tk,sub){
-  DESK_UI.classic=true;DESK_UI.menu=false;deskChartsDrop();deskScrollMode(false);if(typeof deskGlossClose==='function'){deskGlossClose(true);deskTipHide(false);}
-  const de=document.documentElement;de.classList.remove('desk');
-  de.classList.add('ui2');
-  const t=tab&&DATA[tab]?tab:(deskRiskTab()||PF3_KEY);
-  curIdx=t;v3Key=t;pf3Sel=tk||null;pf3Tab=sub||'list';
-  deskBackBtn(true);init();
-  try{window.scrollTo(0,0);}catch(e){}
-}
-function deskBack(){
-  if(!DESK_UI.on)return;
-  DESK_UI.classic=false;document.documentElement.classList.add('desk');document.documentElement.classList.remove('ui2');
-  deskBackBtn(false);deskEnable();
-}
-function deskBackBtn(show){
-  let b=document.getElementById('deskBack');
-  if(!show){if(b)b.remove();return;}
-  if(!b){b=document.createElement('button');b.id='deskBack';b.className='desk-back';b.onclick=deskBack;document.body.appendChild(b);}
-  b.textContent='↩ Trade Desk';b.title=RT('Вернуться в Trade Desk','Back to Trade Desk');
-}
-
 // ── События ──
 function deskOnClick(e){
   const el=e.target.closest('[data-a]');if(!el||!document.getElementById('desk').contains(el))return;
@@ -2793,7 +2748,6 @@ function deskOnClick(e){
     case 'gloss':DESK_UI.menu=false;deskRender(true);deskGlossOpen();break;
     case 'gtip':e.preventDefault();if(typeof deskTipToggle==='function')deskTipToggle(el,e.detail===0);break;   // G2: ⓘ (preventDefault — не сворачивать <details>)
     case 'faq':DESK_UI.menu=false;deskRender(true);toggleFaq();break;
-    case 'off':deskToggle(false);break;
     case 'logout':DESK_UI.menu=false;handleLogout();break;
   }
 }
@@ -2872,7 +2826,6 @@ function deskOnInputKey(e){
   else if(e.key==='Escape'){el.value='';deskSuggest('');el.blur();}
 }
 function deskOnKey(e){
-  if(!deskActive())return;
   // Словарь открыт: только Esc (закрыть), остальные клавиши экрана под панелью не работают.
   if(typeof deskGlossIsOpen==='function'&&deskGlossIsOpen()){if(e.key==='Escape'){e.preventDefault();deskGlossClose();}return;}
   if(e.key==='Escape'&&typeof deskTipIsOpen==='function'&&deskTipIsOpen()){e.preventDefault();deskTipHide(true);return;}   // G2: подсказка — первой
@@ -2905,16 +2858,14 @@ function deskOnKey(e){
     const r2=document.querySelector(`#desk .dk-scr tr[data-k="${CSS.escape(DESK_UI.sel)}"]`);if(r2)r2.scrollIntoView({block:'nearest'});
   }
 }
-// Вход: флаг из URL/хранилища. Без флага desk ничего не рисует (кнопка 🖥 в шапке включает).
+// Вход: desk — всегда (S7b-3); старые ?desk=0 и localStorage dash_desk игнорируются.
 function deskBoot(){
-  let ls=null;try{ls=localStorage.getItem(DESK_LS);}catch(e){}
-  const F=deskFlagFrom(location.search,ls);
-  if(F.set!=null)deskSetFlag(F.on);
   document.addEventListener('keydown',deskOnKey);
   // Back/Forward: экран, бумага и режим — из адреса, прокрутка — из history.state записи (deskHistSave).
-  window.addEventListener('popstate',e=>{if(deskActive()){deskFromHash();const y=e.state&&e.state.dkY;DESK_UI._restoreY=typeof y==='number'?y:null;deskRender(true);}});
-  window.addEventListener('hashchange',()=>{if(deskActive()){deskFromHash();deskRender(true);}});
-  document.addEventListener('click',e=>{if((DESK_UI.menu||DESK_UI.wmenu)&&deskActive()&&!e.target.closest('.dk-menu-w')&&!e.target.closest('#desk [data-a]')){DESK_UI.menu=false;DESK_UI.wmenu=null;deskRender(true);}});
-  if(F.on){DESK_UI.on=true;document.documentElement.classList.add('desk');document.documentElement.classList.remove('ui2');deskEnable();}
+  window.addEventListener('popstate',e=>{deskFromHash();const y=e.state&&e.state.dkY;DESK_UI._restoreY=typeof y==='number'?y:null;deskRender(true);});
+  window.addEventListener('hashchange',()=>{deskFromHash();deskRender(true);});
+  document.addEventListener('click',e=>{if((DESK_UI.menu||DESK_UI.wmenu)&&!e.target.closest('.dk-menu-w')&&!e.target.closest('#desk [data-a]')){DESK_UI.menu=false;DESK_UI.wmenu=null;deskRender(true);}});
+  document.documentElement.classList.add('desk');document.documentElement.classList.remove('ui2');
+  deskEnable();
 }
 deskBoot();

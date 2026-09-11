@@ -297,6 +297,84 @@ grp('syncCommitted', function(){
   __ok('undefined → false', syncCommitted(undefined,6)===false);
 });
 
+// 🔄 Очередь push/realtime (plans/sync-push-timer.md): дедуп по rev, отложенный снапшот, один push в полёте.
+// Раннер: setTimeout заглушки возвращает 0 (pushTimer ложный) — для «таймер стоит» подменяем на 7.
+grp('sync queue', function(){
+  var S={t:pushTimer,b:pushBusy,a:pushAgain,r:remotePending,rev:stateRev,u:currentUser,st:globalThis.setTimeout,
+         apply:applyRemoteState,toast:toast,from:sb.from,init:init,mig:migrateState};
+  var timers=0,applied=[],toasts=0,froms=0;
+  function armTimer(){ globalThis.setTimeout=function(){ timers++; return 7; }; }
+  function stubApply(){ applyRemoteState=function(s){ applied.push(s); }; }
+  toast=function(){ toasts++; }; sb.from=function(){ froms++; return S.from.apply(sb,arguments); };
+  try{
+    // 1) чистое решение
+    __eq('decision rev==stateRev → skip', syncRemoteDecision(5,5,false), 'skip');
+    __eq('decision rev<stateRev → skip', syncRemoteDecision(4,5,false), 'skip');
+    __eq('decision newer, free → apply', syncRemoteDecision(6,5,false), 'apply');
+    __eq('decision newer, busy → defer', syncRemoteDecision(6,5,true), 'defer');
+    __eq('decision no rev, free → apply', syncRemoteDecision(undefined,5,false), 'apply');
+    __eq('decision no rev, busy → defer', syncRemoteDecision(undefined,5,true), 'defer');
+    // 2) корень бага: таймер отработал → флаг сброшен ДО pushState
+    pushTimer=7; currentUser=null; pushFire();
+    __ok('pushFire clears pushTimer', pushTimer===null);
+    // 3) syncOnRemote
+    stubApply(); currentUser={id:'u'}; stateRev=5; pushBusy=false; pushAgain=false; remotePending=null;
+    var s6={rev:6,data:{}};
+    pushTimer=7;
+    __eq('onRemote timer standing → defer', syncOnRemote(s6), 'defer');
+    __ok('onRemote defer: not applied, pending kept', applied.length===0 && remotePending===s6);
+    pushTimer=null; remotePending=null;
+    __eq('onRemote free → apply', syncOnRemote(s6), 'apply');
+    __ok('onRemote apply: applied once, no pending', applied.length===1 && applied[0]===s6 && remotePending===null);
+    remotePending=null; applied=[];
+    __eq('onRemote rev<=stateRev → skip', syncOnRemote({rev:5}), 'skip');
+    __ok('onRemote skip: not applied, pending untouched', applied.length===0 && remotePending===null);
+    pushBusy=true; pushTimer=null;
+    __eq('onRemote push in flight → defer', syncOnRemote(s6), 'defer');
+    pushBusy=false; remotePending=null;
+    // 4) pushState при занятом синке — только флаг, без сети
+    pushBusy=true; pushAgain=false; froms=0;
+    var pr=pushState();
+    __ok('pushState busy → pushAgain sync', pushAgain===true);
+    __ok('pushState busy → no network', froms===0);
+    __ok('pushState returns a promise', pr && typeof pr.then==='function');
+    pushBusy=false; pushAgain=false;
+    // 5) syncSettle(true) с pushAgain — новый таймер, тоста нет
+    armTimer(); timers=0; toasts=0; pushAgain=true; remotePending=null; pushTimer=null;
+    syncSettle(true);
+    __ok('settle ok + pushAgain → timer armed once', timers===1 && pushTimer===7);
+    __ok('settle ok → pushAgain cleared, no toast', pushAgain===false && toasts===0);
+    pushTimer=null; globalThis.setTimeout=S.st;
+    // 6) syncFlushRemote
+    applied=[]; toasts=0; stateRev=5; pushTimer=null; pushBusy=false;
+    remotePending={rev:7};
+    __ok('flush newer, clean → applied, no toast, pending cleared', syncFlushRemote(false)===true && applied.length===1 && toasts===0 && remotePending===null);
+    applied=[]; remotePending={rev:7};
+    __ok('flush newer, dirty → applied with one toast', syncFlushRemote(true)===true && applied.length===1 && toasts===1);
+    applied=[]; toasts=0; remotePending={rev:5};
+    __ok('flush stale → not applied, pending cleared, false', syncFlushRemote(false)===false && applied.length===0 && remotePending===null);
+    var s7={rev:7}; remotePending=s7; pushTimer=7;
+    __ok('flush while timer standing → kept for later', syncFlushRemote(false)===false && applied.length===0 && remotePending===s7);
+    pushTimer=null; remotePending=null;
+    __ok('flush with no pending → false', syncFlushRemote(true)===false);
+    // 7) syncSettle(false) с отложенным новее и pushAgain: применён с тостом, таймер НЕ поставлен (D5)
+    applyRemoteState=S.apply; init=function(){}; migrateState=function(){};
+    var snap=JSON.parse(JSON.stringify(snapshotState())); snap.rev=7;
+    armTimer(); timers=0; toasts=0; stateRev=5; pushAgain=true; remotePending=snap; pushTimer=null; pushBusy=false;
+    syncSettle(false);
+    __ok('settle rejected + pending newer → applied (stateRev=7) with toast', stateRev===7 && toasts===1 && remotePending===null);
+    __ok('settle: applyRemoteState reset pushAgain, no timer (D5)', pushAgain===false && timers===0 && pushTimer===null);
+    globalThis.setTimeout=S.st;
+    // 8) syncReset
+    pushTimer=7; pushBusy=true; pushAgain=true; remotePending={rev:9};
+    syncReset();
+    __ok('syncReset clears all four', pushTimer===null && pushBusy===false && pushAgain===false && remotePending===null);
+  }finally{
+    globalThis.setTimeout=S.st; applyRemoteState=S.apply; toast=S.toast; sb.from=S.from; init=S.init; migrateState=S.mig;
+    pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; stateRev=S.rev; currentUser=S.u;
+  }
+});
+
 // 🔄 Живые котировки: чанкование под лимит подзапросов воркера (solo#1)
 grp('chunkList', function(){
   __eq('7 by 3', chunkList([1,2,3,4,5,6,7],3), [[1,2,3],[4,5,6],[7]]);

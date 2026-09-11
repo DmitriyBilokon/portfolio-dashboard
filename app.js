@@ -12,7 +12,12 @@ const SUPABASE_ANON_KEY = 'sb_publishable_9CIG7HU54hfBcexS4qr3rQ_HQygVVJC';
 // загрузилась — работаем в локальном режиме на встроенных данных (путь `!SYNC_ENABLED`).
 const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20 && !!(window.supabase && window.supabase.createClient);
 const sb = SYNC_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-let currentUser=null, realtimeChannel=null, pushTimer=null, applyingRemote=false, lastPushTs=0;
+let currentUser=null, realtimeChannel=null, applyingRemote=false;
+// Очередь push/realtime (plans/sync-push-timer.md): таймер → один push в полёте → отложенный входящий снапшот.
+let pushTimer=null;        // id дебаунса — null, когда таймер не стоит (сбрасывается в pushFire)
+let pushBusy=false;        // push в полёте (между началом pushState и syncSettle)
+let pushAgain=false;       // во время полёта были правки — после завершения schedulePush()
+let remotePending=null;    // отложенный входящий снапшот (последний), пока синк занят
 
 // The entire editable state, stored as one JSONB row per user.
 function snapshotState(){
@@ -27,13 +32,58 @@ function snapshotState(){
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
 // миграции/рендеры на старте (init до pullState) могли затереть облако пустыми
 // локальными данными (например, журналом сделок PF_TRADES).
+// Модель очереди: правка → таймер 800 мс (pushTimer) → pushState ставит pushBusy и шлёт; правка во время
+// полёта лишь поднимает pushAgain — после завершения (syncSettle) ставится новый таймер. Пока синк занят
+// (syncBusy), входящий realtime-снапшот не отбрасывается, а откладывается в remotePending и применяется
+// после завершения push, если по rev всё ещё новее. Единственный признак «облако новее» — rev
+// (syncRemoteDecision); часы клиента (updated_at) не используются. Политика конфликта: облако побеждает,
+// несохранённые локальные правки теряются с тостом. Слияние по полям — блок E plans/audit-followup.md.
 let syncReady=false;
 let stateRev=0;   // монотонная ревизия состояния: БД-триггер отклоняет запись с НЕ растущим rev (защита от затирания устаревшим клиентом)
 function scheduleSave(){ if(currentUser && !applyingRemote && syncReady) schedulePush(); }
-function schedulePush(){ clearTimeout(pushTimer); pushTimer=setTimeout(pushState, 800); }
+function schedulePush(){ clearTimeout(pushTimer); pushTimer=setTimeout(pushFire, 800); }
+function pushFire(){ pushTimer=null; pushState(); }   // таймер отработал — флага «стоит» больше нет
+function syncBusy(){ return pushTimer!=null || pushBusy; }
+// Обёртка-очередь: одновременно не больше одного push в полёте; тело — pushStateRun.
+function pushState(){
+  if(!currentUser) return Promise.resolve(false);
+  if(pushBusy){ pushAgain=true; return Promise.resolve(false); }
+  pushBusy=true;
+  return pushStateRun().catch(e=>{ console.warn('Sync push failed', e); return false; })
+    .then(ok=>{ pushBusy=false; syncSettle(ok); return ok; });
+}
+// Чистое решение по входящему снапшоту: skip — не новее нашего (эхо своего push / отклонённая
+// триггером запись / отставший клиент), defer — синк занят, apply — применить сразу.
+// Без числового rev считаем новым (совместимость; таких писателей нет).
+function syncRemoteDecision(rev, stateRev, busy){
+  if(typeof rev==='number' && rev<=stateRev) return 'skip';
+  return busy ? 'defer' : 'apply';
+}
+function syncOnRemote(s){   // из обработчика realtime; возвращает решение
+  const d=syncRemoteDecision(s&&s.rev, stateRev, syncBusy());
+  if(d==='defer') remotePending=s;
+  else if(d==='apply') applyRemoteState(s);
+  return d;
+}
+function syncSettle(ok){    // после каждого push (ok ⇔ коммит)
+  const dirty=!ok||pushAgain;   // были несохранённые правки
+  if(syncFlushRemote(dirty)) return;   // применили облако → правки «в полёте» уже потеряны (D5), таймер не нужен
+  if(pushAgain){ pushAgain=false; schedulePush(); }
+}
+function syncFlushRemote(dirty){   // true ⇔ применили отложенный снапшот
+  const s=remotePending; if(!s) return false;
+  if(syncBusy()) return false;     // ветка повтора поставила таймер — ждём дальше
+  remotePending=null;
+  if(typeof s.rev==='number' && s.rev<=stateRev) return false;   // устарел (pullState/коммит уже обогнали)
+  if(dirty) syncConflictToast();
+  applyRemoteState(s); return true;
+}
+function syncConflictToast(){ toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true); }
+function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; }
 
-async function pushState(){
-  if(!currentUser) return;
+// Тело push. true ⇔ коммит (stateRev=snap.rev); false — отклонено/ошибка/отложено.
+async function pushStateRun(){
+  if(!currentUser) return false;
   // 🤖 aiPort: торговым состоянием (позиции/кэш/журнал) владеет worker. Перед
   // записью берём его СЕРВЕРНУЮ копию — наша могла отстать, если realtime-канал
   // спал (сон ноутбука, фоновая вкладка), и тогда push стирал сделки AI.
@@ -52,7 +102,7 @@ async function pushState(){
   }catch(e){ aiPortReadOk=false; }
   // 🛡 fail-closed: не смогли перечитать серверный aiPort — НЕ перезаписываем торговое состояние
   // воркера устаревшей копией (это и затирало сделки). Отложим пуш и попробуем снова.
-  if(!aiPortReadOk && AI_PORT && AI_PORT.startedAt){ schedulePush(); return; }
+  if(!aiPortReadOk && AI_PORT && AI_PORT.startedAt){ schedulePush(); return false; }
   // 🛡 Защита истории сделок: перед записью перечитываем облако. Если наша
   // PF_TRADES пуста, а в облаке журнал есть — НЕ затираем (адаптируем облачную),
   // чтобы устаревшая вкладка/гонка не стёрла сделки. Та же логика, что для aiPort.
@@ -62,13 +112,12 @@ async function pushState(){
       if(rt && Array.isArray(rt.pfTrades) && rt.pfTrades.length){ PF_TRADES=rt.pfTrades; }
     }
   }catch(e){}
-  const ts=new Date().toISOString();
-  lastPushTs=Date.parse(ts);   // remember so the realtime echo of this push can be ignored
   const snap=snapshotState();
   snap.rev=(stateRev||0)+1;    // растущая ревизия — БД-триггер отклонит устаревшую запись
+  // updated_at — только метка времени для админ-экранов/воркера; эхо своего push отсекается по rev.
   const { data:ret, error } = await sb.from('ledger_state')
-    .upsert({ user_id:currentUser.id, data:snap, updated_at:ts }).select('data->rev');
-  if(error){ console.warn('Sync push failed', error); return; }
+    .upsert({ user_id:currentUser.id, data:snap, updated_at:new Date().toISOString() }).select('data->rev');
+  if(error){ console.warn('Sync push failed', error); return false; }
   // Триггер молчит: при rev-конфликте (в облаке уже rev ≥ нашего — другая вкладка/воркер
   // успели записать) он делает `return OLD` без ошибки, строка остаётся со старым rev.
   // Проверяем по вернувшейся строке. Отклонили → перечитываем облако (pullState →
@@ -76,11 +125,12 @@ async function pushState(){
   // локальные правки после последнего успешного push — об этом и говорит тост.
   if(!syncCommitted(ret, snap.rev)){
     console.warn('Sync push rejected (rev conflict)', ret);
-    toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true);
+    syncConflictToast();
     await pullState();
-    return;
+    return false;
   }
   stateRev=snap.rev; pfBackupSave();   // приняли — запоминаем rev + локальный бэкап
+  return true;
 }
 // Детект коммита по вернувшейся строке (.select('data->rev')): БД-триггер при
 // rev-конфликте делает `return OLD` без ошибки — строка остаётся со СТАРЫМ rev.
@@ -177,6 +227,7 @@ function subSharedAnalysis(){
   }catch(e){}
 }
 function applyRemoteState(s){
+  pushAgain=false;   // D5: состояние заменено целиком — правок «в полёте» больше нет (иначе ушёл бы пустой push rev+1)
   applyingRemote=true;
   if(s.data) DATA=s.data;
   if(s.fx) FX=s.fx;
@@ -231,13 +282,7 @@ function subscribeRealtime(){
   if(realtimeChannel) sb.removeChannel(realtimeChannel);
   realtimeChannel=sb.channel('dash_'+currentUser.id)
     .on('postgres_changes',{event:'*',schema:'public',table:'ledger_state',filter:'user_id=eq.'+currentUser.id},
-        p=>{ if(!(p.new && p.new.data)) return;
-             // Эхо своих push-ей и любые записи СТАРЕЕ нашего последнего сохранения
-             // пропускаем: иначе отставший снапшот затирает свежие метрики/типы.
-             const ts=Date.parse(p.new.updated_at)||0;
-             if(lastPushTs && ts<=lastPushTs) return;
-             if(pushTimer) return;   // есть несохранённые локальные правки — их нельзя терять
-             applyRemoteState(p.new.data); })
+        p=>{ if(p.new && p.new.data) syncOnRemote(p.new.data); })   // дедуп по rev, при занятом синке — отложить
     .subscribe();
 }
 
@@ -286,7 +331,7 @@ async function handleLogin(e){
 async function handleLogout(){
   if(realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel=null; }
   clearInterval(hbTimer); userRole='user'; allowedTabs=['Nasdaq 100'];
-  await sb.auth.signOut(); currentUser=null; syncReady=false;
+  await sb.auth.signOut(); currentUser=null; syncReady=false; syncReset();
   document.getElementById('authOverlay').classList.remove('hidden');
   init();   // за оверлеем входа остаются только публичные вкладки
 }

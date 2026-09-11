@@ -10,7 +10,7 @@
   - `app-3.js` — AI-портфель, сбор данных вселенной (`homeUpdateAll`), оценка (Valuation), сценарии bull/base/bear (`scenario*`, блок «Сценарии»), новости;
   - `app-4.js` — тезис-монитор (`cycle*`);
   - `app-5.js` — сделки, налоги K4, план, слой данных S3 (`POS_META`, план v2, `secFromRow`/`deskUniverse`), сигналы v2 (`sigSnapRow`, адаптеры для AI), цены/таргеты вкладок (`pf3FetchPrices`, `pf3RefreshTab`), пре/пост-рынок.
-- **Supabase**: одна строка `ledger_state` с JSON-блобом (`data`), `rev` = optimistic concurrency (инкрементить при записи). На клиенте только anon-ключ. Реалтайм-синк.
+- **Supabase**: одна строка `ledger_state` с JSON-блобом (`data`), `rev` = optimistic concurrency (инкрементить при записи). На клиенте только anon-ключ. Реалтайм-синк: входящий снапшот дедуплицируется по `rev` (`syncRemoteDecision`, не по часам), при занятом синке откладывается в `remotePending` и применяется после push; push сериализован (`pushBusy`/`pushAgain`, `plans/sync-push-timer.md`); конфликт — облако побеждает, слияние по полям — блок E `plans/audit-followup.md`.
 - **Cloudflare Worker** `telegram-notify.js`: live-цены/уровни (Yahoo), фундаментал (FMP→Yahoo), все AI-эндпоинты (Claude + web_search), Telegram-алерты, cron (AI-портфель + авто-анализ + bookcheck).
 
 ## Рабочий процесс (ВАЖНО)

@@ -351,14 +351,13 @@ function onbHTML(){
   const row=(ic,ru,en)=>`<div class="onb-row"><span class="onb-ic">${ic}</span><span>${RT(ru,en)}</span></div>`;
   return `<button class="faq-close" onclick="onbDone()" aria-label="${RT('Закрыть','Close')}">✕</button>
     <h2>👋 ${RT('Добро пожаловать','Welcome')}</h2>
-    <div class="faq-sub">${RT('Это аналитический дашборд портфеля: индексы, ваши портфели и AI-разбор бумаг.','An analytical portfolio dashboard: indices, your portfolios and AI stock analysis.')}</div>
+    <div class="faq-sub">${RT('Trade Desk: что купить/продать/сократить сегодня, план лонг/шорт с входом, стопом и целью, риск по позиции.','Trade Desk: what to buy, sell or trim today, a long/short plan with entry, stop and target, per-position risk.')}</div>
     <div class="onb-list">
-      ${row('🗂','Вкладки в меню слева (на телефоне — сверху): индексы (Nasdaq, OMXS30…) и ваши портфели. 🏠 Home — сводка рынка и барометр.','Tabs in the left menu (on top on a phone): indices (Nasdaq, OMXS30…) and your portfolios. 🏠 Home — market overview & barometer.')}
-      ${row('📋','Клик по строке/бумаге открывает карточку: цена, уровни, фундаментал, тезис-монитор.','Click a row/stock to open its card: price, levels, fundamentals, thesis monitor.')}
-      ${row('🤖','В карточке — AI-анализ и AI-рекомендация (Claude + веб-поиск свежих новостей).','In the card — AI analysis & AI recommendation (Claude + web search of fresh news).')}
-      ${row('🔄','«Обновить» подтягивает живые котировки и технические уровни (Yahoo).','“Refresh” pulls live quotes and technical levels (Yahoo).')}
-      ${row('🖥','Trade Desk (кнопка 🖥 в шапке, бета) — решения дня: вход, стоп, цель и R/R, скринер по всем вкладкам, график с планом лонг/шорт.','Trade Desk (🖥 in the header, beta) — today’s decisions: entry, stop, target and R/R, a screener across all tabs, a chart with a long/short plan.')}
-      ${row('❓','Кнопка «?» в шапке и значки «!» рядом с разделами объясняют все обозначения.','The “?” button in the header and “!” icons next to sections explain every label.')}
+      ${row('📋','«Сегодня» — решения дня по вашим портфелям с входом/стопом/целью и R/R. «Идеи» — скринер всех бумаг с фильтрами.','“Today” — the day’s calls across your portfolios with entry/stop/target and R/R. “Ideas” — a screener across every stock, with filters.')}
+      ${row('📈','«Акция» — график со свечами и уровнями, план лонг/шорт, оценка компании и техника в одной карточке.','“Stock” — a candlestick chart with levels, a long/short plan, company valuation and technicals in one card.')}
+      ${row('💼','«Позиции» — книга по риску: открытые позиции, структура, дивиденды, состояние, AI-раздел. «Журнал» — сделки, планы, налог K4, наблюдения.','“Positions” — the risk book: open positions, breakdown, dividends, health, the AI section. “Journal” — trades, plans, K4 tax, tracked ideas.')}
+      ${row('📨','Открытая страница уведомляет о сработавшем плане сама; закрытая — через Telegram по расписанию.','With the page open, a triggered plan notifies you right there; closed, Telegram alerts do it on a schedule.')}
+      ${row('📖','«📖 Словарь» (⋯ или клавиша «?») объясняет каждый термин и число — с формулой и примером.','“📖 Glossary” (⋯ or the “?” key) explains every term and number — with the formula and a worked example.')}
     </div>
     <div class="onb-note">${RT('Справочная аналитика, не индивидуальная инвестиционная рекомендация.','Reference analytics, not individual investment advice.')}</div>
     <button class="primary onb-ok" onclick="onbDone()">${RT('Понятно, начать','Got it, start')}</button>`;
@@ -1090,101 +1089,39 @@ function applyTheme(t){
 // Reuses the live badge classes (pf3-typ / pf3-crit / pf3-sig) so the modal
 // always looks exactly like the lists.
 function faqHTML(){
-  const row=(k,v)=>`<div class="faq-row"><span class="faq-k">${k}</span><span class="faq-v">${v}</span></div>`;
-  const typ=(t,v)=>row(`<span class="pf3-typ ${PF3_TYPE_META[t][1]}">${PF3_TYPE_META[t][0]} ${t}</span>`,v);
-  const crit=(cls,ico,l,v)=>row(`<span class="pf3-crit ${cls}">${ico} ${l}</span>`,v);
+  const row=(k,v,ven)=>`<div class="faq-row"><span class="faq-k">${k}</span><span class="faq-v">${ven!=null?RT(v,ven):v}</span></div>`;
   const sec=(title,body,open)=>`<details class="faq-sec"${open?' open':''}><summary>${title}</summary><div class="faq-body">${body}</div></details>`;
   return`<button class="faq-close" onclick="toggleFaq()">✕</button>
   <h2>${T('❓ Справка')}</h2>
-  <div class="faq-sub">${T('Нажмите на раздел, чтобы развернуть его')}</div>
+  <div class="faq-sub">${RT('Нажмите на раздел, чтобы развернуть его. За значением каждого термина и числа — «📖 Словарь».','Tap a section to expand it. For what a term or number means — the “📖 Glossary”.')}</div>
 
-  ${sec(T('🗂 Вкладки и виды'),
-    row('<b>🖥 Trade Desk</b>','Новый интерфейс (бета, кнопка 🖥 в шапке или ?desk=1): «Сегодня» — что купить, продать или сократить с входом, стопом, целью и R/R; «Скринер» — все бумаги всех вкладок с фильтрами; «Акция» — график со свечами, уровнями и планом лонг/шорт; «Позиции» — книга с риском; «Журнал» — сделки, планы и бэктест правил. «⋯ → Классический вид» возвращает эти вкладки.')
-   +row('<b>📖 Словарь Trade Desk</b>','Что значит каждый термин и число Trade Desk (R, R/R, ATR, фазы, флаги, «Что если?», зона, риск 1–5…): формула, пример и как использовать, плюс сквозной пример одной сделки. Открывается из Trade Desk: ⋯ → «📖 Словарь» или клавиша ?. <button class="btn" onclick="deskGlossFromFaq()">📖 '+RT('Открыть словарь','Open glossary')+'</button>')
-   +row('<b>🏠 Home</b>','Сводка рынка: живые фьючерсы и индексы, барометр фаз рынка, доска лучших акций (общий рейтинг со столбцом «v2» — вердикт нового слоя сигналов), разбивка по горизонтам и прогноз. Клик по строке открывает карточку.')
-   +row('<b>📊 Портфель / Акции</b>','Главный список: клик по строке открывает карточку акции слева (график, здоровье бизнеса, уровни, отчёты). Колонки сортируются кликом по заголовку; «⚙ Колонки» включает дополнительные, в том числе «Вердикт v2».')
-   +row('<b>🏭 Структура</b>','Те же акции, сгруппированные по сектору, типу и диверсификации: слева группы с итогами, справа акции выбранной группы.')
-   +row('<b>🧪 Симуляция</b>','Бумажный портфель из тестовых покупок — без реальных денег, вкладка в группе «💼 Portfolio». Подробнее в разделе «Симуляция» ниже.')
-   +row('<b>🎯 План · 📜 Сделки · 🧾 Налоги</b>','У портфелей: план сделок (уровень входа или выхода, стоп, цель, R/R), журнал сделок с реализованным P&L и налог K4 по средней цене (genomsnittsmetoden).')
-   +row('<b>📨 Telegram: стопы и лимиты</b>','Открытая страница уведомляет о сработавшем плане сама. При закрытой — сервер по расписанию (в часы бирж, каждые 10–20 минут) проверяет стоп и цель позиций и лимиты плана и пишет в Telegram: пробит стоп, достигнута цель, сработал лимит, «сетап сломан» (цена ушла за стоп до входа). Одно условие приходит один раз; повторно — только если цена отошла от уровня на 0.3·ATR и вернулась. Выключить: Trade Desk → ⋯ → «📨 Telegram-алерты».')
-   +row('<b>📅 Дивиденды и отчёты</b>','Календарь: ближайшие отчёты компаний, экс-дивидендные даты и выплаты.')
-   +row('<b>🩺 Состояние · 🤖 AI · ⚖️ Предложение</b>','У каждого портфеля: здоровье портфеля, AI Proto (анализ с историей запусков и чат по портфелю) и план ребалансировки.'),true)}
+  ${sec(RT('🗂 Экраны Trade Desk','🗂 Trade Desk screens'),
+    row('<b>📋 Сегодня</b>','Решения дня по вашим портфелям: что купить, докупить, сократить или закрыть — с входом, стопом, целью и R/R.','Today’s calls across your portfolios: what to buy, add, trim or close — with entry, stop, target and R/R.')
+   +row('<b>🔎 Идеи</b>','Скринер всех бумаг всех вкладок с фильтрами (сектор, тип, зона, риск…) и карточками-кандидатами.','A screener across every stock in every tab, with filters (sector, type, zone, risk…) and candidate cards.')
+   +row('<b>📈 Акция</b>','Карточка бумаги в трёх режимах: «Решение» (план и размер по риску), «Компания» (фундаментал, оценка, инсайдеры, рост бизнеса), «Техника» (график, уровни, сценарии bull/base/bear).','A stock card with three views: “Decision” (plan and risk-sized size), “Company” (fundamentals, valuation, insiders, business growth), “Technicals” (chart, levels, bull/base/bear scenarios).')
+   +row('<b>💼 Позиции</b>','Книга по риску одного или всех портфелей: Позиции, Структура (сектор/тип/диверсификация), Дивиденды и отчёты, Состояние, Статистика (админ), AI-раздел.','The risk book for one or all portfolios: Positions, Breakdown (sector/type/diversification), Dividends & earnings, Health, Statistics (admin), the AI section.')
+   +row('<b>🧾 Журнал</b>','Мои сделки, Записи (журнал с ручной правкой и импортом CSV), Планы (создание/правка/импорт из AI), Налоги (K4), Бэктест правил, Наблюдения (журнал результатов), AI-разборы (админ).','My trades, Records (journal with manual edits and CSV import), Plans (create/edit/import from AI), Tax (K4), Rules backtest, Tracked ideas (results journal), AI reviews (admin).')
+   +row('<b>⚖️ Сравнение</b>','2–4 бумаги рядом: качество, оценка, момент, риск — что сопоставимо, подсвечено; выбор — чекбоксом на карточках «Идей».','2–4 stocks side by side: quality, valuation, momentum, risk — comparable fields highlighted; pick them via the checkbox on “Ideas” cards.')
+   +row('<b>⋯ Меню</b>','📖 Словарь, 🧰 Сервис (свои вкладки/бумаги и сбор данных, ниже), 📨 Telegram-алерты (вкл/выкл), 🏠 Hub, язык/тема, выход.','📖 Glossary, 🧰 Service (your tabs/stocks and data collection, below), 📨 Telegram alerts (on/off), 🏠 Hub, language/theme, sign out.'),true)}
 
-  ${sec(T('🏷 Тип акции'),
-    typ('Защитная','Стабильный спрос вне зависимости от экономического цикла: фарма, потребительские товары, коммунальные услуги, телеком. Меньше падает в кризис, медленнее растёт на бычьем рынке.')
-   +typ('Качественная','Сильный баланс, высокая рентабельность, устойчивое конкурентное преимущество (Apple, Microsoft, ASML). Костяк долгосрочного портфеля.')
-   +typ('Циклическая','Результаты сильно зависят от фазы экономики и отраслевого цикла: полупроводниковое оборудование, память, авто, промышленность, энергетика.')
-   +typ('Дивидендная','Главная ценность — стабильные выплаты: REIT (Realty Income), Cisco, Kraft Heinz. Покупается ради денежного потока.')
-   +typ('Рост','Быстрорастущая выручка, прибыль реинвестируется: ИИ, облако, кибербезопасность. Выше потенциал — выше волатильность.')
-   +typ('Стоимость','Торгуется дёшево относительно прибыли/активов, часто в ожидании разворота (PayPal, Warner Bros). Ставка на переоценку рынком.')
-   +typ('Спекулятивная','Венчурная ставка на публичном рынке: компания убыточна (ROE < 0), оценка держится на ожиданиях (P/S > 12–20, P/E отсутствует), выживание зависит от привлечения капитала. Квантовые вычисления, ранний биотех. Не путать с настоящим ростом вроде CrowdStrike.')
-   +typ('ETF','Биржевой фонд — корзина бумаг одним инструментом. Определяется автоматически при добавлении.')
-   +row('<b>🧮</b>',RT('Тип считается скорингом по live-метрикам в духе методологий MSCI/S&P: beta и сектор (защитная/циклическая), ROE и D/E (качественная), дивдоходность и payout (дивидендная), рост выручки (рост), P/E к среднему сектора (стоимость). Пограничные получают вторичную метку в карточке — как Microsoft: «Качественная · Рост». Пока метрики не загрузились, действует классификация по сектору.','The type is scored from live metrics in the spirit of MSCI/S&P methodologies: beta & sector (defensive/cyclical), ROE & D/E (quality), yield & payout (dividend), revenue growth (growth), P/E vs sector average (value). Borderline names get a secondary label on the card — like Microsoft: “Quality · Growth”. Until metrics load, the sector-based fallback applies.')))}
+  ${sec(RT('📖 Словарь Trade Desk','📖 Trade Desk glossary'),
+    row('<b>Что это</b>','Что значит каждый термин и число Trade Desk (R, R/R, ATR, фазы, флаги, «Что если?», зона, риск 1–5, статьи «Компании»…): формула, пример и как использовать, плюс сквозной пример одной сделки.','What every Trade Desk term and number means (R, R/R, ATR, phases, flags, “What if?”, zone, risk 1–5, the “Company” metrics…): the formula, an example and how to use it, plus one worked trade end-to-end.')
+   +row('<b>Как открыть</b>','⋯ → «📖 Словарь», клавиша «?», или ⓘ рядом с заголовком раздела/KPI. <button class="btn" onclick="deskGlossFromFaq()">📖 '+RT('Открыть словарь','Open glossary')+'</button>','⋯ → “📖 Glossary”, the “?” key, or the ⓘ next to a section/KPI heading. <button class="btn" onclick="deskGlossFromFaq()">📖 '+RT('Открыть словарь','Open glossary')+'</button>'))}
 
-  ${sec(T('📊 Критерий — рыночная фаза (техника + фундаментал)'),
-    crit('knife','🔪','Падающий нож','Цена ниже всех SMA и дневное падение ≤ −3%, либо пробита поддержка. Ловить не стоит — ждать стабилизации.')
-   +crit('down','📉','Даунтренд','Цена ниже SMA 50, 100 и 200 — нисходящий тренд на всех горизонтах.')
-   +crit('corr','⚠️','Коррекция','Откат ниже SMA 50 при цене выше SMA 200 — долгосрочный тренд цел, краткосрочная слабость.')
-   +crit('flat','⚖️','Боковик','Цена между уровнями без выраженного тренда, или недостаточно данных.')
-   +crit('rev','🔄','Разворот','Цена вернулась выше SMA 50, но ещё ниже SMA 200 — возможное начало восстановления.')
-   +crit('undr','💎','Недооценка','Потенциал до консенсус-таргета аналитиков ≥ +25% (и бумага не в свободном падении).')
-   +crit('up','📈','Аптренд','Цена выше всех SMA 50/100/200 — восходящий тренд подтверждён.')
-   +crit('imp','🚀','Импульс','Сильное дневное движение вверх: ≥ +2.5% при цене выше SMA 50 (или ≥ +4%).')
-   +crit('heat','🌡','Перегрев','Цена выше таргета аналитиков (+5%) или ≥ +30% над SMA 200 — риск отката, фиксация части позиции разумна.'))}
+  ${sec(RT('📨 Telegram: стопы и лимиты','📨 Telegram: stops & limits'),
+    infoP('Открытая страница уведомляет о сработавшем плане сама. При закрытой — сервер по расписанию (в часы бирж, каждые 10–20 минут) проверяет стоп и цель позиций и лимиты плана и пишет в Telegram: пробит стоп, достигнута цель, сработал лимит, «сетап сломан» (цена ушла за стоп до входа). Одно условие приходит один раз; повторно — только если цена отошла от уровня на 0.3·ATR и вернулась. Выключить: ⋯ → «📨 Telegram-алерты».','With the page open, a triggered plan notifies you right there. Closed, the server checks position stops/targets and plan limits on a schedule (during exchange hours, every 10–20 min) and posts to Telegram: stop hit, target reached, limit triggered, “setup broken” (price passed the pre-entry stop). Each condition fires once; it repeats only after price moves 0.3·ATR away from the level and back. Turn off: ⋯ → “📨 Telegram alerts”.'))}
 
-  ${sec(T('🎯 Сигнал — цена у технического уровня (±2%)'),
-    row('<span class="pf3-sig pf3-sig-buy">🟢 Докупка · SMA 50 +1.2%</span>','Цена в пределах ±2% от уровня покупки (SMA 50/100/200 или поддержка). «Покупка» — если позиции ещё нет.')
-   +row('<span class="pf3-sig pf3-sig-sell">🔴 Продажа · Сопр. −0.8%</span>','Цена в пределах ±2% от сопротивления — зона фиксации прибыли.')
-   +row('<span class="pf3-sig pf3-sig-wait">⏳ SMA 100 −5.4%</span>','Уровней рядом нет; показан ближайший уровень покупки снизу и сколько до него.')
-   +row('<span class="pf3-sig pf3-sig-warn">🔻 ниже уровней</span>','Цена опустилась ниже всех уровней покупки.'))}
+  ${sec(RT('🤖 AI-раздел (Позиции → AI)','🤖 The AI section (Positions → AI)'),
+    row('<b>AI Proto</b>','Качественный разбор портфеля Claude (техника, фундаментал, свежие новости через веб-поиск) с историей запусков и чатом; отдельно от вердикта SIG на «Решении» — оба стоит смотреть вместе.','Claude’s qualitative read of the portfolio (technicals, fundamentals, fresh news via web search), with a run history and chat — separate from the SIG verdict on “Decision”; worth reading both.')
+   +row('<b>✨ AI-прогноз</b>','Ожидаемая доходность портфеля по горизонтам со свежим веб-поиском (платно, запускается вручную).','Expected portfolio return by horizon, with a fresh web search (paid, run manually).')
+   +row('<b>⚖️ Предложение</b>','План ребалансировки по итогам последнего AI Proto.','A rebalancing plan from the latest AI Proto run.')
+   +row('<b>📚 Плейбук</b>','Принципы «как обгонять индекс», которым следует автономный AI-портфель; правится вручную или AI подтягивает свежие практики из веба.','The “beat the index” principles the autonomous AI portfolio follows; edit them by hand or have the AI pull fresh practices from the web.'))}
 
-  ${sec(T('🧪 Симуляция — тестовые покупки'),
-    row('<b>Как купить</b>','Откройте карточку акции → секция «🧪 Симуляция» внизу → укажите количество и цену (предзаполнена текущей) → «Купить (тест)». Реальный портфель не затрагивается.')
-   +row('<b>Где следить</b>','В карточке акции — позиции по этой бумаге; на вкладке «🧪 Симуляция» — весь тестовый портфель: вложено, стоимость сейчас и результат в kr по живым ценам и курсу.')
-   +row('<b>Закрыть позицию</b>','Кнопка 🗑 в карточке или в таблице симуляции. Клик по строке таблицы открывает карточку акции.')
-   +row('<b>Привязка к вкладке</b>','Тестовая покупка помнит вкладку, из карточки которой сделана; вкладка «🧪 Симуляция» показывает все вместе. Синхронизируются между устройствами.'))}
+  ${sec(RT('🧾 Налог K4','🧾 K4 tax'),
+    infoP('«Журнал → Налоги» считает реализованные прибыли/убытки по годам методом <b>genomsnittsmetoden</b> (средняя себестоимость) — это метод, требуемый шведской декларацией K4; FIFO — только для сверки/других юрисдикций. Сумма в kr — по текущему курсу (оценка, не готовая декларация: для K4 нужен курс на день сделки).','“Journal → Tax” computes realized gains/losses by year using <b>genomsnittsmetoden</b> (average cost) — the method the Swedish K4 return requires; FIFO is for cross-checking/other jurisdictions only. The kr amount uses the current FX rate (an estimate, not a filing-ready return: K4 needs the trade-date rate).'))}
 
-  ${sec(T('📐 Технические уровни и колонки'),
-    row('<b>SMA 50/100/200</b>','Скользящие средние по дневным свечам (~2.5/5/10 месяцев). В режиме «3 года» — недельные (~1/2/4 года). Обновляются автоматически.')
-   +row('<b>Поддержка / Сопротивление</b>','Минимум и максимум цены за последние ~3 месяца торгов.')
-   +row('<b>Аналит. таргет</b>','Средняя целевая цена аналитиков в валюте торгов: основной — консенсус FMP за всё время (для EU/Nordic — фолбэк Yahoo/Refinitiv), под ним «Таргет 3м» — свежий срез за последний квартал/месяц, чтобы старые таргеты не искажали среднее. Рядом — потенциал в % к цене и число аналитиков.')
-   +row('<b>1д %</b>','Изменение цены к закрытию предыдущей сессии.')
-   +row('<b>Доля</b>','Вес позиции в общей стоимости акций портфеля.'))}
-
-  ${sec(T('💼 Портфельные значения'),
-    row('<b>Покупка</b>','Средняя цена входа в валюте бумаги (из брокерского отчёта).')
-   +row('<b>Стоимость</b>','Текущая стоимость позиции в кронах по живому курсу (kr); под ней — прибыль/убыток в % к вложенному.')
-   +row('<b>Чистый капитал</b>','Стоимость всех акций + свободный кэш.')
-   +row('<b>Кредитное плечо</b>','Доступный кредит брокера сверх собственного капитала; «Доступно с плечом» = свободные + плечо.'))}
-
-  ${sec(T('💪 Здоровье бизнеса (карточка акции)'),
-    row('<b>Оценка 0–10</b>','Баланс (долг/капитал, ликвидность), денежный поток (FCF) и рост выручки (CAGR и год-к-году); итог — среднее. Переключатель: «Годовой отчёт» — последний фискальный год, «Послед. квартал» — свежий квартал + TTM.')
-   +row('🔴 Критично · 🟠 Слабо · 🟡 Средне · 🟢 Хорошо · 🏆 Отлично','Градация итоговой оценки: &lt;2.5 · 2.5–4.5 · 4.5–6.5 · 6.5–8.5 · ≥8.5.'))}
-
-  ${isAdmin()?sec(T('🔬 AI-анализ акции'),
-    row('<b>🟢 Добавлять · 🟡 Наблюдать · 🔴 Не добавлять</b>','Итоговый вердикт Claude по бумаге с учётом вашего портфеля (перевес секторов, концентрация, свободный кэш): открывать/докупать позицию сейчас, держать на радаре или воздержаться. В отличие от «Рекомендации» в карточке (детерминированный скоринг сайта) — это качественный вывод модели по технике, фундаменталу и свежим новостям.')
-   +row('<b>увер.</b> — уверенность: <b>low · medium · high</b>','Насколько сам Claude уверен в этом вердикте. <b>low</b> — данные противоречивы или их мало, высокая неопределённость; <b>medium</b> — аргументы за вердикт есть, но и риски заметны, картина неоднозначная; <b>high</b> — техника, фундаментал и новости сходятся, вывод твёрдый. Это самооценка модели, а не расчёт дашборда.')
-   +row('<b>размер</b>','Рекомендуемый размер позиции: доля в % от капитала и примерная сумма в кронах от свободного кэша.')
-   +row('<b>вход</b>','Ценовая зона для покупки (уровни входа) в валюте торгов бумаги.')
-   +row('<b>цель</b>','Целевая цена Claude и потенциал роста к ней в %. Это собственная оценка модели — может отличаться от консенсус-таргета аналитиков.')
-   +row('<b>горизонт</b>','Ожидаемый срок реализации идеи — недели или месяцы.')
-   +row('<b>🤖 AI-анализ / обновить</b>','Запускает свежий разбор: Claude собирает цены, уровни, фундаментал и через веб-поиск — последние новости компании. Каждый разбор сохраняется в обучающую базу (вкладка 🔬 AI-разборы), и при следующем анализе модель сверяет прошлый прогноз с фактом.')):''}
-
-  ${isAdmin()?sec(T('🔄 AI-Рекомендация'),
-    row('<b>Что это</b>','Кнопка «🔄 AI-Рекомендация» в карточке: Claude взвешивает ВСЁ вместе — технику (SMA, уровни, фаза), фундаментал (ROE, рост, долг, FCF), оценку (P/E, мультипликаторы vs сектор и история), плюс через веб-поиск свежие новости компании и глобальную макрокартину (ставки, инфляция, геополитика, настроение по сектору) — и выдаёт единый вердикт.')
-   +row('🟢 Купить · 🟡 Ждать · 🔴 Продать · ⛔ Избегать','Вердикт по тем же четырём значениям, что и скоринговая «Рекомендация», но с учётом новостей и мира. <b>buy</b> — техника и фундаментал за покупку, цена у входа; <b>wait</b> — смешанно или далеко от входа; <b>sell</b> — у сопротивления/выше таргета/перегрев/негатив; <b>avoid</b> — падающий нож или серьёзный риск.')
-   +row('<b>увер. low/medium/high</b>','Самооценка уверенности модели в вердикте. Рядом — заголовок-суть, зона входа и ключевые риски; «Показать разбор» раскрывает полный текст с разделами Новости/Техника/Фундаментал.')
-   +row('<b>Чем отличается от «Рекомендации»</b>','«Рекомендация» (выше в карточке) — мгновенный детерминированный скоринг сайта по технике+фундаменталу, считается всегда и бесплатно. «AI-Рекомендация» — отдельное поле: запускается вручную, учитывает живые новости и макро, стоит один AI-вызов на бумагу. Они не заменяют друг друга — смотрите оба.')):''}
-
-  ${isAdmin()?sec(T('📐 Оценка — мультипликаторы (Valuation Check)'),
-    row('<b>Кнопка «📐 Оценка»</b>','На 🏠 Home собирает мультипликаторы сразу по всему портфелю (Yahoo — живые значения, покрывает Nordic; FMP — историческая медиана). Результат — в карточке каждой акции и сводкой на Home. Finnhub /metric не используется (US-only).')
-   +row('<b>P/E (TTM) · Forward P/E</b>','Цена / прибыль за 12 мес и по прогнозу на след. год. «n/a», если прибыль ≤ 0 — тогда смотрят на P/S.')
-   +row('<b>P/S (TTM)</b>','Цена / выручка за 12 мес — работает и для убыточных компаний.')
-   +row('<b>EV/EBITDA</b>','Стоимость бизнеса / EBITDA — нивелирует разницу в долге и амортизации. «n/a» при отрицательной EBITDA.')
-   +row('<b>PEG</b>','Forward P/E ÷ ожидаемый рост EPS. PEG &lt; 1 — рост недооценён рынком. Неприменим при росте ≤ 0.')
-   +row('<b>сектор</b>','Медиана мультипликатора по бумагам того же сектора в портфеле (медиана устойчивее к выбросам, чем среднее). Рядом — дисконт/премия в %: <span class="pf3-up">зелёное</span> = дешевле сектора, <span class="pf3-down">красное</span> = дороже.')
-   +row('<b>история 5y</b>','Историческая медиана самой бумаги за 5 лет (FMP). Дисконт/премия показывает, дёшево или дорого относительно своей нормы. Для бумаг без покрытия FMP (часть Nordic) — «—».')
-   +row('🟢 <b>Дёшево по обоим измерениям</b>','Бумага одновременно ниже медианы сектора <b>и</b> ниже собственной истории по ≥2 мультипликаторам. Сильнейший статистический сигнал недооценки — но это наблюдение, а не сигнал к покупке: низкие мультипликаторы часто бывают на пике цикла, когда прибыль временно завышена.')):''}`;
+  ${isAdmin()?sec(RT('🧰 Сервис (админ)','🧰 Service (admin)'),
+    infoP('«⋯ → Сервис» — свои вкладки и бумаги (добавить/удалить/переименовать, пересчитать типы) и сбор данных на всю вселенную бумаг: обновление цен/уровней/таргетов, оценка (мультипликаторы) и инсайдерские сделки. Каждая кнопка объясняет своё действие рядом с собой.','“⋯ → Service” — your tabs and stocks (add/remove/rename, recompute types) and universe-wide data collection: price/level/target refresh, valuation (multiples) and insider trades. Each button explains its own action right next to it.')):''}`;
 }
 // ===== 📜 Промпты (админ): названия и тексты AI-промптов из worker'а =====
 function togglePrompts(){
@@ -1389,45 +1326,6 @@ const SEC_INFO={
     [RT('Фаза','Phase'),'где бумага в своём цикле/истории: стрелка между ранней стадией, развитием и зрелостью/перегревом.','where the stock is in its cycle/story: a needle between early stage, growth and maturity/overheat.'],
     [RT('Источник','Source'),'значка у строки: ✋ ручная правка · ✨ AI (web_search) · ƒ авто-derive · • дефолт-сид.','per-row badge: ✋ manual · ✨ AI (web_search) · ƒ auto-derived · • default seed.'],
   ])+infoNote('Цвет строки: 🟢 порог не достигнут / тезис цел · 🟡 близко к порогу или структурный риск · 🔴 порог достигнут. AI-вызов платный (admin). '+INFO_DISCLAIM[0],'Row colour: 🟢 threshold not hit / thesis intact · 🟡 near threshold or structural risk · 🔴 threshold hit. The AI call is paid (admin). '+INFO_DISCLAIM[1])},
-  baro:{t:['🌡 Барометр перегретости рынков','🌡 Market overheat barometer'],b:()=>infoP('Композитный индекс 0–100 из живых данных ведущих индексов. 0 — страх/перепроданность, 100 — эйфория/перегрев. Считается в браузере из уже загруженных котировок, обновляется вместе с рынками.','A 0–100 composite from live data of leading indices. 0 = fear/oversold, 100 = euphoria/overheated. Computed in the browser from already-loaded quotes, refreshed with the markets.')+infoRows([
-    ['VIX','индекс страха: низкий VIX → самоуспокоенность (перегрев), высокий → страх. Вес 30%.','fear gauge: low VIX → complacency (overheat), high → fear. Weight 30%.'],
-    [RT('Выше SMA200','Above SMA200'),'доля ведущих индексов выше своей SMA200 — широта бычьего тренда. Вес 25%.','share of leading indices above their SMA200 — bull-trend breadth. Weight 25%.'],
-    [RT('Выше SMA50','Above SMA50'),'то же по SMA50 — краткосрочная широта. Вес 20%.','same over SMA50 — short-term breadth. Weight 20%.'],
-    [RT('Растяжение SMA50','SMA50 stretch'),'среднее отклонение цены над SMA50: чем дальше вверх, тем перегретее. Вес 25%.','average price deviation above SMA50: the further up, the more overheated. Weight 25%.'],
-    [RT('Зоны','Zones'),'🧊 0–20 страх · ❄️ 20–40 прохладно · 😐 40–60 нейтрально · 🔥 60–80 жарко · 🌋 80–100 перегрев.','🧊 0–20 fear · ❄️ 20–40 cool · 😐 40–60 neutral · 🔥 60–80 hot · 🌋 80–100 overheated.'],
-  ])+infoNote('Веса нормируются по доступным компонентам (если уровни ещё грузятся — по тому, что есть). '+INFO_DISCLAIM[0],'Weights are renormalised over available components (if levels are still loading — over what is present). '+INFO_DISCLAIM[1])},
-  markets:{t:['📈 Рынки и уровни индексов','📈 Markets & index levels'],b:()=>infoP('Живые цены индексов/фьючерсов и их ключевые уровни. Цена обновляется ~20 c, уровни — раз в 5 мин.','Live index/futures prices and their key levels. Price refreshes ~20 s, levels every 5 min.')+infoRows([
-    ['● LIVE','фьючерсы торгуются ~23 ч → барометр риска; спот-индексы (^…) — в часы своей биржи.','futures trade ~23 h → a risk barometer; spot indices (^…) trade in their exchange hours.'],
-    ['▲/▼ %','изменение за день (авторитетное regularMarketChangePercent от Yahoo).','daily change (authoritative regularMarketChangePercent from Yahoo).'],
-    ['R / R1, R2','сопротивление — уровни ВЫШЕ цены (красным), ближайший первым.','resistance — levels ABOVE price (red), nearest first.'],
-    ['S / S1, S2','поддержка — уровни НИЖЕ цены (зелёным), ближайший первым.','support — levels BELOW price (green), nearest first.'],
-    ['▸ цена','маркер текущей цены между поддержками и сопротивлениями.','marker of the current price between support and resistance.'],
-    ['Pivot','опорный уровень дня P = (High+Low+Close)/3 предыдущего бара; R1=2P−L, S1=2P−H, R2=P+(H−L), S2=P−(H−L).','daily pivot P = (High+Low+Close)/3 of the prior bar; R1=2P−L, S1=2P−H, R2=P+(H−L), S2=P−(H−L).'],
-    ['свинг','максимум/минимум за окно ~60 торговых дней — как дополнительный уровень.','high/low over a ~60-trading-day window — an extra level.'],
-    ['SMA 50/200','простая скользящая средняя за 50/200 дней; «выше/ниже SMA» = направление тренда.','simple moving average over 50/200 days; «above/below SMA» = trend direction.'],
-    ['± % у уровня','расстояние от цены до уровня в процентах.','distance from price to the level, in percent.'],
-  ])+infoNote('Уровни считаются из дневной истории (pivots + свинги). '+INFO_DISCLAIM[0],'Levels computed from daily history (pivots + swings). '+INFO_DISCLAIM[1])},
-  bestrank:{t:['🏆 Лучшие акции — общий рейтинг','🏆 Best stocks — overall rank'],b:()=>infoP('Единый балл 0–100 из ВСЕХ сигналов сразу. Детерминированно по обновлённым данным (кнопка «Обновить всё»).','A single 0–100 score from ALL signals at once. Deterministic from refreshed data («Update all»).')+infoRows([
-    ['Балл 0–100','свод всех вкладов; 50 — нейтрально, выше — сильнее. Бар показывает относительную силу.','sum of all contributions; 50 is neutral, higher is stronger. The bar shows relative strength.'],
-    ['Сигналы','топ-3 причины балла (чипы): апсайд, ROE, рост, P/E, у входа, инсайдеры, недооценка.','top-3 reasons for the score (chips): upside, ROE, growth, P/E, near entry, insiders, undervalued.'],
-    ['Апсайд','потенциал роста к таргету аналитиков, %.','upside to the analyst target, %.'],
-    ['Фаза','тех-фаза цены: 🔪 нож, 📉 даунтренд, ⚠️ коррекция, ⚖️ боковик, 🔄 разворот, 💎 недооценка, 📈 аптренд, 🚀 импульс, 🌡 перегрев.','price phase: 🔪 falling knife, 📉 downtrend, ⚠️ correction, ⚖️ range, 🔄 reversal, 💎 undervalued, 📈 uptrend, 🚀 momentum, 🌡 overheated.'],
-    ['У входа','цена близка к уровню входа (SMA50/поддержка) при аптренде.','price is near an entry level (SMA50/support) in an uptrend.'],
-    ['Сорт','Общий / Апсайд / Недооценка / Качество (ROE) / У входа — переключают ранжирование.','Overall / Upside / Value / Quality (ROE) / Entry — switch the ranking.'],
-    ['Нет данных','отсутствующий сигнал не штрафует (вклад 0) — бумаги без оценки/AI не проваливаются.','a missing signal does not penalize (0 contribution) — stocks without valuation/AI are not buried.'],
-  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
-  horizons:{t:['🏅 Лучшие по горизонтам','🏅 Best by horizon'],b:()=>infoP('Те же кандидаты, но разнесены по сроку удержания — у каждого свой акцент.','Same candidates split by holding horizon — each with its own focus.')+infoRows([
-    ['1–3 мес','импульс и точки входа: тренд выше SMA, близость к уровню, дневная динамика.','momentum & entries: trend above SMA, proximity to a level, daily move.'],
-    ['3–6 мес','тренд + разумная цена: аптренд, умеренный апсайд, приемлемый P/E.','trend + fair value: uptrend, moderate upside, acceptable P/E.'],
-    ['6–12 мес','фундаментал и недооценка: ROE, рост выручки, апсайд, низкий P/E.','fundamentals & value: ROE, revenue growth, upside, low P/E.'],
-    ['Почему','3 коротких причины попадания в список.','3 short reasons for inclusion.'],
-  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
-  forecast:{t:['🔮 Прогноз — топ-10 по горизонтам','🔮 Forecast — top-10 by horizon'],b:()=>infoP('Ожидаемая доходность по 3 горизонтам. По умолчанию — детерминированно от консенсус-таргета; «✨ AI-прогноз» — версия со свежим веб-поиском (платно, админ).','Expected return across 3 horizons. By default deterministic from the consensus target; «✨ AI forecast» is the fresh web-search version (paid, admin).')+infoRows([
-    ['3 мес / 6–9 мес / 12+ мес','доля пути к таргету: ~⅓ / ~⅔ / полностью.','share of the path to target: ~1/3 / ~2/3 / full.'],
-    ['ƒ','оценка по фундаменталу (рост выручки/ROE), когда нет таргета.','fundamental estimate (revenue growth/ROE) when no target.'],
-    ['≈','нет таргета/данных — без изменения.','no target/data — held flat.'],
-    ['Сегменты','переключают сортировку топ-10 по выбранному горизонту.','switch the top-10 sort by the chosen horizon.'],
-  ])+infoNote('Оценка, не индивидуальная рекомендация.','An estimate, not advice.')},
   scenario:{t:['📊 Сценарии акции','📊 Stock scenarios'],b:()=>infoP('Два РАЗДЕЛЬНЫХ горизонта со своим R/R: краткосрок (дни-недели, тех-уровни) и среднесрок (до отчёта, таргеты + событие).','Two SEPARATE horizons, each with its own R/R: short-term (days-weeks, technical levels) and mid-term (to earnings, targets + event).')+infoRows([
     ['Bull / Base / Bear','оптимистичный / базовый / пессимистичный сценарий цены.','optimistic / base / pessimistic price scenario.'],
     ['R/R','risk/reward — отношение потенциала роста к риску снижения; >1 благоприятно.','risk/reward — upside vs downside; >1 is favourable.'],
@@ -1456,17 +1354,6 @@ const SEC_INFO={
     ['vs сектор','% относительно медианы сектора (ниже медианы = дешевле).','% vs the sector median (below median = cheaper).'],
     ['vs история','против собственного исторического диапазона мультипликатора.','vs the stock’s own historical multiple range.'],
     ['⚠ ловушка','дёшево, но EPS падает — мнимая недооценка.','cheap but EPS falling — a value trap.'],
-  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
-  insider:{t:['🕵 Инсайдеры','🕵 Insiders'],b:()=>infoP('Сделки инсайдеров компании. US — Finnhub, Швеция — Finansinspektionen.','Company insider transactions. US via Finnhub, Sweden via Finansinspektionen.')+infoRows([
-    ['Кластер покупок','несколько РАЗНЫХ инсайдеров купили в близком окне — сильный сигнал.','several DIFFERENT insiders bought within a tight window — a strong signal.'],
-    ['Нетто USD','покупки минус продажи в деньгах за окно; >0 — чистая покупка.','buys minus sells in money over the window; >0 = net buying.'],
-    ['Покупка/продажа','тип сделки; покупки информативнее (продажи бывают плановыми).','transaction type; buys are more informative (sells are often planned).'],
-    ['Окно','период, за который собраны сделки.','the period over which trades are collected.'],
-  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
-  signal:{t:['🧭 Инсайдеры × Недооценка','🧭 Insiders × Undervaluation'],b:()=>infoP('Скрещивание двух модулей: где инсайдеры ПОКУПАЮТ и при этом бумага НЕДООЦЕНЕНА.','Crossing two modules: where insiders are BUYING and the stock is also UNDERVALUED.')+infoRows([
-    ['🧭 Сигнал ±N','сумма баллов инсайдеров и оценки; 🟢 положительный, 🔴 отрицательный.','sum of insider and valuation points; 🟢 positive, 🔴 negative.'],
-    ['Кластер +2 / нетто +1','вклад инсайдеров в балл.','insider contribution to the score.'],
-    ['Недооценка +1/+2','вклад дешевизны по сектору/истории.','undervaluation contribution vs sector/history.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
   cashdrag:{t:['💵 Cash-drag','💵 Cash drag'],b:()=>infoP('Сколько доходности теряет портфель из-за доли в кэше.','How much return the portfolio loses by holding cash.')+infoRows([
     ['Cash drag','недополученная доходность = доля кэша × доходность индекса за период.','foregone return = cash share × index return over the period.'],
@@ -1513,13 +1400,6 @@ const SEC_INFO={
     ['Цель','обогнать ВСЕ индексы и максимизировать рост капитала.','beat ALL indices and maximize capital growth.'],
     ['Как направлять','через 📚 Плейбук — это единственный набор принципов, которым он следует.','via the 📚 Playbook — the only set of principles it follows.'],
   ])+infoNote('AI-Портфель — симуляция (бумажная), для сравнения с вашим реальным портфелем. '+INFO_DISCLAIM[0],'The AI portfolio is a paper simulation, to benchmark vs your real portfolio. '+INFO_DISCLAIM[1])},
-  newslive:{t:['📰 Новости (Yahoo)','📰 News (Yahoo)'],b:()=>infoP('Живые заголовки по акции с Yahoo Finance. Тянутся автоматически при открытии карточки (обновление ~10 мин), без платных токенов.','Live per-stock headlines from Yahoo Finance. Fetched automatically when the card opens (refresh ~10 min), no paid tokens.')+infoRows([
-    ['🟢 / 🔴 / ⚪','тональность заголовка по словарю: позитив / негатив / нейтрально.','headline tone by lexicon: positive / negative / neutral.'],
-    ['настрой ±N','суммарный новостной фон с весом по свежести (новое весомее): >0 позитивный, <0 негативный.','overall news tone, recency-weighted (newer matters more): >0 positive, <0 negative.'],
-    ['источник · время','издатель и как давно вышла новость.','publisher and how long ago it was published.'],
-    ['🔄','обновить заголовки вручную (иначе раз в ~10 мин).','refresh headlines manually (otherwise every ~10 min).'],
-    ['в рекомендации','новостной фон входит в 💡 Рекомендацию и общий рейтинг 🏆 (небольшой вес).','news tone feeds the 💡 Recommendation and the 🏆 overall rank (small weight).'],
-  ])+infoNote('Заголовки — публичные данные Yahoo. '+INFO_DISCLAIM[0],'Headlines are public Yahoo data. '+INFO_DISCLAIM[1])},
   news:{t:['📰 Новости → влияние','📰 News → impact'],b:()=>infoP('Вставьте текст новостей — детерминированный разбор без платных токенов сопоставит их с вашими бумагами.','Paste news text — a deterministic, token-free pass maps it to your holdings.')+infoRows([
     ['🟢 Bull / 🔴 Bear / ⚪ Нейтрал','тональность по словарю: позитив / негатив / нейтрально.','lexicon polarity: positive / negative / neutral.'],
     ['Тикер · имя','совпадение по тикеру или словам названия компании.','match by ticker or company-name words.'],
@@ -1530,20 +1410,6 @@ const SEC_INFO={
     ['Волатильность','разброс доходности (стандартное отклонение) — мера риска.','dispersion of returns (standard deviation) — a risk measure.'],
     ['Beta','чувствительность к индексу: 1 — как рынок, >1 — резче.','sensitivity to the index: 1 = like the market, >1 = sharper.'],
     ['Alpha','доходность сверх индекса с поправкой на риск.','return above the index, risk-adjusted.'],
-  ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
-  betyg:{t:['🏅 Фундаментальный рейтинг','🏅 Fundamental rating'],b:()=>infoP('Единый «betyg» 0–100 (буква A+…F) из 5 столпов фундаментала. Считается из отчётности (FMP/Yahoo) и оценки — справочно, по данным последнего отчёта.','A single 0–100 «betyg» (letter A+…F) from 5 fundamental pillars. Computed from filings (FMP/Yahoo) and valuation — reference, as of the latest report.')+infoRows([
-    [RT('💎 Прибыльность','💎 Profitability'),'чистая маржа (или FCF-маржа) — прибыль с каждого доллара выручки. Вес 25%.','net margin (or FCF margin) — profit per dollar of revenue. Weight 25%.'],
-    [RT('📈 Рост','📈 Growth'),'CAGR выручки + год к году. Вес 20%.','revenue CAGR + YoY. Weight 20%.'],
-    [RT('🏦 Баланс','🏦 Balance'),'долг/капитал и ликвидность (current ratio). Вес 20%.','debt/equity and current ratio. Weight 20%.'],
-    [RT('💵 Денежный поток','💵 Cash flow'),'стабильность и маржа свободного денежного потока. Вес 20%.','free-cash-flow stability and margin. Weight 20%.'],
-    [RT('🏷 Оценка','🏷 Valuation'),'P/E·P/S vs медиана сектора (из 📐 Оценки) или типового ориентира: дешевле → выше. Вес 15%.','P/E·P/S vs sector median (from 📐 Valuation) or a typical benchmark: cheaper → higher. Weight 15%.'],
-    [RT('Буква','Grade'),'A+ ≥85 · A ≥75 · B ≥65 · C ≥50 · D ≥35 · F ниже.','A+ ≥85 · A ≥75 · B ≥65 · C ≥50 · D ≥35 · F below.'],
-  ])+infoNote('Дешёвая оценка ≠ всегда хорошо (бывает на пике цикла); смотрите вместе с тезисом и техникой. '+INFO_DISCLAIM[0],'Cheap valuation ≠ always good (can be a cycle peak); read with the thesis and technicals. '+INFO_DISCLAIM[1])},
-  health:{t:['💪 Здоровье бизнеса','💪 Business health'],b:()=>infoP('Качество фундамента компании в простых баллах.','Company fundamental quality in simple scores.')+infoRows([
-    ['Баланс','долговая нагрузка (Debt/Equity) — ниже лучше.','leverage (Debt/Equity) — lower is better.'],
-    ['Кэш','генерация денег (FCF-маржа).','cash generation (FCF margin).'],
-    ['Рост','динамика выручки (CAGR / YoY).','revenue trajectory (CAGR / YoY).'],
-    ['ROE','return on equity — отдача на капитал; >15% сильно.','return on equity; >15% is strong.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
 };
 function secInfo(key){const o=document.getElementById('faqOverlay');if(!o)return;const e=SEC_INFO[key];if(!e)return;document.getElementById('faqCard').innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>${RT(e.t[0],e.t[1])}</h2><div class="faq-body">${e.b()}</div>`;o.classList.remove('hidden');}

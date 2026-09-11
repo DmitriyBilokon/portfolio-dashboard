@@ -2566,3 +2566,205 @@ grp('P5a isolated module load has no DOM/global reads in pure functions', functi
   var r=isolated.rec(journalInput(),{id:'iso',now:5});
   __eq('P5a чистые функции работают без localStorage/currentUser/document', [r.id,r.key,isolated.add([],r,isolated.cfg).ok], ['iso','AAA|USD',true]);
 });
+
+// ── P5b: расчёт результата журнала (plans/stock-selection-ux.md §7/§12) — датированные фикстуры, не живая статистика ──
+function jDays(from,n){var out=[],t=Date.parse(from+'T00:00:00Z');while(out.length<n){var d=new Date(t),w=d.getUTCDay();if(w>0&&w<6)out.push(d.toISOString().slice(0,10));t+=864e5;}return out;}
+function jSer(days,closes,atIso,hh){return {t:days.map(function(d){return Date.parse(d+'T'+(hh||'12:00')+':00Z')/1000;}),c:closes.slice(),at:Date.parse(atIso)};}
+function jRec(over){over=over||{};return deskJournalRecord(Object.assign({key:'VOLV-B.ST|SEK',sym:'VOLV-B.ST',ccy:'SEK',side:'long',selectionVersion:'sv1',signalVersion:'sig1',
+  bucket:'candidates',dimensions:{},observedPrice:100,observationAsOf:null,benchmark:deskJournalBenchmark('SEK'),costAssumptions:null},over),
+  {id:over.id||'r1',now:over.now||Date.parse('2026-09-11T10:00:00Z')});}
+function jOpt(now,costV){return {now:now,cfg:DESK_JOURNAL_CFG,fee:tradeFeeNative,costV:costV||function(){return 'X';}};}
+var J_DAYS=jDays('2026-09-01',150),J_CL=J_DAYS.map(function(d,i){return 100+i;}),J_LATE='2027-06-01T12:00:00Z',J_NOW=Date.parse(J_LATE);
+function jApply(rec,p){return p?deskJournalPatch([rec],rec.id,p)[0]:rec;}
+grp('P5b exchange sessions, benchmark and local dates', function(){
+  __eq('P5b суффиксы → часовые пояса', ['VOLV-B.ST','MU','^OMX','^GSPC','EQNR.OL','SAP.DE','SHEL.L'].map(function(s){var x=deskJournalSession(s,s==='MU'?'USD':'');return x&&x.tz;}),
+    ['Europe/Stockholm','America/New_York','Europe/Stockholm','America/New_York','Europe/Oslo','Europe/Berlin','Europe/London']);
+  __eq('P5b неизвестная биржа — нет сессии', [deskJournalSession('ABC.XX','EUR'),deskJournalSession('ABC','CAD'),deskJournalSession('EURUSD=X','USD')], [null,null,null]);
+  __eq('P5b индекс: USD — S&P 500, SEK — OMXS30, EUR — только абсолютный', [deskJournalBenchmark('USD'),deskJournalBenchmark('sek').symbol,deskJournalBenchmark('EUR')],
+    [{symbol:'^GSPC',currency:'USD',basis:'price'},'^OMX',{symbol:null,currency:'EUR',basis:'absolute'}]);
+  __eq('P5b местная дата — не UTC (Нью-Йорк после перехода на летнее время)', deskJournalLocal(Date.parse('2026-03-09T03:30:00Z'),'America/New_York'), {date:'2026-03-08',min:23*60+30});
+  __eq('P5b местная дата — Стокгольм в ночь смены времени', deskJournalLocal(Date.parse('2026-10-24T23:30:00Z'),'Europe/Stockholm').date, '2026-10-25');
+});
+grp('P5b bars: unclosed today, settle, gaps are not zeros', function(){
+  var S=DESK_JOURNAL_SESSIONS.ST,d=['2026-09-10','2026-09-11'];
+  var B=deskJournalBars(jSer(d,[100,101],'2026-09-11T10:55:00Z','07:00'),S);
+  __eq('P5b сегодняшний бар во время сессии — не закрыт, вчерашний — закрыт', B.bars.map(function(b){return b.done;}), [true,false]);
+  __eq('P5b до закрытия+settle (18:29) — ещё не окончательный', deskJournalBars(jSer(d,[100,101],'2026-09-11T16:29:00Z','07:00'),S).bars[1].done, false);
+  __eq('P5b после закрытия+settle (18:31) — окончательный', deskJournalBars(jSer(d,[100,101],'2026-09-11T16:31:00Z','07:00'),S).bars[1].done, true);
+  __eq('P5b загрузка на следующий местный день — окончательный', deskJournalBars(jSer(d,[100,101],'2026-09-11T22:30:00Z','07:00'),S).bars[1].done, true);
+  var dup=deskJournalBars({t:[Date.parse('2026-09-10T07:00:00Z')/1000,Date.parse('2026-09-11T07:00:00Z')/1000,Date.parse('2026-09-11T14:59:00Z')/1000],c:[100,101,102],at:Date.parse('2026-09-12T10:00:00Z')},S);
+  __eq('P5b два бара одной сессии — один, последний', dup.bars.map(function(b){return [b.date,b.c];}), [['2026-09-10',100],['2026-09-11',102]]);
+  var gap=deskJournalBars(jSer(['2026-09-09','2026-09-10','2026-09-11'],[100,null,0],'2026-09-12T10:00:00Z'),S);
+  __eq('P5b пустые/нулевые закрытия пропущены, не нули', gap.bars.map(function(b){return b.c;}), [100]);
+  __eq('P5b нет серии/сессии — null', [deskJournalBars(null,S),deskJournalBars(jSer(d,[1,2],J_LATE),null)], [null,null]);
+});
+grp('P5b conditional entry strictly after the record', function(){
+  var ser=jSer(J_DAYS,J_CL,J_LATE),i14=J_DAYS.indexOf('2026-09-14'),i11=J_DAYS.indexOf('2026-09-11');
+  var inSess=jRec(),p=deskJournalEval(inSess,ser,null,jOpt(J_NOW));
+  __eq('P5b запись во время сессии → закрытие следующей сессии', [p.entry.status,p.entry.date,p.entry.price], ['fixed','2026-09-14',J_CL[i14]]);
+  p=deskJournalEval(jRec({now:Date.parse('2026-09-11T06:00:00Z')}),ser,null,jOpt(J_NOW));
+  __eq('P5b запись до открытия → закрытие того же дня', [p.entry.date,p.entry.price], ['2026-09-11',J_CL[i11]]);
+  __eq('P5b запись после закрытия → следующая сессия', deskJournalEval(jRec({now:Date.parse('2026-09-11T16:00:00Z')}),ser,null,jOpt(J_NOW)).entry.date, '2026-09-14');
+  __eq('P5b запись в субботу → понедельник', deskJournalEval(jRec({now:Date.parse('2026-09-12T09:00:00Z')}),ser,null,jOpt(J_NOW)).entry.date, '2026-09-14');
+  var us=jSer(J_DAYS,J_CL,J_LATE,'13:30'),uo=function(t){return deskJournalEval(jRec({key:'MU|USD',sym:'MU',ccy:'USD',benchmark:deskJournalBenchmark('USD'),now:Date.parse(t)}),us,null,jOpt(J_NOW)).entry.date;};
+  __eq('P5b США: 15:00 CEST до открытия NY — тот же день, 16:00 CEST (сессия идёт) — следующий', [uo('2026-09-11T13:00:00Z'),uo('2026-09-11T14:00:00Z')], ['2026-09-11','2026-09-14']);
+  var open=deskJournalEval(inSess,jSer(J_DAYS.slice(0,i14+1),J_CL.slice(0,i14+1),'2026-09-14T10:00:00Z'),null,jOpt(Date.parse('2026-09-14T10:00:00Z')));
+  __eq('P5b бар входа ещё идёт — вход ждёт, горизонты ждут входа', [open.entry.status,open.entry.why,open.horizons[20].status,open.horizons[20].why,open.status], ['pending','bar-open','pending','entry','pending']);
+  var none=deskJournalEval(inSess,jSer(J_DAYS.slice(0,i11+1),J_CL.slice(0,i11+1),'2026-09-11T20:00:00Z'),null,jOpt(Date.parse('2026-09-11T20:00:00Z')));
+  __eq('P5b бара после записи ещё нет — ждёт сессию', [none.entry.status,none.entry.why], ['pending','wait-session']);
+  var unk=deskJournalEval(jRec({key:'ABC.XX|EUR',sym:'ABC.XX',ccy:'EUR'}),ser,null,jOpt(J_NOW));
+  __eq('P5b время сессии неизвестно — вход pending', [unk.entry.why,unk.horizons[60].why,unk.status], ['session-unknown','entry','pending']);
+  __eq('P5b история не доходит до даты записи — не выдумывать первый бар', deskJournalEval(jRec({now:Date.parse('2026-08-01T10:00:00Z')}),ser,null,jOpt(J_NOW)).entry.why, 'window');
+  __eq('P5b серии бумаги ещё нет — без изменений', deskJournalEval(inSess,null,null,jOpt(J_NOW)), null);
+});
+grp('P5b horizons: trading bars, pending vs zero, frozen results', function(){
+  var ser=jSer(J_DAYS,J_CL,J_LATE),ei=J_DAYS.indexOf('2026-09-14'),rec=jRec({benchmark:deskJournalBenchmark('EUR')});
+  var at6=J_DAYS[ei+5]+'T20:00:00Z',part=deskJournalEval(rec,jSer(J_DAYS.slice(0,ei+6),J_CL.slice(0,ei+6),at6),null,jOpt(Date.parse(at6)));
+  __eq('P5b 5 баров после входа — горизонт 20 ждёт 15 дней, значение null (не ноль)', [part.horizons[20].status,part.horizons[20].left,part.horizons[20].value], ['pending',15,null]);
+  __eq('P5b pending — не ноль в сводке', deskJournalGroups([jApply(rec,part)]).filter(function(g){return g.horizon===20;})[0].n, 0);
+  var p=deskJournalEval(rec,ser,null,jOpt(J_NOW)),h=p.horizons;
+  __approx('P5b 20 торговых баров от входа', h[20].value, (J_CL[ei+20]/J_CL[ei]-1)*100, 1e-3);
+  __eq('P5b дата замера — бар входа + N', [h[20].date,h[60].date,h[120].date], [J_DAYS[ei+20],J_DAYS[ei+60],J_DAYS[ei+120]]);
+  __eq('P5b все горизонты завершены → запись complete, без индекса', [p.status,h[120].status,h[20].alpha,h[20].alphaWhy], ['complete','complete',null,'no-bench']);
+  var done=jApply(rec,p),cl2=J_CL.map(function(v,i){return i>ei?v*0.5:v;});
+  __eq('P5b завершённая запись не пересчитывается будущими данными', deskJournalEval(done,jSer(J_DAYS,cl2,J_LATE),null,jOpt(J_NOW)), null);
+  var at25=J_DAYS[ei+24]+'T20:00:00Z',half=jApply(rec,part),h25=jApply(half,deskJournalEval(half,jSer(J_DAYS.slice(0,ei+25),J_CL.slice(0,ei+25),at25),null,jOpt(Date.parse(at25))));
+  __eq('P5b через 24 бара: 20 — завершён, 60 — ждёт', [h25.horizons[20].status,h25.horizons[60].status,h25.horizons[60].left], ['complete','pending',36]);
+  var p2=deskJournalEval(h25,jSer(J_DAYS,J_CL.map(function(v,i){return i===ei+20?v*1.05:v;}),J_LATE),null,jOpt(J_NOW));
+  __approx('P5b завершённый горизонт заморожен, даже если бар позже переписан', p2.horizons[20].value, (J_CL[ei+20]/J_CL[ei]-1)*100, 1e-3);
+  __eq('P5b остальные горизонты досчитаны по новой серии', p2.horizons[60].status, 'complete');
+  var sh=deskJournalEval(jRec({side:'short',benchmark:deskJournalBenchmark('EUR')}),ser,null,jOpt(J_NOW));
+  __approx('P5b шорт — зеркальный результат', sh.horizons[20].value, -(J_CL[ei+20]/J_CL[ei]-1)*100, 1e-3);
+});
+grp('P5b benchmark alpha on the same dates', function(){
+  var ser=jSer(J_DAYS,J_CL,J_LATE),ei=J_DAYS.indexOf('2026-09-14'),ix=J_DAYS.map(function(d,i){return 1000+i*2;});
+  var rec=jRec(),p=deskJournalEval(rec,ser,jSer(J_DAYS,ix,J_LATE),jOpt(J_NOW)),rs=(J_CL[ei+20]/J_CL[ei]-1)*100,ri=(ix[ei+20]/ix[ei]-1)*100;
+  __approx('P5b альфа = бумага − индекс за те же даты', p.horizons[20].alpha, rs-ri, 1e-3);
+  __approx('P5b результат индекса сохранён', p.horizons[20].bench, ri, 1e-3);
+  var hol=J_DAYS.filter(function(d,i){return i!==ei+20;}),holC=ix.filter(function(v,i){return i!==ei+20;});
+  var q=deskJournalEval(rec,ser,jSer(hol,holC,J_LATE),jOpt(J_NOW));
+  __eq('P5b у индекса нет той же даты — альфы нет, результат есть', [q.horizons[20].status,q.horizons[20].alpha,q.horizons[20].alphaWhy], ['complete',null,'bench-date']);
+  __eq('P5b индекс не загружен — горизонт ждёт индекс', deskJournalEval(rec,ser,null,jOpt(J_NOW)).horizons[20].why, 'bench-loading');
+  var old=deskJournalEval(rec,ser,jSer(J_DAYS.slice(0,ei+10),ix.slice(0,ei+10),J_LATE),jOpt(J_NOW));
+  __eq('P5b серия индекса старше бумаги — ждёт, а не «альфы нет»', [old.horizons[20].why,old.horizons[120].why], ['bench-loading','bench-loading']);
+  var sh=deskJournalEval(jRec({side:'short'}),ser,jSer(J_DAYS,ix,J_LATE),jOpt(J_NOW));
+  __approx('P5b альфа шорта — зеркально', sh.horizons[20].alpha, -(rs-ri), 1e-3);
+});
+grp('P5b split, price basis and history end', function(){
+  var ei=J_DAYS.indexOf('2026-09-14'),rec=jRec({benchmark:deskJournalBenchmark('EUR')});
+  var cl=J_CL.map(function(v,i){return i>=ei+30?v/2:v;}),p=deskJournalEval(rec,jSer(J_DAYS,cl,J_LATE),null,jOpt(J_NOW));
+  __eq('P5b скачок ×0,5 до замера — несопоставимо (сплит?), до скачка — посчитано', [p.horizons[20].status,p.horizons[60].status,p.horizons[60].why], ['complete','missing','split-suspect']);
+  __ok('P5b сырое значение несопоставимого сохранено для показа', typeof p.horizons[60].raw==='number' && p.horizons[60].value===null);
+  var g=deskJournalGroups([jApply(rec,p)]).filter(function(x){return x.horizon===60;})[0];
+  __eq('P5b несопоставимое не входит в n, считается отдельно', [g.n,g.missing['split-suspect']], [0,1]);
+  var fixed=jApply(rec,{entry:{status:'fixed',date:'2026-09-14',price:J_CL[ei]*2,fixedAt:1},horizons:rec.horizons,status:'pending'});
+  __eq('P5b цена входа в свежей серии пересчитана задним числом — несопоставимо', deskJournalEval(fixed,jSer(J_DAYS,J_CL,J_LATE),null,jOpt(J_NOW)).horizons[20].why, 'price-basis');
+  var rt=Date.parse('2026-09-11T10:00:00Z'),mm=deskJournalEval(jRec({observedPrice:J_CL[ei]*3,observationAsOf:rt-60000,benchmark:deskJournalBenchmark('EUR')}),jSer(J_DAYS,J_CL,J_LATE),null,jOpt(J_NOW));
+  __eq('P5b live-цена записи и вход в разном масштабе — вход помечен, горизонты несопоставимы', [mm.entry.warn,mm.horizons[20].why], ['observed-mismatch','price-basis']);
+  var st=deskJournalEval(jRec({observedPrice:J_CL[ei]*3,observationAsOf:null,benchmark:deskJournalBenchmark('EUR')}),jSer(J_DAYS,J_CL,J_LATE),null,jOpt(J_NOW));
+  __eq('P5b цена строки без времени (могла устареть) — не повод объявлять сплит', [st.entry.warn,st.horizons[20].status], [undefined,'complete']);
+  var end=deskJournalEval(rec,jSer(J_DAYS.slice(0,ei+10),J_CL.slice(0,ei+10),'2026-12-31T12:00:00Z'),null,jOpt(Date.parse('2026-12-31T12:00:00Z')));
+  __eq('P5b история закончилась до замера — «нет результата», запись завершена', [end.horizons[20].status,end.horizons[20].why,end.status], ['missing','history-ended','complete']);
+});
+grp('P5b conditional net after fees', function(){
+  var ser=jSer(J_DAYS,J_CL,J_LATE),ei=J_DAYS.indexOf('2026-09-14'),r=(J_CL[ei+20]/J_CL[ei]-1)*100,n=10000,x=n*(1+r/100);
+  var rec=jRec({benchmark:deskJournalBenchmark('EUR'),costAssumptions:{v:'X',model:'tradeFeeNative',amountSEK:10000,fx:1,notional:n}});
+  var exp=(x-n-tradeFeeNative('SEK',n,true).total-tradeFeeNative('SEK',x,false).total)/n*100;
+  __approx('P5b net = результат − комиссия входа и выхода на зафиксированную сумму', deskJournalEval(rec,ser,null,jOpt(J_NOW)).horizons[20].net, exp, 1e-3);
+  var v=deskJournalEval(rec,ser,null,jOpt(J_NOW,function(){return 'Y';})).horizons[20];
+  __eq('P5b модель комиссии сменилась — net не считается, результат есть', [v.net,v.netWhy,v.status], [null,'cost-version','complete']);
+  __eq('P5b без зафиксированной суммы — net нет', deskJournalEval(jRec({benchmark:deskJournalBenchmark('EUR')}),ser,null,jOpt(J_NOW)).horizons[20].netWhy, 'no-costs');
+  var sh=jRec({side:'short',key:'SHEL.L|GBP',sym:'SHEL.L',ccy:'GBP',benchmark:deskJournalBenchmark('GBP'),costAssumptions:{v:'X',notional:n}});
+  var expS=(-(x-n)-tradeFeeNative('GBP',n,false).total-tradeFeeNative('GBP',x,true).total)/n*100;
+  __approx('P5b шорт: продажа на входе, покупка (с налогом UK) на выходе', deskJournalEval(sh,jSer(J_DAYS,J_CL,J_LATE),null,jOpt(J_NOW)).horizons[20].net, expS, 1e-3);
+});
+grp('P5b groups: versions/sides apart, too little data below minGroup', function(){
+  var ei=J_DAYS.indexOf('2026-09-14'),ser=jSer(J_DAYS,J_CL,J_LATE),mk=function(i,o){var r=jRec(Object.assign({id:'g'+i,key:'S'+(i%7)+'.ST|SEK',sym:'S'+(i%7)+'.ST',benchmark:deskJournalBenchmark('EUR')},o||{}));return jApply(r,deskJournalEval(r,ser,null,jOpt(J_NOW)));};
+  var R=[];for(var i=0;i<29;i++)R.push(mk(i));
+  var g=deskJournalGroups(R).filter(function(x){return x.horizon===20;})[0];
+  __eq('P5b 29 завершённых — «мало данных», распределения нет', [g.n,g.enough,g.median,g.winPct], [29,false,null,null]);
+  R.push(mk(29));g=deskJournalGroups(R).filter(function(x){return x.horizon===20;})[0];
+  __eq('P5b 30 завершённых — распределение, N бумаг (перекрытие видно)', [g.n,g.enough,g.stocks,g.winPct], [30,true,7,100]);
+  __approx('P5b медиана — по значениям', g.median, (J_CL[ei+20]/J_CL[ei]-1)*100, 1e-3);
+  R.push(mk(30,{selectionVersion:'sv2'}));R.push(mk(31,{side:'short'}));R.push(jRec({id:'pend'}));
+  var G=deskJournalGroups(R);
+  __eq('P5b версии отбора и стороны — отдельные группы', G.filter(function(x){return x.horizon===20;}).map(function(x){return [x.selectionVersion,x.side,x.n];}),
+    [['sv2','long',1],['sv1','long',30],['sv1','short',1]]);
+  __eq('P5b pending считаются отдельно', G.filter(function(x){return x.horizon===20&&x.selectionVersion==='sv1'&&x.side==='long';})[0].pending, 1);
+  __eq('P5b альфа без индекса — n=0, не ноль', [g.alphaN,g.alphaMedian], [0,null]);
+});
+grp('P5b record input from the decision model', function(){
+  var S={desk:DESK,fx:FX};
+  try{
+    DESK=deskNorm({whatIf:{mode:'amount',amountSEK:20000}});FX=Object.assign({},FX,{USD:10});
+    var m=deskSelectionModel(selectionFixture()),it={key:'TEST|USD',sec:{key:'TEST|USD',tk:'TEST',sym:'TEST',ccy:'USD'}};
+    var x=deskJournalInput(it,m,'p','long'),r=deskJournalRecord(x,{id:'z',now:1});
+    __eq('P5b версии и сторона фиксируются при записи', [r.side,r.selectionVersion,r.signalVersion,r.bucket], ['long',DESK_SELECTION_V,SIG.VER,'candidates']);
+    __eq('P5b индекс по валюте бумаги', r.benchmark, {symbol:'^GSPC',currency:'USD',basis:'price'});
+    __eq('P5b допущения комиссии: сумма «Что если?», курс записи, версия модели', [r.costAssumptions.amountSEK,r.costAssumptions.fx,r.costAssumptions.notional,r.costAssumptions.v], [20000,10,2000,deskJournalCostV('USD')]);
+    __eq('P5b исходные измерения — снимок', [r.dimensions.quality.grade,r.dimensions.timing.verdict,r.dimensions.action], ['A+','buy','candidate']);
+    __ok('P5b запись компактна (< 1,5 КБ)', JSON.stringify(r).length<1500, JSON.stringify(r).length);
+    __ok('P5b версия комиссии отражает параметры модели', deskJournalCostV('SEK')!==deskJournalCostV('USD'));
+  }finally{DESK=S.desk;FX=S.fx;}
+});
+grp('P5b storage wrappers: accounts, unreadable journal, quota errors', function(){
+  var S={ls:localStorage,user:currentUser},mem={},mk=function(throwOn){return {getItem:function(k){return mem.hasOwnProperty(k)?mem[k]:null;},
+    setItem:function(k,v){if(throwOn){var e=new Error('full');e.name='QuotaExceededError';throw e;}mem[k]=String(v);},removeItem:function(k){delete mem[k];}};};
+  try{
+    localStorage=mk();currentUser={id:'u1'};
+    __eq('P5b запись в пространство аккаунта', [deskJournalRecordAdd(journalInput(),{id:'a',now:5}).ok,!!mem.dash_desk_journal_u1], [true,true]);
+    currentUser={id:'u2'};
+    __eq('P5b другой аккаунт журнала не видит', deskJournalRead(), {items:[],error:null});
+    mem.dash_desk_journal_u2='{broken';
+    var bad=deskJournalRecordAdd(journalInput(),{id:'b',now:5});
+    __eq('P5b повреждённый журнал — отказ, не перезапись', [bad.ok,bad.reason,bad.error,mem.dash_desk_journal_u2], [false,'unreadable','corrupt','{broken']);
+    mem.dash_desk_journal_u2=JSON.stringify({v:DESK_JOURNAL_V+1,items:[{id:'future'}]});
+    __eq('P5b журнал новой версии — отказ записи и очистки', [deskJournalRecordAdd(journalInput(),{id:'c',now:5}).error,deskJournalClearCompletedAndSave().error,deskJournalCleanupAndSave(5).error], ['version','version','version']);
+    delete mem.dash_desk_journal_u2;localStorage=mk(true);
+    var q=deskJournalRecordAdd(journalInput(),{id:'d',now:5});
+    __eq('P5b ошибка квоты браузера видна вызывающему', [q.ok,q.reason,q.error], [false,'storage','QuotaExceededError']);
+    localStorage=mk();currentUser={id:'u1'};
+    var items=deskJournalRead().items,rec=items[0];
+    deskJournalRecordAdd(journalInput({key:'OTHER|USD'}),{id:'e',now:6});   // «другая вкладка» добавила запись между расчётом и записью
+    var s=deskJournalPatchAndSave({a:{status:'complete',key:'HACK'}});
+    __eq('P5b патч на свежий список: чужая новая запись сохранена, исходные поля неизменны', [s.ok,s.items.length,s.items[0].status,s.items[0].key], [true,2,'complete',rec.key]);
+    __eq('P5b патч несуществующей записи — ничего не пишет', deskJournalPatchAndSave({zzz:{status:'complete'}}), {ok:true,changed:0});
+  }finally{localStorage=S.ls;currentUser=S.user;_deskJ=null;}
+});
+grp('P5b UI: track button and «Наблюдения» screen', function(){
+  var S={can:can,watch:DESK_WATCH,plan:PLAN_RULES,ls:localStorage,user:currentUser,jt:DESK_UI.jt,sec:deskSecOf},mem={};
+  var it={key:'TEST|USD',tab:null,r:null,sec:{key:'TEST|USD',tk:'TEST',sym:'TEST',ccy:'USD',held:[],tabs:[]},s:{verdict:'buy',side:'long',why:['x'],phase:{key:'up',label:'Аптренд'},trendUp:true,flags:[],plans:{},price:100,atr:2}};
+  var pri=function(h){return (h.match(/class="dk-btn pri"/g)||[]).length;};
+  try{
+    can=function(){return true;};DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};PLAN_RULES=[];_deskJ=null;
+    localStorage={getItem:function(k){return mem.hasOwnProperty(k)?mem[k]:null;},setItem:function(k,v){mem[k]=String(v);},removeItem:function(k){delete mem[k];}};
+    currentUser={id:'u9'};
+    var H=deskDecisionHTML(it,deskSelectionModel(selectionFixture()),null);
+    __eq('P5b «Отслеживать результат» — вторичная кнопка, primary по-прежнему одна', [H.indexOf('data-a="jtrack"')>0,pri(H)], [true,1]);
+    var held={tab:'p',tk:'TEST',sym:'TEST',side:'long',qty:10,entry:100,stop:95,calc:null},x=selectionFixture();x.position={tab:'p',side:'long',action:{act:'hold',note:''}};
+    __eq('P5b у открытой позиции кнопки нет', deskDecisionHTML(it,deskSelectionModel(x),held).indexOf('data-a="jtrack"'), -1);
+    deskJournalRecordAdd({key:'TEST|USD',sym:'TEST',ccy:'USD',selectionVersion:DESK_SELECTION_V},{id:'t1',now:Date.now()});_deskJ=null;
+    H=deskDecisionHTML(it,deskSelectionModel(selectionFixture()),null);
+    __ok('P5b уже отслеживается сегодня — вместо кнопки ссылка в журнал', H.indexOf('data-a="jtrack"')<0 && H.indexOf('data-jt="ideas"')>0);
+    deskSecOf=function(){return null;};DESK_UI.jt='ideas';
+    var J=deskJournalHTML();
+    __ok('P5b «Наблюдения»: вкладка, запись, «мало данных», методика', J.indexOf('aria-selected="true"')>0 && J.indexOf('>TEST<')>0 && J.indexOf('мало данных')>0 && J.indexOf('выборка ваших решений')>0);
+    __ok('P5b бумаги нет во вселенной — строка не ведёт в «Акцию»', J.indexOf('data-a="open" data-k="TEST|USD"')<0);
+    currentUser=null;_deskJ=null;
+    __ok('P5b без аккаунта — объяснение, без записей', deskJournalIdeasHTML().indexOf('войдите')>0);
+    currentUser={id:'u9'};mem.dash_desk_journal_u9='{bad';_deskJ=null;
+    __ok('P5b нечитаемый журнал — предупреждение, без экспорта', deskJournalIdeasHTML().indexOf('повреждён')>0 && deskJournalIdeasHTML().indexOf('jexport')<0);
+  }finally{can=S.can;DESK_WATCH=S.watch;PLAN_RULES=S.plan;localStorage=S.ls;currentUser=S.user;DESK_UI.jt=S.jt;deskSecOf=S.sec;_deskJ=null;}
+});
+grp('P5b glossary and reason texts', function(){
+  __eq('P5b новые термины — записи словаря', ['journal-ideas','track-idea','cond-entry','horizon','alpha','net-cost','few-data'].filter(function(k){return !deskGlossItem(k);}), []);
+  __eq('P5b все коды причин расчёта — тексты', ['session-unknown','window','wait-session','bar-open','entry','bench-loading','entry-bar-gone','history-ended','price-basis','split-suspect','no-bench','bench-date','no-costs','cost-version','corrupt','version'].filter(function(c){return !DK_J_WHY[c];}), []);
+  var C=DESK_JOURNAL_CFG,m0=C.minGroup;
+  try{C.minGroup=40;__ok('P5b порог «мало данных» в словаре — из DESK_JOURNAL_CFG', __glNorm(deskGlossText(deskGlossItem('few-data').d)).indexOf('Меньше 40')>=0);}finally{C.minGroup=m0;}
+});
+grp('P5b isolated module: calculation has no app globals', function(){
+  var iso=new Function('deskSelCopy',rd('desk-journal.js')+';return {rec:deskJournalRecord,ev:deskJournalEval,gr:deskJournalGroups,bm:deskJournalBenchmark};')(function(v){return v;});
+  var r=iso.rec({key:'VOLV-B.ST|SEK',sym:'VOLV-B.ST',ccy:'SEK',benchmark:iso.bm('EUR')},{id:'i',now:Date.parse('2026-09-11T10:00:00Z')});
+  var p=iso.ev(r,jSer(J_DAYS,J_CL,J_LATE),null,{now:J_NOW,fee:function(){return {total:0};}});
+  __eq('P5b расчёт без глобалов приложения (комиссия — аргументом)', [p.entry.date,p.status,p.horizons[20].net], ['2026-09-14','complete',null]);
+});

@@ -1,5 +1,8 @@
 // P1: чистая модель отбора (P4 — и сравнения). Только нормализованные входы, время и конфигурация аргументами.
 // value качества — 0…10 (шкала Betyg), coverage — 0…1. Причины — коды; UI переводит их.
+// Версия правил отбора (измерения, действие, подборки deskSelectionModel/deskPickBuckets). Журнал результатов
+// (P5, desk-journal.js) дедуплицирует и группирует наблюдения по ней — бампать при смене этих правил.
+const DESK_SELECTION_V='sel-2026-09-11';
 const deskSelNum=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
 const deskSelTime=v=>typeof v==='number'?(v>0&&Number.isFinite(v)?v:null):
   (typeof v==='string'&&v.trim()&&Number.isFinite(Date.parse(v))?Date.parse(v):null);

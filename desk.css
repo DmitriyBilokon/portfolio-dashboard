@@ -308,6 +308,8 @@ details:not([open])>summary.dk-ph{border-bottom:0}
 .dk-cmp-diff li{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px}.dk-cmp-diff b{color:var(--dk-ink);font-weight:600}
 .dk-cmp-diff i{font-style:normal;color:var(--dk-muted);margin:0 8px}.dk-cmp-diff .dk-tk{font-size:12px}
 .dk-tbl.dk-cmp{table-layout:fixed;min-width:540px}
+/* P5b «Наблюдения»: причины «ждёт/нет результата» переносятся, а не растягивают таблицу за экран */
+.dk-tbl td.dk-jc{white-space:normal;min-width:8em;max-width:16em}
 .dk-cmp th.dk-cmp-lbl{position:sticky;left:0;z-index:1;width:150px;background:var(--dk-panel);text-transform:none;letter-spacing:0;font-size:12px;font-weight:600;color:var(--dk-ink2);white-space:normal;vertical-align:top}
 .dk-cmp thead th.dk-cmp-col{text-transform:none;letter-spacing:0;font-size:12px;font-weight:400;color:var(--dk-ink);white-space:normal;vertical-align:top}
 .dk-cmp-hd{display:flex;align-items:center;gap:2px}.dk-cmp-hd .dk-tk{font-size:14px}

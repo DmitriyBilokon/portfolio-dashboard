@@ -384,7 +384,8 @@ let DESK_UI={on:false,classic:false,route:'today',key:null,sel:null,side:{},year
   finOpen:null,finM:'revenue',   // I3: у какой бумаги раскрыт «Рост бизнеса» (сессия, не localStorage — открытие desk не шлёт запросов), ряд
   gloss:{open:false,q:'',id:null},   // G1: панель «📖 Словарь» (desk-gloss.js) — только память сессии, не снапшот
   stockView:'decision',_compFor:null,r1:null,_restoreY:null,   // P2: режим «Акции» (память), для какой бумаги уже запущены загрузки «Компании», обновление одной бумаги, прокрутка из history.state
-  compare:{keys:[],acct:null,dropped:0},_cmpFor:null,_cmpFrom:null};   // P4: выбор для сравнения (память вкладки, аккаунт выбора, сколько убрано из-за доступа), для какого набора запущены загрузки, откуда пришли
+  compare:{keys:[],acct:null,dropped:0},_cmpFor:null,_cmpFrom:null,   // P4: выбор для сравнения (память вкладки, аккаунт выбора, сколько убрано из-за доступа), для какого набора запущены загрузки, откуда пришли
+  _jClean:null,_jErr:null};   // P5b: для какого аккаунта уже прошла ретенция журнала наблюдений в этой сессии, последняя ошибка записи расчёта
 let _deskFan=null;   // I3: веер цели {key, ch}
 let _deskChart=null,_deskMini=null;   // состояния stockChartDraw: {key,tab,row,ccy,years,side,ch}
 const deskActive=()=>!!(DESK_UI.on&&!DESK_UI.classic);
@@ -574,6 +575,98 @@ function deskSelectionBuckets(selectedPortfolio,now){
   return deskPickBuckets(deskSelectionModels(selectedPortfolio,now),SIG.cmp,DESK_IDEA_CFG.selection);
 }
 
+// P5b (plans/stock-selection-ux.md §7): журнал результатов выбора — запись только кнопкой «Отслеживать результат»
+// в «Решении», расчёт — при открытии «Журнал → Наблюдения» (deskJournalEnsure). Хранение и чистый расчёт — desk-journal.js.
+// Версия допущений комиссии: параметры tradeFeeNative для валюты. Сменились — net записей со старой версией не считается.
+function deskJournalCostV(ccy){
+  const c=String(ccy||'USD').toUpperCase();
+  return 'fee1|'+COURTAGE_PCT+'|'+(COURTAGE_MIN[c]!=null?COURTAGE_MIN[c]:6)+'|'+(c==='SEK'?0:FX_FEE_PCT)+(c==='GBP'?'|uk0.5+1.5':'');
+}
+// Вход записи из модели «Решения» — без новых загрузок. Исходные признаки — компактный снимок измерений на момент
+// записи (не пересчитываются сегодняшним фундаменталом). Сумма для net — бюджет «Что если?» (DESK.whatIf) в kr,
+// переведённый в валюту бумаги курсом записи; у доли — от капитала портфеля «Акции».
+function deskJournalInput(it,m,port,side){
+  const sec=it.sec,q=m.quality||{},v=m.valuation||{},t=m.timing||{},rk=m.risk||{},B=(m.selection&&m.selection.buckets)||[];
+  const W=deskNorm(DESK).whatIf,fx=FX[sec.ccy]>0?FX[sec.ccy]:null;
+  let budget=W.mode==='weight'?null:W.amountSEK;
+  if(W.mode==='weight'&&port){try{budget=bookRiskState(port).equitySEK*W.weightPct/100;}catch(e){budget=null;}}
+  return {key:sec.key,sym:sec.sym,ccy:sec.ccy,side:side==='short'?'short':'long',
+    selectionVersion:DESK_SELECTION_V,signalVersion:t.version||SIG.VER,
+    bucket:DK_BUCKET_DEF.map(d=>d[0]).find(k=>B.includes(k))||null,
+    dimensions:{quality:{mode:q.mode||null,value:_djR(q.value,2),grade:q.grade||null,coverage:_djR(q.coverage,2)},
+      valuation:{status:v.status||null,source:v.source||null,upsidePct:_djR(v.upsidePct,1)},
+      timing:{verdict:t.verdict||null,phase:(t.phase&&t.phase.key)||null,planMode:(t.plan&&t.plan.mode)||null,waitingLevel:t.waitingLevel!=null?t.waitingLevel:null,flags:(t.flags||[]).slice(0,8)},
+      risk:{level:rk.level!=null?rk.level:null,auto:rk.auto!=null?rk.auto:null,override:rk.override!=null?rk.override:null},
+      action:(m.action&&m.action.key)||null,buckets:B.slice(),port:port||null},
+    observedPrice:m.price&&m.price.value,observationAsOf:deskSelTime(m.price&&m.price.observedAt),
+    benchmark:deskJournalBenchmark(sec.ccy),
+    costAssumptions:budget>0&&fx>0?{v:deskJournalCostV(sec.ccy),model:'tradeFeeNative',mode:W.mode,amountSEK:Math.round(budget),fx,notional:Math.round(budget/fx*100)/100}:null};
+}
+// Разобранный журнал аккаунта: повторный разбор — только если строка хранилища сменилась (другая вкладка, запись).
+let _deskJ=null;
+function deskJournalCur(){
+  const k=deskJournalKey();if(!k)return {items:[],error:'no-account'};
+  let raw=null;try{raw=localStorage.getItem(k);}catch(e){}
+  if(_deskJ&&_deskJ.k===k&&_deskJ.raw===raw)return _deskJ.R;
+  const R=deskJournalRead();_deskJ={k,raw,R};return R;
+}
+// «Отслеживать результат»: явная запись идеи. Без аккаунта, при дубле, лимите или ошибке хранилища — видимый отказ.
+function deskJournalTrack(key){
+  const it=deskSecOf(key);if(!it||!can('view.portfolio'))return;
+  if(!deskJournalKey())return toast(RT('Наблюдения ведутся для аккаунта — войдите, чтобы отслеживать идеи','Tracking is kept per account — sign in to track ideas'),true);
+  const held=deskHeld(it),port=deskStockPort(held),m=deskStockModel(it,held);
+  if(!m)return toast(RT('Анализ бумаги недоступен — записывать нечего','Stock analysis unavailable — nothing to record'),true);
+  const now=Date.now(),r=deskJournalRecordAdd(deskJournalInput(it,m,port,held?held.side:'long'),{id:'j'+now.toString(36)+Math.random().toString(36).slice(2,7),now});
+  _deskJ=null;
+  if(r.ok)toast('👁 '+RT(`${it.sec.tk}: наблюдение записано — вход по закрытию первой сессии после записи`,`${it.sec.tk}: tracked — entry at the close of the first session after now`));
+  else if(r.reason==='duplicate')toast(RT('Эта идея уже отслеживается сегодня (та же версия отбора)','This idea is already tracked today (same selection version)'));
+  else if(r.reason==='limit'){toast(RT('Журнал наблюдений заполнен — экспортируйте и очистите завершённые','The tracking journal is full — export and clear completed'),true);DESK_UI.jt='ideas';deskGo('journal');return;}
+  else toast(RT('Наблюдение не сохранено: ','Tracking not saved: ')+(r.error||r.reason),true);
+  deskRender(true);
+}
+function deskJournalTrackBtn(it){
+  const R=deskJournalCur(),probe=deskJournalDedupKey({key:it.key,selectionVersion:DESK_SELECTION_V,recordedAt:Date.now()});
+  if(!R.error&&R.items.some(r=>r&&deskJournalDedupKey(r)===probe))
+    return `<button type="button" class="dk-btn" data-a="nav" data-r="journal" data-jt="ideas">✓ ${RT('Отслеживается','Tracked')} · ${RT('журнал','journal')} →</button>`;
+  return `<button type="button" class="dk-btn" data-a="jtrack" data-k="${dkEsc(it.key)}"${dkG('track-idea')}>👁 ${RT('Отслеживать результат','Track the outcome')}</button>`;
+}
+// Догоняющий расчёт при открытии «Наблюдений» (§7): свечи бумаг с pending-записями и их индексов — через пул (2)
+// общим кэшем истории; по готовности — патчи и одна запись. Пока сайт закрыт, наблюдение не ведётся — пропущенное
+// досчитывается по истории. Бары разбираются один раз на загрузку серии (мемо по ключу и времени загрузки).
+const _deskJFail={},_deskJBars={};
+const deskJournalRange=(r,now)=>now-(r.recordedAt||now)>600*864e5?'5y':'2y';   // 2 года истории хватает на запись + 120 торговых дней
+function deskJournalSeries(sym,rg,sess){
+  const key=sym+':'+rg,hc=_histCache[key];if(!hc||!hc.j||!Array.isArray(hc.j.t)||!sess)return null;
+  const m=_deskJBars[key];if(m&&m.at===hc.t&&m.tz===sess.tz)return m.S;
+  const S=deskJournalBars({t:hc.j.t,c:hc.j.c,at:hc.t},sess,DESK_JOURNAL_CFG);_deskJBars[key]={at:hc.t,tz:sess.tz,S};return S;
+}
+function deskJournalEnsure(){
+  if(!deskActive()||DESK_UI.route!=='journal'||DESK_UI.jt!=='ideas'||!PRICE_PROXY||!can('view.portfolio'))return;
+  const k=deskJournalKey();if(!k)return;
+  const now=Date.now();
+  if(DESK_UI._jClean!==k){DESK_UI._jClean=k;const c=deskJournalCleanupAndSave(now);_deskJ=null;
+    if(c.ok&&c.removed)toast(RT(`Журнал наблюдений: удалено ${c.removed} завершённых старше ${DESK_JOURNAL_CFG.retainDays} дн`,`Tracking journal: removed ${c.removed} completed older than ${DESK_JOURNAL_CFG.retainDays} d`));}
+  const R=deskJournalCur();if(R.error)return;
+  const P=R.items.filter(r=>r&&r.status!=='complete'&&r.sym);if(!P.length)return;
+  const need={};
+  P.forEach(r=>{const rg=deskJournalRange(r,now),b=r.benchmark&&r.benchmark.symbol;need[r.sym+':'+rg]=[r.sym,rg];if(b)need[b+':'+rg]=[b,rg];});
+  Object.keys(need).forEach(key=>{
+    const [sym,rg]=need[key],hc=_histCache[key];
+    if(hc&&now-hc.t<SIG_TTL||_deskJFail[key]&&now-_deskJFail[key]<SIG_TTL)return;
+    deskPoolRun('jhist|'+key,()=>histBars(sym,rg).then(()=>{delete _deskJFail[key];},()=>{_deskJFail[key]=Date.now();}));
+  });
+  const patches={},o={now,cfg:DESK_JOURNAL_CFG,fee:tradeFeeNative,costV:deskJournalCostV};
+  P.forEach(r=>{
+    const rg=deskJournalRange(r,now),b=r.benchmark&&r.benchmark.symbol;
+    const p=deskJournalEval(r,deskJournalSeries(r.sym,rg,deskJournalSession(r.sym,r.ccy)),b?deskJournalSeries(b,rg,deskJournalSession(b,r.benchmark.currency)):null,o);
+    if(p)patches[r.id]=p;
+  });
+  if(!Object.keys(patches).length)return;
+  const s=deskJournalPatchAndSave(patches);_deskJ=null;
+  // Ошибку записи показываем один раз (перерисовка при каждой неудаче зациклила бы экран).
+  if(s.ok||DESK_UI._jErr!==s.error){DESK_UI._jErr=s.ok?null:s.error;deskRender();}
+}
+
 // ── Флаг, монтирование, перерисовка ──
 function deskSetFlag(on){try{localStorage.setItem(DESK_LS,on?'1':'0');}catch(e){}}
 function deskToggle(on){
@@ -693,7 +786,7 @@ function deskPaint(){
   if(!L.busy&&L.at&&L.key!==I.items.length+'|'+I.tabsN)setTimeout(()=>deskLoad(true),0);
   document.getElementById('dkModal').innerHTML=deskModalHTML();
   deskChartsAttach(keep);
-  deskCompanyEnsure();deskCompareEnsure();
+  deskCompanyEnsure();deskCompareEnsure();deskJournalEnsure();
   if(fk&&document.activeElement!==ae){const L=root.querySelectorAll(fk),n=L[fi]||L[0];if(n)try{n.focus({preventScroll:true});}catch(e){}}
   try{window.scrollTo(0,scr);}catch(e){}
   document.title=RT('Trade Desk','Trade Desk')+' · '+deskRouteLabel(DESK_UI.route);
@@ -1515,7 +1608,7 @@ function deskDecisionHTML(it,m,held){
       <h2 id="dkConclT"${dkG(gid)}>${dkEsc(title)}</h2>${why.map(x=>`<p>${x}</p>`).join('')}
       ${A.key==='candidate'?`<p class="dk-note"${dkG('dec-candidate')}>${dkEsc(dkCandNote())}</p>`:''}
       ${crit.length?`<ul class="dk-crit-list">${crit.join('')}</ul>`:''}
-      <div class="dk-row dk-mt14">${bid?dkDecBtn(bid,it,held,{trail,sug}):''}${!held&&bid!=='wadd'?dkWatchBtn(it.key):''}</div>${note?`<p class="dk-note">${dkEsc(note)}</p>`:''}</section>`;
+      <div class="dk-row dk-mt14">${bid?dkDecBtn(bid,it,held,{trail,sug}):''}${!held&&bid!=='wadd'?dkWatchBtn(it.key):''}${!held?deskJournalTrackBtn(it):''}</div>${note?`<p class="dk-note">${dkEsc(note)}</p>`:''}</section>`;
   const own=w&&w.thesis&&(w.thesis.title||w.thesis.text);
   return concl+deskDimsHTML(it,m,w)+(own?`<p class="dk-own-thesis"><span class="dk-lbl"${dkG('thesis')}>${RT('Мой тезис','My thesis')}</span> ${dkEsc(own)} <button type="button" class="dk-link" data-a="view" data-v="company">${RT('Компания →','Company →')}</button></p>`:'')
     +`<div class="dk-dec-grid">${held?deskPosPanel(held,it,true):''}${deskWhatIfPanel(it,deskStockSide(it),true)}</div>`;
@@ -1964,8 +2057,83 @@ function deskBookHTML(){
 // ═══════════════════ Журнал ═══════════════════
 function deskJournalHTML(){
   const jt=DESK_UI.jt;
-  const seg=`<div class="dk-seg dk-mb" role="tablist">${[['mine',RT('Мои сделки','My trades'),dkG('trips')],['plans',RT('Планы','Plans'),dkG('plans')],['rules',RT('Бэктест правил','Rules backtest'),dkG('backtest')]].map(([v,l,g])=>`<button class="${jt===v?'on':''}" data-a="jt" data-v="${v}" role="tab" aria-selected="${jt===v}"${g}>${l}</button>`).join('')}</div>`;
-  return seg+(jt==='rules'?deskRulesHTML():jt==='plans'?deskPlansHTML():deskMineHTML());
+  const seg=`<div class="dk-seg dk-mb" role="tablist">${[['mine',RT('Мои сделки','My trades'),dkG('trips')],['plans',RT('Планы','Plans'),dkG('plans')],['rules',RT('Бэктест правил','Rules backtest'),dkG('backtest')],['ideas',RT('Наблюдения','Tracked ideas'),dkG('journal-ideas')]].map(([v,l,g])=>`<button class="${jt===v?'on':''}" data-a="jt" data-v="${v}" role="tab" aria-selected="${jt===v}"${g}>${l}</button>`).join('')}</div>`;
+  return seg+(jt==='rules'?deskRulesHTML():jt==='plans'?deskPlansHTML():jt==='ideas'?deskJournalIdeasHTML():deskMineHTML());
+}
+// ── P5b: «Наблюдения» — исходы явно отмеченных идей (§7): группы по версиям/стороне/горизонту и записи ──
+const DK_J_WHY={
+  'session-unknown':()=>RT('время сессии биржи неизвестно','exchange session time unknown'),
+  window:()=>RT('история не доходит до даты записи','history does not reach the record date'),
+  'wait-session':()=>RT('ждёт первой сессии после записи','waits for the first session after the record'),
+  'bar-open':()=>RT('сессия ещё не закрыта','session not closed yet'),
+  entry:()=>RT('ждёт входа','waits for the entry'),
+  'bench-loading':()=>RT('ждёт свечей индекса','waits for index candles'),
+  'entry-bar-gone':()=>RT('бара входа нет в свежей истории','the entry bar is missing from fresh history'),
+  'history-ended':()=>RT('история бумаги закончилась (делистинг?)','the stock’s history ended (delisted?)'),
+  'price-basis':()=>RT('цены пересчитаны задним числом (сплит?) — несопоставимо','prices restated retroactively (split?) — not comparable'),
+  'split-suspect':()=>RT(`дневной скачок больше ×${dkN(DESK_JOURNAL_CFG.jumpX,1)} — возможен сплит, несопоставимо`,`a one-day move beyond ×${dkN(DESK_JOURNAL_CFG.jumpX,1)} — possible split, not comparable`),
+  'no-bench':()=>RT('без индекса — только абсолютный результат','no index — absolute result only'),
+  'bench-date':()=>RT('у индекса нет той же даты — альфы нет','the index lacks the same date — no alpha'),
+  'no-costs':()=>RT('сумма не зафиксирована при записи — net нет','no amount fixed at record time — no net'),
+  'cost-version':()=>RT('модель комиссии сменилась после записи — net нет','fee model changed since the record — no net'),
+  'no-fee-model':()=>RT('модели комиссии нет — net нет','no fee model — no net'),
+  corrupt:()=>RT('журнал на этом устройстве повреждён','the journal on this device is damaged'),
+  version:()=>RT('журнал записан более новой версией приложения','the journal was written by a newer app version')};
+const dkJWhy=c=>DK_J_WHY[c]?DK_J_WHY[c]():String(c||'—');
+const dkJBucket=k=>{const d=DK_BUCKET_DEF.find(x=>x[0]===k);return d?d[1]():RT('вне подборок','no bucket');};
+function dkJEntry(r){
+  const e=r.entry;
+  if(!e)return `<span class="dk-mut">${RT('ещё не считался','not computed yet')}</span>`;
+  if(e.status==='fixed')return `<span class="dk-num">${dkPx(e.price)}</span><div class="dk-note dk-num">${dkEsc(e.date)}${e.warn?' · ⚠ '+RT('масштаб цены','price scale'):''}</div>`;
+  return `<span class="dk-mut">${dkEsc(dkJWhy(e.why))}${e.date?' · '+dkEsc(e.date):''}</span>`;
+}
+function dkJCell(x){
+  if(!x||x.status==='pending')return `<span class="dk-mut">${x&&x.why==='wait-bars'&&x.left?RT(`ещё ${x.left} торг. дн.`,`${x.left} trading d left`):dkEsc(dkJWhy(x&&x.why||'entry'))}</span>`;
+  if(x.status!=='complete')return `<span class="dk-mut">${RT('нет результата','no result')}</span><div class="dk-note">${dkEsc(dkJWhy(x.why))}${x.raw!=null?' · '+RT('сырое ','raw ')+dkPct(x.raw,1):''}</div>`;
+  const sub=[x.alpha!=null?'α '+dkPct(x.alpha,1):x.alphaWhy==='no-bench'?RT('без индекса','no index'):RT('α нет','no α'),x.net!=null?'net '+dkPct(x.net,1):null].filter(Boolean).join(' · ');
+  return `<b class="dk-num ${x.value>=0?'dk-up':'dk-dn'}">${dkPct(x.value,1)}</b><div class="dk-note dk-num">${sub}</div>`;
+}
+function deskJournalIdeasHTML(){
+  const C=DESK_JOURNAL_CFG,H=C.horizons;
+  if(!can('view.portfolio'))return `<div class="dk-panel dk-empty">${RT('Нет доступа к портфелю.','No portfolio access.')}</div>`;
+  if(!deskJournalKey())return `<div class="dk-panel dk-empty">${RT('Наблюдения хранятся на этом устройстве для вашего аккаунта — войдите, чтобы отслеживать идеи.','Tracked ideas are stored on this device for your account — sign in to track ideas.')}</div>`;
+  const R=deskJournalCur();
+  if(R.error)return `<div class="dk-warn">⚠ ${dkEsc(dkJWhy(R.error))}. ${RT('Запись и расчёт отключены, чтобы не затереть его. Экспорт недоступен: данные не читаются.','Recording and computing are off so it is not overwritten. Export is unavailable: the data cannot be read.')}</div>`;
+  const items=R.items.filter(Boolean),Q=deskJournalQuotaState(items,C),done=items.filter(r=>r.status==='complete').length;
+  const busy=Object.keys(_deskPool.live).filter(k=>k.indexOf('jhist|')===0).length;
+  const kpi=(l,v,d)=>`<div class="dk-panel dk-stat"><div class="dk-lbl">${l}</div><div class="dk-v dk-num">${v}</div><div class="dk-d">${d}</div></div>`;
+  const quota=Q.atLimit?`<div class="dk-warn">⚠ ${RT(`Журнал заполнен (${Q.count} из ${Q.maxRecords} записей · ${dkN(Q.bytes/1000,0)} из ${dkN(Q.maxBytes/1000,0)} КБ) — новые наблюдения не записываются. Экспортируйте журнал и очистите завершённые; ожидающие не удаляются.`,`The journal is full (${Q.count} of ${Q.maxRecords} records · ${dkN(Q.bytes/1000,0)} of ${dkN(Q.maxBytes/1000,0)} KB) — new ideas are not recorded. Export the journal and clear completed ones; pending ones are never removed.`)}</div>`
+    :Q.near?`<div class="dk-warn">${RT(`Журнал почти заполнен: ${Q.count} из ${Q.maxRecords} записей · ${dkN(Q.bytes/1000,0)} из ${dkN(Q.maxBytes/1000,0)} КБ.`,`The journal is almost full: ${Q.count} of ${Q.maxRecords} records · ${dkN(Q.bytes/1000,0)} of ${dkN(Q.maxBytes/1000,0)} KB.`)}</div>`:'';
+  const err=DESK_UI._jErr?`<div class="dk-warn">⚠ ${RT('Расчёт не сохранён: ','The computation was not saved: ')}${dkEsc(DESK_UI._jErr)} — ${RT('журнал на устройстве не изменён.','the journal on this device is unchanged.')}</div>`:'';
+  const tools=`<div class="dk-row dk-mb">${items.length?`<button type="button" class="dk-btn dk-sm" data-a="jexport">⬇ ${RT('Экспорт JSON','Export JSON')}</button>`:''}${done?`<button type="button" class="dk-btn dk-sm" data-a="jclear">🗑 ${RT(`Очистить завершённые (${done})`,`Clear completed (${done})`)}</button>`:''}${busy?`<span class="dk-chip dk-num">⏳ ${RT('свечи','candles')} ${busy}</span>`:''}<span class="dk-note dk-ml">${RT(`${Q.count} из ${Q.maxRecords} записей · хранится на этом устройстве`,`${Q.count} of ${Q.maxRecords} records · stored on this device`)}</span></div>`;
+  if(!items.length)return quota+err+`<div class="dk-panel dk-empty">${RT('Наблюдений пока нет. На экране «Акция» → «Решение» нажмите «👁 Отслеживать результат» — идея попадёт сюда, а результат досчитается по истории цен.','No tracked ideas yet. On Stock → Decision press “👁 Track the outcome” — the idea lands here and its outcome is computed from price history.')}</div>`+deskJournalMethodHTML();
+  const G=deskJournalGroups(items,C),side=s=>s==='short'?RT('шорт','short'):RT('лонг','long');
+  const gRows=G.map(g=>{
+    const head=`<td class="dk-num">${dkEsc(g.selectionVersion||'—')}<div class="dk-note">SIG ${dkEsc(g.signalVersion||'—')}</div></td><td>${side(g.side)}</td><td class="r dk-num">${g.horizon}</td>
+      <td class="r dk-num">${g.n}<div class="dk-note">${RT(`${g.stocks} бум.`,`${g.stocks} st.`)}${g.pending?' · '+RT(`ждут ${g.pending}`,`${g.pending} pending`):''}${g.missingN?' · '+RT(`без рез. ${g.missingN}`,`no result ${g.missingN}`):''}</div></td>`;
+    if(!g.enough)return `<tr>${head}<td colspan="5" class="dk-mut dk-jc"${dkG('few-data')}>${RT(`мало данных: ${g.n} из ${C.minGroup} — распределение не показывается`,`too little data: ${g.n} of ${C.minGroup} — no distribution shown`)}</td></tr>`;
+    return `<tr>${head}<td class="r dk-num dk-b ${g.median>=0?'dk-up':'dk-dn'}">${dkPct(g.median,1)}<div class="dk-note">${dkPct(g.p25,1)} … ${dkPct(g.p75,1)}</div></td><td class="r dk-num">${dkN(g.winPct,0)} %</td><td class="r dk-num">${dkPct(g.mean,1)}</td>
+      <td class="r dk-num">${g.alphaMedian!=null?dkPct(g.alphaMedian,1):`<span class="dk-mut">${RT(`мало (${g.alphaN})`,`few (${g.alphaN})`)}</span>`}</td><td class="r dk-num">${g.netMean!=null?dkPct(g.netMean,1):`<span class="dk-mut">${RT(`мало (${g.netN})`,`few (${g.netN})`)}</span>`}<div class="dk-note">${dkEsc(g.from||'')}…${dkEsc(g.to||'')}</div></td></tr>`;
+  }).join('');
+  const fmtT=t=>{try{return new Date(t).toLocaleString(LANG==='en'?'en-GB':'ru-RU',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return '—';}};
+  const now=Date.now(),rows=items.slice().sort((a,b)=>(b.recordedAt||0)-(a.recordedAt||0)).map(r=>{
+    const has=!!deskSecOf(r.key),tk=String(r.key||'').split('|')[0]||r.sym;
+    // Свечи бумаги не загрузились (нет у провайдера, делистинг, сеть) — причина на виду, а не «ещё не считался».
+    const fail=r.status!=='complete'&&(!r.entry||r.entry.status!=='fixed')&&_deskJFail[r.sym+':'+deskJournalRange(r,now)];
+    return `<tr${has?` class="dk-tr" data-a="open" data-k="${dkEsc(r.key)}"`:''}><td><span class="dk-tk">${dkEsc(tk)}</span>${r.side==='short'?' '+dkSide('short'):''}<div class="dk-note">${dkEsc(dkJBucket(r.bucket))}</div></td>
+      <td class="dk-num">${dkEsc(fmtT(r.recordedAt))}<div class="dk-note">${r.observedPrice>0?dkPx(r.observedPrice)+' '+dkCcy(r.ccy):'—'}${r.observationAsOf?'':' · '+RT('не live','not live')}</div></td>
+      <td class="dk-jc">${fail?`<span class="dk-mut">${RT('история цены не загрузилась — повтор через 10 мин','price history did not load — retrying in 10 min')}</span>`:dkJEntry(r)}</td>${H.map(h=>`<td class="r dk-jc">${dkJCell(r.horizons&&r.horizons[h])}</td>`).join('')}</tr>`;
+  }).join('');
+  return quota+err+`<div class="dk-grid dk-g4 dk-mb">${kpi(RT('Наблюдений','Tracked')+dkGi('journal-ideas'),items.length,RT(`${done} завершено · ${items.length-done} ждут`,`${done} complete · ${items.length-done} pending`))}
+      ${kpi(RT('Горизонты','Horizons')+dkGi('horizon'),H.join(' / '),RT('торговых дней от условного входа','trading days from the conditional entry'))}</div>`+tools+
+    `<div class="dk-panel dk-mb"><div class="dk-ph"><h2>${RT('Итоги по группам','Group results')}${dkGi('few-data')}</h2><span class="dk-note dk-ml">${RT('версия отбора · версия SIG · сторона · горизонт — не смешиваются','selection version · SIG version · side · horizon — never mixed')}</span></div>
+      <div class="dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Правила','Rules')}</th><th>${RT('Сторона','Side')}</th><th class="r"${dkG('horizon')}>${RT('Дней','Days')}</th><th class="r">${RT('Завершено','Complete')}</th><th class="r">${RT('Медиана · P25…P75','Median · P25…P75')}</th><th class="r">${RT('В плюсе','Positive')}</th><th class="r">${RT('Среднее','Mean')}</th><th class="r"${dkG('alpha')}>${RT('Альфа, медиана','Alpha, median')}</th><th class="r"${dkG('net-cost')}>${RT('Net, среднее · период','Net, mean · period')}</th></tr></thead><tbody>${gRows}</tbody></table></div></div>
+    <div class="dk-panel dk-wrap"><table class="dk-tbl"><thead><tr><th>${RT('Бумага · подборка','Stock · bucket')}</th><th>${RT('Записано · цена','Recorded · price')}</th><th${dkG('cond-entry')}>${RT('Условный вход','Conditional entry')}</th>${H.map(h=>`<th class="r"${dkG('horizon')}>${h} ${RT('дн','d')}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`+deskJournalMethodHTML();
+}
+function deskJournalMethodHTML(){
+  const C=DESK_JOURNAL_CFG;
+  return `<p class="dk-note dk-mt14">${RT(`Наблюдения — идеи, которые вы явно отметили «Отслеживать результат»: это выборка ваших решений, а не проверка всей вселенной и не доходность портфеля (реальные сделки — «Мои сделки», правила SIG — «Бэктест правил»). Условный вход — закрытие первой сессии биржи, начавшейся после записи; это расчётная точка, не сделка. Горизонты — ${C.horizons.join('/')} торговых дней бумаги от входа. Результат — изменение цены в валюте бумаги без дивидендов, у шорта — зеркально; альфа — минус S&P 500 (USD) или OMXS30 (SEK) за те же даты, у остальных валют — только абсолютный результат; результат в kr не считается — для него нужен исторический курс. Net — после комиссии входа и выхода на сумму «Что если?» в момент записи. Расчёт идёт, когда открыта эта вкладка: пропущенное досчитывается по истории. Меньше ${C.minGroup} завершённых в группе — «мало данных»; повторы одной бумаги с перекрывающимися окнами не независимы. Завершённые хранятся ${C.retainDays} дней, ожидающие не удаляются.`,
+    `Tracked ideas are the ones you explicitly marked “Track the outcome”: a sample of your decisions, not a test of the whole universe and not portfolio return (real trades — “My trades”, SIG rules — “Rules backtest”). The conditional entry is the close of the first exchange session that starts after the record — a computed point, not a trade. Horizons are ${C.horizons.join('/')} trading days of the stock from the entry. The result is the price change in the stock’s currency without dividends, mirrored for shorts; alpha subtracts the S&P 500 (USD) or OMXS30 (SEK) over the same dates, other currencies get the absolute result only; no SEK result — that needs historical FX. Net is after entry and exit fees on the “What if?” amount at record time. Computation runs while this tab is open: missed days are caught up from history. Fewer than ${C.minGroup} completed in a group — “too little data”; repeats of one stock with overlapping windows are not independent. Completed ones are kept ${C.retainDays} days, pending ones are never removed.`)}</p>`;
 }
 function deskMineHTML(){
   const port=deskPort(),tabs=port==='all'?deskPorts():(port?[port]:[]);
@@ -2297,6 +2465,11 @@ function deskOnClick(e){
     case 'planx':if(confirm(RT('Удалить правило плана?','Delete this plan rule?'))){PLAN_RULES=(PLAN_RULES||[]).filter(r=>r.id!==el.dataset.id);scheduleSave();deskRender(true);}break;
     case 'plandone':{const r=(PLAN_RULES||[]).find(x=>x.id===el.dataset.id);if(r){r.done=true;r.hitAt=0;planRuleNorm(r);scheduleSave();deskRender(true);}break;}
     case 'jt':DESK_UI.jt=el.dataset.v;deskRender(true);break;
+    case 'jtrack':deskJournalTrack(k);break;   // P5b: «Отслеживать результат»
+    case 'jexport':{const R=deskJournalCur();if(!R.error&&R.items.length)deskJournalExportTrigger(R.items,Date.now());break;}
+    case 'jclear':{const R=deskJournalCur(),n=R.error?0:R.items.filter(r=>r&&r.status==='complete').length;
+      if(!n||!confirm(RT(`Удалить ${n} завершённых наблюдений? Ожидающие не трогаются. Удаление не отменить — сначала сделайте экспорт.`,`Delete ${n} completed tracked ideas? Pending ones stay. This cannot be undone — export first.`)))break;
+      const c=deskJournalClearCompletedAndSave();_deskJ=null;toast(c.ok?RT(`Удалено завершённых: ${c.removed}`,`Completed removed: ${c.removed}`):RT('Не удалось очистить: ','Could not clear: ')+c.error,!c.ok);deskRender(true);break;}
     case 'finm':DESK_UI.finM=el.dataset.v;deskRender(true);break;
     case 'finre':if(_deskFin[k])_deskFin[k].at=0;deskFinLoad(k);deskRender(true);break;
     case 'fund':if(PF_FUND[k]&&!PF_FUND[k].data)delete PF_FUND[k];deskPoolRun('fund|'+k,()=>pf3FundFetch([k]));deskRender(true);break;   // «Повторить» снимает негативный кэш

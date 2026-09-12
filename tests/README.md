@@ -32,7 +32,8 @@ bash tests/run.sh
 скрипты для `osascript -l JavaScript` (движок JavaScriptCore):
 
 1. поднимают минимальные заглушки браузерного окружения (`document`, `window`,
-   `localStorage`, `fetch`, `crypto`, `supabase`, `ALL` …);
+   `localStorage`, `fetch`, `crypto`, `supabase` … — общий файл `env-stubs.js`,
+   его же грузит стенд копии ledger) и `ALL`;
 2. читают реальный исходник, убирают авто-`boot()` (app) / `export default`
    (worker);
 3. `eval`-ят исходник (для app — `signals.js` + `app*.js` в порядке `index.html`,
@@ -49,6 +50,16 @@ Claude с повторами/таймаутами, сквозной цикл AI-
 воркер в `vm`-контекст с подменёнными `fetch` (Anthropic SSE / Supabase / Yahoo /
 Telegram) и `Date` (среда, биржи открыты — тест не зависит от дня запуска). Без node
 `run.sh` падает, а не пропускает сьют.
+
+## Стенд копии ledger (вне `run.sh`)
+
+`node tests/ledger-copy.js <copy.json | --bundle> [--ref=<git ref>] [--expect-drop=…] [--expect-add=…] [--loose]`
+— «проверка на копии» блока E (`plans/ledger-model-e.md` §4.E0 п.4, §5). Грузит клиентские скрипты
+из `index.html` в node `vm` с `env-stubs.js` дважды — рабочее дерево и `--ref` (через `git show`), —
+делает `applyRemoteState(копия)` → `snapshotState()` и сравнивает: I0 снапшот (кроме ожидаемых путей,
+`data.*.count` — шаблон), I1 первичные факты (строки tk/qty/buy/ccy/price, cashFree, сделки, posMeta, план…),
+I2 идемпотентность, I3 контракт префикса строк (для E2), I4 размер и запас до лимита realtime 1024 КБ.
+Копия — личные данные, лежит вне репозитория (`~/dash-ledger-copies/`); `--bundle` — самопроверка на `data.js`.
 
 ## Что покрыто (сейчас)
 

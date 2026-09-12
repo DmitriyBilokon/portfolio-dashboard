@@ -273,7 +273,8 @@ grp('pfRecentTrades', function(){
 // 9) Покрытие ключей синка: ПОЛНЫЙ список ключей snapshotState (tests-quality#5) —
 // новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
 // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (классические таблицы и навигация) удалены из снапшота.
-var SNAP_KEYS=['data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+// E0: cv — версия клиента (CLIENT_BUILD), пишется, но applyRemoteState её не читает.
+var SNAP_KEYS=['cv','data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -366,12 +367,93 @@ grp('sync queue', function(){
     __ok('settle: applyRemoteState reset pushAgain, no timer (D5)', pushAgain===false && timers===0 && pushTimer===null);
     globalThis.setTimeout=S.st;
     // 8) syncReset
-    pushTimer=7; pushBusy=true; pushAgain=true; remotePending={rev:9};
+    pushTimer=7; pushBusy=true; pushAgain=true; remotePending={rev:9}; remoteStale=true;
     syncReset();
-    __ok('syncReset clears all four', pushTimer===null && pushBusy===false && pushAgain===false && remotePending===null);
+    __ok('syncReset clears all five', pushTimer===null && pushBusy===false && pushAgain===false && remotePending===null && remoteStale===false);
   }finally{
     globalThis.setTimeout=S.st; applyRemoteState=S.apply; toast=S.toast; sb.from=S.from; init=S.init; migrateState=S.mig;
     pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; stateRev=S.rev; currentUser=S.u;
+  }
+});
+
+// 🔄 E0 (plans/ledger-model-e.md §4.E0): realtime как сигнал (лимит payload 1024 КБ), догон после сна, cv.
+// Асинхронные обёртки (syncOnSignal/syncSignalRun) тонкие — JSC не крутит промисы; тестируем чистые решения
+// и маршрутизацию с подменённым syncOnSignal.
+grp('sync signal (E0)', function(){
+  var S={t:pushTimer,b:pushBusy,a:pushAgain,r:remotePending,st:remoteStale,rev:stateRev,u:currentUser,rdy:syncReady,
+         at:syncResumeAt,sig:syncOnSignal,onr:syncOnRemote,lsa:loadSharedAnalysis,ra:renderAll,
+         V:VAL,I:INSIDER,A:AI_RECO,T:TG_FULL,stt:globalThis.setTimeout,vs:document.visibilityState};
+  var sigs=0, remotes=[], loads=0, renders=0;
+  syncOnSignal=function(){ sigs++; return {then:function(){}}; };
+  try{
+    // 1) чистое решение по rev облака: число × (меньше/равно/больше) × busy
+    __eq('signal rev<stateRev → skip', syncSignalDecision(4,5,false), 'skip');
+    __eq('signal rev==stateRev → skip (эхо своего push)', syncSignalDecision(5,5,false), 'skip');
+    __eq('signal rev==stateRev busy → skip', syncSignalDecision(5,5,true), 'skip');
+    __eq('signal rev<stateRev busy → skip', syncSignalDecision(4,5,true), 'skip');
+    __eq('signal newer, free → pull', syncSignalDecision(6,5,false), 'pull');
+    __eq('signal newer, busy → defer', syncSignalDecision(6,5,true), 'defer');
+    __eq('signal NaN (нет строки/rev) → skip', syncSignalDecision(NaN,5,false), 'skip');
+    __eq('signal non-number → skip', syncSignalDecision('6',5,false), 'skip');
+    __eq('signal Infinity → skip', syncSignalDecision(Infinity,5,false), 'skip');
+    __eq('signal first rev on empty state → pull', syncSignalDecision(1,0,false), 'pull');
+    // 2) маршрутизация realtime ledger: payload с data → syncOnRemote, без data → сигнал
+    syncOnRemote=function(s){ remotes.push(s); return 'apply'; };
+    var s9={rev:9};
+    __eq('realtime with data → syncOnRemote', syncOnRealtime({new:{data:s9}}), 'apply');
+    __ok('realtime with data: passed through, no signal', remotes.length===1 && remotes[0]===s9 && sigs===0);
+    __eq('realtime without data (limit) → signal', syncOnRealtime({new:{user_id:'u',updated_at:'x'}}), 'signal');
+    __eq('realtime DELETE (new={}) → signal', syncOnRealtime({new:{}}), 'signal');
+    __eq('realtime empty payload → signal', syncOnRealtime(null), 'signal');
+    __ok('signals counted, syncOnRemote untouched', sigs===3 && remotes.length===1);
+    syncOnRemote=S.onr;
+    // 3) syncSettle: отложенный сигнал проверяется, когда синк свободен; при новом таймере — ждёт
+    sigs=0; remotePending=null; pushBusy=false; pushTimer=null; pushAgain=false; remoteStale=true;
+    syncSettle(true);
+    __ok('settle free + stale → one signal check, flag cleared', sigs===1 && remoteStale===false);
+    sigs=0; remoteStale=true; pushAgain=true; globalThis.setTimeout=function(){ return 7; };
+    syncSettle(true);
+    __ok('settle + pushAgain → timer armed, stale kept for next settle', pushTimer===7 && remoteStale===true && sigs===0);
+    globalThis.setTimeout=S.stt; pushTimer=null; pushAgain=false;
+    sigs=0; remoteStale=false; syncSettle(true);
+    __ok('settle without stale → no signal', sigs===0);
+    // 4) троттлинг догона после сна
+    __ok('resumeDue first time (last=0)', syncResumeDue(1000,0)===true);
+    __ok('resumeDue within 30 s → false', syncResumeDue(100000,100000-SYNC_RESUME_MS+1)===false);
+    __ok('resumeDue exactly 30 s → true', syncResumeDue(100000,100000-SYNC_RESUME_MS)===true);
+    __ok('resumeDue clock went back → true', syncResumeDue(1000,5000)===true);
+    sigs=0; currentUser=null; syncReady=true; syncResumeAt=0;
+    __ok('resumeCheck without user → no check', syncResumeCheck()===false && sigs===0);
+    currentUser={id:'u'}; syncReady=false;
+    __ok('resumeCheck before first pull → no check', syncResumeCheck()===false && sigs===0);
+    syncReady=true; document.visibilityState='hidden';
+    __ok('resumeCheck hidden tab → no check', syncResumeCheck()===false && sigs===0);
+    document.visibilityState='visible';
+    __ok('resumeCheck → one check, stamp set', syncResumeCheck()===true && sigs===1 && syncResumeAt>0);
+    __ok('resumeCheck again at once → throttled', syncResumeCheck()===false && sigs===1);
+    // 5) shared_analysis: неполный payload → перечитать строку, полный → применить
+    var full={id:'global',val:{A:{pe:1}},insider:{},aireco:{},targets:{A:{t:2}}};
+    __ok('shared full payload', sharedPayloadFull(full)===true);
+    __ok('shared payload w/o big columns', sharedPayloadFull({id:'global',updated_at:'x'})===false);
+    __ok('shared payload null column', sharedPayloadFull({id:'global',val:{},insider:null,aireco:{},targets:{}})===false);
+    loadSharedAnalysis=function(){ loads++; return {then:function(){}}; }; renderAll=function(){ renders++; };
+    __eq('shared realtime truncated → reload', sharedOnRealtime({new:{id:'global',updated_at:'x'}}), 'reload');
+    __ok('shared reload: no direct assign', loads===1 && VAL===S.V);
+    __eq('shared realtime full → apply', sharedOnRealtime({new:full}), 'apply');
+    __ok('shared apply: all four + render', VAL===full.val && INSIDER===full.insider && AI_RECO===full.aireco && TG_FULL===full.targets && renders===1 && loads===1);
+    __eq('shared realtime DELETE → none', sharedOnRealtime({new:{}}), 'none');
+    // 6) cv: версия клиента в снапшоте; в тестах нет <script src="app.js?v=…"> → 'dev'
+    __eq('CLIENT_BUILD without script tag → dev', CLIENT_BUILD, 'dev');
+    __eq('snapshot carries cv', snapshotState().cv, CLIENT_BUILD);
+    var _init=init,_mig=migrateState; init=function(){}; migrateState=function(){};
+    try{ var o=JSON.parse(JSON.stringify(snapshotState())); o.cv='old123'; applyRemoteState(o);
+      __eq('apply ignores remote cv', snapshotState().cv, CLIENT_BUILD); }
+    finally{ init=_init; migrateState=_mig; }
+  }finally{
+    syncOnSignal=S.sig; syncOnRemote=S.onr; loadSharedAnalysis=S.lsa; renderAll=S.ra; globalThis.setTimeout=S.stt;
+    VAL=S.V; INSIDER=S.I; AI_RECO=S.A; TG_FULL=S.T; document.visibilityState=S.vs;
+    pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; remoteStale=S.st; stateRev=S.rev; currentUser=S.u;
+    syncReady=S.rdy; syncResumeAt=S.at;
   }
 });
 
@@ -763,7 +845,8 @@ grp('sync round-trip', function(){
   var back=snapshotState();
   SNAP_KEYS.forEach(function(k){
     var m=mk[k], b=back[k], ok;
-    if(m && typeof m==='object' && !Array.isArray(m) && m.__m) ok = b && b.__m===k;   // aiSpend дополняется дефолтами
+    if(k==='cv') ok = b===CLIENT_BUILD;   // E0: версию пишет клиент, из облака не берётся
+    else if(m && typeof m==='object' && !Array.isArray(m) && m.__m) ok = b && b.__m===k;   // aiSpend дополняется дефолтами
     else ok = JSON.stringify(b)===JSON.stringify(m);
     __ok('round-trip '+k, ok, 'got '+JSON.stringify(b));
   });

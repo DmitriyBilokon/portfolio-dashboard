@@ -18,12 +18,16 @@ let pushTimer=null;        // id дебаунса — null, когда тайм�
 let pushBusy=false;        // push в полёте (между началом pushState и syncSettle)
 let pushAgain=false;       // во время полёта были правки — после завершения schedulePush()
 let remotePending=null;    // отложенный входящий снапшот (последний), пока синк занят
+let remoteStale=false;     // сигнал «облако изменилось» без данных пришёл, пока синк занят — сверить rev в syncSettle (E0)
+// Версия клиента в снапшоте (блок E, plans/ledger-model-e.md R6): ?v= собственного <script src="app.js?v=…">
+// (его штампует pre-commit хук по хэшу app.js). Снапшот без cv записал клиент до E0; applyRemoteState cv не читает.
+const CLIENT_BUILD=(()=>{ try{ const s=document.currentScript||document.querySelector('script[src^="app.js?"]'); const m=s&&/[?&]v=([0-9a-z]+)/.exec(s.getAttribute('src')||''); return m?m[1]:'dev'; }catch(e){ return 'dev'; } })();
 
 // The entire editable state, stored as one JSONB row per user.
 function snapshotState(){
   // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (состояние классических таблиц и навигации) не пишутся —
   // старый клиент без них ничего не теряет. sim/aiDash/scnAlerts/tgAlerts — заморожены до блока E (plans/audit-followup.md).
-  return { data:DATA, fx:FX,
+  return { cv:CLIENT_BUILD, data:DATA, fx:FX,
            theme:(document.documentElement.dataset.theme||'light'),
            smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, tgAlerts:TG_ALERTS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
            posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
@@ -67,9 +71,11 @@ function syncOnRemote(s){   // из обработчика realtime; возвр�
 }
 function syncSettle(ok){    // после каждого push (ok ⇔ коммит)
   const dirty=!ok||pushAgain;   // были несохранённые правки
-  if(syncFlushRemote(dirty)) return;   // применили облако → правки «в полёте» уже потеряны (D5), таймер не нужен
-  if(pushAgain){ pushAgain=false; schedulePush(); }
+  // Применили облако → правки «в полёте» уже потеряны (D5), таймер не нужен.
+  if(!syncFlushRemote(dirty) && pushAgain){ pushAgain=false; schedulePush(); }
+  syncStaleCheck();
 }
+function syncStaleCheck(){ if(remoteStale && !syncBusy()){ remoteStale=false; syncOnSignal(); } }
 function syncFlushRemote(dirty){   // true ⇔ применили отложенный снапшот
   const s=remotePending; if(!s) return false;
   if(syncBusy()) return false;     // ветка повтора поставила таймер — ждём дальше
@@ -79,7 +85,58 @@ function syncFlushRemote(dirty){   // true ⇔ применили отложен
   applyRemoteState(s); return true;
 }
 function syncConflictToast(){ toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true); }
-function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; }
+function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; remoteStale=false; }
+
+// ── Realtime как сигнал + догон после сна (E0, plans/ledger-model-e.md §4.E0 п.5–6) ──
+// У Supabase Postgres Changes лимит 1024 КБ: строка больше приходит без `data` (только поля ≤ 64 байт), а после
+// сна/обрыва канала пропущенные записи не доставляются вовсе. Тогда сверяем rev облака (дёшево: data->rev) и,
+// если облако новее, читаем строку целиком и отдаём в тот же syncOnRemote — он заново решает skip/defer/apply
+// по свежему syncBusy() (правка, начатая во время чтения, не затирается применением «из-под неё»).
+// Чистое решение по rev облака: skip — не новее (в т.ч. эхо своего push большой строки) или rev нет,
+// defer — синк занят (сверка повторится в syncSettle), pull — облако новее, синк свободен.
+function syncSignalDecision(remoteRev, stateRev, busy){
+  if(typeof remoteRev!=='number' || !isFinite(remoteRev) || remoteRev<=stateRev) return 'skip';
+  return busy ? 'defer' : 'pull';
+}
+function syncOnRealtime(p){   // обработчик postgres_changes ledger_state
+  if(p && p.new && p.new.data) return syncOnRemote(p.new.data);   // дедуп по rev, при занятом синке — отложить
+  syncOnSignal(); return 'signal';                                // payload без data (лимит/DELETE) — сверить rev
+}
+let sigRun=null, sigAgain=false;   // одна сверка в полёте; сигнал во время сверки — ещё один проход после неё
+function syncOnSignal(){
+  if(!currentUser||!syncReady) return Promise.resolve('off');
+  if(sigRun){ sigAgain=true; return sigRun; }
+  sigRun=syncSignalRun().catch(e=>{ console.warn('Sync signal check failed', e); return 'err'; })
+    .then(d=>{ sigRun=null; if(sigAgain){ sigAgain=false; syncOnSignal(); } return d; });
+  return sigRun;
+}
+async function syncSignalRun(){
+  const uid=currentUser.id;
+  const { data:rw, error } = await sb.from('ledger_state').select('rev:data->rev').eq('user_id',uid).maybeSingle();
+  if(error) throw error;
+  if(!currentUser||currentUser.id!==uid) return 'off';   // вышли/сменили аккаунт во время запроса
+  const d=syncSignalDecision(rw&&rw.rev!=null?Number(rw.rev):NaN, stateRev, syncBusy());
+  if(d==='defer'){ remoteStale=true; return d; }
+  if(d!=='pull') return d;
+  const { data:full, error:e2 } = await sb.from('ledger_state').select('data').eq('user_id',uid).maybeSingle();
+  if(e2) throw e2;
+  if(!currentUser||currentUser.id!==uid) return 'off';
+  return (full&&full.data&&Object.keys(full.data).length) ? syncOnRemote(full.data) : 'skip';
+}
+// Догон после сна: вкладка снова видна / сеть вернулась → та же сверка rev, не чаще раза в SYNC_RESUME_MS.
+const SYNC_RESUME_MS=30000;
+function syncResumeDue(now, last){ return !(last>0) || now<last || now-last>=SYNC_RESUME_MS; }
+let syncResumeAt=0, syncResumeOn=false;
+function syncResumeCheck(){
+  if(!currentUser||!syncReady||document.visibilityState==='hidden') return false;
+  const now=Date.now(); if(!syncResumeDue(now, syncResumeAt)) return false;
+  syncResumeAt=now; syncOnSignal(); return true;
+}
+function syncResumeInit(){   // один раз за жизнь страницы (startApp зовётся на каждый вход)
+  if(syncResumeOn) return; syncResumeOn=true;
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') syncResumeCheck(); });
+  window.addEventListener('online', ()=>syncResumeCheck());
+}
 
 // Тело push. true ⇔ коммит (stateRev=snap.rev); false — отклонено/ошибка/отложено.
 async function pushStateRun(){
@@ -213,17 +270,20 @@ async function pushSharedAnalysis(){
   try{ await sb.from('shared_analysis').upsert({id:'global',val:VAL,insider:INSIDER,aireco:AI_RECO,targets:TG_FULL,updated_at:new Date().toISOString()}); }catch(e){ console.warn('shared push failed',e); }
 }
 let _sharedSub=null;
+const SHARED_COLS=['val','insider','aireco','targets'];
+// E0: строка > 1024 КБ приходит по realtime без больших колонок (лимит Postgres Changes) — тогда перечитываем её.
+function sharedPayloadFull(n){ return !!n && SHARED_COLS.every(k=>n[k]&&typeof n[k]==='object'); }
+function sharedOnRealtime(payload){
+  const n=payload&&payload.new; if(!n||!Object.keys(n).length)return 'none';
+  const rr=()=>{ _valSecCache=null; if(typeof renderAll==='function')renderAll(); };
+  if(!sharedPayloadFull(n)){ loadSharedAnalysis().then(rr,()=>{}); return 'reload'; }
+  VAL=n.val; INSIDER=n.insider; AI_RECO=n.aireco; TG_FULL=n.targets;
+  rr(); return 'apply';
+}
 function subSharedAnalysis(){
   if(!SYNC_ENABLED||!sb||_sharedSub)return;
   try{
-    _sharedSub=sb.channel('shared_analysis').on('postgres_changes',{event:'*',schema:'public',table:'shared_analysis'},payload=>{
-      const n=payload&&payload.new; if(!n)return;
-      if(n.val&&typeof n.val==='object')VAL=n.val;
-      if(n.insider&&typeof n.insider==='object')INSIDER=n.insider;
-      if(n.aireco&&typeof n.aireco==='object')AI_RECO=n.aireco;
-      if(n.targets&&typeof n.targets==='object')TG_FULL=n.targets;
-      _valSecCache=null; if(typeof renderAll==='function')renderAll();
-    }).subscribe();
+    _sharedSub=sb.channel('shared_analysis').on('postgres_changes',{event:'*',schema:'public',table:'shared_analysis'},sharedOnRealtime).subscribe();
   }catch(e){}
 }
 function applyRemoteState(s){
@@ -281,8 +341,7 @@ function applyRemoteState(s){
 function subscribeRealtime(){
   if(realtimeChannel) sb.removeChannel(realtimeChannel);
   realtimeChannel=sb.channel('dash_'+currentUser.id)
-    .on('postgres_changes',{event:'*',schema:'public',table:'ledger_state',filter:'user_id=eq.'+currentUser.id},
-        p=>{ if(p.new && p.new.data) syncOnRemote(p.new.data); })   // дедуп по rev, при занятом синке — отложить
+    .on('postgres_changes',{event:'*',schema:'public',table:'ledger_state',filter:'user_id=eq.'+currentUser.id},syncOnRealtime)
     .subscribe();
 }
 
@@ -340,6 +399,7 @@ async function startApp(){
   await initAccess();   // роль + вкладки до первой отрисовки синхронизированных данных
   await pullState();
   subscribeRealtime();
+  syncResumeInit();   // догон облака после сна/офлайна (E0)
   refreshFX();   // override synced rates with live USD/EUR/NOK→SEK (non-blocking)
   maybeOnboard();   // приветствие при первом входе (один раз, флаг в localStorage)
 }

@@ -242,17 +242,24 @@ grp('aiTrackRecord', function(){
     [1,'Micron','MU','','','',0,100,'USD']
   ] } };
   IDX_HIST = {};   // без истории индекса → alpha null
-  STOCK_AI_LOG = [
-    {ticker:'NVDA',ts:'2026-05-01',price:150,ccy:'USD',verdict:'buy'},  // +13.3% → hit
-    {ticker:'MU',  ts:'2026-05-10',price:120,ccy:'USD',verdict:'buy'},  // -16.7% → miss
-    {ticker:'MU',  ts:'2026-04-01',price:130,ccy:'USD',verdict:'sell'}  // -23% → sell hit
+  var _rep = AI_REP;
+  // E5: разборы акций — строки ai_reports kind 'stock'; трек-рекорду хватает выжимки meta (data − text)
+  var LOG = [
+    {ticker:'NVDA',ts:'2026-05-01',price:150,ccy:'USD',verdict:'buy',text:'t1'},  // +13.3% → hit
+    {ticker:'MU',  ts:'2026-05-10',price:120,ccy:'USD',verdict:'buy',text:'t2'},  // -16.7% → miss
+    {ticker:'MU',  ts:'2026-04-01',price:130,ccy:'USD',verdict:'sell',text:'t3'}  // -23% → sell hit
   ];
-  var tr = aiTrackRecord();
-  __eq('track samples', tr.samples, 3);
-  __eq('track overall hit %', tr.overallHitRate, 67);
-  __eq('track buy n', tr.byVerdict.buy.n, 2);
-  __eq('track buy hit', tr.byVerdict.buy.hitRate, 50);
-  __eq('track sell hit', tr.byVerdict.sell.hitRate, 100);
+  try{
+    AI_REP = {uid:null, rows:LOG.map(function(e){ return {kind:'stock',key:e.ticker,at:e.ts,data:e}; }), ready:true, err:false};
+    var tr = aiTrackRecord();
+    __eq('track samples', tr.samples, 3);
+    __eq('track overall hit %', tr.overallHitRate, 67);
+    __eq('track buy n', tr.byVerdict.buy.n, 2);
+    __eq('track buy hit', tr.byVerdict.buy.hitRate, 50);
+    __eq('track sell hit', tr.byVerdict.sell.hitRate, 100);
+    AI_REP = {uid:null, rows:LOG.map(function(e,i){ var m=JSON.parse(JSON.stringify(e)); delete m.text; return {id:'i'+i,kind:'stock',key:e.ticker,at:e.ts+'T00:00:00+00:00',meta:m,data:null}; }), ready:true, err:false};
+    __eq('track record from meta only (E5) = same', JSON.stringify(aiTrackRecord()), JSON.stringify(tr));
+  }finally{ AI_REP = _rep; }
 });
 
 // 8) Журнал сделок: pfRecentTrades (фильтр по вкладке + plSEK)
@@ -275,7 +282,8 @@ grp('pfRecentTrades', function(){
 // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (классические таблицы и навигация) удалены из снапшота.
 // E0: cv — версия клиента (CLIENT_BUILD), пишется, но applyRemoteState её не читает.
 // E1: val/insider/aiReco/tgFull (общие данные по тикеру → только shared_analysis) и tgMeta (мёртвая запись) удалены.
-var SNAP_KEYS=['cv','data','fx','theme','pfTrades','aiChat','aiPort','aiPortBak','stockAiLog','aiSpend','aiPlaybook','aiPlaybookSeedV','planRules','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+// E5: stockAiLog — только пока непуст переходный буфер AI_LEGACY_STOCK (отдельный кейс в группе 'ai reports (E5)').
+var SNAP_KEYS=['cv','data','fx','theme','pfTrades','aiChat','aiPort','aiPortBak','aiSpend','aiPlaybook','aiPlaybookSeedV','planRules','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -382,10 +390,12 @@ grp('sync queue', function(){
 // и маршрутизацию с подменённым syncOnSignal.
 grp('sync signal (E0)', function(){
   var S={t:pushTimer,b:pushBusy,a:pushAgain,r:remotePending,st:remoteStale,rev:stateRev,u:currentUser,rdy:syncReady,
-         at:syncResumeAt,sig:syncOnSignal,onr:syncOnRemote,lsa:loadSharedAnalysis,ra:renderAll,
+         at:syncResumeAt,sig:syncOnSignal,onr:syncOnRemote,lsa:loadSharedAnalysis,ra:renderAll,arl:aiRepLoad,ars:aiRepSweep,
          V:VAL,I:INSIDER,A:AI_RECO,T:TG_FULL,stt:globalThis.setTimeout,vs:document.visibilityState};
-  var sigs=0, remotes=[], loads=0, renders=0;
+  var sigs=0, remotes=[], loads=0, renders=0, aiLoads=0;
   syncOnSignal=function(){ sigs++; return {then:function(){}}; };
+  aiRepLoad=function(){ aiLoads++; return {then:function(){}}; };
+  var aiSweeps=0; aiRepSweep=function(){ aiSweeps++; return {then:function(){}}; };
   try{
     // 1) чистое решение по rev облака: число × (меньше/равно/больше) × busy
     __eq('signal rev<stateRev → skip', syncSignalDecision(4,5,false), 'skip');
@@ -432,6 +442,7 @@ grp('sync signal (E0)', function(){
     document.visibilityState='visible';
     __ok('resumeCheck → one check, stamp set', syncResumeCheck()===true && sigs===1 && syncResumeAt>0);
     __ok('resumeCheck again at once → throttled', syncResumeCheck()===false && sigs===1);
+    __eq('E5: resume also reloads AI report list and retries the sweep (same throttle)', [aiLoads,aiSweeps], [1,1]);
     // 5) shared_analysis: неполный payload → перечитать строку, полный → применить
     var full={id:'global',val:{A:{pe:1}},insider:{},aireco:{},targets:{A:{t:2}}};
     __ok('shared full payload', sharedPayloadFull(full)===true);
@@ -451,7 +462,7 @@ grp('sync signal (E0)', function(){
       __eq('apply ignores remote cv', snapshotState().cv, CLIENT_BUILD); }
     finally{ init=_init; migrateState=_mig; }
   }finally{
-    syncOnSignal=S.sig; syncOnRemote=S.onr; loadSharedAnalysis=S.lsa; renderAll=S.ra; globalThis.setTimeout=S.stt;
+    syncOnSignal=S.sig; syncOnRemote=S.onr; loadSharedAnalysis=S.lsa; renderAll=S.ra; aiRepLoad=S.arl; aiRepSweep=S.ars; globalThis.setTimeout=S.stt;
     VAL=S.V; INSIDER=S.I; AI_RECO=S.A; TG_FULL=S.T; document.visibilityState=S.vs;
     pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; remoteStale=S.st; stateRev=S.rev; currentUser=S.u;
     syncReady=S.rdy; syncResumeAt=S.at; _sharedAt=null;
@@ -534,6 +545,185 @@ grp('shared analysis (E1)', function(){
 });
 
 // 🔄 Живые котировки: чанкование под лимит подзапросов воркера (solo#1)
+// 🧠 E5 (plans/ai-reports-e5.md §4, §7): AI-отчёты в таблице ai_reports. Асинхронные aiRepPut/Sweep/Load/Ensure тонкие
+// (JSC не крутит промисы — проверены node-скриптом в vm) — здесь чистые функции, снапшот, чтение и сканер.
+// Выжимки meta ниже — ровно то, что даёт SQL ai_reports_meta (проверено на PGlite на тех же фикстурах).
+grp('ai reports (E5)', function(){
+  var S={rep:AI_REP,leg:AI_LEGACY_STOCK,u:currentUser,init:init,mig:migrateState,ra:renderAll,v3:v3Key,D:DATA,save:scheduleSave};
+  var T=function(i){ return new Date(Date.UTC(2026,5,10,12,0,i,714)).toISOString(); };
+  var keys=function(rows){ return rows.map(aiRowK); };
+  try{
+    // 1) ключ строки: только мс
+    __eq('rowKey Z ≡ +00:00', aiRowKey('proto','P','2026-06-14T12:41:22.714Z'), aiRowKey('proto','P','2026-06-14T12:41:22.714+00:00'));
+    __eq('rowKey microseconds truncated', aiRowKey('stock','MU','2026-06-14T12:41:22.714123+00:00'), aiRowKey('stock','MU','2026-06-14T12:41:22.714Z'));
+    __eq('rowKey no date / garbage / no key → null', [aiRowKey('proto','P',null),aiRowKey('proto','P',''),aiRowKey('proto','P','нет'),aiRowKey('proto','','2026-06-14T00:00:00Z')], [null,null,null,null]);
+    __ok('rowKey kinds differ', aiRowKey('proto','P',T(1))!==aiRowKey('pfa','P',T(1)));
+    // 2) извлечение из снапшота ledger
+    var h2={text:'p2',at:T(2),proposal:{summary:'S2',actions:[1,2]}}, h1={text:'p1',at:T(1),proposal:null}, rOld={text:'old',at:T(0)};
+    var a2={at:T(11),summary:'a2',report:'R',actions:[{}]}, a2c={at:T(11),summary:'a2',report:'R',actions:[{}]}, a1={at:T(10),summary:'a1'};
+    var q1={text:'q',at:T(3)}, mu={ticker:'mu ',ts:T(20),text:'m',verdict:'add'};
+    var snap={data:{P:{rows:[[1]],cashFree:5,aiHistory:[h2,h1],aiReport:rOld,analysis:a2,analysisHistory:[a2c,a1]},Q:{rows:[],aiReport:q1},Z:{rows:[],aiHistory:[{text:'без даты'}]},N:null},
+      stockAiLog:[mu,{ticker:'',ts:T(21),text:'x'},{ticker:'NVDA',text:'y'},{ticker:'BIG',ts:T(22),text:new Array(210*1024).join('x')}]};
+    var ex=aiLedgerExtract(snap);
+    __eq('extract rows (proto×3 P, pfa×2 P dedup, proto Q, stock MU)', keys(ex.rows),
+      [aiRowKey('proto','P',T(2)),aiRowKey('proto','P',T(1)),aiRowKey('proto','P',T(0)),aiRowKey('pfa','P',T(11)),aiRowKey('pfa','P',T(10)),aiRowKey('proto','Q',T(3)),aiRowKey('stock','MU',T(20))]);
+    __ok('extract: data passed as is (same objects)', ex.rows[0].data===h2 && ex.rows[2].data===rOld && ex.rows[3].data===a2c && ex.rows[6].data===mu);
+    __eq('extract: stock key trimmed/upper, at = ts', [ex.rows[6].key,ex.rows[6].at], ['MU',T(20)]);
+    __eq('extract bad: no date, no ticker, no ts, oversize', ex.bad.map(function(b){return b.kind+':'+b.key+':'+b.why;}), ['proto:Z:at','stock::key','stock:NVDA:at','stock:BIG:size']);
+    __eq('extract bad: key > 200 chars', aiLedgerExtract({stockAiLog:[{ticker:new Array(202).join('A'),ts:T(1)}]}).bad[0].why, 'key');
+    __eq('extract empty/garbage snapshot', [aiLedgerExtract({}).rows.length,aiLedgerExtract(null).rows.length,aiLedgerExtract({data:{X:{aiHistory:'x'}},stockAiLog:{}}).rows.length], [0,0,0]);
+    // 3) strip: только подтверждённое, пустые поля удаляются, идемпотентность
+    var D=JSON.parse(JSON.stringify(snap.data)), leg=JSON.parse(JSON.stringify(snap.stockAiLog));
+    var st=aiLedgerStrip(D,leg,new Set([aiRowKey('proto','P',T(2)),aiRowKey('pfa','P',T(11)),aiRowKey('stock','MU',T(20))]));
+    __ok('strip partial: changed', st.changed===true);
+    __eq('strip partial: unconfirmed stay', [D.P.aiHistory.map(function(e){return e.text;}),D.P.aiReport.text,D.P.analysisHistory.map(function(e){return e.summary;}),'analysis' in D.P], [['p1'],'old',['a1'],false]);
+    __eq('strip partial: stock buffer rest (bad kept)', st.stock.map(function(e){return e.ticker;}), ['','NVDA','BIG']);
+    var all=new Set(keys(ex.rows)); st=aiLedgerStrip(D,st.stock,all);
+    __eq('strip all: AI fields gone, rest intact', [Object.keys(D.P).sort(),D.P.cashFree,Object.keys(D.Q),D.Z.aiHistory.length], [['cashFree','rows'],5,['rows'],1]);
+    __eq('strip all: only bad stock left', st.stock.length, 3);
+    var st2=aiLedgerStrip(D,st.stock,all);
+    __ok('strip idempotent', st2.changed===false && st2.stock.length===3 && JSON.stringify(D.P)==='{"rows":[[1]],"cashFree":5}');
+    __ok('strip with nothing confirmed → no change', aiLedgerStrip(JSON.parse(JSON.stringify(snap.data)),snap.stockAiLog,new Set()).changed===false);
+    // 4) слияние, сверка со списком сервера, порядок
+    var loc={kind:'proto',key:'P',at:T(2),data:h2,_local:true};
+    var m=aiRepMerge([loc],[{id:'id2',kind:'proto',key:'P',at:T(2).replace('Z','+00:00'),meta:{summary:'S2'}}]);
+    __ok('merge: server row confirms local (id, meta, data kept, not local)', m.length===1 && m[0].id==='id2' && m[0].data===h2 && m[0].meta.summary==='S2' && !m[0]._local);
+    m=aiRepMerge([loc],[{kind:'proto',key:'P',at:T(2),data:{text:'new'},_local:true}]);
+    __ok('merge: local+local stays local, incoming data wins', m.length===1 && m[0]._local===true && m[0].data.text==='new');
+    m=aiRepMerge([{id:'a',kind:'stock',key:'MU',at:T(1),meta:{x:1},data:null}],[{kind:'stock',key:'MU',at:T(1),data:{t:1},_local:true}]);
+    __ok('merge: re-extracted row of confirmed stays confirmed, gets data', m[0].id==='a' && !m[0]._local && m[0].data.t===1);
+    __ok('merge: rows without key ignored, input not mutated', aiRepMerge([],[{kind:'proto',key:'P',at:null}]).length===0 && loc._local===true && !loc.id);
+    var prev=[{kind:'proto',key:'P',at:T(1),data:h1},{kind:'proto',key:'P',at:T(5),data:{text:'q'},_local:true},{id:'c',kind:'pfa',key:'P',at:T(9),data:a1}];
+    var rc=aiRepReconcile(prev,[{id:'a',kind:'proto',key:'P',at:T(1).replace('Z','+00:00'),meta:{}},{id:'d',kind:'stock',key:'MU',at:T(20),meta:{}}]);
+    __eq('reconcile: server rows (+data from memory) ∪ unconfirmed local; confirmed-but-gone dropped', rc.map(function(r){return (r.id||'-')+':'+(r.data!=null)+':'+!!r._local;}).sort(), ['-:true:true','a:true:false','d:false:false']);
+    rc=aiRepReconcile(prev,[],new Set([aiRowKey('pfa','P',T(9))]));
+    __ok('reconcile: confirmed during the list request (keep) survives a stale list', rc.some(function(r){return r.id==='c';}) && rc.length===2);
+    var L=aiRepList([{kind:'proto',key:'P',at:T(1)},{kind:'proto',key:'Q',at:T(9)},{kind:'proto',key:'P',at:T(3).replace('Z','+00:00')},{kind:'pfa',key:'P',at:T(8)}],'proto','P');
+    __eq('list: kind+key, newest first', L.map(function(r){return aiRowMs(r.at);}), [aiRowMs(T(3)),aiRowMs(T(1))]);
+    __eq('list: key null → whole kind', aiRepList([{kind:'stock',key:'A',at:T(1)},{kind:'stock',key:'B',at:T(2)}],'stock').map(function(r){return r.key;}), ['B','A']);
+    // 5) запись в прежней форме: data / выжимка meta с _partial
+    __ok('entry with data = the record itself', aiEntry({kind:'proto',key:'P',at:T(2),data:h2})===h2);
+    var ep=aiEntry({id:'1',kind:'proto',key:'P',at:'2026-06-10T12:00:02.714+00:00',meta:{at:T(2),summary:'S2',nAct:2,nWl:0},data:null});
+    __ok('entry partial proto: meta + _partial, at from meta', ep._partial===true && ep.at===T(2) && ep.summary==='S2' && !('text' in ep));
+    var es=aiEntry({id:'2',kind:'stock',key:'MU',at:'2026-06-10T12:00:20.714+00:00',meta:{ticker:'MU',ts:T(20),verdict:'add',data:{verdict:'add'}},data:null});
+    __ok('entry partial stock: ts field, meta data kept', es._partial && es.ts===T(20) && es.data.verdict==='add');
+    __ok('entry partial without meta: date from row', aiEntry({id:'3',kind:'stock',key:'X',at:T(4),meta:null,data:null}).ts===T(4) && aiEntry({id:'4',kind:'pfa',key:'P',at:T(4),data:null}).at===T(4));
+    __eq('entry null', aiEntry(null), null);
+    // 6) сводка/число действий AI Proto: с данными = по meta (SQL ai_reports_meta на тех же записях)
+    var long=new Array(1501).join('x')+'хвост', emo=new Array(401).join('абв😀');
+    var FX5=[[{text:'body',proposal:{summary:'S2',actions:[1,2],watchlist:[{}]},at:T(2)},{summary:'S2',nAct:2,nWl:1}],
+             [{text:long,proposal:null,at:T(3)},{summary:long.slice(0,1200),nAct:0,nWl:0}],
+             [{text:emo,proposal:{summary:'',actions:'bad'},at:T(4)},{summary:Array.from(emo).slice(0,1200).join(''),nAct:0,nWl:0}],
+             [{text:null,at:T(5)},{summary:'',nAct:0,nWl:0}]];
+    FX5.forEach(function(f,i){
+      var part=Object.assign({_partial:true,at:f[0].at},f[1]);
+      __eq('proto summary data ≡ meta #'+i, aiProtoSummary(f[0]), aiProtoSummary(part));
+      __eq('proto acts data ≡ meta #'+i, aiProtoActs(f[0]), aiProtoActs(part));
+    });
+    __eq('proto summary: 1200 chars (code points)', Array.from(aiProtoSummary(FX5[2][0])).length, 1200);
+    __eq('proto summary/acts: null → empty', [aiProtoSummary(null),aiProtoActs(null),aiProtoActs(undefined)], ['',0,0]);
+    // 7) realtime
+    var base=[{kind:'proto',key:'P',at:T(2),data:h2,_local:true},{id:'z',kind:'stock',key:'MU',at:T(20),meta:{},data:null}];
+    var r1=aiRepRealtimeApply(base,{eventType:'INSERT',new:{id:'n1',user_id:'u',kind:'proto',key:'P',at:T(2).replace('Z','+00:00'),meta:{summary:'S2'},data:h2}});
+    __ok('realtime INSERT of local row → confirmed, one row', r1.length===2 && r1[0].id==='n1' && !r1[0]._local);
+    var r2=aiRepRealtimeApply(base,{eventType:'INSERT',new:{id:'n2',kind:'pfa',key:'P',at:T(30),meta:{nAct:1},data:{at:T(30),summary:'w'}}});
+    __ok('realtime INSERT new → added with data', r2.length===3 && r2[2].data.summary==='w');
+    __ok('realtime DELETE own id → removed', aiRepRealtimeApply(base,{eventType:'DELETE',old:{id:'z'}}).length===1);
+    __ok('realtime DELETE unknown / no id → same array', aiRepRealtimeApply(base,{eventType:'DELETE',old:{id:'foreign'}})===base && aiRepRealtimeApply(base,{eventType:'DELETE',old:{}})===base);
+    __ok('realtime garbage → same array', aiRepRealtimeApply(base,null)===base && aiRepRealtimeApply(base,{eventType:'INSERT',new:{}})===base);
+    var conf=[{id:'e1',kind:'proto',key:'P',at:T(2),meta:{summary:'S2'},data:h2}];
+    __ok('realtime echo of own confirmed insert → same array (no rerender)', aiRepRealtimeApply(conf,{eventType:'INSERT',new:{id:'e1',kind:'proto',key:'P',at:T(2),meta:{summary:'S2'},data:h2}})===conf);
+    // 8) подтверждение пачки, пачки, очередь, постоянные ошибки
+    var cr=aiRepConfirmRows([loc,{kind:'proto',key:'P',at:T(7),data:{},_local:true}],[loc],[]);
+    __ok('confirm: batch rows lose _local even without returned id (duplicate)', !cr[0]._local && cr[1]._local===true && cr[0].data===h2);
+    cr=aiRepConfirmRows([loc],[loc],[{id:'q',kind:'proto',key:'P',at:T(2),meta:{nAct:2}}]);
+    __ok('confirm: returned id/meta merged', cr[0].id==='q' && cr[0].meta.nAct===2 && cr[0].data===h2);
+    var small=[]; for(var i=0;i<120;i++)small.push({kind:'stock',key:'K'+i,at:T(i),data:{t:i}});
+    __eq('batches ≤ 50 rows', aiRepBatches(small).map(function(b){return b.length;}), [50,50,20]);
+    var big=[0,1,2].map(function(i){ return {kind:'stock',key:'B'+i,at:T(i),data:{text:new Array(200*1024).join('ж')}}; });
+    __eq('batches ≤ 512 KB (UTF-8)', aiRepBatches(big).map(function(b){return b.length;}), [1,1,1]);
+    __eq('batches empty', aiRepBatches([]).length, 0);
+    __eq('utf8 length', [aiUtf8Len('ab'),aiUtf8Len('ж'),aiUtf8Len('€'),aiUtf8Len('😀')], [2,2,3,4]);
+    var ob=aiOutboxAdd([],loc,1e6); ob=aiOutboxAdd(ob.list,{kind:'proto',key:'P',at:T(2).replace('Z','+00:00'),data:{text:'v2'}},1e6);
+    __ok('outbox: same key replaced, not duplicated', ob.ok && ob.list.length===1 && ob.list[0].data.text==='v2' && !('_local' in ob.list[0]));
+    var of=aiOutboxAdd(ob.list,{kind:'stock',key:'X',at:T(9),data:{text:new Array(3000).join('x')}},2000);
+    __ok('outbox overflow → refused, list unchanged', of.ok===false && of.list===ob.list);
+    __eq('permanent errors: 22/23 only', [aiRepPermanent({code:'23514'}),aiRepPermanent({code:'22P02'}),aiRepPermanent({code:'PGRST205'}),aiRepPermanent({message:'Failed to fetch'}),aiRepPermanent(null)], [true,true,false,false,false]);
+    // 9) снапшот: stockAiLog только пока есть неперенесённый остаток; applyRemoteState не пишет в память отчётов
+    init=function(){}; migrateState=function(){}; renderAll=function(){}; scheduleSave=function(){};
+    AI_LEGACY_STOCK=[];
+    __ok('snapshot without legacy buffer → no stockAiLog', !Object.prototype.hasOwnProperty.call(snapshotState(),'stockAiLog'));
+    __ok('STOCK_AI_LOG global removed', typeof STOCK_AI_LOG==='undefined');
+    var rowsRef=AI_REP.rows, s0=JSON.parse(JSON.stringify(snapshotState()));
+    s0.stockAiLog=[{ticker:'MU',ts:T(20),text:'m'}];
+    currentUser=null; applyRemoteState(s0);
+    __ok('apply old snapshot: buffer = its stockAiLog, report memory untouched', AI_LEGACY_STOCK.length===1 && AI_LEGACY_STOCK[0].ticker==='MU' && AI_REP.rows===rowsRef);
+    __eq('snapshot re-emits exactly the unconfirmed rest', snapshotState().stockAiLog, [{ticker:'MU',ts:T(20),text:'m'}]);
+    delete s0.stockAiLog; applyRemoteState(s0);
+    __ok('apply snapshot without key → buffer empty (transferred elsewhere)', AI_LEGACY_STOCK.length===0 && !('stockAiLog' in snapshotState()));
+    // 10) аккаунт: память отчётов — одного uid; буфер ledger — только выходом
+    AI_REP={uid:'A',rows:[loc],ready:true,err:false}; AI_LEGACY_STOCK=[mu];
+    aiRepUid('A'); __ok('same uid → kept', AI_REP.rows.length===1 && AI_REP.ready);
+    aiRepUid('B'); __ok('other uid → reports reset, ledger buffer kept', AI_REP.uid==='B' && AI_REP.rows.length===0 && !AI_REP.ready && AI_LEGACY_STOCK.length===1);
+    AI_REP.rows=[loc]; syncReset();
+    __ok('syncReset (logout) → reports and buffer cleared', AI_REP.uid===null && AI_REP.rows.length===0 && AI_LEGACY_STOCK.length===0);
+    // 11) realtime-обработчик: только свой аккаунт
+    var renders=0; renderAll=function(){ renders++; };
+    AI_REP={uid:'A',rows:[],ready:true,err:false}; currentUser=null;
+    __eq('onRealtime without user → off', aiRepOnRealtime({eventType:'INSERT',new:{id:'1',kind:'stock',key:'MU',at:T(1),data:{}}}), 'off');
+    currentUser={id:'B'};
+    __eq('onRealtime other account memory → off', aiRepOnRealtime({eventType:'INSERT',new:{id:'1',kind:'stock',key:'MU',at:T(1),data:{}}}), 'off');
+    currentUser={id:'A'};
+    __ok('onRealtime own → apply + render', aiRepOnRealtime({eventType:'INSERT',new:{id:'1',kind:'stock',key:'MU',at:T(1),data:{ticker:'MU'}}})==='apply' && AI_REP.rows.length===1 && renders===1);
+    __ok('onRealtime unknown delete → none, no render', aiRepOnRealtime({eventType:'DELETE',old:{id:'zz'}})==='none' && renders===1);
+    // 12) читатели в прежней форме (вкладка v3Key)
+    DATA={P:{v3:'1',headers:[],rows:[]}}; v3Key='P';
+    AI_REP={uid:'A',ready:true,err:false,rows:[{id:'p2',kind:'proto',key:'P',at:T(2),meta:{at:T(2),summary:'S2',nAct:2,nWl:0},data:null},{kind:'proto',key:'P',at:T(1),data:h1},
+      {id:'f1',kind:'pfa',key:'P',at:T(11),meta:{at:T(11),summary:'итог',nAct:1},data:null},{kind:'stock',key:'MU',at:T(20),data:{ticker:'MU',ts:T(20),price:1,ccy:'USD',text:'разбор',verdict:'add',data:{verdict:'add'}}}]};
+    var H=pf3AiHist();
+    __ok('pf3AiHist: newest first, partial + full', H.length===2 && H[0]._partial && H[0].summary==='S2' && H[1]===h1);
+    __ok('hasProp from meta.nAct', aiProtoActs(H[0])===2);
+    __ok('AI Proto: partial → loading note, history text shown', /Загружаю отчёт/.test(pf3AiHTML()) && /p1/.test(pf3AiHTML()));
+    __ok('Proposal: partial with actions → loading note', /Загружаю отчёт/.test(pf3PropHTML()));
+    var an=pf3AnalysisHTML();
+    __ok('Analysis: partial → meta summary + loading note', /итог/.test(an) && /Загружаю отчёт/.test(an));
+    __ok('stock log lists rows', /разбор/.test((function(){ _stkOpen[T(20)]=true; try{ return stkLogHTML(); }finally{ delete _stkOpen[T(20)]; } })()) && stockAiLog().length===1);
+    _aiRepFail={f1:1};
+    __ok('partial note: remembered failure → ↻ retry with kind/key', /aiRepRetry\('pfa',&quot;P&quot;\)/.test(pf3AnalysisHTML()) && !/Загружаю отчёт/.test(pf3AnalysisHTML()));
+    _aiRepFail={};
+    AI_REP={uid:'A',rows:[],ready:false,err:false};
+    __ok('state note: loading before list', /Загружаю AI-отчёты/.test(pf3AnalysisHTML()));
+    AI_REP.err=true;
+    __ok('state note: failed list → ↻', /aiRepRetry\(\)/.test(stkLogHTML()));
+    currentUser=null;
+    __eq('state note: no account → empty', aiRepStateNote(), '');
+    // 12b) desk: догрузка текста — один запрос на набор строк без текста; неудачные выпадают, новые — новый запрос
+    var _need=deskAiNeed,_pool=deskPoolRun,pools=[],need=null;
+    deskAiNeed=function(){ return need; }; deskPoolRun=function(k,fn){ pools.push(k); return {then:function(){}}; };
+    try{
+      DESK_UI._aiFor=null;
+      need={pool:'aidata|proto|P',rows:[{id:'a'},{id:'b'}]}; deskAiAfter(); deskAiAfter();
+      __eq('desk ai: same set → one pool run', pools, ['aidata|proto|P']);
+      need={pool:'aidata|proto|P',rows:[]}; deskAiAfter();
+      need={pool:'aidata|proto|P',rows:[{id:'a'},{id:'b'}]}; deskAiAfter();
+      __eq('desk ai: set emptied (loaded/failed) then again → new run', pools.length, 2);
+      need={pool:'aidata|proto|P',rows:[{id:'a'},{id:'b'},{id:'c'}]}; deskAiAfter();
+      __eq('desk ai: new row from resume/realtime → new run', pools.length, 3);
+      need=null; deskAiAfter(); __eq('desk ai: section left → key reset', DESK_UI._aiFor, null);
+    }finally{ deskAiNeed=_need; deskPoolRun=_pool; DESK_UI._aiFor=null; }
+    // 13) сканер: AI-поля ledger и таблицу трогает только слой E5
+    var src=['app.js','app-2.js','app-3.js','app-4.js','app-5.js','desk.js'].map(function(f){ return rd(f); }).join('\n');
+    var a=src.indexOf('// ── AI-отчёты (E5) ──'), b=src.indexOf('// ── /AI-отчёты (E5) ──');
+    __ok('E5 block markers present', a>0 && b>a);
+    var out=src.slice(0,a)+src.slice(b);
+    __eq('no AI ledger fields outside E5 layer', out.match(/STOCK_AI_LOG|\.aiHistory\b|\.aiReport\b|\.analysisHistory\b|\.analysis\b/g), null);
+    __eq('ai_reports accessed only by E5 layer', out.match(/from\('ai_reports'\)/g), null);
+  }finally{
+    AI_REP=S.rep; AI_LEGACY_STOCK=S.leg; currentUser=S.u; init=S.init; migrateState=S.mig; renderAll=S.ra; v3Key=S.v3; DATA=S.D; scheduleSave=S.save;
+    _aiRepFail={}; _aiRepLive={};
+  }
+});
+
 grp('chunkList', function(){
   __eq('7 by 3', chunkList([1,2,3,4,5,6,7],3), [[1,2,3],[4,5,6],[7]]);
   __eq('empty', chunkList([],5), []);
@@ -1546,8 +1736,13 @@ grp('SIG adapters for AI (S7b-3)', function(){
     var W=pf3AiSnapshot('IDX');
     __eq('watchlist snapshot: phase/signal via SIG', W.stocks.map(function(x){return [x.ticker,x.phase,x.signal];}),
       [['AAA',sigRowPhase(DATA.IDX,DATA.IDX.rows[0]).label,null],['BBB','—',null],['CCC','—',null],['AZN',sigRowPhase(DATA.IDX,az).label,sigNearText(sigRowSnap(DATA.IDX,az))]]);
+    var _rep=AI_REP;
+    AI_REP={uid:null,ready:true,err:false,rows:[{id:'x1',kind:'proto',key:'IDX',at:'2026-06-01T10:00:00+00:00',meta:{at:'2026-06-01T10:00:00.000Z',summary:'S-meta',nAct:0,nWl:0},data:null},
+      {id:'x0',kind:'proto',key:'IDX',at:'2026-05-01T10:00:00+00:00',meta:{at:'2026-05-01T10:00:00.000Z',summary:'old',nAct:0,nWl:0},data:null}]};
     var P=pf3AiSnapshot(PF3_KEY),mc=P.marketContext.filter(function(x){return x.index==='IDX';})[0];
+    AI_REP=_rep;
     __eq('portfolio snapshot: market phases via sigRowPhase', mc&&mc.phases['—'], 2);
+    __eq('E5 marketContext: last proto review from meta (no text load)', mc&&mc.lastAiReview, {at:'2026-06-01T10:00:00.000Z',summary:'S-meta'});
     // AI-рекомендация бумаги: бейдж «устарел» только при sigAt ≠ текущему вердикту SIG; у записи до S7b-3 (recoAt) — нет
     var v=it.s.verdict,other=v==='buy'?'wait':'buy';
     AI_RECO={AZN:{verdict:'buy',text:'x',at:'2026-09-10T10:00:00Z',sigAt:other}};

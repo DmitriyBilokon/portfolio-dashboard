@@ -84,8 +84,8 @@ async function aipRunNow(ev){
     toast(j.error?j.error:String(j.result||'OK').split('\n').filter(Boolean).join(' · '),!!j.error);
   }catch(e){toast(RT('Worker недоступен (нужен редеплой с ?action=aiport)','Worker unreachable (redeploy with ?action=aiport)'),true);}
   await aipPullState();   // подтянуть актуальное состояние воркера и перерисовать
-  // Цикл также пишет авто-анализ реальных портфелей (data[key].analysis) — тянем
-  // свежий снапшот облака, чтобы вкладка «📈 Анализ» у Dima/Anna обновилась.
+  // Свежий снапшот облака (позиции/кэш AI-портфеля в ledger). Авто-анализ портфелей — отдельные cron-слоты/?action=pfanalyze;
+  // «📈 Анализ» обновляется по realtime ai_reports (E5; до E5b воркер пишет его в ledger — переносит aiRepSweep).
   try{ await pullState(); }catch(e){}
   if(isV3())renderPF3();
   if(btn){btn.disabled=false;btn.textContent='▶ '+RT('Запустить цикл сейчас','Run cycle now');}

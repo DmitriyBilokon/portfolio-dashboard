@@ -12,7 +12,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_9CIG7HU54hfBcexS4qr3rQ_HQygVVJC';
 // загрузилась — работаем в локальном режиме на встроенных данных (путь `!SYNC_ENABLED`).
 const SYNC_ENABLED = SUPABASE_URL.startsWith('http') && SUPABASE_ANON_KEY.length > 20 && !!(window.supabase && window.supabase.createClient);
 const sb = SYNC_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-let currentUser=null, realtimeChannel=null, applyingRemote=false;
+let currentUser=null, realtimeChannel=null, aiRepChannel=null, applyingRemote=false;
 // Очередь push/realtime (plans/sync-push-timer.md): таймер → один push в полёте → отложенный входящий снапшот.
 let pushTimer=null;        // id дебаунса — null, когда таймер не стоит (сбрасывается в pushFire)
 let pushBusy=false;        // push в полёте (между началом pushState и syncSettle)
@@ -29,10 +29,14 @@ function snapshotState(){
   // старый клиент без них ничего не теряет. E1: val/insider/aiReco/tgFull — общие данные по тикеру, живут только в
   // shared_analysis (sharedPatch); tgMeta удалён. E3: sim/aiDash/scnAlerts/tgAlerts (мёртвые движки) и smaTf (пишется и
   // тут же копируется в строку — applyRemoteState продолжает его читать ради одноразового migrateSmaDaily) — не пишутся.
-  return { cv:CLIENT_BUILD, data:DATA, fx:FX,
+  // E5: AI-отчёты — в таблице ai_reports; stockAiLog пишется, только пока не перенесён (AI_LEGACY_STOCK), AI-поля вкладок
+  // уходят из DATA сами после подтверждённого переноса (aiRepSweep).
+  const o={ cv:CLIENT_BUILD, data:DATA, fx:FX,
            theme:(document.documentElement.dataset.theme||'light'),
-           pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, aiSpend:AI_SPEND, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
+           pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, aiSpend:AI_SPEND, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
            posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
+  if(AI_LEGACY_STOCK.length)o.stockAiLog=AI_LEGACY_STOCK;
+  return o;
 }
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
@@ -87,7 +91,7 @@ function syncFlushRemote(dirty){   // true ⇔ применили отложен
   applyRemoteState(s); return true;
 }
 function syncConflictToast(){ toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true); }
-function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; remoteStale=false; }
+function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; remoteStale=false; aiRepReset(); }
 
 // ── Realtime как сигнал + догон после сна (E0, plans/ledger-model-e.md §4.E0 п.5–6) ──
 // У Supabase Postgres Changes лимит 1024 КБ: строка больше приходит без `data` (только поля ≤ 64 байт), а после
@@ -132,7 +136,7 @@ let syncResumeAt=0, syncResumeOn=false;
 function syncResumeCheck(){
   if(!currentUser||!syncReady||document.visibilityState==='hidden') return false;
   const now=Date.now(); if(!syncResumeDue(now, syncResumeAt)) return false;
-  syncResumeAt=now; syncOnSignal(); return true;
+  syncResumeAt=now; syncOnSignal(); aiRepLoad(); aiRepSweep(); return true;   // E5: список AI-отчётов (пропущенный realtime, очередь) и повтор переноса
 }
 function syncResumeInit(){   // один раз за жизнь страницы (startApp зовётся на каждый вход)
   if(syncResumeOn) return; syncResumeOn=true;
@@ -340,6 +344,363 @@ function subSharedAnalysis(){
     _sharedSub=sb.channel('shared_analysis').on('postgres_changes',{event:'*',schema:'public',table:'shared_analysis'},sharedOnRealtime).subscribe();
   }catch(e){}
 }
+// ── AI-отчёты (E5) ── plans/ai-reports-e5.md, supabase-ai-reports.sql
+// Разборы AI Proto (kind 'proto', ключ — вкладка), авто-анализ воркера ('pfa', вкладка) и AI-разборы акций ('stock', ТИКЕР)
+// живут в таблице ai_reports, не в ledger. Память: AI_REP.rows = [{id, kind, key, at, meta, data|null, _local?}] — при входе
+// грузятся id/meta (выжимка, её считает БД), полный data — лениво при входе в раздел (aiRepEnsure). _local — строка ещё не
+// подтверждена сервером (перенос/запись в полёте, исходящая очередь). Читать — только aiRepList/aiEntry/stockAiLog(),
+// писать — только aiRepPut/aiRepDel. Старые AI-поля ledger (data.<tab>.aiHistory/aiReport/analysis/analysisHistory,
+// stockAiLog → AI_LEGACY_STOCK) переносит aiRepSweep и убирает из ledger только после подтверждённой вставки.
+let AI_REP={uid:null,rows:[],ready:false,err:false};
+let AI_LEGACY_STOCK=[];   // ещё не перенесённый stockAiLog ledger: пишется в снапшот, только пока непуст
+const AI_REP_RETRY_MS=3000, AI_REP_READY_MS=5000;
+const AI_REP_BATCH_N=50, AI_REP_BATCH_BYTES=512*1024, AI_REP_MAX_BYTES=200*1024, AI_OUTBOX_MAX=2*1024*1024;
+const AI_SUM_LEN=1200;   // = left(…, 1200) в ai_reports_meta
+// Push ledger после переноса — не сразу и вразброс: два открытых устройства переносят одно и то же и иначе конфликтуют
+// по rev (проигравший получил бы тост «повторите правку»). Пришло облако/свой push раньше — не пушим (там уже чисто или
+// перенос повторится на новом снапшоте).
+const AI_STRIP_PUSH_MS=1500, AI_STRIP_JITTER_MS=8000;
+// Метки времени сравниваются только в мс: PostgREST отдаёт «…714+00:00», клиент пишет «…714Z» (микросекунды — отбросить).
+function aiRowMs(at){ if(at==null||at==='')return null; const t=Date.parse(String(at).replace(/(\.\d{3})\d+/,'$1')); return isFinite(t)?t:null; }
+function aiRowKey(kind,key,at){ const ms=aiRowMs(at); return ms==null||!key?null:kind+'|'+key+'|'+ms; }
+const aiRowK=r=>r?aiRowKey(r.kind,r.key,r.at):null;
+const aiStockKey=t=>String(t==null?'':t).trim().toUpperCase();
+function aiUtf8Len(s){ let n=0; for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); if(c<0x80)n++; else if(c<0x800)n+=2; else if(c>=0xD800&&c<=0xDBFF){n+=4;i++;} else n+=3; } return n; }
+// Все AI-записи снапшота ledger → строки таблицы; data — запись КАК ЕСТЬ. Без разбираемой даты/ключа или больше
+// AI_REP_MAX_BYTES — в bad (не переносятся и не удаляются). Дубли (analysis ∈ analysisHistory) — одна строка.
+function aiLedgerExtract(snap){
+  const rows=[],bad=[],seen={};
+  const add=(kind,key,e,atF)=>{
+    if(!e||typeof e!=='object'||Array.isArray(e))return;
+    const k=aiRowKey(kind,key,e[atF]);
+    if(!k||String(key).length>200){ bad.push({kind,key,why:!key||String(key).length>200?'key':'at'}); return; }
+    if(seen[k])return;
+    if(aiUtf8Len(JSON.stringify(e))>AI_REP_MAX_BYTES){ bad.push({kind,key,why:'size'}); return; }
+    seen[k]=1; rows.push({kind,key,at:e[atF],data:e});
+  };
+  const D=snap&&snap.data;
+  if(D&&typeof D==='object')Object.keys(D).forEach(tab=>{
+    const d=D[tab]; if(!d||typeof d!=='object')return;
+    if(Array.isArray(d.aiHistory))d.aiHistory.forEach(e=>add('proto',tab,e,'at'));
+    add('proto',tab,d.aiReport,'at');   // устаревший одиночный отчёт
+    if(Array.isArray(d.analysisHistory))d.analysisHistory.forEach(e=>add('pfa',tab,e,'at'));
+    add('pfa',tab,d.analysis,'at');
+  });
+  if(snap&&Array.isArray(snap.stockAiLog))snap.stockAiLog.forEach(e=>add('stock',aiStockKey(e&&e.ticker),e,'ts'));
+  return {rows,bad};
+}
+// Убрать из ledger только подтверждённые записи (done — Set ключей aiRowKey); пустые поля удаляются. Мутирует DATA,
+// буфер stockAiLog не трогает — возвращает остаток. Идемпотентна.
+function aiLedgerStrip(D,legacyStock,done){
+  let changed=false;
+  const keep=(arr,kind,tab,atF)=>arr.filter(e=>!(e&&typeof e==='object'&&done.has(aiRowKey(kind,tab,e[atF]))));
+  if(D&&typeof D==='object')Object.keys(D).forEach(tab=>{
+    const d=D[tab]; if(!d||typeof d!=='object')return;
+    [['aiHistory','proto'],['analysisHistory','pfa']].forEach(([f,kind])=>{
+      if(!Array.isArray(d[f]))return;
+      const k=keep(d[f],kind,tab,'at');
+      if(k.length===d[f].length)return;
+      changed=true; if(k.length)d[f]=k; else delete d[f];
+    });
+    [['aiReport','proto'],['analysis','pfa']].forEach(([f,kind])=>{
+      const e=d[f]; if(e&&typeof e==='object'&&done.has(aiRowKey(kind,tab,e.at))){ delete d[f]; changed=true; }
+    });
+  });
+  const L=Array.isArray(legacyStock)?legacyStock:[];
+  const stock=L.filter(e=>!(e&&typeof e==='object'&&done.has(aiRowKey('stock',aiStockKey(e.ticker),e.ts))));
+  return {changed:changed||stock.length!==L.length,stock};
+}
+// Слияние по aiRowKey: id/meta — из БД (у кого есть), data сохраняется, если есть у любой стороны (входящая главнее);
+// _local остаётся, только пока ни одна сторона не подтверждена сервером.
+function aiRepMerge(rows,incoming){
+  const out=(rows||[]).slice(),idx={};
+  out.forEach((r,i)=>{ const k=aiRowK(r); if(k)idx[k]=i; });
+  (incoming||[]).forEach(r=>{
+    const k=aiRowK(r); if(!k)return;
+    const i=idx[k];
+    if(i==null){ idx[k]=out.length; out.push(Object.assign({},r)); return; }
+    const x=out[i],m=Object.assign({},x,{id:r.id||x.id,meta:r.meta||x.meta,data:r.data!=null?r.data:x.data});
+    if(m.id||!(x._local&&r._local))delete m._local;
+    out[i]=m;
+  });
+  return out;
+}
+// Загрузка списка с сервера: серверные строки (data переносится из памяти) + ещё не подтверждённые локальные + keep
+// (ключи, подтверждённые/пришедшие, пока летел запрос списка: ответ мог быть снят раньше их вставки). Подтверждённые
+// до запроса, но пропавшие с сервера (обрезка/удаление на другом устройстве), уходят.
+function aiRepReconcile(prev,loaded,keep){
+  const pk={}; (prev||[]).forEach(r=>{ const k=aiRowK(r); if(k)pk[k]=r; });
+  const base=aiRepMerge([],(loaded||[]).map(r=>{ const p=pk[aiRowK(r)]; return p&&p.data!=null&&r.data==null?Object.assign({},r,{data:p.data}):r; }));
+  return aiRepMerge(base,(prev||[]).filter(r=>r._local||(keep&&keep.has(aiRowK(r)))));
+}
+// Строки вида (и ключа; key==null — весь вид), новые первыми.
+function aiRepList(rows,kind,key){
+  return (rows||[]).filter(r=>r.kind===kind&&(key==null||r.key===key)).map(r=>[aiRowMs(r.at)||0,r]).sort((a,b)=>b[0]-a[0]).map(x=>x[1]);
+}
+// Строка → запись в прежней форме (как лежала в ledger): data, если загружено; иначе выжимка meta с _partial.
+function aiEntry(r){
+  if(!r)return null;
+  if(r.data!=null)return r.data;
+  const m=Object.assign({},r.meta||{},{_partial:true});
+  if(r.kind==='stock'){ if(m.ts==null)m.ts=r.at; } else if(m.at==null)m.at=r.at;
+  return m;
+}
+const aiCp=s=>{ s=String(s); if(s.length<=AI_SUM_LEN)return s; return Array.from(s.slice(0,AI_SUM_LEN*2)).slice(0,AI_SUM_LEN).join(''); };   // символы, как left() Postgres
+function aiProtoSummary(e){
+  if(!e)return '';
+  if(e._partial)return String(e.summary==null?'':e.summary);
+  const P=e.proposal,s=P&&P.summary!=null&&String(P.summary)!==''?P.summary:e.text;
+  return aiCp(s==null?'':s);
+}
+function aiProtoActs(e){
+  if(!e)return 0;
+  if(e._partial)return +e.nAct||0;
+  return e.proposal&&Array.isArray(e.proposal.actions)?e.proposal.actions.length:0;
+}
+function aiRepFillData(rows,got){ return (rows||[]).map(r=>r.id&&r.data==null&&got[r.id]!=null?Object.assign({},r,{data:got[r.id]}):r); }
+// Подтверждение пачки: снять _local с её строк, слить вернувшиеся id/meta (дубль сервер не возвращает — строка остаётся без id).
+function aiRepConfirmRows(rows,batch,returned){
+  const ks=new Set((batch||[]).map(aiRowK));
+  return aiRepMerge((rows||[]).map(r=>r._local&&ks.has(aiRowK(r))?(({_local,...x})=>x)(r):r),returned||[]);
+}
+// Realtime ai_reports: INSERT/UPDATE — слить (payload несёт meta и data), DELETE — убрать по id (приходит только id и без
+// фильтра по user_id: чужой/незнакомый — ничего). Без изменений возвращает тот же массив.
+function aiRepRealtimeApply(rows,p){
+  const t=p&&p.eventType;
+  if(t==='DELETE'){ const id=p.old&&p.old.id; if(!id||!(rows||[]).some(r=>r.id===id))return rows; return rows.filter(r=>r.id!==id); }
+  const n=p&&p.new;
+  if(!((t==='INSERT'||t==='UPDATE')&&n&&n.id&&n.kind&&n.key))return rows;
+  // эхо своей подтверждённой записи (перенос, aiRepPut) — ничего нового, без перерисовки
+  if(t==='INSERT'&&(rows||[]).some(r=>r.id===n.id&&r.data!=null&&r.meta))return rows;
+  return aiRepMerge(rows,[{id:n.id,kind:n.kind,key:n.key,at:n.at,meta:n.meta||null,data:n.data!=null?n.data:null}]);
+}
+// Пачки переноса: ≤ AI_REP_BATCH_N строк и ≤ AI_REP_BATCH_BYTES на запрос.
+function aiRepBatches(rows){
+  const out=[]; let cur=[],sz=0;
+  (rows||[]).forEach(r=>{ const n=aiUtf8Len(JSON.stringify(r.data)); if(cur.length&&(cur.length>=AI_REP_BATCH_N||sz+n>AI_REP_BATCH_BYTES)){ out.push(cur); cur=[]; sz=0; } cur.push(r); sz+=n; });
+  if(cur.length)out.push(cur);
+  return out;
+}
+// Исходящая очередь (localStorage, по аккаунту): добавить без дубля; больше max знаков JSON — отказ (запись остаётся в памяти).
+function aiOutboxAdd(list,row,max){
+  const k=aiRowK(row),L=(Array.isArray(list)?list:[]).filter(x=>aiRowK(x)!==k);
+  L.push({kind:row.kind,key:row.key,at:row.at,data:row.data});
+  return JSON.stringify(L).length>max?{list:Array.isArray(list)?list:[],ok:false}:{list:L,ok:true};
+}
+const aiRepPermanent=err=>/^(22|23)/.test(String(err&&err.code||''));   // данные/ограничения — повтор не поможет
+const aiOutboxKey=uid=>'dash_ai_outbox_'+uid;
+function aiOutboxRead(uid){ try{ const a=JSON.parse(localStorage.getItem(aiOutboxKey(uid))||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function aiOutboxWrite(uid,a){ try{ if(a.length)localStorage.setItem(aiOutboxKey(uid),JSON.stringify(a)); else localStorage.removeItem(aiOutboxKey(uid)); return true; }catch(e){ return false; } }
+// Память отчётов — одного аккаунта. AI_LEGACY_STOCK здесь НЕ трогаем: это часть состояния ledger (его ставит
+// applyRemoteState до переноса) — сброс тут выпустил бы снапшот без stockAiLog до подтверждения.
+function aiRepUid(uid){
+  if(AI_REP.uid===uid)return;
+  AI_REP={uid,rows:[],ready:false,err:false}; _aiRepFail={}; _aiRepLive={}; _aiSweepRej=new Set();
+}
+function aiRepReset(){ AI_REP={uid:null,rows:[],ready:false,err:false}; AI_LEGACY_STOCK=[]; _aiRepFail={}; _aiRepLive={}; _aiSweepRej=new Set(); }
+const aiRepMine=uid=>!!currentUser&&currentUser.id===uid&&AI_REP.uid===uid;
+const stockAiLog=()=>aiRepList(AI_REP.rows,'stock').map(aiEntry);
+function aiRepSig(rows){ return (rows||[]).map(r=>aiRowK(r)+'#'+(r.id||'')+(r.data!=null?'+':'')).sort().join('|'); }
+async function aiRepInsert(uid,rows){
+  let res;
+  try{ res=await sb.from('ai_reports').upsert(rows.map(r=>({user_id:uid,kind:r.kind,key:r.key,at:r.at,data:r.data})),{onConflict:'user_id,kind,key,at',ignoreDuplicates:true}).select('id,kind,key,at,meta'); }
+  catch(e){ res={error:e}; }
+  if(res&&res.error)return {ok:false,err:res.error,permanent:aiRepPermanent(res.error)};
+  return {ok:true,rows:(res&&res.data)||[]};
+}
+// Пачка, отклонённая сервером (22/23 — одна «плохая» строка), вставляется по одной: отказ не забирает соседей.
+// done — подтверждены (ret — вернувшиеся id/meta), rejected — отказ по самой строке, net — сеть (дальше не шли).
+async function aiRepInsertSafe(uid,b){
+  const r=await aiRepInsert(uid,b);
+  if(r.ok)return {done:b,ret:r.rows,rejected:[],net:false};
+  if(!r.permanent)return {done:[],ret:[],rejected:[],net:true,err:r.err};
+  if(b.length<2)return {done:[],ret:[],rejected:b,net:false,err:r.err};
+  const out={done:[],ret:[],rejected:[],net:false,err:r.err};
+  for(const x of b){
+    const q=await aiRepInsert(uid,[x]);
+    if(q.ok){ out.done.push(x); out.ret=out.ret.concat(q.rows); }
+    else if(q.permanent)out.rejected.push(x);
+    else { out.net=true; out.err=q.err; break; }
+  }
+  return out;
+}
+// Список своих строк (id/kind/key/at/meta). Ошибка — одна повторная попытка через 3 с, дальше разделы показывают «↻».
+async function aiRepLoad(retry){
+  if(!SYNC_ENABLED||!sb||!currentUser)return false;
+  const uid=currentUser.id; aiRepUid(uid);
+  const known=new Set(AI_REP.rows.filter(r=>!r._local).map(aiRowK));   // подтверждённые до запроса
+  let res;
+  try{ res=await sb.from('ai_reports').select('id,kind,key,at,meta').order('at',{ascending:false}).range(0,999); }
+  catch(e){ res={error:e}; }
+  if(!aiRepMine(uid))return false;
+  if(res&&res.error){
+    console.warn('ai_reports load failed',res.error);
+    if(!retry)setTimeout(()=>{ aiRepLoad(true); },AI_REP_RETRY_MS);
+    else if(!AI_REP.ready){ AI_REP.err=true; renderAll(); }
+    return false;
+  }
+  const before=aiRepSig(AI_REP.rows)+AI_REP.ready;
+  const ob=aiOutboxRead(uid).map(x=>Object.assign({},x,{_local:true}));
+  const fresh=new Set(AI_REP.rows.filter(r=>!r._local&&!known.has(aiRowK(r))).map(aiRowK));
+  AI_REP.rows=aiRepReconcile(aiRepMerge(AI_REP.rows,ob),(res&&res.data)||[],fresh);
+  AI_REP.ready=true; AI_REP.err=false;
+  aiOutboxFlush();
+  if(aiRepSig(AI_REP.rows)+AI_REP.ready!==before)renderAll();
+  return true;
+}
+// Дождаться списка (≤ AI_REP_READY_MS) — снапшоты AI (трек-рекорд, контекст рынка) собираются по полной истории.
+function aiRepReady(){
+  if(!SYNC_ENABLED||!currentUser||AI_REP.ready||AI_REP.err)return Promise.resolve(AI_REP.ready);
+  const t0=Date.now();
+  return new Promise(res=>{ (function tick(){ if(AI_REP.ready||AI_REP.err||!currentUser||Date.now()-t0>=AI_REP_READY_MS)res(AI_REP.ready); else setTimeout(tick,150); })(); });
+}
+// Дотянуть data строк без него. Запрос по id в полёте — один; неудача (сеть/строки нет) запоминается до «↻» (aiRepRetry),
+// иначе каждая перерисовка раздела грузила бы заново. true ⇔ у всех строк есть data.
+let _aiRepLive={},_aiRepFail={};
+const aiRepFailed=r=>!!(r&&r.id&&_aiRepFail[r.id]);
+async function aiRepEnsure(rows){
+  const need=(rows||[]).filter(r=>r&&r.data==null&&r.id);
+  if(!need.length)return true;
+  if(!SYNC_ENABLED||!sb||!currentUser)return false;
+  const uid=currentUser.id,ids=need.map(r=>r.id).filter(id=>!_aiRepFail[id]);
+  const fresh=ids.filter(id=>!_aiRepLive[id]);
+  if(fresh.length){
+    const p=(async()=>{
+      let res; try{ res=await sb.from('ai_reports').select('id,data').in('id',fresh); }catch(e){ res={error:e}; }
+      if(!aiRepMine(uid))return;
+      if(res&&res.error){ console.warn('ai_reports data failed',res.error); fresh.forEach(id=>{ _aiRepFail[id]=1; }); return; }
+      const got={}; ((res&&res.data)||[]).forEach(x=>{ if(x&&x.id)got[x.id]=x.data; });
+      fresh.forEach(id=>{ if(got[id]==null)_aiRepFail[id]=1; });   // строки нет (обрезана/удалена) — не долбить
+      AI_REP.rows=aiRepFillData(AI_REP.rows,got);
+    })().finally(()=>{ fresh.forEach(id=>{ delete _aiRepLive[id]; }); });
+    fresh.forEach(id=>{ _aiRepLive[id]=p; });
+  }
+  await Promise.all(ids.map(id=>_aiRepLive[id]).filter(Boolean));
+  if(!aiRepMine(uid))return false;
+  return need.every(r=>AI_REP.rows.some(x=>x.id===r.id&&x.data!=null));
+}
+// Строки, полный текст которых нужен разделу: proto — вся история вкладки (≤ 10), pfa и stock — последняя.
+function aiRepWanted(kind,key){ const L=aiRepList(AI_REP.rows,kind,key); return kind==='proto'?L:L.slice(0,1); }
+// «↻»: забыть неудачи и повторить — список (если он не загрузился) или тексты раздела.
+function aiRepRetry(kind,key){
+  if(AI_REP.err||!AI_REP.ready){ AI_REP.err=false; renderAll(); aiRepLoad(); return; }
+  const rows=kind?aiRepWanted(kind,key):AI_REP.rows.filter(aiRepFailed);
+  rows.forEach(r=>{ if(r.id)delete _aiRepFail[r.id]; });
+  renderAll(); aiRepEnsure(rows).then(()=>renderAll(),()=>{});
+}
+// Новая запись: сразу в память (UI видит её), затем в таблицу. Сеть — в исходящую очередь с тостом; повтор — при
+// online/возврате на вкладку, следующей записи и после загрузки списка.
+function aiRepPut(kind,key,entry){
+  const at=entry&&(kind==='stock'?entry.ts:entry.at),row={kind,key,at,meta:null,data:entry,_local:true};
+  if(!aiRowK(row))return Promise.resolve('bad');
+  AI_REP.rows=aiRepMerge(AI_REP.rows,[row]);
+  if(!SYNC_ENABLED||!sb||!currentUser)return Promise.resolve('off');
+  const uid=currentUser.id; aiRepUid(uid);
+  return aiRepInsert(uid,[row]).catch(e=>({ok:false,err:e,permanent:false})).then(r=>{
+    const mine=aiRepMine(uid);
+    if(r.ok){ if(mine){ AI_REP.rows=aiRepConfirmRows(AI_REP.rows,[row],r.rows); aiOutboxFlush(); } return 'ok'; }
+    console.warn('ai_reports insert failed',r.err);
+    if(r.permanent){ if(mine)toast(RT('⚠ AI-отчёт отклонён сервером — сохранён только до перезагрузки','⚠ The server rejected the AI report — kept until reload only'),true); return 'err'; }
+    // очередь — аккаунта записи, даже если за время запроса вышли/сменили аккаунт (сбросится при его входе)
+    const ob=aiOutboxAdd(aiOutboxRead(uid),row,AI_OUTBOX_MAX),saved=ob.ok&&aiOutboxWrite(uid,ob.list);
+    if(mine)toast(saved?RT('⚠ AI-отчёт не сохранён в облако — повторю при подключении','⚠ AI report not saved to the cloud — will retry when online')
+      :RT('⚠ AI-отчёт не сохранён в облако, очередь переполнена — сохранён только до перезагрузки','⚠ AI report not saved to the cloud and the queue is full — kept until reload only'),true);
+    return saved?'queued':'err';
+  });
+}
+let _aiOutRun=null;
+function aiOutboxFlush(){
+  if(_aiOutRun)return _aiOutRun;
+  if(!SYNC_ENABLED||!sb||!currentUser)return Promise.resolve();
+  const uid=currentUser.id,ob=aiOutboxRead(uid);
+  if(!ob.length)return Promise.resolve();
+  _aiOutRun=(async()=>{
+    for(const b of aiRepBatches(ob)){
+      const r=await aiRepInsertSafe(uid,b);
+      if(!aiRepMine(uid))return;
+      const gone=r.done.concat(r.rejected),ks=new Set(gone.map(aiRowK));
+      if(gone.length)aiOutboxWrite(uid,aiOutboxRead(uid).filter(x=>!ks.has(aiRowK(x))));
+      if(r.done.length)AI_REP.rows=aiRepConfirmRows(AI_REP.rows,r.done,r.ret);
+      if(r.rejected.length){ console.warn('ai outbox: rejected',r.err,r.rejected); toast(RT('⚠ AI-отчёт из очереди отклонён сервером','⚠ A queued AI report was rejected by the server'),true); }
+      if(r.net)return;   // сеть — ждём следующего повода
+    }
+  })().catch(e=>{ console.warn('ai outbox flush failed',e); }).then(()=>{ _aiOutRun=null; });
+  return _aiOutRun;
+}
+// Удаление (🗑 AI-разбора): из памяти сразу, из переходного буфера ledger и очереди, затем в таблице (по id или ключу).
+async function aiRepDel(row){
+  const k=aiRowK(row); if(!k)return false;
+  AI_REP.rows=AI_REP.rows.filter(r=>aiRowK(r)!==k);
+  if(row.kind==='stock'){ const n=AI_LEGACY_STOCK.length; AI_LEGACY_STOCK=AI_LEGACY_STOCK.filter(e=>!(e&&aiRowKey('stock',aiStockKey(e.ticker),e.ts)===k)); if(AI_LEGACY_STOCK.length!==n)scheduleSave(); }
+  if(!SYNC_ENABLED||!sb||!currentUser)return true;
+  const uid=currentUser.id;
+  aiOutboxWrite(uid,aiOutboxRead(uid).filter(x=>aiRowK(x)!==k));
+  let res;
+  try{ const q=sb.from('ai_reports').delete(); res=await(row.id?q.eq('id',row.id):q.eq('user_id',uid).eq('kind',row.kind).eq('key',row.key).eq('at',row.at)); }
+  catch(e){ res={error:e}; }
+  if(res&&res.error){
+    console.warn('ai_reports delete failed',res.error);
+    if(aiRepMine(uid)){ AI_REP.rows=aiRepMerge(AI_REP.rows,[row]); renderAll(); }
+    toast(RT('⚠ Не удалось удалить AI-разбор в облаке — повторите','⚠ Could not delete the AI analysis in the cloud — try again'),true);
+    return false;
+  }
+  return true;
+}
+// Перенос AI-записей ledger в таблицу (§4.3). Строки сразу в памяти (_local); из ledger запись уходит ТОЛЬКО после
+// подтверждённой вставки её пачки (дубль = уже в таблице, тоже подтверждение). Ошибка — ничего не удаляется, повтор
+// при следующем applyRemoteState/догоне. Один перенос в полёте; новый повод во время переноса — ещё один проход.
+let _aiSweepRun=null,_aiSweepAgain=false,_aiSweepRej=new Set(),_aiApplyGen=0;   // _aiSweepRej — отклонённые сервером (сессия)
+function aiRepSweep(){
+  if(!SYNC_ENABLED||!sb||!currentUser||!syncReady)return Promise.resolve('off');
+  if(_aiSweepRun){ _aiSweepAgain=true; return _aiSweepRun; }
+  _aiSweepRun=aiRepSweepRun().catch(e=>{ console.warn('AI sweep failed',e); return 'err'; })
+    .then(r=>{ _aiSweepRun=null; if(_aiSweepAgain){ _aiSweepAgain=false; aiRepSweep(); } return r; });
+  return _aiSweepRun;
+}
+async function aiRepSweepRun(){
+  const uid=currentUser.id; aiRepUid(uid);
+  const ex=aiLedgerExtract({data:DATA,stockAiLog:AI_LEGACY_STOCK}),rows=ex.rows.filter(r=>!_aiSweepRej.has(aiRowK(r)));
+  if(ex.bad.length)console.warn('AI sweep: записи без даты/ключа или слишком большие остаются в ledger',ex.bad);
+  AI_REP.rows=aiRepMerge(AI_REP.rows,ex.rows.map(r=>Object.assign({},r,{_local:true})));   // видны в UI и до подтверждения
+  if(!rows.length)return 'none';
+  let stripped=false;
+  for(const b of aiRepBatches(rows)){
+    const r=await aiRepInsertSafe(uid,b);
+    if(!aiRepMine(uid))return 'off';
+    if(r.done.length){
+      AI_REP.rows=aiRepConfirmRows(AI_REP.rows,r.done,r.ret);
+      const st=aiLedgerStrip(DATA,AI_LEGACY_STOCK,new Set(r.done.map(aiRowK)));
+      AI_LEGACY_STOCK=st.stock; if(st.changed)stripped=true;
+    }
+    if(r.rejected.length){ console.warn('AI sweep: отклонены сервером — остаются в ledger',r.err,r.rejected); r.rejected.forEach(x=>_aiSweepRej.add(aiRowK(x))); }
+    if(r.net){ console.warn('AI sweep: insert failed',r.err); if(stripped)aiStripSave(); return 'err'; }
+  }
+  if(stripped)aiStripSave();
+  return 'ok';
+}
+function aiStripSave(){
+  const g=_aiApplyGen,rev=stateRev;
+  setTimeout(()=>{ if(g===_aiApplyGen&&rev===stateRev)scheduleSave(); },AI_STRIP_PUSH_MS+Math.random()*AI_STRIP_JITTER_MS);
+}
+function aiRepOnRealtime(p){
+  if(!currentUser||AI_REP.uid!==currentUser.id)return 'off';
+  const next=aiRepRealtimeApply(AI_REP.rows,p);
+  if(next===AI_REP.rows)return 'none';
+  AI_REP.rows=next; renderAll(); return 'apply';
+}
+// Статус списка для пустых разделов: грузится / не загрузился (↻) / '' (загружен или без облака).
+function aiRepStateNote(){
+  if(!SYNC_ENABLED||!currentUser||AI_REP.ready)return '';
+  return AI_REP.err?`<div class="pf3-empty">⚠ ${RT('AI-отчёты не загрузились','AI reports failed to load')} — <button class="pf3-btn pf3-btn-sm" onclick="aiRepRetry()">↻ ${RT('Повторить','Retry')}</button></div>`
+    :`<div class="pf3-empty">⏳ ${RT('Загружаю AI-отчёты…','Loading AI reports…')}</div>`;
+}
+// Заглушка вместо текста строки без data: грузится или не загрузилась (↻ по виду/ключу).
+function aiRepPartialNote(e,kind,key){
+  const r=e&&aiRepList(AI_REP.rows,kind,key).find(x=>aiRowMs(x.at)===aiRowMs(kind==='stock'?e.ts:e.at));
+  return aiRepFailed(r)?`<div class="pf3-empty">⚠ ${RT('Текст отчёта не загрузился','The report text failed to load')} — <button class="pf3-btn pf3-btn-sm" onclick="aiRepRetry('${kind}',${escHtml(JSON.stringify(key))})">↻ ${RT('Повторить','Retry')}</button></div>`
+    :`<div class="pf3-empty">⏳ ${RT('Загружаю отчёт…','Loading the report…')}</div>`;
+}
+// ── /AI-отчёты (E5) ──
 function applyRemoteState(s){
   pushAgain=false;   // D5: состояние заменено целиком — правок «в полёте» больше нет (иначе ушёл бы пустой push rev+1)
   applyingRemote=true;
@@ -367,7 +728,7 @@ function applyRemoteState(s){
   if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
-  if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
+  AI_LEGACY_STOCK=Array.isArray(s.stockAiLog)?s.stockAiLog:[];   // E5: не перенесённые разборы акций (ключа нет — перенесены)
   // E1: val/insider/aiReco/tgFull/tgMeta в снапшоте старого клиента не читаются — общие данные только из shared_analysis.
   if(s.cycleOvr&&typeof s.cycleOvr==='object') CYCLE_OVR=s.cycleOvr;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
@@ -383,11 +744,20 @@ function applyRemoteState(s){
   if(restoreMeta||restoreWatch) scheduleSave();   // мета позиций / список покупок пережили запись старым клиентом — вернуть в облако
   migrateState();   // один проход на загрузку облачного состояния (S7a)
   init();   // перерисовать с синхронизированными данными
+  _aiApplyGen++;   // отложенный push переноса по прежнему снапшоту больше не нужен
+  if(currentUser&&syncReady)aiRepSweep();   // E5: AI-записи ledger → ai_reports (из ledger — после подтверждения)
 }
 function subscribeRealtime(){
   if(realtimeChannel) sb.removeChannel(realtimeChannel);
   realtimeChannel=sb.channel('dash_'+currentUser.id)
     .on('postgres_changes',{event:'*',schema:'public',table:'ledger_state',filter:'user_id=eq.'+currentUser.id},syncOnRealtime)
+    .subscribe();
+  // E5: AI-отчёты — своим каналом (нет таблицы — ошибка канала не задевает синк ledger). DELETE приходит только с id и
+  // фильтром user_id не отбирается — отдельной подпиской, чужой id игнорируется.
+  if(aiRepChannel) sb.removeChannel(aiRepChannel);
+  aiRepChannel=sb.channel('ai_'+currentUser.id)
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'ai_reports',filter:'user_id=eq.'+currentUser.id},aiRepOnRealtime)
+    .on('postgres_changes',{event:'DELETE',schema:'public',table:'ai_reports'},aiRepOnRealtime)
     .subscribe();
 }
 
@@ -435,6 +805,7 @@ async function handleLogin(e){
 }
 async function handleLogout(){
   if(realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel=null; }
+  if(aiRepChannel){ sb.removeChannel(aiRepChannel); aiRepChannel=null; }
   clearInterval(hbTimer); userRole='user'; allowedTabs=['Nasdaq 100'];
   await sb.auth.signOut(); currentUser=null; syncReady=false; syncReset();
   document.getElementById('authOverlay').classList.remove('hidden');
@@ -443,7 +814,9 @@ async function handleLogout(){
 async function startApp(){
   document.getElementById('authOverlay').classList.add('hidden');
   await initAccess();   // роль + вкладки до первой отрисовки синхронизированных данных
+  aiRepUid(currentUser.id);
   await pullState();
+  aiRepLoad();   // E5: список AI-отчётов (id/meta) — после первого чтения ledger (перенос уже запущен applyRemoteState)
   subscribeRealtime();
   syncResumeInit();   // догон облака после сна/офлайна (E0)
   refreshFX();   // override synced rates with live USD/EUR/NOK→SEK (non-blocking)
@@ -576,7 +949,7 @@ function newsImpactHTML(){
   return`<div class="news-res">${grp('📈 '+RT('Позитив','Bullish'),bull)}${grp('📉 '+RT('Негатив','Bearish'),bear)}${grp('⚪ '+RT('Нейтрально','Neutral'),neu)}</div>`;
 }
 let AI_PORT=null,AI_PORT_BAK=null;   // 🤖 AI Портфель: состояние + резерв worker'а (round-trip)
-let STOCK_AI_LOG=[];   // обучающая база: разборы акций {ticker,ts,price,ccy,verdict,target,horizon,text,data}
+// Обучающая база разборов акций {ticker,ts,price,ccy,verdict,target,horizon,text,data} — E5: таблица ai_reports (stockAiLog()).
 
 // 📚 Инвест-плейбук: курируемая методичка «как обгонять индекс». Редактируется
 // инвестором, синхронизируется (aiPlaybook) и передаётся во все анализы AI Proto.
@@ -661,7 +1034,7 @@ function idxCloseOn(sym,dateStr){
 // 🎯 Трек-рекорд прошлых разборов: сбывались ли вердикты (направление цены) И
 // АЛЬФА к индексу (бумага минус бенчмарк за тот же период, если история загружена).
 function aiTrackRecord(){
-  const log=Array.isArray(STOCK_AI_LOG)?STOCK_AI_LOG:[];
+  const log=stockAiLog();   // E5: хватает выжимки meta (ticker/price/verdict/ts/ccy)
   if(!log.length)return null;
   const px={};
   v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;d.rows.forEach(r=>{const tk=String(r[2]||'').toUpperCase();const p=parseFloat(r[7]);if(tk&&isFinite(p)&&p>0&&px[tk]==null)px[tk]=p})});
@@ -1786,8 +2159,7 @@ function pf3DateRu(s){const d=new Date(s+'T00:00:00');if(isNaN(d))return String(
 
 // ===== «AI Proto» sub-tab: Claude-powered portfolio analysis =====
 // The worker's ?action=ai endpoint sends the snapshot to the Claude API and
-// returns a markdown report; the last report is stored in pf3D().aiReport
-// (synced), so it survives reloads and is visible on every device.
+// returns a markdown report; reports live in the ai_reports table (kind 'proto', key = tab, E5).
 let pf3Ai={loading:false};
 
 // Everything the model needs: positions with live prices, levels, targets, shares + capital.
@@ -1886,21 +2258,17 @@ function pf3AiSnapshot(key){
     marketContext:v3Tabs().filter(k=>!pf3IsPort(k)&&DATA[k]).map(k=>{
       const di=DATA[k],phases={};
       di.rows.forEach(r=>{const l=sigRowPhase(di,r).label;phases[l]=(phases[l]||0)+1});
-      const last=(di.aiHistory||[])[0];
+      const last=aiEntry(aiRepList(AI_REP.rows,'proto',k)[0]);   // E5: сводка — из meta, текст не нужен
       return{index:k,phases,
-        lastAiReview:last?{at:last.at,summary:(last.proposal&&last.proposal.summary)||String(last.text||'').slice(0,1200)}:null};
+        lastAiReview:last?{at:last.at,summary:aiProtoSummary(last)}:null};
     }),
     userNews:newsForAi(),   // 📰 вставленная пользователем сводка новостей (если есть)
   };
 }
 
-// History of analyses (newest first, capped) — each entry {text, proposal, at}.
-// Older d.aiReport (single report) is folded in for backward compatibility.
-function pf3AiHist(){
-  const d=pf3D();
-  if(d.aiHistory&&d.aiHistory.length)return d.aiHistory;
-  return d.aiReport?[d.aiReport]:[];
-}
+// History of analyses (newest first, ≤ 10 in ai_reports) — each entry {text, proposal, at, cost}; без загруженного
+// текста — выжимка meta с _partial (E5). Устаревший одиночный отчёт вкладки (aiReport) переносит aiRepSweep.
+function pf3AiHist(){ return aiRepList(AI_REP.rows,'proto',v3Key).map(aiEntry); }
 const pf3DtRu=iso=>{const d=new Date(iso);return isNaN(d)?'':pf3DateRu(String(iso).slice(0,10))+', '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
 
 // Access-token текущей сессии — worker пускает к AI только админа по нему.
@@ -1959,6 +2327,7 @@ async function pf3AiRun(){
     await aiLoadIdxHist().catch(()=>{});   // история индексов → альфа в трек-рекорде
     await pf3PullHoldingsNews(key).catch(()=>{});   // 📰 свежие новости по позициям → анализ актуален
     await pf3LoadAllFundamentals(key).catch(()=>{});   // 🏅 фундаментал всех позиций → betyg как в карточке
+    await aiRepReady();   // E5: трек-рекорд и контекст рынка — по полному списку AI-отчётов
     const snap=pf3AiSnapshot(key);
     const ln=pf3LiveNewsForAi(key); if(ln)snap.liveNews=ln;   // живые заголовки + тональность по позициям
     // Вердикты «Решения» (SIG v2) по всем тикерам вкладок — чтобы «Предложение» AI было согласовано с тем, что
@@ -1977,12 +2346,10 @@ async function pf3AiRun(){
       if(res.ok&&res.result)j=res.result;else{toast('AI ('+TAB_LABEL(key)+'): '+(res.error||'нет результата'),true);pf3Ai.loading=false;if(isV3())renderPF3();return;}
     }
     if(j&&j.text){
-      const d=DATA[key];
       aiSpendAdd(j.cost);
       const entry={text:j.text,proposal:j.proposal||null,at:new Date().toISOString(),cost:j.cost||null};
-      d.aiHistory=[entry,...(d.aiHistory||(d.aiReport?[d.aiReport]:[]))].slice(0,10);   // keep the last 10 runs
-      delete d.aiReport;   // superseded by aiHistory
-      scheduleSave();
+      aiRepPut('proto',key,entry);   // E5: в ai_reports (история ≤ 10 на вкладку — обрезает сервер)
+      scheduleSave();   // AI_SPEND — личный снапшот
       toast('🤖 '+RT('Анализ готов — отчёт сохранён в «'+TAB_LABEL(key)+'»','Analysis ready — saved to '+TAB_LABEL(key)));
     }else{
       // Показать НАСТОЯЩУЮ причину от воркера (раньше пряталась за общим тостом).
@@ -1997,7 +2364,7 @@ async function pf3AiRun(){
 
 // ── 🔬 AI-анализ одной акции (карточка): web-поиск новостей + рекомендация ──
 // Снапшот бумаги + контекст портфеля (доли по секторам, кэш) + прошлые разборы
-// этого тикера (сверка прогноз↔факт). Результат логируется в STOCK_AI_LOG.
+// этого тикера (сверка прогноз↔факт). Результат пишется в ai_reports (kind 'stock', E5).
 function stockAiSnapshot(d,r){
   const h=d.headers,{s50,s100,s200}=smaIdx(d);
   const g=name=>{const i=h.indexOf(name);const v=i>=0?parseFloat(r[i]):NaN;return isFinite(v)?v:null};
@@ -2012,7 +2379,7 @@ function stockAiSnapshot(d,r){
       bySectorPct:Object.entries(bySec).map(([k,v])=>({sector:k,pct:tot>0?Math.round(v/tot*1000)/10:0})).sort((a,b)=>b.pct-a.pct),
       holdsThis:p3.rows.some(x=>String(x[2]||'').toUpperCase()===tk)};
   }
-  const prior=(STOCK_AI_LOG||[]).filter(e=>String(e.ticker||'').toUpperCase()===tk).slice(0,4)
+  const prior=stockAiLog().filter(e=>aiStockKey(e.ticker)===tk.trim()).slice(0,4)
     .map(e=>({at:e.ts,priceThen:e.price,verdict:(e.data||{}).verdict||null,targetThen:(e.data||{}).targetPrice||null,priceNow:price}));
   // Фундаментал СВОЕЙ бумаги: снапшот собирается после await, а pf3FundData() смотрит на текущий выбор (v3Key/pf3Sel) —
   // переход к другой бумаге во время запроса подставил бы её отчётность. Кэш карточки — только при совпадении символа.
@@ -2067,6 +2434,7 @@ async function stockAiRun(ev){
   renderPF3();
   try{
     await pf3LoadFundamentals().catch(()=>{});   // подтянуть фундаментал в снапшот
+    await aiRepReady();   // E5: прошлые разборы тикера (priorAnalyses) — по полному списку
     const snap=stockAiSnapshot(d,r);
     const resp=await fetch(PRICE_PROXY+'?action=stockai',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const j=await resp.json();
@@ -2074,11 +2442,11 @@ async function stockAiRun(ev){
       aiSpendAdd(j.cost);
       pf3StockAi={sym,loading:false,text:j.text,data:j.data||null,at:new Date().toISOString(),cost:j.cost||null,sigAt:snap.recoVerdict||null};
       _stkCardOpen[sym]=true;
-      // Обучающая база: привязка к тикеру, дате, цене.
-      STOCK_AI_LOG=[{ticker:sym,name:r[1],ts:pf3StockAi.at,price:snap.price,ccy:snap.ccy,
+      // Обучающая база: привязка к тикеру, дате, цене (E5: ai_reports, ≤ 300 — обрезает сервер).
+      aiRepPut('stock',aiStockKey(sym),{ticker:sym,name:r[1],ts:pf3StockAi.at,price:snap.price,ccy:snap.ccy,
         verdict:(j.data||{}).verdict||null,target:(j.data||{}).targetPrice||null,horizon:(j.data||{}).horizon||null,
-        cost:j.cost||null,sigAt:snap.recoVerdict||null,data:j.data||null,text:j.text},...(STOCK_AI_LOG||[])].slice(0,300);
-      scheduleSave();
+        cost:j.cost||null,sigAt:snap.recoVerdict||null,data:j.data||null,text:j.text});
+      scheduleSave();   // AI_SPEND
       toast('🔬 '+RT('Анализ готов','Analysis ready'));
     }else{pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast((j&&j.error)||'AI не ответил',true);}
   }catch(e){pf3StockAi={sym,loading:false,text:null,data:null,at:null};toast(RT('Worker недоступен (нужен эндпоинт ?action=stockai)','Worker unreachable (?action=stockai)'),true);}
@@ -2234,7 +2602,7 @@ function insiderHeadline(v){
   return{cls:'val-mid',icon:'⚪',txt:RT('Нейтрально за 30 дней','Neutral over 30d')};
 }
 
-// 🔬 AI-разборы: история разборов из обучающей базы STOCK_AI_LOG. Каждая запись
+// 🔬 AI-разборы: история разборов из обучающей базы (ai_reports, kind 'stock'). Каждая запись
 // сверяется с текущей ценой бумаги (где она есть в данных) — прогноз↔факт.
 function stkLivePrice(tk){
   const U=String(tk).toUpperCase();
@@ -2245,16 +2613,21 @@ function stkLivePrice(tk){
   }
   return null;
 }
+const stkRow=ts=>aiRepList(AI_REP.rows,'stock').find(r=>aiRowMs(r.at)===aiRowMs(ts));
 function stkDelete(ts){
-  STOCK_AI_LOG=(STOCK_AI_LOG||[]).filter(e=>e.ts!==ts);
-  scheduleSave();renderAll();
+  const r=stkRow(ts); if(!r)return;
+  aiRepDel(r); renderAll();
 }
 let _stkOpen={};
-function stkToggle(ts){_stkOpen[ts]=!_stkOpen[ts];renderAll();}
+function stkToggle(ts){
+  _stkOpen[ts]=!_stkOpen[ts]; renderAll();
+  const r=_stkOpen[ts]&&stkRow(ts);   // текст разбора — только по раскрытию (E5)
+  if(r&&r.data==null&&!aiRepFailed(r))aiRepEnsure([r]).then(()=>renderAll(),()=>{});
+}
 function stkLogHTML(){
-  const log=STOCK_AI_LOG||[];
+  const log=stockAiLog();
   if(!log.length)return `<section class="pf3-panel"><div class="pf3-panel-hd"><span>🔬 ${RT('AI-разборы акций','AI stock analyses')}</span></div>
-    <div class="pf3-empty">${RT('Пока пусто. Откройте карточку любой акции и нажмите «🤖 AI-анализ» — разбор сохранится сюда.','Empty yet. Open any stock card and press «🤖 AI-анализ» — the analysis is saved here.')}</div></section>`;
+    ${aiRepStateNote()||`<div class="pf3-empty">${RT('Пока пусто. Откройте карточку любой акции и нажмите «🤖 AI-анализ» — разбор сохранится сюда.','Empty yet. Open any stock card and press «🤖 AI-анализ» — the analysis is saved here.')}</div>`}</section>`;
   const VB={add:['🟢',RT('Добавлять','Add'),'add'],watch:['🟡',RT('Наблюдать','Watch'),'watch'],avoid:['🔴',RT('Не добавлять','Avoid'),'avoid']};
   const rows=log.map(e=>{
     const v=VB[e.verdict]||['⚪','—',''];
@@ -2282,7 +2655,7 @@ function stkLogHTML(){
         <span class="stk-exp">${open?'▾':'▸'}</span>
       </div>
       ${bits.length?`<div class="stkai-bits" style="padding:0 4px 6px">${bits.map(b=>`<span>${b}</span>`).join('')}</div>`:''}
-      ${open?`<div class="pf3-ai-report stk-body">${pf3Md(e.text||'')}</div><div style="text-align:right"><button class="pf3-btn pf3-btn-sm btn-del" onclick="stkDelete('${e.ts}')">🗑 ${RT('Удалить','Delete')}</button></div>`:''}
+      ${open?`${e._partial?aiRepPartialNote(e,'stock',aiStockKey(e.ticker)):`<div class="pf3-ai-report stk-body">${pf3Md(e.text||'')}</div>`}<div style="text-align:right"><button class="pf3-btn pf3-btn-sm btn-del" onclick="stkDelete('${e.ts}')">🗑 ${RT('Удалить','Delete')}</button></div>`:''}
     </div>`;
   }).join('');
   return `<section class="pf3-panel">
@@ -2295,9 +2668,10 @@ function stockAiHTML(d,r){
   const sym=String(r[2]||'').toUpperCase();
   const cur=pf3StockAi.sym===sym?pf3StockAi:null;
   // Последний сохранённый разбор по этому тикеру (если в памяти ничего нет).
-  const saved=(!cur||(!cur.loading&&!cur.text))?(STOCK_AI_LOG||[]).find(e=>String(e.ticker||'').toUpperCase()===sym):null;
+  const saved=(!cur||(!cur.loading&&!cur.text))?aiEntry(aiRepList(AI_REP.rows,'stock',sym.trim())[0]):null;
   const loading=cur&&cur.loading;
-  const text=cur&&cur.text?cur.text:(saved?saved.text:null);
+  const partial=!!(saved&&saved._partial);   // E5: текст ещё не загружен (грузит deskStockAiEnsure при раскрытой панели)
+  const text=cur&&cur.text?cur.text:(saved&&!partial?saved.text:null);
   const data=cur&&cur.data?cur.data:(saved?saved.data:null);
   const at=cur&&cur.at?cur.at:(saved?saved.ts:null);
   const cost=cur&&cur.cost?cur.cost:(saved?saved.cost:null);
@@ -2317,9 +2691,10 @@ function stockAiHTML(d,r){
   const open=!!_stkCardOpen[sym];
   const body=loading
     ? `<div class="stkai-load">⏳ ${RT('Анализирую: цены, фундаментал, веб-поиск новостей… (до минуты)','Analysing: prices, fundamentals, web news search… (up to a minute)')}</div>`
+    : partial ? aiStaleBadge(sigAt,sigRowVerdict(d,r))+head+aiRepPartialNote(saved,'stock',sym.trim())
     : text
       ? aiStaleBadge(sigAt,sigRowVerdict(d,r))+head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
-      : `<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
+      : aiRepStateNote()||`<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('AI-анализ акции','AI stock analysis')}</span>
       <button class="pf3-btn pf3-btn-sm" onclick="stockAiRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🤖 '+RT('AI-анализ','AI analysis')+(text?' · '+RT('обновить','refresh'):'')}</button></div>
@@ -2352,8 +2727,10 @@ async function aiChatSend(){
   AI_CHAT.push({role:'user',content:q,at:new Date().toISOString()});
   aiChatBusy=true;scheduleSave();renderPF3();
   try{
+    const key=v3Key;   // портфель, в котором спросили (ожидание списка ниже — до 5 с)
+    await aiRepReady();   // E5: трек-рекорд и контекст рынка в снапшоте — по полному списку AI-отчётов
     const r=await fetch(PRICE_PROXY+'?action=chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},
-      body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:[],snapshot:pf3AiSnapshot()})});
+      body:JSON.stringify({messages:AI_CHAT.slice(-16).map(m=>({role:m.role,content:m.content})),prefs:[],snapshot:pf3AiSnapshot(key)})});
     const j=await r.json();
     if(j&&j.reply){
       aiSpendAdd(j.cost);
@@ -2441,7 +2818,7 @@ function pf3AiHTML(){
       <label class="pf3-incl-chat" title="${RT('Передать последние сообщения из чата с AI Proto в следующий анализ портфеля — AI учтёт ваши пожелания и идеи из переписки.','Pass the latest AI Proto chat messages into the next portfolio analysis — the AI will factor in your wishes and ideas from the conversation.')}"><input type="checkbox" ${AI_INCL_CHAT?'checked':''} onchange="aiToggleInclChat()"> 💬 ${RT('Учесть чат','Include chat')}${AI_CHAT.length?` (${AI_CHAT.length})`:''}</label>
       <span class="pf3-ai-note">${v3Key===PF3_KEY?RT('Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков и кэш — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»). Включите «💬 Учесть чат», чтобы добавить в анализ комментарии из переписки.','Claude gets your holdings, live prices, SMA/support levels, analyst targets and cash — and returns a report with recommendations plus a rebalancing plan (the ⚖️ Proposal tab). Toggle «💬 Include chat» to add your conversation comments to the analysis.'):RT(`Claude получит все ${pf3D().rows.length} акций вкладки с живыми ценами, уровнями, фазами и таргетами — и выделит самые актуальные с рекомендациями. Включите «💬 Учесть чат», чтобы добавить комментарии из переписки.`,`Claude gets all ${pf3D().rows.length} stocks of this tab with live prices, levels, phases and targets — and highlights the most relevant ones. Toggle «💬 Include chat» to add your conversation comments.`)}</span>
     </div>
-    ${last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
+    ${last&&last._partial?aiRepPartialNote(last,'proto',v3Key):last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':aiRepStateNote()||'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
     ${aiSpendLine()?`<div class="pf3-ai-note pf3-spend" title="${RT('Накоплено по всем AI-прогонам (анализ, рекомендации, чат). Оценка по тарифу Opus 4.8.','Accumulated across all AI runs. Estimated at Opus 4.8 pricing.')}">${aiSpendLine()}</div>`:''}
   </section>`;
   // Чат: вопросы по портфелю и рынку; ассистент сам выносит устойчивые
@@ -2466,7 +2843,7 @@ function pf3AiHTML(){
   if(H.length>1){
     h+=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('📜 История запросов')}</span><span class="pf3-asof">${H.length-1} пред.</span></div>`;
     H.slice(1).forEach(e=>{
-      h+=`<details class="pf3-ai-hist"><summary>🗓 ${pf3DtRu(e.at)}${e.cost?' · '+costUsd(e.cost):''}</summary><div class="pf3-ai-report" style="margin-top:10px">${pf3Md(e.text)}</div></details>`;
+      h+=`<details class="pf3-ai-hist"><summary>🗓 ${pf3DtRu(e.at)}${e.cost?' · '+costUsd(e.cost):''}</summary>${e._partial?aiRepPartialNote(e,'proto',v3Key):`<div class="pf3-ai-report" style="margin-top:10px">${pf3Md(e.text)}</div>`}</details>`;
     });
     h+='</section>';
   }
@@ -2477,6 +2854,8 @@ function pf3AiHTML(){
 function pf3PropHTML(){
   const H=pf3AiHist(),last=H[0],P=last&&last.proposal;
   let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${T('⚖️ Предложение по балансировке портфеля')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at):''}</span></div>`;
+  if(last&&last._partial)return h+(aiProtoActs(last)||last.nWl?aiRepPartialNote(last,'proto',v3Key):`<div class="pf3-empty">${RT('В последнем анализе нет структурированного плана — запустите анализ заново на вкладке «🤖 AI Proto»','The latest analysis has no structured plan — rerun it on the «🤖 AI Proto» tab')}</div>`)+'</section>';
+  if(!last&&aiRepStateNote())return h+aiRepStateNote()+'</section>';
   if(!P){
     h+=`<div class="pf3-empty">${last?'В последнем анализе нет структурированного плана — запустите анализ заново на вкладке «🤖 AI Proto» (worker должен быть обновлён)':'Предложения ещё нет — запустите анализ на вкладке «🤖 AI Proto», и план ребалансировки появится здесь'}</div></section>`;
     return h;
@@ -2504,12 +2883,14 @@ function pf3PropHTML(){
   return h;
 }
 
-// ===== «📈 Анализ» sub-tab: авто-разбор портфеля из цикла AI-портфеля =====
-// Заполняется воркером при нажатии «▶ Запустить цикл сейчас» (и на cron):
-// data[key].analysis = {at, summary, report, actions:[{action,name,ticker,details,amountSEK}]}.
+// ===== «📈 Анализ» sub-tab: авто-разбор портфеля воркером (cron-слоты :20/:40 и ?action=pfanalyze) =====
+// Последняя строка ai_reports kind 'pfa' вкладки (E5; до E5b воркер пишет в ledger — переносит aiRepSweep):
+// {at, summary, report, actions:[{action,name,ticker,details,amountSEK}], cost}.
 function pf3AnalysisHTML(){
-  const d=DATA[v3Key],A=d&&d.analysis;
+  const A=aiEntry(aiRepList(AI_REP.rows,'pfa',v3Key)[0]);
   let h=`<section class="pf3-panel"><div class="pf3-panel-hd"><span>${RT('📈 AI-анализ портфеля','📈 AI portfolio analysis')}</span><span class="pf3-asof">${A&&A.at?RT('обновлено ','updated ')+pf3DtRu(A.at):''}</span></div>`;
+  if(!A&&aiRepStateNote())return h+aiRepStateNote()+'</section>';
+  if(A&&A._partial)return h+(A.summary?`<div class="pf3-prop-sum">${pf3Md(A.summary)}</div>`:'')+aiRepPartialNote(A,'pfa',v3Key)+'</section>';
   if(!A){
     h+=`<div class="pf3-empty">${RT('Анализ ещё не запускался — нажмите «▶ Запустить цикл сейчас» на вкладке AI-Portfolio (worker должен быть обновлён). Анализ обновляется автоматически по циклу.','No analysis yet — press «▶ Run cycle now» on the AI-Portfolio tab (worker must be updated). It also refreshes automatically on the cycle.')}</div></section>`;
     return h;

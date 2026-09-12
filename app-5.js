@@ -390,8 +390,14 @@ function planFixAiRule(r){
   }
   return ch;
 }
-// Перенести структурированный совет AI-Proto («⚖️ Предложение») в правила плана.
-function planImportFromAi(){
+// Перенести структурированный совет AI-Proto («⚖️ Предложение») в правила плана. E5: совет — последняя строка proto
+// вкладки в ai_reports; без загруженного текста сначала догружаем её (портфель — тот, где нажали).
+async function planImportFromAi(){
+  const key=v3Key,top=aiRepList(AI_REP.rows,'proto',key)[0];
+  if(top&&top.data==null&&!(await aiRepEnsure([top]))){toast(RT('Не удалось загрузить совет AI — повторите','Could not load the AI advice — try again'),true);return;}
+  deskWithCtx(key,planImportFromAiRun);
+}
+function planImportFromAiRun(){
   const H=pf3AiHist(),last=H[0],P=last&&last.proposal;
   const acts=(P&&P.actions)||[];
   const wl=(P&&P.watchlist)||[];
@@ -539,7 +545,7 @@ function planRulesHTML(){
   const canNotify=typeof Notification!=='undefined';
   const notifBtn=(canNotify&&Notification.permission!=='granted')
     ?`<button class="pf3-btn pf3-btn-sm" onclick="planAskNotify()">🔔 ${RT('Вкл. уведомления','Enable alerts')}</button>`:'';
-  const hasProp=(()=>{const H=pf3AiHist();return!!(H[0]&&H[0].proposal&&(H[0].proposal.actions||[]).length);})();
+  const hasProp=(()=>{const H=pf3AiHist();return aiProtoActs(H[0])>0;})();   // E5: из meta.nAct — текст не нужен
   const importBtn=(can('action.edit_plan')&&hasProp)?`<button class="pf3-btn pf3-btn-sm" onclick="planImportFromAi()">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
   const addForm=`
     <datalist id="planTkList">${tkOpts}</datalist>

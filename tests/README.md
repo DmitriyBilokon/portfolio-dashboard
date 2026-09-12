@@ -53,13 +53,16 @@ Telegram) и `Date` (среда, биржи открыты — тест не з�
 
 ## Стенд копии ledger (вне `run.sh`)
 
-`node tests/ledger-copy.js <copy.json | --bundle> [--ref=<git ref>] [--expect-drop=…] [--expect-add=…] [--loose]`
+`node tests/ledger-copy.js <copy.json | --bundle> [--ref=<git ref>] [--expect-drop=…] [--expect-add=…] [--loose] [--ai-out]`
+
 — «проверка на копии» блока E (`plans/ledger-model-e.md` §4.E0 п.4, §5). Грузит клиентские скрипты
 из `index.html` в node `vm` с `env-stubs.js` дважды — рабочее дерево и `--ref` (через `git show`), —
 делает `applyRemoteState(копия)` → `snapshotState()` и сравнивает: I0 снапшот (кроме ожидаемых путей,
 `data.*.count` — шаблон), I1 первичные факты (строки tk/qty/buy/ccy/price, cashFree, сделки, posMeta, план…),
 I2 идемпотентность, I3 контракт префикса строк (для E2), I4 размер и запас до лимита realtime 1024 КБ.
 Копия — личные данные, лежит вне репозитория (`~/dash-ledger-copies/`); `--bundle` — самопроверка на `data.js`.
+
+`--ai-out` (E5, `plans/ai-reports-e5.md` §7): в HEAD после `applyRemoteState` — перенос AI-отчётов «как будто сервер подтвердил всё» (`aiLedgerExtract` → `aiLedgerStrip`). **I5** — извлечено ровно всё (независимый подсчёт по видам и вкладкам, каждая запись глубоко равна исходной, `bad` перечислены); к `--expect-drop` сами добавляются `stockAiLog` и `data.*.aiHistory/aiReport/analysis/analysisHistory`.
 
 ## Что покрыто (сейчас)
 
@@ -71,6 +74,9 @@ I2 идемпотентность, I3 контракт префикса стро
 - **Раскладка-конструктор**: `eapply` (сохранение/новые/устаревшие id).
 - **Сектора**: конфиг ETF, `sectPortfolioSet` (маппинг сектор→портфель).
 - **Трек-рекорд**: `aiTrackRecord` (точность по вердиктам).
+- **AI-отчёты (E5)**: ключ строки в мс, извлечение/удаление из ledger только подтверждённого, слияние/сверка
+  со списком сервера, выжимка `meta` ≡ данные (`aiProtoSummary`/`aiProtoActs`), realtime, снапшот (`stockAiLog` —
+  только остаток), читатели с `_partial`, сканер «AI-поля ledger и `ai_reports` — только слой E5».
 - **Журнал сделок**: `pfRecentTrades`.
 - **Реко**: `pf3RecoHorizons.now` (валидный вердикт, не падает).
 - **Синк**: `snapshotState` содержит все критичные пользовательские ключи

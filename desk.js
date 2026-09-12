@@ -722,6 +722,7 @@ function deskMount(){
   el.addEventListener('toggle',e=>{const d=e.target;if(!d||!d.dataset)return;   // toggle не всплывает
     if(d.dataset.det)deskDetSave(d.dataset.det,d.open);
     if(d.dataset.det==='st-ana'&&d.open)deskFanAttach();
+    if(d.dataset.det==='st-stkai'&&d.open)deskAiAfter();   // E5: текст последнего разбора — по раскрытию
     // Ленивые блоки (S7b-2): тело рисуется только раскрытым — сценарии (запрос implied move), подробная оценка.
     if(d.dataset.lazy&&d.open&&!d.querySelector('.dk-lazy-b'))deskRender(true);
     // «Рост бизнеса»: запрос — только по раскрытию; перерисовка — лишь при смене состояния (иначе toggle от
@@ -2626,6 +2627,31 @@ function deskPerfAttach(kept){
   if(!(window.LightweightCharts&&window.LightweightCharts.createChart)){loadLWC().then(()=>deskRender(),()=>{});return;}
   _deskPerfKey=key;pfPerfDraw();
 }
+// E5: полный текст AI-отчётов раздела. «Позиции → AI»: AI Proto/Предложение — история proto вкладки (≤ 10), «Анализ» —
+// последний pfa; «Акция» → «🔬 AI-анализ акции» (админ) — последний разбор бумаги, только при раскрытой панели.
+// Ключ — набор строк без текста: запрос один раз на такой набор (новые строки из догона/realtime — новый ключ);
+// неудачу помнит aiRepEnsure до «↻» — строка выпадает из набора, фоновые перерисовки сеть не долбят. Через пул — дедуп.
+function deskAiNeed(){
+  const r=DESK_UI.route,miss=L=>L.filter(x=>x.data==null&&x.id&&!aiRepFailed(x));
+  if(r==='book'&&DESK_UI.bt==='ai'){
+    const port=deskPort(),tab=port===AIP_KEY?null:deskOnePort(),v=DESK_UI.bai||'proto';
+    if(!tab||!['proto','prop','analysis'].includes(v))return null;
+    const kind=v==='analysis'?'pfa':'proto';
+    return {pool:'aidata|'+kind+'|'+tab,rows:miss(aiRepWanted(kind,tab))};
+  }
+  if(r==='stock'&&deskDetOpen('st-stkai')&&isAdmin()){
+    const it=deskSecOf(DESK_UI.key);if(!it||!it.r)return null;
+    const sym=aiStockKey(it.r[2]);
+    return {pool:'aidata|stock|'+sym,rows:miss(aiRepWanted('stock',sym))};
+  }
+  return null;
+}
+function deskAiAfter(){
+  const n=deskAiNeed(),k=n&&n.rows.length?n.pool+'|'+n.rows.map(x=>x.id).join(','):null;
+  if(k===DESK_UI._aiFor)return;
+  DESK_UI._aiFor=k;
+  if(k)deskPoolRun(n.pool,()=>aiRepEnsure(n.rows));
+}
 // После отрисовки: поллеры пре/пост (бумага «Акции», баланс «Позиций»), синк AI-портфеля, прокрутка чата AI и
 // загрузки раздела — один раз на вход в раздел (у неудачной загрузки нет кэша: каждая перерисовка грузила бы заново).
 function deskClassicAfter(){
@@ -2639,6 +2665,7 @@ function deskClassicAfter(){
     pf3LastRefresh[AIP_KEY]=Date.now();pf3FetchPrices(DATA[AIP_KEY],AIP_KEY).then(()=>deskRender(),()=>{});}
   {const cb=document.getElementById('aiChatBox'),c=DESK_UI._chat;
     if(cb){if(c&&!c.bottom&&cb.children.length===c.n)cb.scrollTop=c.top;else try{aiChatScroll();}catch(e){}}}
+  deskAiAfter();
   const sk=r==='book'?'book|'+DESK_UI.bt+'|'+deskOnePort():null;
   if(sk===DESK_UI._secFor)return;DESK_UI._secFor=sk;
   if(r==='book'&&DESK_UI.bt==='cal'&&document.querySelector('#dkMain .dk-classic'))pf3LoadCalendar();

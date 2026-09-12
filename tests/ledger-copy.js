@@ -27,7 +27,7 @@ const RT_LIMIT = 1024 * 1024;   // Supabase Postgres Changes: больше — p
 const E5_LIMIT = 600 * 1024;    // порог плана E5 (AI-отчёты вне ledger)
 const PF3_KEY = '🚀 Портфель 3.0';
 const FACT_KEYS = ['pfTrades', 'posMeta', 'planRules', 'desk', 'deskWatch', 'aiPort', 'aiPlaybook', 'news', 'cycleOvr'];
-const AI_TOP = ['stockAiLog', 'aiChat'], AI_TAB = ['aiHistory', 'analysis'];
+const AI_TOP = ['stockAiLog', 'aiChat'], AI_TAB = ['aiHistory', 'analysisHistory', 'analysis'];   // analysisHistory пишет воркер
 
 // ── аргументы ──
 const args = process.argv.slice(2);
@@ -140,12 +140,15 @@ line(`Скрипты: ${fl}`);
   const d = diffPaths(r0, h0, '', [], 3);
   const stillThere = expectDrop.flatMap(p => matchPaths(H, p).map(x => x.join('.')));
   const notAdded = expectAdd.filter(p => !matchPaths(H, p).length);
-  const ok = !d.length && !stillThere.length && !notAdded.length;
+  const inRef = expectAdd.filter(p => matchPaths(R, p).length), noneInRef = expectDrop.filter(p => !matchPaths(R, p).length);
+  const ok = !d.length && !stillThere.length && !notAdded.length && !inRef.length;
   line(`\nI0 снапшот ref → HEAD: ${ok ? '✔ равны' : (loose ? '⚠ расходятся (--loose)' : '✘ расходятся')}` +
        (expectDrop.length ? `  (ожидаемо удалены: ${expectDrop.join(', ')})` : '') + (expectAdd.length ? `  (ожидаемо добавлены: ${expectAdd.join(', ')})` : ''));
   d.forEach(x => line('   ' + x));
   stillThere.forEach(x => line('   ✘ ожидали удаление, но есть в HEAD: ' + x));
   notAdded.forEach(x => line('   ✘ ожидали появление, но нет в HEAD: ' + x));
+  inRef.forEach(x => line(`   ✘ ожидали появление, но уже есть в ref: ${x} — --ref=${ref} указывает на коммит после шага?`));
+  noneInRef.forEach(x => line(`   ⚠ ожидали удаление, но в ref и так нет: ${x} (у копии нет ключа или --ref после шага)`));
   if (!ok && !loose) bad++;
 }
 // I1
@@ -198,7 +201,7 @@ line(`Скрипты: ${fl}`);
   const ai = AI_TOP.reduce((n, k) => n + (H[k] === undefined ? 0 : bytes(J(H[k]))), 0) +
              tf.filter(([k]) => AI_TAB.some(f => k.endsWith(' → ' + f))).reduce((n, [, b]) => n + b, 0);
   const e5 = tot >= E5_LIMIT || ai > tot / 2;
-  line(`   AI-отчёты (stockAiLog, aiChat, data.*.aiHistory/analysis): ${kb(ai)} = ${(100 * ai / tot).toFixed(0)} %  →  ` +
+  line(`   AI-отчёты (stockAiLog, aiChat, data.*.aiHistory/analysisHistory/analysis): ${kb(ai)} = ${(100 * ai / tot).toFixed(0)} %  →  ` +
        (e5 ? 'порог E5 превышен (≥ 600 КБ или AI > 50 %) — писать план E5' : 'порог E5 не превышен'));
 }
 const toasts = V_HEAD.run('globalThis.__toasts||[]');

@@ -378,7 +378,6 @@ function pf3Add(e){
   const row=[d.rows.length+1,PF3_NAMES[t]||t,t,flag,'—','Акция',sh||0,buy||0,ccy,buy||0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать'];
   while(row.length<d.headers.length)row.push('');
   d.rows.push(row);
-  d.count=d.rows.length;
   recalcPF(d.rows.length-1,v3Key);
   // Покупка списывает деньги со свободного кэша (кэш → акции, чистый капитал
   // не меняется). Только мои/семейные портфели; AI-портфель сюда не попадает
@@ -429,7 +428,6 @@ function pf3Delete(tk,ev){
   if(!confirm(T('Удалить')+' '+tk+' ('+TAB_LABEL(v3Key)+')?'))return;
   d.rows.splice(i,1);
   d.rows.forEach((r,j)=>r[0]=j+1);
-  d.count=d.rows.length;
   if(pf3Sel===tk)pf3Sel=null;
   scheduleSave();
   init();

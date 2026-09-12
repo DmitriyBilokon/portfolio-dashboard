@@ -78,7 +78,7 @@ function pfTradeAddRecord(){
     const row=new Array(d.headers.length).fill('');
     row[0]=d.rows.length+1;row[1]=tk;row[2]=tk;row[3]='';row[4]='';row[5]='';
     row[6]=0;row[7]=price;row[8]=ccyIn||'USD';row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;
-    d.rows.push(row);d.count=d.rows.length;ri=d.rows.length-1;
+    d.rows.push(row);ri=d.rows.length-1;
   }
   const r=d.rows[ri],ccy=r[8]||ccyIn||'USD';
   const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
@@ -989,12 +989,10 @@ async function pf3FetchPrices(d,key){
     if(!(q&&typeof q.price==='number'))return;
     r[7]=q.price;pxMarkLive(exSymbol(r[2],r[8]),q.price);
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
-    // Обе серии SMA (дневные и недельные) — в SMA_TF (снапшот; режим 3Г с S7b-3 не используется), в колонки —
+    // SMA (дневные) — в SMA_TF (E3: не пишется в снапшот, режим 3Г с S7b-3 не используется), в колонки —
     // всегда дневные: от них считаются фаза (sigRowPhase) и AI-снапшоты.
     const tk=String(r[2]||'');
-    SMA_TF[tk]={mode:'1Y',
-      d:[q.sma50??null,q.sma100??null,q.sma200??null],
-      w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};
+    SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null]};
     const set=SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
     if(s100>=0&&set[1]!=null)r[s100]=set[1];
@@ -1037,7 +1035,7 @@ async function pf3RefreshCardPrice(d,r,tab){
     if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
     const tk=String(r[2]||'');
     CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,day:typeof q.pct==='number'?q.pct:null,at:Date.now()};   // объём торгов + дневное движение (лайв)
-    SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null],w:[q.sma50w??null,q.sma100w??null,q.sma200w??null]};   // в колонки — дневные (S7b-3)
+    SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null]};   // в колонки — дневные (S7b-3)
     const set=SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
     if(s100>=0&&set[1]!=null)r[s100]=set[1];

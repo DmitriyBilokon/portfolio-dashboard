@@ -2467,7 +2467,7 @@ function deskExecApply(o,sec,row0,d0){
     row[0]=d.rows.length+1;row[1]=String(sec.name||src[1]||tk);row[2]=tk;row[3]=src[3]||'';row[4]=sec.sector||src[4]||'';row[5]=sec.type||src[5]||'';
     row[6]=0;row[7]=o.price;row[8]=String(sec.ccy||src[8]||'USD').toUpperCase();row[9]=0;row[10]=parseFloat(src[10])||0;row[11]=0;row[12]=0;row[13]=0;
     d.headers.forEach((n,i)=>{if(i<14)return;const j=h0.indexOf(n);if(j>=0&&src[j]!=null&&src[j]!=='')row[i]=src[j];});
-    d.rows.push(row);d.count=d.rows.length;ri=d.rows.length-1;
+    d.rows.push(row);ri=d.rows.length-1;
   }
   const r=d.rows[ri],ccy=String(r[8]||'USD').toUpperCase(),fx=FX[ccy]||1,short=o.side==='short';
   const act=short?(o.mode==='open'?'sell':'buy'):(o.mode==='open'?'buy':'sell');

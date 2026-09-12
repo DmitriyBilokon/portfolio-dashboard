@@ -26,11 +26,12 @@ const CLIENT_BUILD=(()=>{ try{ const s=document.currentScript||document.querySel
 // The entire editable state, stored as one JSONB row per user.
 function snapshotState(){
   // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (состояние классических таблиц и навигации) не пишутся —
-  // старый клиент без них ничего не теряет. sim/aiDash/scnAlerts/tgAlerts — заморожены до блока E (plans/audit-followup.md).
-  // E1: val/insider/aiReco/tgFull — общие данные по тикеру, живут только в shared_analysis (sharedPatch); tgMeta удалён.
+  // старый клиент без них ничего не теряет. E1: val/insider/aiReco/tgFull — общие данные по тикеру, живут только в
+  // shared_analysis (sharedPatch); tgMeta удалён. E3: sim/aiDash/scnAlerts/tgAlerts (мёртвые движки) и smaTf (пишется и
+  // тут же копируется в строку — applyRemoteState продолжает его читать ради одноразового migrateSmaDaily) — не пишутся.
   return { cv:CLIENT_BUILD, data:DATA, fx:FX,
            theme:(document.documentElement.dataset.theme||'light'),
-           smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, tgAlerts:TG_ALERTS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, aiSpend:AI_SPEND, aiDash:AI_DASH, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
+           pfTrades:PF_TRADES, aiChat:AI_CHAT, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, aiSpend:AI_SPEND, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
            posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
 }
 // Call after any edit: debounce-push to the cloud.
@@ -222,7 +223,7 @@ function pfBackupRestore(){
   const bakHasTrades=Array.isArray(bak.pfTrades)&&bak.pfTrades.length;
   if(!(cloudEmptyTrades&&bakHasTrades))return false;
   PF_TRADES=bak.pfTrades.slice();
-  if(bak.ports)Object.keys(bak.ports).forEach(key=>{ const d=DATA[key],b=bak.ports[key]; if(d&&b&&Array.isArray(b.rows)){ d.rows=b.rows; d.count=b.rows.length; if(b.cashFree!=null)d.cashFree=b.cashFree; } });
+  if(bak.ports)Object.keys(bak.ports).forEach(key=>{ const d=DATA[key],b=bak.ports[key]; if(d&&b&&Array.isArray(b.rows)){ d.rows=b.rows; if(b.cashFree!=null)d.cashFree=b.cashFree; } });
   return true;
 }
 // Мета позиций (стоп/цель/сторона) из локального бэкапа — когда облачный снапшот пришёл без
@@ -344,8 +345,7 @@ function applyRemoteState(s){
   applyingRemote=true;
   if(s.data) DATA=s.data;
   if(s.fx) FX=s.fx;
-  if(s.smaTf) SMA_TF=s.smaTf;
-  if(Array.isArray(s.sim)) SIM=s.sim;
+  if(s.smaTf) SMA_TF=s.smaTf;   // E3: не пишем, но читаем — нужен одноразовому migrateSmaDaily для клиентов до v3
   if(Array.isArray(s.pfTrades)) PF_TRADES=s.pfTrades;
   if(Array.isArray(s.planRules)) PLAN_RULES=s.planRules.map(planRuleNorm);   // v1 → v2 (аддитивные поля, идемпотентно)
   STATE_V=(typeof s.schemaV==='number')?s.schemaV:0;   // до migrateState(): migrateSchema знает, какие одноразовые шаги уже применены
@@ -360,20 +360,17 @@ function applyRemoteState(s){
   let restoreWatch=false;
   if(s.deskWatch&&typeof s.deskWatch==='object') DESK_WATCH=deskWatchNorm(s.deskWatch);
   else restoreWatch=(DESK_WATCH&&DESK_WATCH.items&&DESK_WATCH.items.length>0)||deskWatchBackupRestore();
-  if(s.scnAlerts&&typeof s.scnAlerts==='object') SCN_ALERT_STATE=s.scnAlerts;
   if(Array.isArray(s.aiChat)) AI_CHAT=s.aiChat;
   if(typeof s.aiInclChat==='boolean') AI_INCL_CHAT=s.aiInclChat;
   if(typeof s.news==='string') NEWS_TEXT=s.news;
   if(s.newsImpact&&typeof s.newsImpact==='object') NEWS_IMPACT=s.newsImpact;
   if(Array.isArray(s.aiPlaybook)){ AI_PLAYBOOK=s.aiPlaybook; AI_PLAYBOOK_SEEDV=(typeof s.aiPlaybookSeedV==='number')?s.aiPlaybookSeedV:0; }   // нет флага = старый плейбук → миграция допишет v2
-  if(s.tgAlerts&&typeof s.tgAlerts==='object') TG_ALERTS=s.tgAlerts;
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
   // E1: val/insider/aiReco/tgFull/tgMeta в снапшоте старого клиента не читаются — общие данные только из shared_analysis.
   if(s.cycleOvr&&typeof s.cycleOvr==='object') CYCLE_OVR=s.cycleOvr;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
-  if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=(s.aiDash.cards||s.aiDash.headline)?{[PF3_KEY]:s.aiDash}:s.aiDash;   // миграция старого одиночного дашборда в карту по портфелям
   if(typeof s.rev==='number') stateRev=s.rev;   // приняли облачную ревизию → наш след. push = rev+1
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
@@ -488,9 +485,6 @@ async function boot(){
 const META={'OMXS30':'🇸🇪','Nasdaq 100':'🇺🇸','OMXSPI':'🇸🇪','S&P 500':'🇺🇸','DAX 40':'🇩🇪','CAC 40':'🇫🇷','FTSE MIB':'🇮🇹','OBX 25':'🇳🇴',};
 let FX={SEK:1,EUR:10.59,USD:8.93,NOK:0.9375,DKK:1.52,CAD:7.0,GBP:12.6,AUD:6.2};
 let _fxAt=0;   // когда курсы FX последний раз обновлены живьём в этой сессии (0 = дефолт/из снапшота, свежесть не подтверждена)
-// Бумажный (тестовый) портфель: [{tab,tk,name,ccy,qty,buy,date}] — у каждой
-// v3-вкладки свои тестовые покупки (tab), синхронизируется с остальным состоянием.
-let SIM=[];
 // 📜 Журнал реальных сделок по портфелям: [{id,tab,tk,name,ccy,act:'buy'|'sell',
 // qty,price,plNative,date}] — plNative = реализованный P&L в валюте бумаги (для продаж).
 let PF_TRADES=[];
@@ -511,10 +505,6 @@ let DESK_WATCH={v:1,lists:[{id:'main',name:'',order:0}],items:[]};
 // Версия схемы снапшота (schemaV): одноразовые шаги migrateSchema не повторяются после применения.
 const SCHEMA_V=3;
 let STATE_V=0;
-let SCN_ALERT_STATE={};   // 📊 Блок D: последнее наблюдаемое состояние сценариев по тикеру (дедуп алертов)
-// Кулдауны Telegram-алертов: пишет worker, клиент только прокидывает через
-// свои сохранения, чтобы push дашборда не стирал память бота.
-let TG_ALERTS={};
 // AI Proto: диалог с ассистентом (личные правила инвестора отменены — investorRules пуст).
 let AI_CHAT=[],aiChatBusy=false;
 let AI_INCL_CHAT=false;   // 💬 включать последние сообщения чата в следующий анализ портфеля
@@ -711,7 +701,6 @@ let valPeMode='fwd';   // 📐 карточка оценки: forward | trailing
 let _valBusy=false;
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let AI_SPEND={usd:0,runs:0,in:0,out:0,searches:0};   // 💸 накопленные AI-расходы (sync)
-let AI_DASH={};   // 📊 AI-Dashboard: {tabKey:{headline,cards,picks,asOf,at,cost}} — отдельно по портфелям (sync)
 let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (shared): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
 let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
 let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
@@ -896,11 +885,10 @@ function tradeFeeNative(ccy,amount,isBuy){
 // акций; опустевший портфель больше не засевается.
 function migratePortfolio3(){
   if(!DATA[PF3_KEY])
-    DATA[PF3_KEY]={headers:['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие'],rows:[],count:0,subtitle:'Портфель 3.0'};
+    DATA[PF3_KEY]={headers:['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие'],rows:[],subtitle:'Портфель 3.0'};
   const d=DATA[PF3_KEY];
   if(!d.rows.length&&STATE_V<1){
     d.rows.push([1,'Micron Technology','MU','🇺🇸','Полупроводники','Акция',0,0,'USD',0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать']);
-    d.count=d.rows.length;
     if(!applyingRemote)scheduleSave();
   }
 }
@@ -1075,7 +1063,7 @@ function migrateIndexV3(KEY,flag,ccy,sfx){
     if(n.tg>=0)row[n.tg]=num(r,o.tg)||'';
     return row;
   });
-  DATA[KEY]={headers:nh,rows,count:rows.length,subtitle:d.subtitle||KEY,v3:'1',xcols:d.xcols};
+  DATA[KEY]={headers:nh,rows,subtitle:d.subtitle||KEY,v3:'1',xcols:d.xcols};
   if(!applyingRemote)scheduleSave();
 }
 // ===== Миграции состояния (S7a) =====
@@ -1087,10 +1075,10 @@ function migrateIndexV3(KEY,flag,ccy,sfx){
 // чужие позиции не нужны. Их флаги в данных (brokerSnap, cashSnap, gsSeed, scSeed, aiMig, ttlMig)
 // НЕ удалять, пока жив клиент до S7a: без флага он применит шаг заново (кэш, удалённые тикеры).
 // S7b-3: шаги удалённой классики (simMigrateTabs — симуляция, restoreXcols — доп. колонки списка) убраны;
-// migrateDropReco — на каждый проход (клиент до S7b-3 на другом устройстве снова пишет эти поля).
+// migrateDropDead — на каждый проход (клиент до S7b-3/E3 на другом устройстве снова пишет эти поля).
 function migrateState(){
   migratePortfolio3();migrateNasdaqV3();migrateAiPort();migrateSchema();
-  if(migrateDropReco(DATA)&&!applyingRemote)scheduleSave();
+  if(migrateDropDead(DATA)&&!applyingRemote)scheduleSave();
 }
 // Перерисовка после смены данных/роли/языка (≈16 мест: синк, вход, вкладки…). Миграции — не здесь, а в migrateState().
 function init(){
@@ -1132,20 +1120,22 @@ function migrateSchema(){
   STATE_V=SCHEMA_V;
   if(!applyingRemote)scheduleSave();
 }
-// S7b-3 (plans/s7b-map.md §2 решение 3, §10.3): следы удалённых движков в данных вкладок. Колонка «Реком. скоринг»
-// (писала удалённая «Рекомендация») очищается — воркер берёт непустую как вердикт вселенной AI-портфеля, пустую добивает
-// aipVerdict той же логикой; прото-сигналы бэктеста btSignals/btRuleAcc (писал удалённый btCompute) удаляются — иначе
-// воркер слал бы их AI-портфелю и анализу замороженными («проверено на истории»). Клиент до S7b-3, пока открыт на другом
-// устройстве, снова пишет и то и другое (обновление цен, AI Proto) — поэтому это не одноразовый шаг схемы, а проход на
-// каждую загрузку состояния (migrateState; идемпотентно, O(строк)). btJournal/btConfig — до блока E. Колонку из headers
-// не убираем (схема строк индексная). → число изменений.
-function migrateDropReco(data){
+// S7b-3 (plans/s7b-map.md §2 решение 3, §10.3) + E3 (plans/ledger-model-e.md): следы удалённых движков в данных
+// вкладок. Колонка «Реком. скоринг» (писала удалённая «Рекомендация») очищается — воркер берёт непустую как вердикт
+// вселенной AI-портфеля, пустую добивает aipVerdict той же логикой; прото-сигналы бэктеста btSignals/btRuleAcc (писал
+// удалённый btCompute) удаляются — иначе воркер слал бы их AI-портфелю и анализу замороженными («проверено на
+// истории»). Клиент до S7b-3, пока открыт на другом устройстве, снова пишет и то и другое (обновление цен, AI
+// Proto) — поэтому это не одноразовый шаг схемы, а проход на каждую загрузку состояния (migrateState; идемпотентно,
+// O(строк)). Колонку из headers не убираем (схема строк индексная). E3: btJournal/btConfig (журнал гипотез
+// удалённого движка калибровки) и count (производный от rows.length, читателей нет) — писателей в текущем коде нет,
+// но чистим на каждый проход теми же причинами. → число изменений.
+function migrateDropDead(data){
   let n=0;
   Object.keys(data||{}).forEach(k=>{
     const d=data[k];if(!d||!Array.isArray(d.rows)||!Array.isArray(d.headers))return;
     const rc=d.headers.indexOf('Реком. скоринг');
     if(rc>=0)d.rows.forEach(r=>{if(r[rc]!=null&&r[rc]!==''){r[rc]='';n++;}});
-    ['btSignals','btRuleAcc'].forEach(f=>{if(f in d){delete d[f];n++;}});
+    ['btSignals','btRuleAcc','btJournal','btConfig','count'].forEach(f=>{if(f in d){delete d[f];n++;}});
   });
   return n;
 }
@@ -1167,7 +1157,7 @@ function pf3NewTab(){
   const name=(prompt(RT('Название новой вкладки:','New tab name:'))||'').trim();
   if(!name)return;
   if(DATA[name]||name===AIP_KEY){toast(RT('Такая вкладка уже есть','A tab with this name exists'),true);return}
-  DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],count:0,v3:'1',custom:'1',subtitle:name};
+  DATA[name]={headers:DATA[PF3_KEY].headers.slice(),rows:[],v3:'1',custom:'1',subtitle:name};
   scheduleSave();
   curIdx=name;v3Key=name;pf3Sel=null;pf3Tab='list';
   init();

@@ -275,7 +275,7 @@ grp('pfRecentTrades', function(){
 // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (классические таблицы и навигация) удалены из снапшота.
 // E0: cv — версия клиента (CLIENT_BUILD), пишется, но applyRemoteState её не читает.
 // E1: val/insider/aiReco/tgFull (общие данные по тикеру → только shared_analysis) и tgMeta (мёртвая запись) удалены.
-var SNAP_KEYS=['cv','data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+var SNAP_KEYS=['cv','data','fx','theme','pfTrades','aiChat','aiPort','aiPortBak','stockAiLog','aiSpend','aiPlaybook','aiPlaybookSeedV','planRules','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -1458,7 +1458,8 @@ grp('signals adapter', function(){
 grp('S7b-3 shell', function(){
   var gone=['deskFlagFrom','deskActive','deskToggle','deskSetFlag','deskClassic','deskBack','deskBackBtn','deskStopTimers','pf3Reco','pf3RecoHorizons','pf3Criterion','pf3SignalInfo',
     'homeBestComposite','homeHTML','renderTable','renderRanking','pf3DetailHTML','pf3Summary','pf3ListHTML','scnAlertCheck','sigShadowRecord','SIG_SHADOW','btCompute','dashRecoMap',
-    'simTabHTML','dupHTML','sectHTML','aiDashHTML','pf3Refresh','pf3WriteReco','openStockChart','insiderOpenCard','simOpen','RANK','SMA_IDX','TAB_GROUPS','HOME_KEY'];
+    'simTabHTML','dupHTML','sectHTML','aiDashHTML','pf3Refresh','pf3WriteReco','openStockChart','insiderOpenCard','simOpen','RANK','SMA_IDX','TAB_GROUPS','HOME_KEY',
+    'SIM','AI_DASH','SCN_ALERT_STATE','TG_ALERTS','migrateDropReco'];   // E3: мёртвые движки/ключи
   __eq('removed names are gone', gone.filter(function(n){return eval('typeof '+n)!=='undefined';}), []);
   __ok('DESK_UI has no flag fields', !('on' in DESK_UI) && !('classic' in DESK_UI));
   var html=rd('index.html');
@@ -1482,19 +1483,19 @@ grp('S7b-3 shell', function(){
   try{DESK_UI.bt='cal';pf3GoList();__eq('cash-drag → «Позиции»', [go,DESK_UI.bt], [['book'],'pos']);}finally{deskGo=_dg;DESK_UI.bt=_bt;}
 });
 
-// S7b-3: следы удалённых движков — «Реком. скоринг» очищается (воркер добивает пустую aipVerdict), прото-сигналы бэктеста
-// удаляются (воркер слал бы их AI замороженными) на КАЖДЫЙ проход migrateState: клиент до S7b-3 на другом устройстве
-// пишет их снова. SMA в колонках — только дневные: одноразовый шаг схемы v3.
-grp('migrate v3 (S7b-3)', function(){
+// S7b-3 + E3: следы удалённых движков — «Реком. скоринг» очищается (воркер добивает пустую aipVerdict), прото-сигналы
+// бэктеста и поля btJournal/btConfig/count удаляются на КАЖДЫЙ проход migrateState (клиент до S7b-3/E3 на другом
+// устройстве пишет их снова). SMA в колонках — только дневные: одноразовый шаг схемы v3.
+grp('migrate v3 (S7b-3/E3)', function(){
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%','SMA 50','SMA 100','SMA 200','Реком. скоринг'];
-  var mk=function(){return {A:{headers:h,v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,95,90,80,'buy'],[2,'Y','YY','','','',0,50,'USD',0,0,45,44,40,'']],btSignals:{XX:{s:1}},btRuleAcc:{r:50},btJournal:[{tk:'XX'}],btConfig:{H:20}},
+  var mk=function(){return {A:{headers:h,v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,95,90,80,'buy'],[2,'Y','YY','','','',0,50,'USD',0,0,45,44,40,'']],btSignals:{XX:{s:1}},btRuleAcc:{r:50},btJournal:[{tk:'XX'}],btConfig:{H:20},count:2},
     B:{headers:h.slice(0,14),v3:'1',rows:[[1,'X','XX','','','',0,100,'USD',0,0,70,60,50]]},bad:{rows:[1]}};};
-  var data=mk(),n=migrateDropReco(data);
+  var data=mk(),n=migrateDropDead(data);
   __eq('reco column cleared', data.A.rows.map(function(r){return r[14];}), ['','']);
-  __ok('bt signals dropped, journal/config frozen', !('btSignals' in data.A)&&!('btRuleAcc' in data.A)&&data.A.btJournal.length===1&&data.A.btConfig.H===20);
-  __eq('reco: changes counted, SMA untouched', [n,data.A.rows[0].slice(11,14)], [3,[95,90,80]]);
-  __eq('reco: idempotent', migrateDropReco(data), 0);
-  __eq('empty inputs', [migrateDropReco({}),migrateDropReco(null),migrateSmaDaily({},{}),migrateSmaDaily(null,null)], [0,0,0,0]);
+  __ok('bt signals/journal/config/count dropped', !('btSignals' in data.A)&&!('btRuleAcc' in data.A)&&!('btJournal' in data.A)&&!('btConfig' in data.A)&&!('count' in data.A));
+  __eq('reco: changes counted, SMA untouched', [n,data.A.rows[0].slice(11,14)], [6,[95,90,80]]);
+  __eq('reco: idempotent', migrateDropDead(data), 0);
+  __eq('empty inputs', [migrateDropDead({}),migrateDropDead(null),migrateSmaDaily({},{}),migrateSmaDaily(null,null)], [0,0,0,0]);
   var tf={XX:{mode:'3Y',d:[96,91,81],w:[70,60,50]},YY:{mode:'1Y',d:[46,null,41],w:[1,2,3]},ZZ:{mode:'3Y',d:[1,2,3],w:[4,5,6]}};
   data=mk();var m=migrateSmaDaily(data,tf);
   __eq('3Y rows get daily SMA in every tab', [data.A.rows[0].slice(11,14),data.B.rows[0].slice(11,14)], [[96,91,81],[96,91,81]]);

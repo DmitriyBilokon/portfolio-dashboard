@@ -14,7 +14,7 @@ function aipFindSrcRow(tk){
 function aipSyncTab(){
   if(!AI_PORT)migrateAiPort();
   const p3=DATA[PF3_KEY];if(!p3)return;
-  const d=DATA[AIP_KEY]||(DATA[AIP_KEY]={headers:p3.headers.slice(),rows:[],count:0,subtitle:'AI Портфель'});
+  const d=DATA[AIP_KEY]||(DATA[AIP_KEY]={headers:p3.headers.slice(),rows:[],subtitle:'AI Портфель'});
   d.v3='1';d.aip='1';
   d.cashFree=Math.round(AI_PORT.cashSEK||0);
   const pos=AI_PORT.positions||[];
@@ -39,7 +39,6 @@ function aipSyncTab(){
     if(!(parseFloat(r[7])>0)&&p.lastPrice)r[7]=p.lastPrice;
   });
   d.rows.forEach((r,i)=>{r[0]=i+1;recalcPF(i,AIP_KEY)});
-  d.count=d.rows.length;
 }
 // Живую цену позиции ищем в строках вкладок (обновляются сайтом), иначе —
 // lastPrice из последнего цикла worker'а.

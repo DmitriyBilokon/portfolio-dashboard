@@ -259,11 +259,27 @@ function valSectorMedians(){
 // сектор → точнее медианы и шире охват недооценки.
 function valPortTickers(){return insiderAllTickers().map(x=>({...x,sym:exSymbol(x.tk,x.ccy)}))}
 let _valSecCache=null;
+// Записи общих данных по ответу воркера (чистые; пишутся патчем в shared_analysis — E1).
+function valEntry(prev,v,x){return{...v,name:x.name||x.tk,ccy:x.ccy,notified:(prev&&prev.notified)||null};}
+// ccy/sym листинга, по которому запрошены таргеты: кэш по тикеру, desk сверяет листинг (stock-selection-ux §15 #1).
+function tgFullEntry(t,x,sym,at){return{...t,ccy:String(x.ccy||'USD').trim().toUpperCase(),sym,at};}
+// Метка «дёшево по обоим измерениям» (сектор и своя история, ≥ 2 мультипликатора): записи, у которых она меняется.
+function valNotifyPatch(val,secMed){
+  const patch={};let cheap=0;
+  Object.keys(val||{}).forEach(tk=>{
+    const v=val[tk];if(!v)return;
+    const c=valCmp(v,secMed&&secMed[v.sector]);
+    if(c&&c.bothCount>=2){const sig='cheap_'+c.bothCount;if(v.notified!==sig){patch[tk]={...v,notified:sig};cheap++;}}   // Telegram-алерт недооценки убран — смотрим на сайте
+    else if(v.notified)patch[tk]={...v,notified:null};
+  });
+  return{patch,cheap};
+}
 async function valUpdateAll(){
   if(_valBusy)return;_valBusy=true;
   const btn=document.getElementById('valBtn');if(btn){btn.disabled=true;btn.textContent='⏳ 0%';}
   const list=valPortTickers();const bySym={};list.forEach(x=>bySym[x.sym]=x);
   let done=0,withData=0,cheap=0;
+  const at=new Date().toISOString(),pv={},pt={};   // патчи shared_analysis.val/targets — только тикеры этого прогона
   try{
     const tok=await sbToken();
     for(let i=0;i<list.length;i+=6){   // 6 симв/вызов: yValuation+FMP ratios, лимит субзапросов Cloudflare
@@ -274,36 +290,28 @@ async function valUpdateAll(){
         if(j&&!j.error){
           for(const sym of Object.keys(j)){
             const v=j[sym];if(!v)continue;const x=bySym[sym];if(!x)continue;
-            const prev=VAL[x.tk]||{};
-            VAL[x.tk]={...v,name:x.name||x.tk,ccy:x.ccy,notified:prev.notified||null};
+            VAL[x.tk]=pv[x.tk]=valEntry(VAL[x.tk],v,x);
             if(v.pe||v.fwdPe||v.ps||v.evEbitda)withData++;
           }
         }
       }catch(e){}
       done+=chunk.length;const b=document.getElementById('valBtn');if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
     }
-    _valSecCache=valSectorMedians();
+    Object.assign(VAL,pv);   // realtime чужого патча во время сбора мог заменить VAL — вернуть собранное
+    const secMed=valSectorMedians();_valSecCache=secMed;   // локально: realtime во время таргетов сбрасывает кэш в null
     // 🎯 A.1: агрегированные аналит. таргеты тем же набором символов (отдельный проход).
     for(let i=0;i<list.length;i+=5){   // 5 симв/вызов: 3 FMP-запроса/символ (+редиректы), лимит субзапросов Cloudflare
       const chunk=list.slice(i,i+5);
       try{
         const r=await fetch(PRICE_PROXY+'?action=targetsagg',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({symbols:chunk.map(x=>x.sym)})});
         const j=await r.json();
-        // ccy/sym листинга, по которому запрошены таргеты: кэш по тикеру, desk сверяет листинг (stock-selection-ux §15 #1).
-        if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]={...t,ccy:String(x.ccy||'USD').trim().toUpperCase(),sym,at:new Date().toISOString()};}
+        if(j&&!j.error)for(const sym of Object.keys(j)){const t=j[sym];const x=bySym[sym];if(t&&x)TG_FULL[x.tk]=pt[x.tk]=tgFullEntry(t,x,sym,at);}
       }catch(e){ if(i===0)break; }   // упал ПЕРВЫЙ чанк → эндпоинт недоступен (старый воркер/CORS), не долбим; иначе пропускаем сбойный чанк и продолжаем
     }
-    // Алерты «дёшево по обоим измерениям» (новые) → Telegram, дедуп по подписи.
-    for(const tk of Object.keys(VAL)){
-      const v=VAL[tk];const c=valCmp(v,_valSecCache[v.sector]);
-      if(c&&c.bothCount>=2){
-        const sig='cheap_'+c.bothCount;
-        if(v.notified!==sig){
-          cheap++;VAL[tk].notified=sig;   // Telegram-алерт недооценки убран — смотрим на сайте
-        }
-      }else if(v.notified){VAL[tk].notified=null;}
-    }
-    scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
+    Object.assign(TG_FULL,pt);Object.assign(VAL,pv);   // то же после прохода таргетов
+    const np=valNotifyPatch(VAL,secMed);cheap=np.cheap;
+    Object.assign(VAL,np.patch);Object.assign(pv,np.patch);
+    await sharedSave({val:pv,targets:pt});   // общие данные → все пользователи (в личный снапшот не входят)
     toast('📐 '+RT(`Оценка обновлена: ${withData}/${list.length} с данными${cheap?` · ${cheap} нов. недооценк.`:''}`,`Valuation updated: ${withData}/${list.length} with data${cheap?` · ${cheap} new undervalued`:''}`));
   }catch(e){toast(RT('Worker недоступен (нужен ?action=valuation)','Worker unreachable (?action=valuation)'),true);}
   finally{_valBusy=false;renderAll();}

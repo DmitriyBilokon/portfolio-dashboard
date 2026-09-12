@@ -1,6 +1,6 @@
 # План: блок E — модель данных ledger (миграция с откатом)
 
-Статус: **Planning завершён** (2026-09-12, решения пользователя приняты — §9). **E0 закрыт 2026-09-12** (итоги §10: владелец 1275 КБ > лимита realtime → E5 нужен, Planning E5 — сразу после E1). Код — в отдельных сессиях Implementation E0…E4 (CLAUDE.md, «вариант 1»), по одной сессии на шаг; коммит в конце сессии после зелёных `bash tests/run.sh`, push — по просьбе. Источник находок — `plans/audit-followup.md` §E и `plans/redesign-trading/all_findings.json` (`data-model-sync#2/3/4/9`, `tests-quality#3/6/7`).
+Статус: **Planning завершён** (2026-09-12, решения пользователя приняты — §9). **E0 закрыт 2026-09-12** (итоги §10: владелец 1275 КБ > лимита realtime → E5 нужен, Planning E5 — сразу после E1). **E1 — код сделан 2026-09-12** (итоги §10: стенд 1190 → 661 КБ; ждёт SQL, push и живой проверки пользователя). Код — в отдельных сессиях Implementation E0…E4 (CLAUDE.md, «вариант 1»), по одной сессии на шаг; коммит в конце сессии после зелёных `bash tests/run.sh`, push — по просьбе. Источник находок — `plans/audit-followup.md` §E и `plans/redesign-trading/all_findings.json` (`data-model-sync#2/3/4/9`, `tests-quality#3/6/7`).
 
 **Главная идея плана:** почти всё, что в аудите выглядело как «миграция формата ledger», делается **без смены формата хранения**. Формат меняется только одним способом — из снапшота *убираются* ключи, у которых есть другой источник правды или нет ни одного читателя. Строки остаются позиционными массивами; индексы получают имена только в коде. Поэтому версии клиента N и N−1 и воркер совместимы на каждом шаге, `SCHEMA_V` в блоке E не меняется, а откат шага — `git revert` (+ восстановление ключа из серверного бэкапа, если понадобится).
 
@@ -323,3 +323,80 @@ where l.user_id = b.user_id and l.user_id = '<USER_ID>';
 **E0 закрыт 2026-09-12.** Дальше — E1 (новая сессия), затем Planning E5.
 
 **Было за пользователем:** бэкап (на момент замера **не создан** — `to_regclass` = НЕТ), прогон стенда на реальной копии (I3 — вход в E2), деплой сайта (push) и живая проверка §4.E0 (две вкладки; offline 2 мин → правка в другой вкладке → online; ▶ AI-портфель при открытой странице).
+
+### Итоги E1 (2026-09-12, Opus 5 · high)
+
+**Код.**
+- `snapshotState`/`applyRemoteState`/`SNAP_KEYS`: без `val/insider/aiReco/tgFull/tgMeta`; снапшот старого клиента с этими ключами новым клиентом игнорируется. `TG_META` удалён целиком (объявление + писатель в `pf3RefreshTargets`).
+- `app.js` — слой общей аналитики: `sharedApply(row)` (чистая: перекрывает только непустыми колонками, дедуп по `updated_at` в `_sharedAt`, сброс `_valSecCache`), `loadSharedAnalysis(retry)` → `true`, если применено новое; ошибка — одна повторная попытка через `SHARED_RETRY_MS` = 3 с (сама перерисует). `pullState`: `if(await loadSharedAnalysis()) renderAll()` — первый экран без общих данных дорисовывается. `sharedOnRealtime` запоминает `updated_at` полной строки, путь «перечитать» перерисовывает только при изменении.
+- Запись: `sharedPatch(col, patch)` → RPC `shared_analysis_patch`; нет функции (`PGRST202`/`42883`, `sharedRpcMissing`) → upsert **одной** колонки (память ∪ патч); результат `rpc|col|skip|off|err`. `sharedSave({col:patch,…})` — колонки параллельно, при ошибке один тост «⚠ Общие данные не сохранены в облако — повторите сбор». `pushSharedAnalysis` удалён.
+- Сборщики шлют только тикеры своего прогона: `valUpdateAll` → `val` + `targets` (чистые `valEntry`, `tgFullEntry`, `valNotifyPatch` в app-3.js), `insiderUpdateAll` → `insider` (`insiderEntry` в app.js), `aiRecoRun` → `aireco` одного тикера (`scheduleSave` остался — `AI_SPEND` личный). У `valUpdateAll`/`insiderUpdateAll` `scheduleSave` убран — снапшот они больше не меняют.
+- `supabase-shared-analysis.sql`: функция `shared_analysis_patch(p_col, p_patch)` — `security definer`, админ по `user_access.role`, белый список колонок, `coalesce(col,'{}') || patch` через `format('%I')`, `updated_at = now()`; `revoke … from public, anon`, `grant … to authenticated`. Файл идемпотентен.
+
+**Отклонения от плана.**
+1. **Гонка с realtime во время сбора** (не было в плане): полная строка чужого патча по realtime заменяет `VAL/INSIDER/TG_FULL` целиком, пока сбор ещё идёт (второе устройство админа) — собранное раньше в этом прогоне пропало бы из памяти и из «дёшево»-меток. Поэтому патч копится в локальном объекте (`pv/pt/pi`) и перед отправкой вливается обратно (`Object.assign`), а секторные медианы для меток берутся локально (`secMed`), не из `_valSecCache` (realtime сбрасывает его в `null` — все метки `notified` обнулились бы).
+2. Дедуп по `updated_at` (`_sharedAt`) — не было в плане: без него «перерисовка при изменении» (п.5) была бы перерисовкой всегда.
+3. Метка `at` у записей одного прогона сбора одна (раньше — `new Date()` на каждую запись) — разница в миллисекундах.
+
+**Тесты.** app 1353 → 1384 (группа `shared analysis (E1)`, 36 кейсов: снапшот без общих ключей, снапшот старого клиента не трогает память и ключи не возвращаются, `sharedApply` (непустые/дедуп/null/массив), `sharedPatchClean`, `sharedRpcMissing`, `valEntry/tgFullEntry/insiderEntry/valNotifyPatch` (чистота), сканер «запись в `shared_analysis` — одно место, нет `pushSharedAnalysis`/upsert всей строки»; round-trip −5 ключей), worker 239, async 46; `MIN_CASES_app` 1320 → 1350. Асинхронные `sharedPatch/sharedSave/loadSharedAnalysis/pullState` проверены отдельным node-скриптом в vm (17 проверок: RPC, пустой патч, запасной путь пишет только `id+колонка+updated_at`, отказ прав/сеть → один тост, не-админ, повтор загрузки один раз, перерисовка только при новой версии) — в репо не добавлен (JSC не ждёт промисы, асинхронного раннера клиента нет — §8).
+**Стенд на реальной копии:** `node tests/ledger-copy.js ~/dash-ledger-copies/owner-2026-09-12.json --ref=HEAD --expect-drop=val,insider,aiReco,tgFull,tgMeta` (HEAD = a8f74fd, до E1) → **I0 ✔** (отличие — только 5 ключей), **I1 ✔** (16 вкладок, 573 строки, 32 сделки), **I2 ✔**, I3 ✔; **I4: 1190 → 661 КБ** компактного JSON (65 % лимита realtime, прогноз E0 — 661) → realtime ledger владельца снова понесёт `data` (в `jsonb::text` ≈ 700 КБ). AI 53 % → порог E5 превышен, как и предсказано: **Planning E5 — следующим**.
+
+**SQL — выполняет пользователь до push (Supabase → SQL Editor), по порядку.**
+```sql
+-- 1) свежий бэкап (R4)
+create table backup.ledger_state_e1 as table public.ledger_state;
+create table backup.shared_analysis_e1 as table public.shared_analysis;
+
+-- 2) сверка (только чтение): личные копии общих данных против shared_analysis, по пользователям.
+--    newer_in_personal > 0 у владельца — значит раньше pushSharedAnalysis молча падал.
+with s as (select * from public.shared_analysis where id = 'global'),
+pairs(lkey, scol) as (values ('val','val'), ('insider','insider'), ('aiReco','aireco'), ('tgFull','targets')),
+e as (
+  select l.user_id, p.lkey, p.scol, x.key as tk, x.value as v,
+         (case p.scol when 'val' then s.val when 'insider' then s.insider when 'aireco' then s.aireco else s.targets end) -> x.key as sv
+  from public.ledger_state l cross join pairs p cross join s
+  cross join lateral jsonb_each(case when jsonb_typeof(l.data -> p.lkey) = 'object' then l.data -> p.lkey else '{}'::jsonb end) x
+)
+select user_id, lkey, count(*) as personal,
+       count(*) filter (where sv is null) as missing_in_shared,
+       count(*) filter (where sv is not null and (v->>'at') > (sv->>'at')) as newer_in_personal
+from e group by 1, 2 order by 1, 2;
+
+-- 3) ТОЛЬКО если у владельца (c13ee426…) newer_in_personal или missing_in_shared > 0: влить его более свежие
+--    записи (по `at`, ISO-строки) и недостающие. Записи без `at` против общих не трогаем. Чужие ledger не берём:
+--    у не-админов лишь старые копии общих данных (у 7ce29019 — июньский insider).
+with s as (select * from public.shared_analysis where id = 'global'),
+pairs(lkey, scol) as (values ('val','val'), ('insider','insider'), ('aiReco','aireco'), ('tgFull','targets')),
+e as (
+  select p.scol, x.key as tk, x.value as v,
+         (case p.scol when 'val' then s.val when 'insider' then s.insider when 'aireco' then s.aireco else s.targets end) -> x.key as sv
+  from public.ledger_state l cross join pairs p cross join s
+  cross join lateral jsonb_each(case when jsonb_typeof(l.data -> p.lkey) = 'object' then l.data -> p.lkey else '{}'::jsonb end) x
+  where l.user_id::text like 'c13ee426%'
+),
+agg as (
+  select scol, jsonb_object_agg(tk, v) as patch from e
+  where jsonb_typeof(v) = 'object' and (sv is null or (v->>'at') > (sv->>'at'))
+  group by scol
+)
+update public.shared_analysis sa set
+  val     = sa.val     || coalesce((select patch from agg where scol = 'val'),     '{}'::jsonb),
+  insider = sa.insider || coalesce((select patch from agg where scol = 'insider'), '{}'::jsonb),
+  aireco  = sa.aireco  || coalesce((select patch from agg where scol = 'aireco'),  '{}'::jsonb),
+  targets = sa.targets || coalesce((select patch from agg where scol = 'targets'), '{}'::jsonb),
+  updated_at = now()
+where sa.id = 'global' and exists (select 1 from agg);
+
+-- 4) RPC: выполнить supabase-shared-analysis.sql целиком (идемпотентен). Проверка, что функция есть
+--    и чужим закрыта (из SQL Editor auth.uid() пуст → ожидаемая ошибка «admin only»):
+select public.shared_analysis_patch('val', '{}'::jsonb);
+```
+**После SQL:** push → на **каждом** устройстве админа жёсткая перезагрузка (Cmd+Shift+R / сброс SW, PWA на телефоне тоже) и в консоли `CLIENT_BUILD` = `?v=` нового `app.js` — старый клиент админа при сборе перетирает `shared_analysis` целиком (R1).
+**Живая проверка §4.E1:** админ «⋯ → 🧰 Сервис → 📐 Оценка» и «🔄 AI-Рекомендация» на «Акции» → в SQL `select updated_at, octet_length(val::text), octet_length(aireco::text) from shared_analysis` — обновилось; вторая вкладка получила без перезагрузки (realtime). Не-админ (тестовый аккаунт): после входа оценка/таргеты видны на первом экране. Через сутки:
+```sql
+select user_id, data->>'cv' as cv, data ?| array['val','insider','aiReco','tgFull','tgMeta'] as has_shared_keys,
+       octet_length(data::text) as bytes, updated_at
+from public.ledger_state order by updated_at desc;
+```
+Ожидание: у строк, записанных новым клиентом, `has_shared_keys = false`, владелец ≈ 700 КБ (< 1024 КБ). Строка со старым `cv`/без `cv` и `has_shared_keys = true` — где-то открыт старый клиент (безвредно для личных данных; опасно, только если это устройство админа, который запускает сбор).
+**Откат.** `git revert` + push: старый клиент берёт общие данные из shared (как до E1), личные ключи вернутся при следующем push; RPC остаётся (безвредна). Данные не восстанавливаются.

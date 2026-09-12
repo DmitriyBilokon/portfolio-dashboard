@@ -27,9 +27,10 @@ const CLIENT_BUILD=(()=>{ try{ const s=document.currentScript||document.querySel
 function snapshotState(){
   // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (состояние классических таблиц и навигации) не пишутся —
   // старый клиент без них ничего не теряет. sim/aiDash/scnAlerts/tgAlerts — заморожены до блока E (plans/audit-followup.md).
+  // E1: val/insider/aiReco/tgFull — общие данные по тикеру, живут только в shared_analysis (sharedPatch); tgMeta удалён.
   return { cv:CLIENT_BUILD, data:DATA, fx:FX,
            theme:(document.documentElement.dataset.theme||'light'),
-           smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, tgAlerts:TG_ALERTS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, insider:INSIDER, tgMeta:TG_META, val:VAL, tgFull:TG_FULL, aiReco:AI_RECO, aiSpend:AI_SPEND, aiDash:AI_DASH, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
+           smaTf:SMA_TF, sim:SIM, pfTrades:PF_TRADES, aiChat:AI_CHAT, tgAlerts:TG_ALERTS, aiPort:AI_PORT, aiPortBak:AI_PORT_BAK, stockAiLog:STOCK_AI_LOG, aiSpend:AI_SPEND, aiDash:AI_DASH, aiPlaybook:AI_PLAYBOOK, aiPlaybookSeedV:AI_PLAYBOOK_SEEDV, planRules:PLAN_RULES, scnAlerts:SCN_ALERT_STATE, news:NEWS_TEXT, newsImpact:NEWS_IMPACT, aiInclChat:AI_INCL_CHAT, cycleOvr:CYCLE_OVR,
            posMeta:POS_META, desk:DESK, deskWatch:DESK_WATCH, schemaV:STATE_V };
 }
 // Call after any edit: debounce-push to the cloud.
@@ -247,37 +248,89 @@ async function pullState(){
   syncReady=true;   // облако прочитано — с этого момента локальные правки можно безопасно пушить
   if(data && data.data && Object.keys(data.data).length) applyRemoteState(data.data);
   else pushState();   // first login: seed the cloud with the bundled data
-  await loadSharedAnalysis();   // общие данные оценки/инсайдеров/AI-реко (админ собрал → все видят)
+  // Общие данные оценки/инсайдеров/AI-реко/таргетов (админ собрал → все видят). С E1 их нет в личном снапшоте —
+  // первый экран (init в applyRemoteState) рисуется без них, поэтому после загрузки — перерисовка.
+  if(await loadSharedAnalysis()) renderAll();
   subSharedAnalysis();
 }
-// ── Общая аналитика (VAL/INSIDER/AI_RECO): админ собирает — все читают ──
-// Данные по тикерам не персональны, поэтому живут в общей таблице shared_analysis
-// (RLS: чтение всем, запись только админу). См. supabase-shared-analysis.sql.
-async function loadSharedAnalysis(){
-  if(!SYNC_ENABLED||!sb||!currentUser)return;
-  try{
-    const{data}=await sb.from('shared_analysis').select('val,insider,aireco,targets').eq('id','global').maybeSingle();
-    if(!data)return;
-    if(data.val&&typeof data.val==='object'&&Object.keys(data.val).length)VAL=data.val;
-    if(data.insider&&typeof data.insider==='object'&&Object.keys(data.insider).length)INSIDER=data.insider;
-    if(data.aireco&&typeof data.aireco==='object'&&Object.keys(data.aireco).length)AI_RECO=data.aireco;
-    if(data.targets&&typeof data.targets==='object'&&Object.keys(data.targets).length)TG_FULL=data.targets;
-    _valSecCache=null;   // пересчитать секторные медианы по общим данным
-  }catch(e){}   // таблицы нет (до миграции) → молча
+// ── Общая аналитика по тикеру (VAL/INSIDER/AI_RECO/TG_FULL): админ собирает — все читают ──
+// Данные по тикерам не персональны: живут ТОЛЬКО в общей строке shared_analysis (RLS: чтение всем вошедшим),
+// в личный ledger не входят (E1, plans/ledger-model-e.md). Запись — только sharedSave/sharedPatch: RPC
+// shared_analysis_patch сливает патч изменённых тикеров на сервере (колонка || патч), поэтому два устройства
+// админа не затирают друг другу собранное (раньше — upsert всей строки из памяти). См. supabase-shared-analysis.sql.
+const SHARED_COLS=['val','insider','aireco','targets'];
+const SHARED_MEM={val:()=>VAL, insider:()=>INSIDER, aireco:()=>AI_RECO, targets:()=>TG_FULL};
+const SHARED_RETRY_MS=3000;
+let _sharedAt=null;   // updated_at последней применённой строки: та же версия повторно не применяется и не перерисовывает
+// Строка shared_analysis → глобалы. Перекрываем только непустыми колонками (пустая строка/таблица до миграции
+// не стирает данные в памяти). true — применено хоть что-то новое (нужна перерисовка).
+function sharedApply(row){
+  if(!row||typeof row!=='object')return false;
+  if(row.updated_at&&row.updated_at===_sharedAt)return false;
+  const ok=x=>!!x&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).length>0;
+  let n=0;
+  if(ok(row.val)){VAL=row.val;n++;}
+  if(ok(row.insider)){INSIDER=row.insider;n++;}
+  if(ok(row.aireco)){AI_RECO=row.aireco;n++;}
+  if(ok(row.targets)){TG_FULL=row.targets;n++;}
+  if(!n)return false;
+  _sharedAt=row.updated_at||null;
+  _valSecCache=null;   // пересчитать секторные медианы по общим данным
+  return true;
 }
-async function pushSharedAnalysis(){
-  if(!SYNC_ENABLED||!sb||!isAdmin())return;
-  try{ await sb.from('shared_analysis').upsert({id:'global',val:VAL,insider:INSIDER,aireco:AI_RECO,targets:TG_FULL,updated_at:new Date().toISOString()}); }catch(e){ console.warn('shared push failed',e); }
+// Чтение строки; true — применили новое. Ошибка (сеть/таблицы нет) — одна повторная попытка через 3 с,
+// она сама перерисует (вызывающий к тому времени уже вернулся).
+async function loadSharedAnalysis(retry){
+  if(!SYNC_ENABLED||!sb||!currentUser)return false;
+  let res;
+  try{ res=await sb.from('shared_analysis').select('val,insider,aireco,targets,updated_at').eq('id','global').maybeSingle(); }
+  catch(e){ res={data:null,error:e}; }
+  if(res&&res.error){
+    if(!retry)setTimeout(()=>{ loadSharedAnalysis(true).then(ch=>{ if(ch)renderAll(); },()=>{}); }, SHARED_RETRY_MS);
+    return false;
+  }
+  return sharedApply(res&&res.data);
+}
+// PostgREST: функции нет (SQL E1 не выполнен) — PGRST202 «not found in schema cache», 42883 undefined_function.
+function sharedRpcMissing(err){ const c=err&&err.code; return c==='PGRST202'||c==='42883'; }
+// Патч колонки: {TK: запись-объект}; ключи — непустые строки, значения — объекты. Пусто → null (писать нечего).
+function sharedPatchClean(patch){
+  if(!patch||typeof patch!=='object'||Array.isArray(patch))return null;
+  const out={}; let n=0;
+  Object.keys(patch).forEach(k=>{ const v=patch[k]; if(String(k).trim()&&v&&typeof v==='object'&&!Array.isArray(v)){ out[k]=v; n++; } });
+  return n?out:null;
+}
+// Точечная запись одной колонки: 'rpc' — патч слит сервером; 'col' — запасной путь (RPC нет: upsert ОДНОЙ колонки
+// целиком = память ∪ патч, не всей строки); 'skip' — нечего писать; 'off' — не админ/без облака; 'err' — не записано.
+async function sharedPatch(col, patch){
+  if(!SYNC_ENABLED||!sb||!isAdmin())return 'off';
+  const p=sharedPatchClean(patch);
+  if(!SHARED_COLS.includes(col)||!p)return 'skip';
+  try{
+    const{error}=await sb.rpc('shared_analysis_patch',{p_col:col,p_patch:p});
+    if(!error)return 'rpc';
+    if(!sharedRpcMissing(error))throw error;
+    console.warn('shared_analysis_patch не найдена — выполните supabase-shared-analysis.sql; пишу колонку целиком');
+    const{error:e2}=await sb.from('shared_analysis').upsert({id:'global',[col]:Object.assign({},SHARED_MEM[col](),p),updated_at:new Date().toISOString()});
+    if(e2)throw e2;
+    return 'col';
+  }catch(e){ console.warn('shared patch failed',col,e); return 'err'; }
+}
+// Запись сборщика: {колонка: патч, …} параллельно (сервер сериализует по строке); ошибка — один тост админу.
+async function sharedSave(parts){
+  const cols=Object.keys(parts||{});
+  const res=await Promise.all(cols.map(c=>sharedPatch(c,parts[c])));
+  if(res.includes('err'))toast(RT('⚠ Общие данные не сохранены в облако — повторите сбор','⚠ Shared data was not saved to the cloud — rerun the collection'),true);
+  return res;
 }
 let _sharedSub=null;
-const SHARED_COLS=['val','insider','aireco','targets'];
 // E0: строка > 1024 КБ приходит по realtime без больших колонок (лимит Postgres Changes) — тогда перечитываем её.
 function sharedPayloadFull(n){ return !!n && SHARED_COLS.every(k=>n[k]&&typeof n[k]==='object'); }
 function sharedOnRealtime(payload){
   const n=payload&&payload.new; if(!n||!Object.keys(n).length)return 'none';
   const rr=()=>{ _valSecCache=null; if(typeof renderAll==='function')renderAll(); };
-  if(!sharedPayloadFull(n)){ loadSharedAnalysis().then(rr,()=>{}); return 'reload'; }
-  VAL=n.val; INSIDER=n.insider; AI_RECO=n.aireco; TG_FULL=n.targets;
+  if(!sharedPayloadFull(n)){ loadSharedAnalysis().then(ch=>{ if(ch)rr(); },()=>{}); return 'reload'; }
+  VAL=n.val; INSIDER=n.insider; AI_RECO=n.aireco; TG_FULL=n.targets; _sharedAt=n.updated_at||null;
   rr(); return 'apply';
 }
 function subSharedAnalysis(){
@@ -317,11 +370,7 @@ function applyRemoteState(s){
   if(s.aiPort&&typeof s.aiPort==='object') AI_PORT=s.aiPort;
   if(s.aiPortBak&&typeof s.aiPortBak==='object') AI_PORT_BAK=s.aiPortBak;
   if(Array.isArray(s.stockAiLog)) STOCK_AI_LOG=s.stockAiLog;
-  if(s.insider&&typeof s.insider==='object') INSIDER=s.insider;
-  if(s.tgMeta&&typeof s.tgMeta==='object') TG_META=s.tgMeta;
-  if(s.val&&typeof s.val==='object') VAL=s.val;
-  if(s.tgFull&&typeof s.tgFull==='object') TG_FULL=s.tgFull;
-  if(s.aiReco&&typeof s.aiReco==='object') AI_RECO=s.aiReco;
+  // E1: val/insider/aiReco/tgFull/tgMeta в снапшоте старого клиента не читаются — общие данные только из shared_analysis.
   if(s.cycleOvr&&typeof s.cycleOvr==='object') CYCLE_OVR=s.cycleOvr;
   if(s.aiSpend&&typeof s.aiSpend==='object') AI_SPEND=Object.assign({usd:0,runs:0,in:0,out:0,searches:0},s.aiSpend);
   if(s.aiDash&&typeof s.aiDash==='object') AI_DASH=(s.aiDash.cards||s.aiDash.headline)?{[PF3_KEY]:s.aiDash}:s.aiDash;   // миграция старого одиночного дашборда в карту по портфелям
@@ -654,16 +703,16 @@ function aiBenchmarks(){
     return{index:k,basis:'доля по числу бумаг (не по капитализации)',sectors};
   });
 }
-let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (sync): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
-let TG_META={};   // 🎯 мета аналит-таргета по тикеру (sync): {n,nr,span('q'|'m'),src('fmp'|'yahoo'),at}
-let VAL={};   // 📐 Valuation Check по тикеру (sync): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
-let TG_FULL={};   // 🎯 A.1 агрегированные таргеты по тикеру (общие): {consensus,high,low,count,lastDate,ratings,changes,span,at}
+// INSIDER/VAL/TG_FULL/AI_RECO — общие данные по тикеру: только shared_analysis (E1), в личный снапшот не входят.
+let INSIDER={};   // 🕵 инсайдерские сводки по тикеру (shared): {at,buyShares,buyUSD,sellShares,sellUSD,netUSD,cluster,tx,notified}
+let VAL={};   // 📐 Valuation Check по тикеру (shared): {pe,fwdPe,ps,evEbitda,peg,sector,hist:{pe3,pe5,ps3,ps5,ev3,ev5},name,ccy,at,notified}
+let TG_FULL={};   // 🎯 A.1 агрегированные таргеты по тикеру (shared): {consensus,high,low,count,lastDate,ratings,changes,span,at}
 let valPeMode='fwd';   // 📐 карточка оценки: forward | trailing(ttm) для P/E
 let _valBusy=false;
 let pf3StockAi={sym:null,loading:false,text:null,data:null,at:null};   // текущий показанный разбор
 let AI_SPEND={usd:0,runs:0,in:0,out:0,searches:0};   // 💸 накопленные AI-расходы (sync)
 let AI_DASH={};   // 📊 AI-Dashboard: {tabKey:{headline,cards,picks,asOf,at,cost}} — отдельно по портфелям (sync)
-let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (sync): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
+let AI_RECO={};   // 🔄 AI-Рекомендация по тикеру (shared): {verdict,confidence,headline,entryLow,entryHigh,keyRisks,text,price,ccy,at}
 let _aiRecoLoading=null;   // тикер, по которому сейчас идёт запрос
 let _aiRecoOpen={};   // раскрыт ли полный разбор по тикеру
 let _stkCardOpen={};   // sym → раскрыт ли полный текст разбора в карточке
@@ -2079,7 +2128,8 @@ async function aiRecoRun(ev){
         horizons:(D.horizons&&typeof D.horizons==='object')?D.horizons:null,
         text:j.text,price:snap.price,ccy:snap.ccy,at:new Date().toISOString(),cost:j.cost||null,sigAt:snap.recoVerdict||null};
       _aiRecoOpen[tk]=true;
-      scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
+      scheduleSave();   // AI_SPEND — личный снапшот
+      sharedSave({aireco:{[tk]:AI_RECO[tk]}});   // общие данные → все пользователи (патч одного тикера)
       toast('🔄 '+RT('AI-Рекомендация готова','AI recommendation ready'));
     }else toast((j&&j.error)||'AI не ответил',true);
   }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=reco)','Worker unreachable (?action=reco)'),true);}
@@ -2139,6 +2189,12 @@ function insiderAllTickers(){
   });
   return out;
 }
+// Запись INSIDER по ответу воркера (чистая): notified — подпись последнего кластера; fresh — кластер новый.
+function insiderEntry(prev,v,name,at){
+  const p=prev||{}, sig=v.cluster?v.cluster.fromDate+'_'+v.cluster.toDate+'_'+v.cluster.uniqueBuyers:null;
+  const fresh=!!sig&&p.notified!==sig;
+  return{entry:{...v,name,notified:fresh?sig:(p.notified||null),at},fresh};
+}
 async function insiderUpdateAll(){
   if(_insiderBusy)return;
   _insiderBusy=true;
@@ -2149,6 +2205,7 @@ async function insiderUpdateAll(){
   const from=new Date(Date.now()-30*86400e3).toISOString().slice(0,10);
   const names={};list.forEach(x=>names[x.tk]=x.name);
   let done=0,clusters=0,withData=0;
+  const at=new Date().toISOString(), pi={};   // патч shared_analysis.insider — только тикеры этого прогона
   try{
     const tok=await sbToken();
     for(let i=0;i<list.length;i+=12){
@@ -2159,16 +2216,10 @@ async function insiderUpdateAll(){
         if(j&&!j.error){
           for(const tk of Object.keys(j)){
             const v=j[tk];if(!v||v.err)continue;
-            const prev=INSIDER[tk]||{};
-            INSIDER[tk]={...v,name:names[tk]||tk,notified:prev.notified||null,at:new Date().toISOString()};
+            const e=insiderEntry(INSIDER[tk],v,names[tk]||tk,at);
+            INSIDER[tk]=pi[tk]=e.entry;
             if(v.txCount>0)withData++;
-            // Новый кластер (другая сигнатура) → Telegram-алерт.
-            if(v.cluster){
-              const sig=v.cluster.fromDate+'_'+v.cluster.toDate+'_'+v.cluster.uniqueBuyers;
-              if(prev.notified!==sig){
-                clusters++;INSIDER[tk].notified=sig;   // Telegram-алерт убран — кластеры смотрим на сайте
-              }
-            }
+            if(e.fresh)clusters++;   // новый кластер (Telegram-алерт убран — смотрим на сайте)
           }
         }
       }catch(e){}
@@ -2176,7 +2227,8 @@ async function insiderUpdateAll(){
       const b=document.getElementById('insiderBtn');
       if(b)b.textContent=`⏳ ${Math.round(done/list.length*100)}%`;
     }
-    scheduleSave(); pushSharedAnalysis();   // общие данные → все пользователи
+    Object.assign(INSIDER,pi);   // realtime чужого патча во время сбора мог заменить INSIDER — вернуть собранное
+    await sharedSave({insider:pi});   // общие данные → все пользователи (в личный снапшот не входят)
     toast('🕵 '+RT(`Инсайдеры обновлены: ${withData}/${list.length} с данными · ${clusters} нов. кластер.`,`Insiders updated: ${withData}/${list.length} with data · ${clusters} new cluster(s)`));
   }catch(e){toast(RT('Worker недоступен (нужен эндпоинт ?action=insider)','Worker unreachable (?action=insider)'),true);}
   finally{_insiderBusy=false;renderAll();}

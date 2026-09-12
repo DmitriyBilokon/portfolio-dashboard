@@ -274,7 +274,8 @@ grp('pfRecentTrades', function(){
 // новый ключ обязан появиться здесь И в applyRemoteState (см. 'sync round-trip').
 // S7b-3: rankings/sma/colOrders/hiddenCols/tabGroups/tabOrder (классические таблицы и навигация) удалены из снапшота.
 // E0: cv — версия клиента (CLIENT_BUILD), пишется, но applyRemoteState её не читает.
-var SNAP_KEYS=['cv','data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','insider','tgMeta','val','tgFull','aiReco','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
+// E1: val/insider/aiReco/tgFull (общие данные по тикеру → только shared_analysis) и tgMeta (мёртвая запись) удалены.
+var SNAP_KEYS=['cv','data','fx','theme','smaTf','sim','pfTrades','aiChat','tgAlerts','aiPort','aiPortBak','stockAiLog','aiSpend','aiDash','aiPlaybook','aiPlaybookSeedV','planRules','scnAlerts','news','newsImpact','aiInclChat','cycleOvr','posMeta','desk','deskWatch','schemaV'];
 grp('snapshotState keys', function(){
   var s = snapshotState();
   __eq('snapshot keys = full list', Object.keys(s).sort(), SNAP_KEYS.slice().sort());
@@ -453,7 +454,82 @@ grp('sync signal (E0)', function(){
     syncOnSignal=S.sig; syncOnRemote=S.onr; loadSharedAnalysis=S.lsa; renderAll=S.ra; globalThis.setTimeout=S.stt;
     VAL=S.V; INSIDER=S.I; AI_RECO=S.A; TG_FULL=S.T; document.visibilityState=S.vs;
     pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; remoteStale=S.st; stateRev=S.rev; currentUser=S.u;
-    syncReady=S.rdy; syncResumeAt=S.at;
+    syncReady=S.rdy; syncResumeAt=S.at; _sharedAt=null;
+  }
+});
+
+// 🌐 E1 (plans/ledger-model-e.md §4.E1): общие данные по тикеру только в shared_analysis, запись — патчем через RPC.
+// Асинхронные sharedPatch/sharedSave тонкие (JSC не крутит промисы) — тестируем чистые построители и применение.
+grp('shared analysis (E1)', function(){
+  var S={V:VAL,I:INSIDER,A:AI_RECO,T:TG_FULL,at:_sharedAt,vc:_valSecCache,init:init,mig:migrateState};
+  var SHARED=['val','insider','aiReco','tgFull','tgMeta'];
+  try{
+    // 1) снапшот без общих ключей; снапшот старого клиента (с ними) не трогает память
+    var s=snapshotState();
+    __ok('snapshot has no shared keys', SHARED.every(function(k){ return !Object.prototype.hasOwnProperty.call(s,k); }));
+    __ok('TG_META removed', typeof TG_META==='undefined');
+    VAL={A:{pe:1}}; INSIDER={A:{tx:[]}}; AI_RECO={A:{verdict:'buy'}}; TG_FULL={A:{consensus:10}};
+    var v0=VAL,i0=INSIDER,a0=AI_RECO,t0=TG_FULL;
+    init=function(){}; migrateState=function(){};
+    var o=JSON.parse(JSON.stringify(s)); o.val={B:{pe:9}}; o.insider={B:{}}; o.aiReco={B:{verdict:'sell'}}; o.tgFull={B:{consensus:1}}; o.tgMeta={B:{n:3}};
+    applyRemoteState(o);
+    __ok('old-client snapshot: VAL/INSIDER/AI_RECO/TG_FULL untouched', VAL===v0 && INSIDER===i0 && AI_RECO===a0 && TG_FULL===t0 && !VAL.B);
+    __ok('old-client snapshot: shared keys not re-emitted', SHARED.every(function(k){ return !Object.prototype.hasOwnProperty.call(snapshotState(),k); }));
+    init=S.init; migrateState=S.mig; applyRemoteState(s);
+    // 2) sharedApply: только непустые колонки, дедуп по updated_at, сброс секторных медиан
+    _sharedAt=null; _valSecCache={x:1};
+    var row={val:{C:{pe:2}},insider:{},aireco:null,targets:{C:{consensus:5}},updated_at:'2026-09-12T10:00:00Z'};
+    __ok('sharedApply new row → true', sharedApply(row)===true);
+    __ok('sharedApply: non-empty columns applied', VAL===row.val && TG_FULL===row.targets);
+    __ok('sharedApply: empty/null columns keep memory', INSIDER===i0 && AI_RECO===a0);
+    __ok('sharedApply: sector medians reset, stamp kept', _valSecCache===null && _sharedAt==='2026-09-12T10:00:00Z');
+    __ok('sharedApply same updated_at → false (no rerender)', sharedApply({val:{D:{pe:3}},updated_at:'2026-09-12T10:00:00Z'})===false && !VAL.D);
+    __ok('sharedApply all-empty row → false', sharedApply({val:{},insider:{},aireco:{},targets:{},updated_at:'x2'})===false && _sharedAt==='2026-09-12T10:00:00Z');
+    __ok('sharedApply null/array → false', sharedApply(null)===false && sharedApply({val:[1],updated_at:'x3'})===false);
+    __ok('sharedApply newer row → true', sharedApply({insider:{E:{tx:[]}},updated_at:'2026-09-12T11:00:00Z'})===true && INSIDER.E);
+    __ok('sharedApply row without updated_at → applied', sharedApply({aireco:{F:{verdict:'wait'}}})===true && AI_RECO.F && _sharedAt===null);
+    // realtime с полной строкой запоминает её версию — повторная загрузка той же строки не перерисует
+    var _ra=renderAll; renderAll=function(){};
+    try{ sharedOnRealtime({new:{id:'global',val:{G:{}},insider:{},aireco:{},targets:{},updated_at:'2026-09-12T12:00:00Z'}});
+      __ok('realtime full row stamps _sharedAt', _sharedAt==='2026-09-12T12:00:00Z' && sharedApply({val:{H:{}},updated_at:'2026-09-12T12:00:00Z'})===false); }
+    finally{ renderAll=_ra; }
+    // 3) патч: только объекты по непустому тикеру
+    __eq('patchClean keeps objects', sharedPatchClean({A:{pe:1},B:{x:2}}), {A:{pe:1},B:{x:2}});
+    __eq('patchClean drops non-objects/blank keys', sharedPatchClean({A:{pe:1},B:null,C:5,D:[1],' ':{x:1}}), {A:{pe:1}});
+    __eq('patchClean empty → null', [sharedPatchClean({}),sharedPatchClean(null),sharedPatchClean([{a:1}]),sharedPatchClean({A:null})], [null,null,null,null]);
+    __ok('rpc missing: PGRST202/42883', sharedRpcMissing({code:'PGRST202'}) && sharedRpcMissing({code:'42883'}));
+    __ok('rpc missing: other errors are real', !sharedRpcMissing({code:'42501'}) && !sharedRpcMissing(null) && !sharedRpcMissing({message:'x'}));
+    __eq('SHARED_COLS ↔ SHARED_MEM', Object.keys(SHARED_MEM).sort(), SHARED_COLS.slice().sort());
+    // 4) построители записей сборщиков
+    __eq('valEntry keeps notified, sets name/ccy', valEntry({notified:'cheap_2',pe:1},{pe:5,at:'t'},{tk:'MU',name:'Micron',ccy:'USD'}), {pe:5,at:'t',name:'Micron',ccy:'USD',notified:'cheap_2'});
+    __eq('valEntry no prev → notified null, name=tk', valEntry(undefined,{pe:5},{tk:'MU',ccy:'USD'}), {pe:5,name:'MU',ccy:'USD',notified:null});
+    __eq('tgFullEntry listing ccy/sym/at', tgFullEntry({consensus:10,ccy:'x'},{ccy:' sek '},'VOLV-B.ST','T'), {consensus:10,ccy:'SEK',sym:'VOLV-B.ST',at:'T'});
+    __eq('tgFullEntry default ccy USD', tgFullEntry({},{},'MU','T').ccy, 'USD');
+    var cl={fromDate:'2026-09-01',toDate:'2026-09-05',uniqueBuyers:3};
+    var e1=insiderEntry({notified:null},{cluster:cl,txCount:4},'Micron','T');
+    __ok('insiderEntry new cluster → fresh, signed', e1.fresh===true && e1.entry.notified==='2026-09-01_2026-09-05_3' && e1.entry.name==='Micron' && e1.entry.at==='T');
+    var e2=insiderEntry(e1.entry,{cluster:cl,txCount:4},'Micron','T2');
+    __ok('insiderEntry same cluster → not fresh', e2.fresh===false && e2.entry.notified==='2026-09-01_2026-09-05_3');
+    var e3=insiderEntry({notified:'old'},{txCount:0},'X','T');
+    __ok('insiderEntry no cluster → keeps previous signature', e3.fresh===false && e3.entry.notified==='old');
+    __ok('insiderEntry no prev, no cluster → null', insiderEntry(undefined,{},'X','T').entry.notified===null);
+    // valNotifyPatch: метка «дёшево по обоим» меняется только у тех, у кого меняется; вход не мутируется
+    var med={Tech:{pe:20,fwdPe:20,ps:5,evEbitda:15}};
+    var cheapV={sector:'Tech',fwdPe:10,ps:2,evEbitda:15,hist:{pe5:18,ps5:4,ev5:14},notified:null};   // P/E и P/S ниже сектора и истории → 2
+    var val={A:cheapV,B:{sector:'Tech',fwdPe:30,ps:6,notified:'cheap_2'},C:{sector:'Tech',fwdPe:10,ps:2,hist:{pe5:18,ps5:4},notified:'cheap_2'},D:null};
+    var np=valNotifyPatch(val,med);
+    __eq('valNotifyPatch keys', Object.keys(np.patch).sort(), ['A','B']);
+    __ok('valNotifyPatch new cheap → signed, counted', np.patch.A.notified==='cheap_2' && np.cheap===1);
+    __ok('valNotifyPatch no longer cheap → cleared', np.patch.B.notified===null);
+    __ok('valNotifyPatch pure (input untouched)', val.A.notified===null && val.B.notified==='cheap_2');
+    __ok('valNotifyPatch without medians → no crash', valNotifyPatch({A:cheapV},null).cheap===0);
+    // 5) регресс: запись в shared_analysis — только sharedPatch (RPC / одна колонка), не upsert всей строки
+    var src=['app.js','app-2.js','app-3.js','app-4.js','app-5.js','desk.js'].map(function(f){ return rd(f); }).join('\n');
+    __ok('no pushSharedAnalysis', src.indexOf('pushSharedAnalysis')<0);
+    __ok('no whole-row shared upsert', !/shared_analysis'\)\.upsert\(\{[^}]*val:VAL/.test(src));
+    __eq('shared_analysis written only by sharedPatch', (src.match(/from\('shared_analysis'\)\.(upsert|update|insert)/g)||[]).length, 1);
+  }finally{
+    VAL=S.V; INSIDER=S.I; AI_RECO=S.A; TG_FULL=S.T; _sharedAt=S.at; _valSecCache=S.vc; init=S.init; migrateState=S.mig;
   }
 });
 

@@ -1199,7 +1199,6 @@ async function pf3RefreshTargets(d){
     if(!q)return;
     if(typeof q.avg==='number'&&q.avg>0)r[tgC]=q.avg;
     if(typeof q.recent==='number'&&q.recent>0)r[tgrC]=q.recent;
-    if(typeof q.avg==='number'&&q.avg>0)TG_META[String(r[2]||'').trim().toUpperCase()]={n:q.count||0,nr:q.recentCount||0,span:q.recentSpan||null,src:q.src||null,at:Date.now()};
     if(typeof q.pe==='number'&&q.pe>0)r[peC]=Math.round(q.pe*10)/10;
     if(typeof q.ps==='number'&&q.ps>0)r[psC]=Math.round(q.ps*10)/10;
     if(typeof q.divy==='number'&&q.divy>0)r[dyC]=Math.round(q.divy*1000)/10;   // доля → %

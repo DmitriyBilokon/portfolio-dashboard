@@ -454,7 +454,7 @@ from public.ledger_state order by updated_at desc;
    group by 1,3,4 order by 1,2 desc;
    ```
    Ожидание: `prefix` — один из двух вариантов (сид / Портфель 2.0), в `tail_matched` только `SMA 50 | SMA 100 | SMA 200 | Аналит. таргет | Период SMA | Таргет 3м` (в любом порядке). Иное — прислать строку: у неё поменяется результат `colOf`.
-3. **До деплоя воркера** сохранить `?action=bookcheck&dry=1&all=1` (консоль сайта: `fetch(PRICE_PROXY+'?action=bookcheck&dry=1&all=1',{headers:{Authorization:'Bearer '+(await sb.auth.getSession()).data.session.access_token}}).then(r=>r.json())`), после деплоя — то же; `items` и `quoted` идентичны (`fires` зависит от живых цен). `?action=version` → `2026-09-14e2-named-cols`; `verify-worker`.
+3. ~~**Воркер**~~ — задеплоен 2026-09-14, `?action=version` → `2026-09-14e2-named-cols`; bookcheck dry до (e5b, 11:43 UTC) и после (e2, 11:44 UTC) идентичен: `items` 29, `quoted` те же 13 символов в том же порядке, `missing`/`fires` пусты, `stateErr` null. Как проверяли: до деплоя воркера сохранить `?action=bookcheck&dry=1&all=1` (консоль сайта: `fetch(PRICE_PROXY+'?action=bookcheck&dry=1&all=1',{headers:{Authorization:'Bearer '+(await sb.auth.getSession()).data.session.access_token}}).then(r=>r.json())`), после деплоя — то же; `items` и `quoted` идентичны (`fires` зависит от живых цен). `?action=version` → `2026-09-14e2-named-cols`; `verify-worker`.
 4. Push → жёсткая перезагрузка устройств → живая проверка §4.E2: «Сегодня»/«Позиции»/«Акция» на всех портфелях — суммы и P&L как до деплоя; в консоли нет `E2: префикс заголовков…`.
 **Откат.** `git revert` + деплой сайта и воркера (`WORKER_BUILD` предыдущий `2026-09-14e5b-ai-reports`). Данные не менялись.
 Дальше — **E4** (Opus 5 · max + ревью слияния Fable 5.1 · high).

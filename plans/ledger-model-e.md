@@ -444,7 +444,7 @@ from public.ledger_state order by updated_at desc;
 
 **За пользователем (по порядку).**
 1. ~~**Свежая копия и I3**~~ — сделано 2026-09-14 (см. «Стенд» выше). Как выгружать (до деплоя; консоль залогиненной страницы, два шага): `var __s=JSON.stringify((await sb.from('ledger_state').select('data').eq('user_id',currentUser.id).maybeSingle()).data.data)`, затем `copy(__s)`, затем в терминале `pbpaste > ~/dash-ledger-copies/owner-2026-09-14.json && chmod 600 ~/dash-ledger-copies/owner-2026-09-14.json` → `node tests/ledger-copy.js ~/dash-ledger-copies/owner-2026-09-14.json --ref=583c8dc` — ждём I0 «байт-в-байт», I3 и «контракт RC» ✔.
-2. **SQL (только чтение) — раскладки всех пользователей** (копия видит только владельца):
+2. ~~**SQL — раскладки всех пользователей**~~ — сделано 2026-09-14: у всех трёх строк (c13ee426 — 16 вкладок, 7ce29019 — 14, ec2cb692 — 14) все вкладки проверяются контрактом и проходят его, префикс везде — имена Портфеля 2.0 (вариант сида в облаке не встречается — только у будущих новых аккаунтов); в хвосте только `SMA 50/100/200`, «Аналит. таргет», «Таргет 3м», «Период SMA» (у части вкладок нет «Таргет 3м»/«Период SMA» — `colOf` даёт −1, как и старые матчеры). Итоговая проверка префикса — запрос с `ok` (обе строки-эталона PF_HEAD/PF_HEAD_ALT прямо в SQL). Первый запрос (для истории):
    ```sql
    select left(l.user_id::text,8) as usr, count(*) as tabs,
           (select string_agg(h, ' | ' order by i) from jsonb_array_elements_text(t.value->'headers') with ordinality x(h,i) where i<=16) as prefix,

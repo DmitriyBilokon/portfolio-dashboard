@@ -454,6 +454,22 @@ grp('err alert dedup', function(){
   __eq('вход не мутируется', b.state.errs[K].n, 1);
 });
 
+// ai_reports (E5b): гейт авто-анализа — построитель URL (PostgREST-кавычки для скобок/
+// эмодзи в ключе вкладки) и запись, уходящая в ai_reports.data.
+grp('ai_reports (E5b)', function(){
+  var base = 'https://sb.test';
+  __eq('URL: тикер без спецсимволов', aiReportLastAtUrl(base, 'u1', 'pfa', 'MU'),
+    base + '/rest/v1/ai_reports?select=at&user_id=eq.u1&kind=eq.pfa&key=eq.' + encodeURIComponent('"MU"') + '&order=at.desc&limit=1');
+  __eq('URL: ключ со скобками — в кавычках', aiReportLastAtUrl(base, 'u1', 'pfa', 'Portfolio (Anna)'),
+    base + '/rest/v1/ai_reports?select=at&user_id=eq.u1&kind=eq.pfa&key=eq.' + encodeURIComponent('"Portfolio (Anna)"') + '&order=at.desc&limit=1');
+  __eq('URL: ключ с эмодзи — тоже в кавычках', aiReportLastAtUrl(base, 'u1', 'pfa', '🚀 Портфель 3.0'),
+    base + '/rest/v1/ai_reports?select=at&user_id=eq.u1&kind=eq.pfa&key=eq.' + encodeURIComponent('"🚀 Портфель 3.0"') + '&order=at.desc&limit=1');
+  __eq('URL: кавычка внутри ключа экранируется', aiReportLastAtUrl(base, 'u1', 'pfa', 'A"B'),
+    base + '/rest/v1/ai_reports?select=at&user_id=eq.u1&kind=eq.pfa&key=eq.' + encodeURIComponent('"A\\"B"') + '&order=at.desc&limit=1');
+  __eq('pfaEntry: запись как есть, лишние поля отброшены', pfaEntry({ at: 't', summary: 's', report: 'r', actions: [1], cost: 2, extra: 'x' }),
+    { at: 't', summary: 's', report: 'r', actions: [1], cost: 2 });
+});
+
 // LSE: пенсы Yahoo (GBp) → фунты в точках входа yChart/yQuoteSummary (plans/lse-pence.md).
 grp('LSE pence', function(){
   function ch(ccy){

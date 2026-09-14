@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-10c-err-dedup';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-14e5b-ai-reports';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -48,8 +48,8 @@ const aiModel = k => MODELS[k] || AI_MODEL_DEFAULT;
 const PF3_KEY = '🚀 Портфель 3.0';   // portfolio of record
 const PF_KEY = '💼 Портфель 2.0';    // legacy key — read fallback only
 // Реальные портфели, которые авто-анализируются в цикле AI-портфеля (кнопка
-// «Запустить цикл сейчас» + cron) → результат пишется в data[key].analysis,
-// клиент рисует его во вкладке «📈 Анализ». Sergei намеренно не включён.
+// «Запустить цикл сейчас» + cron) → результат пишется в таблицу ai_reports (kind
+// 'pfa', E5b), клиент рисует его во вкладке «📈 Анализ». Sergei намеренно не включён.
 const ANALYZE_PORTFOLIOS = [PF3_KEY, 'Portfolio (Anna)'];
 const PFANALYSIS_INTERVAL_MS = 60 * 60e3;   // на cron — не чаще раза в час
 const CHART_TICKER = 'MU';   // test mode: send a chart image for this holding only
@@ -1971,7 +1971,7 @@ async function aiPortfolioRun(env, force){
 // При нажатии «Запустить цикл сейчас» (и на cron) worker не только ведёт свой
 // виртуальный портфель, но и анализирует реальные портфели владельца, давая по
 // каждому рекомендации (купить/докупить/сократить/продать/держать). Результат
-// пишется в data[key].analysis, клиент рисует его во вкладке «📈 Анализ».
+// пишется в таблицу ai_reports (kind 'pfa', E5b), клиент рисует его во вкладке «📈 Анализ».
 // Структурный вывод (json_schema), без web_search — дёшево на часовом цикле;
 // глубокий FED-aware разбор с веб-поиском остаётся на ручной кнопке AI Proto.
 const PFANALYZE_SYSTEM = `Ты — AI Proto, главная аналитическая модель инвестиционного дашборда частного инвестора из Швеции (базовая валюта — шведская крона, kr). Тебе передают JSON-снапшот ОДНОГО реального портфеля (поле portfolioName): позиции с живыми ценами, P&L, долями, уровнями SMA 50/100/200, поддержкой/сопротивлением, консенсус-таргетами; аллокацию по секторам; свободный кэш; recoVerdicts (детерминированный вердикт скоринга сайта по тикерам, легенда — recoLegend); liveMarkets (живые фьючерсы/индексы/доходности/доллар — risk-фон и реакция на FED); при наличии — playbook.
@@ -2191,16 +2191,51 @@ async function analyzeErrAlert(env, userId, key, msg){
   try{ await sendTelegram(env, `📈 <b>Анализ ${esc(key)}</b>: ошибка — ${esc(msg.slice(0, 400))}${hint}${rep}${quiet}`); }catch(_){}
   return 'Telegram отправлен';
 }
+// PostgREST eq. требует кавычек у значений с зарезервированными символами (,.():) —
+// ключи вкладок содержат скобки/эмодзи («Portfolio (Anna)», «🚀 Портфель 3.0»).
+function pgEqVal(v){ return encodeURIComponent('"' + String(v).replace(/"/g, '\\"') + '"'); }
+function aiReportLastAtUrl(base, userId, kind, key){
+  return `${base}/rest/v1/ai_reports?select=at&user_id=eq.${encodeURIComponent(userId)}&kind=eq.${encodeURIComponent(kind)}&key=eq.${pgEqVal(key)}&order=at.desc&limit=1`;
+}
+// Запись авто-анализа как она уходит в ai_reports.data (kind 'pfa') — без изменений.
+function pfaEntry(a){ return { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost }; }
+// Метка времени последней строки ai_reports для (userId, kind, key) в мс — гейт cron'а.
+async function aiReportLastAt(env, userId, kind, key){
+  try{
+    const r = await fetch(aiReportLastAtUrl(env.SUPABASE_URL, userId, kind, key),
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } });
+    if(!r.ok) return null;
+    const rows = await r.json();
+    const at = rows && rows[0] && rows[0].at;
+    return at ? Date.parse(at) : null;
+  }catch(e){ return null; }
+}
+// Вставка отчёта в ai_reports (дубль по уникальному ключу user_id,kind,key,at — игнорируется).
+async function aiReportInsert(env, userId, kind, key, at, data){
+  try{
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ai_reports?on_conflict=user_id,kind,key,at`, {
+      method: 'POST',
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: userId, kind, key, at, data }),
+    });
+    return !!(r && r.ok);
+  }catch(e){ return false; }
+}
 // Анализ ОДНОГО реального портфеля (отдельный вызов воркера — экономим бюджет
-// подзапросов Cloudflare free=50). Гейт per-portfolio по data[key].pfAnalysisAt
-// (cron — не чаще раза в час); force=true (ручной запуск) считает сейчас.
+// подзапросов Cloudflare free=50). Гейт per-portfolio — по последней строке ai_reports
+// (kind 'pfa'), с фолбэком на устаревший data[key].pfAnalysisAt (ledger — до E5b его писал
+// сам воркер; после деплоя поле больше не обновляется и служит только переходным
+// гейтом первого запуска, пока в таблице ещё нет строк); cron — не чаще раза в час,
+// force=true (ручной запуск) считает сейчас.
 async function analyzeOnePortfolio(env, key, force){
   if(!env.ANTHROPIC_API_KEY) return 'ANTHROPIC_API_KEY не задан';
   const row = await loadRow(env);
   const snap = row && row.snap;
   if(!snap || !snap.data || !snap.data[key]) return `Нет данных портфеля ${key}`;
   const now = Date.now();
-  const lastAt = snap.data[key].pfAnalysisAt || 0;
+  const repAt = await aiReportLastAt(env, row.userId, 'pfa', key);
+  const lastAt = Math.max(repAt || 0, snap.data[key].pfAnalysisAt || 0);
   // −90 с допуска: слот анализа — один тик в час (pickCronTask), тик на секунды раньше часа не должен сдвигать анализ на 2 ч.
   if(!force && lastAt && now - lastAt < PFANALYSIS_INTERVAL_MS - 90e3){
     return `Рано: анализ ${key} через ${Math.ceil((lastAt + PFANALYSIS_INTERVAL_MS - now) / 60e3)} мин`;
@@ -2213,16 +2248,10 @@ async function analyzeOnePortfolio(env, key, force){
     return `Анализ ${key}: ошибка — ${msg} · ${tg}`;
   }
   if(!a) return `Анализ ${key}: пусто`;
-  // Пишем анализ в СВЕЖИЙ снапшот с повтором при rev-конфликте (клиент автосохраняет); Telegram — только после коммита.
-  const entry = { at: a.at, summary: a.summary, report: a.report, actions: a.actions, cost: a.cost };
-  const saved = await writeChecked(env, snap => {
-    const d = snap && snap.data && snap.data[key];
-    if(!d) return false;
-    d.analysis = entry;
-    d.analysisHistory = [entry, ...(d.analysisHistory || [])].slice(0, 5);
-    d.pfAnalysisAt = now;   // per-portfolio гейт — чтобы анализы разных портфелей не блокировали друг друга
-  });
-  if(!saved){ console.error('analyze ' + key + ': запись не закоммичена'); return `Анализ ${key}: не удалось сохранить (конфликт записи) — Telegram не отправлен`; }
+  // Пишем отчёт в ai_reports (E5b) — ledger_state воркер больше не трогает; Telegram — только после вставки.
+  const entry = pfaEntry(a);
+  const saved = await aiReportInsert(env, row.userId, 'pfa', key, entry.at, entry);
+  if(!saved){ console.error('analyze ' + key + ': запись не сохранена в ai_reports'); return `Анализ ${key}: не удалось сохранить (ai_reports — выполнен ли supabase-ai-reports.sql?) — Telegram не отправлен`; }
   const top = (a.actions || []).filter(x => x && x.action && !/держать/i.test(x.action)).slice(0, 6)
     .map(x => `${/прода|сократ/i.test(x.action) ? '🔴' : '🟢'} ${esc(x.action)} ${esc(x.ticker || x.name || '')}`).join('\n');
   // Была ошибка с дедупом — снять её запись (следующая ошибка придёт сразу) и отметить восстановление.
@@ -3239,7 +3268,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry · lse-pence · err-dedup\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry · lse-pence · err-dedup · ai-reports\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.

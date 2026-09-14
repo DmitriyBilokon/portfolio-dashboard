@@ -72,7 +72,7 @@ function chart(price){
   return { chart: { result: [{ meta: { regularMarketPrice: price }, timestamp: ts, indicators: { quote: [{ close: c, high: h, low: l, open: c, volume: c.map(() => 1e6) }] } }] } };
 }
 function mkWorld(snap){
-  const w = { snap: JSON.parse(JSON.stringify(snap)), patches: 0, bak: null, bakPosts: 0, tg: [], jobs: [] };
+  const w = { snap: JSON.parse(JSON.stringify(snap)), patches: 0, bak: null, bakPosts: 0, tg: [], jobs: [], aiReports: [], aiReportsFail: false };
   w.fetch = async (url, init) => {
     url = String(url); init = init || {};
     const method = init.method || 'GET';
@@ -91,6 +91,20 @@ function mkWorld(snap){
       }
       if(url.includes('select=alerts')) return w.noAlertsCol ? httpErr(400, '{"message":"column alerts does not exist"}') : new Response(JSON.stringify([{ alerts: w.alerts || null }]), { status: 200 });
       return new Response(JSON.stringify(w.bak ? [{ port: w.bak }] : []), { status: 200 });
+    }
+    if(url.includes('/rest/v1/ai_reports')){
+      if(method === 'POST'){
+        if(w.aiReportsFail) return httpErr(500);
+        const b = JSON.parse(init.body);
+        const dup = w.aiReports.some(r => r.kind === b.kind && r.key === b.key && r.at === b.at);
+        if(!dup) w.aiReports.push(b);
+        return new Response('', { status: 201 });
+      }
+      const u = new URL(url);
+      const kind = (u.searchParams.get('kind') || '').replace(/^eq\./, '');
+      const key = (u.searchParams.get('key') || '').replace(/^eq\."|"$/g, '').replace(/\\"/g, '"');
+      const rows = w.aiReports.filter(r => r.kind === kind && r.key === key).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+      return new Response(JSON.stringify(rows.slice(0, 1).map(r => ({ at: r.at }))), { status: 200 });
     }
     if(url.includes('/rest/v1/ledger_state')){
       if(method === 'PATCH'){ w.patches++; w.snap = JSON.parse(init.body).data; return new Response(JSON.stringify([{ data: w.snap }]), { status: 200 }); }
@@ -185,10 +199,32 @@ const decisions = d => JSON.stringify({ decisions: d, note: 'n' });
   await grp('analyzeOnePortfolio: усечение', async () => {
     const w = mkWorld(mkSnap()); ctx.__fetch = w.fetch; anthQ = [anth('{"summary":"', 'max_tokens'), anth('{"summary":"x","rep', 'max_tokens')];
     const out = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, true);
-    eq('ошибка, pfAnalysisAt и анализ не записаны', [/усечён/.test(out), w.patches, w.snap.data[W.PF3_KEY].pfAnalysisAt, w.snap.data[W.PF3_KEY].analysis], [true, 0, undefined, undefined]);
+    eq('ошибка — ни ai_reports, ни ledger не тронуты', [/усечён/.test(out), w.patches, w.aiReports.length], [true, 0, 0]);
     const w2 = mkWorld(mkSnap()); ctx.__fetch = w2.fetch; anthQ = [httpErr(529), anth(JSON.stringify({ summary: 's', report: 'r', actions: [{ action: 'Держать', name: 'Micron', ticker: 'MU', details: 'd', amountSEK: null }] }), 'end_turn')];
     const out2 = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, true);
-    eq('529 → повтор → анализ записан', [/1 реком/.test(out2), w2.snap.data[W.PF3_KEY].pfAnalysisAt > 0, w2.snap.data[W.PF3_KEY].analysis.summary], [true, true, 's']);
+    eq('529 → повтор → отчёт записан в ai_reports (kind pfa), ledger не тронут', [/1 реком/.test(out2), w2.patches, w2.aiReports.length, w2.aiReports[0].kind, w2.aiReports[0].key, w2.aiReports[0].data.summary], [true, 0, 1, 'pfa', W.PF3_KEY, 's']);
+  });
+
+  await grp('analyzeOnePortfolio: гейт и запись в ai_reports (E5b)', async () => {
+    // Свежая строка в таблице — «Рано» без force.
+    const w = mkWorld(mkSnap());
+    w.aiReports.push({ user_id: 'u1', kind: 'pfa', key: W.PF3_KEY, at: new Date(BASE - 10 * 60e3).toISOString(), data: { summary: 'old' } });
+    ctx.__fetch = w.fetch;
+    const out = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('«Рано» по последней строке ai_reports', [/Рано/.test(out), w.aiReports.length], [true, 1]);
+    // force игнорирует гейт — новая строка добавляется, старая остаётся.
+    anthQ = [anth(JSON.stringify({ summary: 's2', report: 'r', actions: [] }), 'end_turn')];
+    const out2 = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, true);
+    eq('force игнорирует гейт', [/0 реком/.test(out2), w.aiReports.length, w.aiReports[1].data.summary], [true, 2, 's2']);
+    // Устаревший ledger-гейт (pfAnalysisAt) — фолбэк первого запуска после деплоя, пока в таблице пусто.
+    const w2 = mkWorld(mkSnap()); w2.snap.data[W.PF3_KEY].pfAnalysisAt = BASE - 5 * 60e3; ctx.__fetch = w2.fetch;
+    const out3 = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
+    eq('«Рано» по pfAnalysisAt ledger, пока ai_reports пуста', [/Рано/.test(out3), w2.aiReports.length], [true, 0]);
+    // Ошибка вставки — Telegram не отправлен, ledger не тронут.
+    const w3 = mkWorld(mkSnap()); w3.aiReportsFail = true; ctx.__fetch = w3.fetch;
+    anthQ = [anth(JSON.stringify({ summary: 's3', report: 'r', actions: [] }), 'end_turn')];
+    const out4 = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, true);
+    eq('вставка упала → ошибка про SQL, без Telegram и без ledger', [/ai_reports/.test(out4), w3.tg.length, w3.patches, w3.aiReports.length], [true, 0, 0, 0]);
   });
 
   await grp('analyzeOnePortfolio: дедуп ошибок в Telegram', async () => {
@@ -200,7 +236,7 @@ const decisions = d => JSON.stringify({ decisions: d, note: 'n' });
     anthQ = [bill()];
     out = await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
     eq('2-я та же (другой request_id): молчим', [w.tg.length, /повтор той же ошибки \(1\)/.test(out), w.alerts.errs[W.PF3_KEY].n], [1, true, 1]);
-    eq('гейт анализа не записан — повтор через час сохраняется', [w.patches, w.snap.data[W.PF3_KEY].pfAnalysisAt], [0, undefined]);
+    eq('гейт анализа не записан — повтор через час сохраняется', [w.patches, w.aiReports.length], [0, 0]);
     anthQ = [anth(JSON.stringify({ summary: 's', report: 'r', actions: [] }), 'end_turn')];
     await W.analyzeOnePortfolio(ENV, W.PF3_KEY, false);
     eq('успех: «снова работает», запись дедупа снята', [w.tg.length, /снова работает/.test(w.tg[1] || ''), W.PF3_KEY in w.alerts.errs], [2, true, false]);

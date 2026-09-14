@@ -3163,3 +3163,83 @@ grp('P5b isolated module: calculation has no app globals', function(){
   var p=iso.ev(r,jSer(J_DAYS,J_CL,J_LATE),null,{now:J_NOW,fee:function(){return {total:0};}});
   __eq('P5b расчёт без глобалов приложения (комиссия — аргументом)', [p.entry.date,p.status,p.horizons[20].net], ['2026-09-14','complete',null]);
 });
+
+// ── E2: контракт строки v3-вкладки (plans/ledger-model-e.md §4.E2) ──
+grp('row contract (E2)', function(){
+  parityRun('app', RC, COLN, COLN_RE, colOf);
+  __ok('E2 контракт заморожен', Object.isFrozen(RC)&&Object.isFrozen(COLN)&&Object.isFrozen(COLN_RE)&&Object.isFrozen(PF_HEAD)&&Object.isFrozen(PF_HEAD_ALT));
+  __eq('E2 RC = позиции 0–15 PF_HEAD', [PF_HEAD.length, Object.keys(RC).map(function(k){return RC[k];}).join(',')], [16, '0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15']);
+  __eq('E2 PF_HEAD = сид, PF_HEAD_ALT = имена Портфеля 2.0', [PF_HEAD.slice(), PF_HEAD.map(function(x,i){return PF_HEAD_ALT[i]||x;})], [PARITY_PREFIX_SEED, PARITY_PREFIX_PF2]);
+  // colOf / colEnsure
+  var d={headers:['#','A','SMA 50'],rows:[[1,'x',5],[2,'y']]};
+  __eq('E2 colOf: SMA матчером, нет колонки/неизвестный id/нет headers → −1', [colOf(d,'s50'),colOf(d,'sup'),colOf(d,'nope'),colOf(null,'sup'),colOf({},'s50'),colOf(undefined,'tg')], [2,-1,-1,-1,-1,-1]);
+  __eq('E2 colEnsure: есть → индекс, без изменений', [colEnsure(d,'s50'),d.headers.length,d.rows[1].length], [2,3,2]);
+  __eq('E2 colEnsure: нет → в конец + выравнивание строк', [colEnsure(d,'sup'),d.headers[3],d.rows.map(function(r){return r.length;})], [3,'Поддержка',[4,4]]);
+  __eq('E2 colEnsure идемпотентен', [colEnsure(d,'sup'),d.headers.length], [3,4]);
+  var threw=false;try{colEnsure(d,'nope');}catch(e){threw=true;}
+  __ok('E2 colEnsure: неизвестный id — ошибка, не колонка «undefined»', threw&&d.headers.length===4&&d.headers.indexOf(undefined)<0);
+  __eq('E2 smaIdx через COLN_RE', smaIdx({headers:PARITY_HEADS[0].headers}), {s50:16,s100:17,s200:18});
+  __eq('E2 pf3EffTarget по colOf (tg/tg3)', pf3EffTarget({headers:['a','Аналит. таргет','Таргет 3м']},[0,100,80]).target, 80);
+  __eq('E2 deskRowNum по id', [deskRowNum({d:{headers:['a','Beta']},r:[0,'1.3']},'beta'), deskRowNum({d:{headers:['a']},r:[0]},'beta'), deskRowNum(null,'beta')], [1.3,null,null]);
+  // rowSchemaOk / rowSchemaBad
+  var seed=PARITY_HEADS[3].headers, cloud=PARITY_HEADS[0].headers;
+  __ok('E2 rowSchemaOk: сид и имена Портфеля 2.0', rowSchemaOk({headers:seed})&&rowSchemaOk({headers:cloud}));
+  var sw=seed.slice();sw[1]='Тикер';sw[2]='Компания';
+  var alt=seed.slice();alt[11]='Стоимость kr';
+  __eq('E2 rowSchemaOk: перестановка/синоним не на своём месте/короткий/без headers → false',
+    [rowSchemaOk({headers:sw}),rowSchemaOk({headers:alt}),rowSchemaOk({headers:seed.slice(0,15)}),rowSchemaOk({}),rowSchemaOk(null)], [false,false,false,false,false]);
+  var data={};data[PF3_KEY]={headers:seed,rows:[]};data.X={headers:['a'],rows:[],v3:'1'};data.Y={headers:['a'],rows:[]};data.Z={headers:['a'],v3:'1'};data.P={headers:['a'],rows:[]};
+  data[PF3_KEY+'x']={headers:seed,rows:[],v3:'1'};
+  __eq('E2 rowSchemaBad: только Портфель 3.0 и v3-вкладки со строками', rowSchemaBad(data), ['X']);
+  var d3={};d3[PF3_KEY]={headers:['#'],rows:[]};
+  __eq('E2 rowSchemaBad: Портфель 3.0 проверяется и без флага v3', rowSchemaBad(d3), [PF3_KEY]);
+  // Бандл data.js после migrateState: все вкладки по контракту, заголовки сида — прежние
+  var B=new Function(rd('data.js')+';return ALL;')();
+  var _D=DATA,_V=STATE_V,_save=scheduleSave,_P=PLAN_RULES,_A=AI_PORT,_t=toast,_ce=console.error,_role=userRole,_w=_rowSchemaWarned;
+  var toasts=[],errs=[];
+  try{
+    scheduleSave=function(){};toast=function(m,e){toasts.push([m,!!e]);};console.error=function(){errs.push([].slice.call(arguments));};
+    DATA=JSON.parse(JSON.stringify(B.data));STATE_V=0;PLAN_RULES=[];userRole='admin';_rowSchemaWarned=false;
+    migrateState();
+    __eq('E2 бандл после migrateState: нарушителей нет, ни тоста, ни ошибки', [rowSchemaBad(DATA),toasts.length,errs.length], [[],0,0]);
+    __eq('E2 сид Портфеля 3.0 — те же 22 заголовка, что до E2', DATA[PF3_KEY].headers,
+      ['#','Компания','Тикер','Страна','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','1д %','Прибыль','От покупки %','Стоимость','X-dag','Выплата','SMA 50','SMA 100','SMA 200','Целевая','Цель %','Действие']);
+    __eq('E2 индексы бандла → v3 с префиксом сида', Object.keys(DATA).filter(function(k){return DATA[k].v3==='1';}).map(function(k){return DATA[k].headers.slice(0,16).join('|')===PF_HEAD.join('|');}).indexOf(false), -1);
+    // Нарушитель: console.error на каждый проход, тост админу — один на загрузку страницы, данные не тронуты
+    DATA.Bad={headers:['#','Тикер'],rows:[[1,'A']],v3:'1'};var before=JSON.stringify(DATA.Bad);
+    migrateState();migrateState();
+    __eq('E2 нарушитель: 2 прохода → 2 console.error, 1 тост-ошибка с именем вкладки', [errs.length,toasts.length,toasts[0]&&/Bad/.test(toasts[0][0]),toasts[0]&&toasts[0][1]], [2,1,true,true]);
+    __eq('E2 нарушитель: данные вкладки не тронуты', JSON.stringify(DATA.Bad), before);
+    _rowSchemaWarned=false;userRole='user';toasts=[];
+    __ok('E2 не-админу тоста нет', rowSchemaCheck().length===1&&(SYNC_ENABLED?toasts.length===0:true));
+  }finally{DATA=_D;STATE_V=_V;scheduleSave=_save;PLAN_RULES=_P;AI_PORT=_A;toast=_t;console.error=_ce;userRole=_role;_rowSchemaWarned=_w;}
+});
+// Сканеры регресса (как тест покрытия DK_*): индекс строки только через RC, колонка хвоста только через colOf/colEnsure,
+// русские имена колонок — только в COLN/PF_HEAD (и в migrateIndexV3 — он читает СТАРУЮ схему сида, вырезается до проверки).
+grp('row contract scanners (E2)', function(){
+  var files=['app.js','app-2.js','app-3.js','app-4.js','app-5.js','desk-selection.js','desk-journal.js','desk.js'];
+  var blank=function(src,name){var i=src.indexOf('\nfunction '+name+'(');if(i<0)return src;var j=src.indexOf('\n}\n',i);return src.slice(0,i)+src.slice(i,j+3).replace(/[^\n]/g,'')+src.slice(j+3);};
+  var names=Object.keys(COLN).map(function(k){return COLN[k];}).concat(PF_HEAD.slice(),Object.keys(PF_HEAD_ALT).map(function(k){return PF_HEAD_ALT[k];}));
+  var rowIdx=[],look=[],ens=[],re=[],ids=[],seen=0;
+  var ROW=/(?:\b(?:r|row|src|r0)|\.r|\brows\[[^\]]*\]|\.r\|\|\w+\))\[(?:1[0-5]|[0-9])\]/;
+  files.forEach(function(f){
+    var s=blank(rd(f),'migrateIndexV3');
+    s.split('\n').forEach(function(ln,n){
+      var at=f+':'+(n+1),m,rx;
+      if(ROW.test(ln))rowIdx.push(at);
+      rx=/\.(?:indexOf|findIndex|lastIndexOf|includes)\(\s*(['"])(.*?)\1/g;while((m=rx.exec(ln)))if(names.indexOf(m[2])>=0)look.push(at+' '+m[2]);
+      if(/\bensurePFCol\(/.test(ln)&&!/^function (?:ensurePFCol|colEnsure)\(/.test(ln))ens.push(at);
+      if(/\/sma\.\?(?:50|100|200)|\/аналит\/|\/таргет 3м\//i.test(ln)&&!/^const COLN_RE=/.test(ln))re.push(at);
+      rx=/\b(?:colOf|colEnsure|deskRowNum)\([^()]*?,\s*'([^']*)'\)/g;while((m=rx.exec(ln))){seen++;if(!COLN[m[1]])ids.push(at+' '+m[1]);}
+    });
+  });
+  __eq('E2 сканер: нет r[N]/row[N]/o.r[N]/rows[i][N] (0–15) вне migrateIndexV3', rowIdx, []);
+  __eq('E2 сканер: нет поиска колонки по русскому имени (indexOf/findIndex/includes)', look, []);
+  __eq('E2 сканер: ensurePFCol зовёт только colEnsure', ens, []);
+  __eq('E2 сканер: матчеры SMA/таргетов — только COLN_RE (и migrateIndexV3)', re, []);
+  __eq('E2 сканер: литеральные id в colOf/colEnsure/deskRowNum — ключи COLN', ids, []);
+  __ok('E2 сканер: id-литералы найдены (регулярка жива)', seen>=30, 'найдено '+seen);
+  var g=[];['pf3TypeMetrics','stockAiSnapshot'].forEach(function(fn){var src=String(this[fn]||eval(fn)),m,rx=/\bg\('([^']*)'\)/g;while((m=rx.exec(src)))if(!COLN[m[1]])g.push(fn+' '+m[1]);});
+  __eq('E2 сканер: g(id) в pf3TypeMetrics/stockAiSnapshot — ключи COLN', g, []);
+  __ok('E2 сканер: ROW ловит все формы', ['r[2]','row[15]','it.r[8]','(o.r||o)[13]','d.rows[ri][6]','src[1]'].every(function(x){return ROW.test(x);})&&!ROW.test('r[16]')&&!ROW.test('r[RC.tk]')&&!ROW.test('x[2]'));
+});

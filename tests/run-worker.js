@@ -9,7 +9,7 @@ globalThis.__ok = function(n,c,i){ __res.push({n:n,p:!!c,i:c?'':(i||'falsy')}); 
 globalThis.__approx = function(n,g,e,eps){ var p=(typeof g==='number')&&Math.abs(g-e)<=(eps||0.01); __res.push({n:n,p:p,i:p?'':('got '+g+' exp '+e)}); };
 
 var src = rd('telegram-notify.js').replace(/^export default/m, 'var __mod =');
-var caseSrc = rd('tests/cases-worker.js');
+var caseSrc = rd('tests/fixtures-parity.js') + '\n;\n' + rd('tests/cases-worker.js');   // паритет контракта строки с app-сьютом (E2)
 try { eval(src + '\n;\n' + caseSrc); }
 catch(e){ __res.push({n:'EVAL worker', p:false, i:String(e && e.message || e)}); }
 

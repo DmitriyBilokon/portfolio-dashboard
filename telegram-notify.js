@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-14e5b-ai-reports';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-14e2-named-cols';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -63,6 +63,15 @@ function exSymbol(ticker, ccy){
   if(t.includes('.')) return t;   // уже полный символ биржи (CAC → .PA, MIB → .MI)
   return ({ USD:t, SEK:t+'.ST', NOK:t+'.OL', DKK:t+'.CO', EUR:t+'.DE', GBP:t+'.L' })[String(ccy||'').toUpperCase()] || t;
 }
+// ── Контракт строки v3-вкладки (E2, plans/ledger-model-e.md §4.E2) — КОПИЯ app.js (RC/COLN/COLN_RE/colOf), общего
+// модуля нет (сборки нет). Паритет с клиентом — tests/fixtures-parity.js в обоих сьютах. Префикс 0–15 — r[RC.<id>];
+// хвост — только colOf(d, id). Русские имена колонок — только здесь.
+const RC = Object.freeze({ n:0, name:1, tk:2, country:3, sector:4, type:5, qty:6, price:7, ccy:8, buy:9, day:10, pl:11, plPct:12, value:13, xdag:14, pay:15 });
+const COLN = Object.freeze({ s50:'SMA 50', s100:'SMA 100', s200:'SMA 200', sup:'Поддержка', res:'Сопротивление', tg:'Аналит. таргет', tg3:'Таргет 3м',
+  pe:'P/E', ps:'P/S', dy:'Дивид. %', beta:'Beta', roe:'ROE', de:'D/E', revg:'Рост выручки', payout:'Payout', rev:'Выручка TTM', cap:'Кап-я', reco:'Реком. скоринг' });
+const COLN_RE = Object.freeze({ s50:/sma.?50$/i, s100:/sma.?100$/i, s200:/sma.?200$/i });
+// Индекс колонки хвоста по id на вкладке d; −1 — нет колонки (или у d нет headers).
+function colOf(d, id){ const h = d && d.headers; if(!Array.isArray(h)) return -1; const re = COLN_RE[id]; return re ? h.findIndex(x => re.test(x)) : h.indexOf(COLN[id]); }
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const round2 = n => Math.round(n * 100) / 100;
 const FENCE = String.fromCharCode(96, 96, 96);   // тройная обратная кавычка — для встраивания json-блоков в системные промпты
@@ -818,14 +827,14 @@ async function chartPng(sym, name, support, resistance){
 async function sendChartMU(env){
   const pf = await loadPortfolio(env);
   if(!pf) return false;
-  const row = pf.rows.find(r => String(r[2] || '').trim().toUpperCase() === CHART_TICKER);
+  const row = pf.rows.find(r => String(r[RC.tk] || '').trim().toUpperCase() === CHART_TICKER);
   if(!row) return false;
-  const sym = exSymbol(row[2], row[8]), ccy = row[8] || '';
+  const sym = exSymbol(row[RC.tk], row[RC.ccy]), ccy = row[RC.ccy] || '';
   const q = await yahoo(sym);
-  const png = await chartPng(sym, String(row[1] || CHART_TICKER), q && q.support, q && q.resistance);
+  const png = await chartPng(sym, String(row[RC.name] || CHART_TICKER), q && q.support, q && q.resistance);
   if(!png) return false;
   const px = q && typeof q.price === 'number' ? ` — ${q.price} ${ccy}` : '';
-  await sendPhoto(env, png, `📈 <b>${esc(String(row[1] || CHART_TICKER))}</b> (${CHART_TICKER})${px}`);
+  await sendPhoto(env, png, `📈 <b>${esc(String(row[RC.name] || CHART_TICKER))}</b> (${CHART_TICKER})${px}`);
   return true;
 }
 
@@ -1614,22 +1623,21 @@ function aipUniverse(snap){
   for(const key of Object.keys(data)){
     const d = data[key];
     if(!d || d.v3 !== '1' || d.aip === '1' || !Array.isArray(d.rows)) continue;   // aip — производная вкладка самого AI
-    const h = d.headers || [];
     const ix = {
-      s50: h.findIndex(x => /sma.?50$/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
-      sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'), tg: h.findIndex(x => /аналит/i.test(x)),
-      tgr: h.findIndex(x => /таргет 3м/i.test(x)),
-      pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
-      reco: h.indexOf('Реком. скоринг'),
+      s50: colOf(d, 's50'), s200: colOf(d, 's200'),
+      sup: colOf(d, 'sup'), res: colOf(d, 'res'), tg: colOf(d, 'tg'),
+      tgr: colOf(d, 'tg3'),
+      pe: colOf(d, 'pe'), beta: colOf(d, 'beta'), roe: colOf(d, 'roe'), revg: colOf(d, 'revg'),
+      reco: colOf(d, 'reco'),
     };
     for(const r of d.rows){
-      const tk = String(r[2] || '').trim();
+      const tk = String(r[RC.tk] || '').trim();
       if(!tk) continue;
-      const ccy = String(r[8] || 'USD');
+      const ccy = String(r[RC.ccy] || 'USD');
       const sym = exSymbol(tk, ccy);
       if(seen.has(sym)) continue;
       seen.add(sym);
-      const price = parseFloat(r[7]) || 0;
+      const price = parseFloat(r[RC.price]) || 0;
       if(!(price > 0)) continue;
       const num = i => { const v = i >= 0 ? parseFloat(r[i]) : NaN; return isFinite(v) ? v : null; };
       const dist = v => (v && v > 0) ? Math.round((price - v) / v * 1000) / 10 : null;
@@ -1638,7 +1646,7 @@ function aipUniverse(snap){
       // upside (и производный перегрев в aipVerdict) не противоречил карточке.
       const tgMain = num(ix.tg), tgRec = num(ix.tgr);
       const tg = (tgMain > 0 && tgRec > 0 && Math.abs(tgRec - tgMain) / tgMain * 100 >= 10) ? tgRec : (tgMain || tgRec);
-      out.push([tk, ccy, String(r[4] || ''), String(r[5] || ''), price, parseFloat(r[10]) || 0,
+      out.push([tk, ccy, String(r[RC.sector] || ''), String(r[RC.type] || ''), price, parseFloat(r[RC.day]) || 0,
         dist(num(ix.s50)), dist(num(ix.s200)), dist(num(ix.sup)), dist(num(ix.res)),
         (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,
         num(ix.pe), num(ix.beta), num(ix.roe), num(ix.revg),
@@ -1696,7 +1704,7 @@ function aipFindRow(snap, tk){
   for(const key of Object.keys((snap && snap.data) || {})){
     const d = snap.data[key];
     if(!d || d.v3 !== '1') continue;
-    const r = (d.rows || []).find(r => String(r[2] || '').trim().toUpperCase() === T);
+    const r = (d.rows || []).find(r => String(r[RC.tk] || '').trim().toUpperCase() === T);
     if(r) return r;
   }
   return null;
@@ -1888,7 +1896,7 @@ async function aiPortfolioRun(env, force){
     }else if(dec.action === 'buy'){
       const r0 = aipFindRow(snap, tk);
       const exist = positions.find(x => String(x.ticker).toUpperCase() === tk);
-      const ccy = exist ? exist.ccy : (r0 ? String(r0[8] || 'USD') : null);
+      const ccy = exist ? exist.ccy : (r0 ? String(r0[RC.ccy] || 'USD') : null);
       if(!ccy){ skipped.push(`buy ${tk}: вне вселенной`); continue; }
       if(!marketsOpen[String(ccy).toUpperCase()]){ skipped.push(`buy ${tk}: рынок ${ccy} закрыт`); continue; }
       // 🤖 автономия: вердикт скоринга — справочный, не блокирует сделку
@@ -1903,8 +1911,8 @@ async function aiPortfolioRun(env, force){
       let p = exist;
       if(p){ p.avgBuy = Math.round((p.avgBuy * p.qty + q.price * qty) / (p.qty + qty) * 100) / 100; p.qty += qty; }
       else{
-        p = { ticker: tk, name: r0 ? String(r0[1] || tk) : tk, ccy, qty, avgBuy: q.price, openedAt: now,
-              type: r0 ? String(r0[5] || '') : '', sector: r0 ? String(r0[4] || '') : '' };
+        p = { ticker: tk, name: r0 ? String(r0[RC.name] || tk) : tk, ccy, qty, avgBuy: q.price, openedAt: now,
+              type: r0 ? String(r0[RC.type] || '') : '', sector: r0 ? String(r0[RC.sector] || '') : '' };
         positions.push(p);
       }
       p.lastPrice = q.price;
@@ -2036,33 +2044,32 @@ const PFANALYZE_LEGEND = '{ТИКЕР:[recoVerdict(buy|wait|sell|avoid), upside%
 async function buildPortfolioSnapshot(env, key, snap){
   const d = snap && snap.data && snap.data[key];
   if(!d || !Array.isArray(d.rows) || !d.rows.length) return null;
-  const h = d.headers || [];
   const ix = {
-    s50: h.findIndex(x => /sma.?50$/i.test(x)), s100: h.findIndex(x => /sma.?100/i.test(x)), s200: h.findIndex(x => /sma.?200/i.test(x)),
-    sup: h.indexOf('Поддержка'), res: h.indexOf('Сопротивление'),
-    tg: h.findIndex(x => /аналит/i.test(x)), tgr: h.findIndex(x => /таргет 3м/i.test(x)),
-    pe: h.indexOf('P/E'), beta: h.indexOf('Beta'), roe: h.indexOf('ROE'), revg: h.indexOf('Рост выручки'),
+    s50: colOf(d, 's50'), s100: colOf(d, 's100'), s200: colOf(d, 's200'),
+    sup: colOf(d, 'sup'), res: colOf(d, 'res'),
+    tg: colOf(d, 'tg'), tgr: colOf(d, 'tg3'),
+    pe: colOf(d, 'pe'), beta: colOf(d, 'beta'), roe: colOf(d, 'roe'), revg: colOf(d, 'revg'),
   };
   const fx = Object.assign({}, FX_DEFAULT, snap.fx || {});
   const num = (r, i) => { const v = i >= 0 ? parseFloat(r[i]) : NaN; return isFinite(v) ? v : null; };
   // Живые котировки по позициям — как в торговом цикле.
   const quotes = {};
   await Promise.all(d.rows.map(async r => {
-    const tk = String(r[2] || '').trim(); if(!tk) return;
-    quotes[tk] = await yahooLite(exSymbol(tk, r[8] || 'USD')).catch(() => null);
+    const tk = String(r[RC.tk] || '').trim(); if(!tk) return;
+    quotes[tk] = await yahooLite(exSymbol(tk, r[RC.ccy] || 'USD')).catch(() => null);
   }));
   const positions = [], recoVerdicts = {};
   let totalVal = 0;
   for(const r of d.rows){
-    const tk = String(r[2] || '').trim(); if(!tk) continue;
-    const ccy = String(r[8] || 'USD');
+    const tk = String(r[RC.tk] || '').trim(); if(!tk) continue;
+    const ccy = String(r[RC.ccy] || 'USD');
     const q = quotes[tk] || {};
-    const price = (q && q.price > 0) ? round2(q.price) : num(r, 7);
+    const price = (q && q.price > 0) ? round2(q.price) : num(r, RC.price);
     if(!(price > 0)) continue;
-    const qty = num(r, 6) || 0, f = fx[ccy] || 1;
+    const qty = num(r, RC.qty) || 0, f = fx[ccy] || 1;
     const sma50 = (q && q.sma50) || num(r, ix.s50), sma100 = (q && q.sma100) || num(r, ix.s100), sma200 = (q && q.sma200) || num(r, ix.s200);
     const support = (q && q.support) || num(r, ix.sup), resistance = (q && q.resistance) || num(r, ix.res);
-    const buy = num(r, 9);
+    const buy = num(r, RC.buy);
     const valueSEK = Math.round(qty * price * f);
     totalVal += valueSEK;
     // Эффективный таргет (свежий «Таргет 3м» при устаревшем консенсусе ≥10%).
@@ -2070,13 +2077,13 @@ async function buildPortfolioSnapshot(env, key, snap){
     const tg = (tgMain > 0 && tgRec > 0 && Math.abs(tgRec - tgMain) / tgMain * 100 >= 10) ? tgRec : (tgMain || tgRec);
     const dist = v => (v && v > 0) ? Math.round((price - v) / v * 1000) / 10 : null;
     // recoVerdict через ту же логику, что в карточке (aipVerdict по universe-строке).
-    const uRow = [tk, ccy, String(r[4] || ''), String(r[5] || ''), price, num(r, 10) || 0,
+    const uRow = [tk, ccy, String(r[RC.sector] || ''), String(r[RC.type] || ''), price, num(r, RC.day) || 0,
       dist(sma50), dist(sma200), dist(support), dist(resistance),
       (tg && tg > 0) ? Math.round((tg / price - 1) * 1000) / 10 : null,
       num(r, ix.pe), num(r, ix.beta), num(r, ix.roe), num(r, ix.revg), null];
     recoVerdicts[tk.toUpperCase()] = aipVerdict(uRow);
     positions.push({
-      name: r[1], ticker: tk, sector: r[4] || '—', ccy,
+      name: r[RC.name], ticker: tk, sector: r[RC.sector] || '—', ccy,
       qty, buyPrice: buy, price, valueSEK,
       plPct: (buy > 0) ? Math.round((price / buy - 1) * 1000) / 10 : null,
       sma50, sma100, sma200, support, resistance,
@@ -2274,7 +2281,7 @@ function pickCronTask(minute){
 
 // ── 📨 bookcheck (S8): стопы/цели позиций и лимиты плана → Telegram при закрытой странице ──
 // Клиент (planCheck) уведомляет только в открытой вкладке. Здесь cron читает ledger владельца:
-// позиции = строки с qty>0 (r[6]) + POS_META (snap.posMeta[tab][TK]: side/stop/target/stop0) или
+// позиции = строки с qty>0 (r[RC.qty]) + POS_META (snap.posMeta[tab][TK]: side/stop/target/stop0) или
 // открытое правило плана; лимиты = snap.planRules (не done, не open). Цены — yahooLite
 // (1 подзапрос на символ, ATR из тех же свечей), только бумаги, чей рынок сейчас открыт.
 // Дедуп с гистерезисом: условие шлётся один раз при срабатывании и взводится заново, только
@@ -2291,12 +2298,12 @@ const bkKey = tk => bkTk(tk).replace(/[\s_-]+/g, '-');   // «INVE B» в стр
 // Валюта бумаги по строкам: сначала вкладка правила, затем любая. Строка — источник правды (в правилах из AI
 // раньше записывался USD, если тикер писался иначе, → Yahoo «INVE-B» вместо «INVE-B.ST»).
 function bkRowCcy(data, tk, tab){
-  const k = bkKey(tk), find = d => ((d && d.rows) || []).find(r => bkKey(r[2]) === k);
+  const k = bkKey(tk), find = d => ((d && d.rows) || []).find(r => bkKey(r[RC.tk]) === k);
   const own = find(data && data[tab]);
   if(own && own[8]) return String(own[8]);
   for(const key of Object.keys(data || {})){
     const r = find(data[key]);
-    if(r && r[8]) return String(r[8]);
+    if(r && r[RC.ccy]) return String(r[RC.ccy]);
   }
   return '';
 }
@@ -2313,15 +2320,15 @@ function bookItems(snap){
     const d = data[tab];
     if(!d || !Array.isArray(d.rows) || d.aip === '1' || BOOK_SKIP_TABS.includes(tab)) continue;
     for(const r of d.rows){
-      const qty = parseFloat(r[6]) || 0, tk = bkTk(r[2]);
+      const qty = parseFloat(r[RC.qty]) || 0, tk = bkTk(r[RC.tk]);
       if(!(qty > 0) || !tk) continue;
       const m = (pm[tab] && typeof pm[tab][tk] === 'object') ? pm[tab][tk] : null, rule = openRule[tab + '|' + tk] || null;
       const stop = bkNum(m && m.stop) || bkNum(rule && rule.stop), target = bkNum(m && m.target) || bkNum(rule && rule.target);
       if(!stop && !target) continue;
       const side = (m ? m.side : rule && rule.side) === 'short' ? 'short' : 'long', dir = side === 'short' ? -1 : 1;
-      const ccy = String(r[8] || 'SEK').toUpperCase();
-      const base = { src: 'pos', tab, tk, name: String(r[1] || tk), ccy, sym: exSymbol(tk, ccy), side, qty,
-        entry: bkNum(r[9]) || bkNum(r[7]), stop0: bkNum(m && m.stop0) || stop, stop, target, note: rule ? String(rule.note || '') : '' };
+      const ccy = String(r[RC.ccy] || 'SEK').toUpperCase();
+      const base = { src: 'pos', tab, tk, name: String(r[RC.name] || tk), ccy, sym: exSymbol(tk, ccy), side, qty,
+        entry: bkNum(r[RC.buy]) || bkNum(r[RC.price]), stop0: bkNum(m && m.stop0) || stop, stop, target, note: rule ? String(rule.note || '') : '' };
       if(stop) items.push({ ...base, key: `pos|${tab}|${tk}|stop|${stop}`, kind: 'stop', level: stop, cross: dir > 0 ? 'le' : 'ge' });
       if(target) items.push({ ...base, key: `pos|${tab}|${tk}|target|${target}`, kind: 'target', level: target, cross: dir > 0 ? 'ge' : 'le' });
     }
@@ -2898,8 +2905,6 @@ async function dashboardGen(env, snapshot){
 }
 
 // ── Analyst target prices (FMP for US, Yahoo/Refinitiv consensus for EU/Nordic) ──
-const TARGET_COL = 'Аналит. таргет';
-const TARGET_RECENT_COL = 'Таргет 3м';   // свежий срез (последний квартал/месяц)
 
 // Yahoo (Refinitiv/LSEG) consensus — aggregates exactly those brokers' targets for
 // EU/Nordic tickers FMP can't price. targetMeanPrice is in the stock's TRADING
@@ -3190,7 +3195,7 @@ async function updateTargets(env){
   const details = [];
   for(const pf of tabs){
     for(const r of pf.rows){
-      const sym = exSymbol(r[2], r[8]);
+      const sym = exSymbol(r[RC.tk], r[RC.ccy]);
       if(cache[sym] !== undefined) continue;
       let res = await fmpTargetFull(sym, env);   // FMP: all-time + свежий срез
       if(!(res && typeof res.avg === 'number')){
@@ -3198,8 +3203,8 @@ async function updateTargets(env){
         if(y) res = y;
       }
       cache[sym] = res;
-      if(res && typeof res.avg === 'number') details.push(`✓ ${r[2]} (${sym}) → ${res.avg} · ${res.count} an.${res.src ? ' · ' + res.src : ''}`);
-      else details.push(`— ${r[2]} (${sym}) [${(res && res.err) || '?'}]`);
+      if(res && typeof res.avg === 'number') details.push(`✓ ${r[RC.tk]} (${sym}) → ${res.avg} · ${res.count} an.${res.src ? ' · ' + res.src : ''}`);
+      else details.push(`— ${r[RC.tk]} (${sym}) [${(res && res.err) || '?'}]`);
       await sleep(250);   // stay under FMP's burst rate limit
     }
   }
@@ -3209,14 +3214,14 @@ async function updateTargets(env){
   const saved = await writeChecked(env, snap => {
     updated = 0; total = 0; let changed = false;
     for(const pf of tabsOf(snap)){
-      let ti = pf.headers.indexOf(TARGET_COL);
-      if(ti === -1){ pf.headers.push(TARGET_COL); ti = pf.headers.length - 1; changed = true; }
-      let tri = pf.headers.indexOf(TARGET_RECENT_COL);
-      if(tri === -1){ pf.headers.push(TARGET_RECENT_COL); tri = pf.headers.length - 1; changed = true; }
+      let ti = colOf(pf, 'tg');
+      if(ti === -1){ pf.headers.push(COLN.tg); ti = pf.headers.length - 1; changed = true; }
+      let tri = colOf(pf, 'tg3');   // свежий срез (последний квартал/месяц)
+      if(tri === -1){ pf.headers.push(COLN.tg3); tri = pf.headers.length - 1; changed = true; }
       pf.rows.forEach(r => { while(r.length < pf.headers.length) r.push(''); });
       for(const r of pf.rows){
         total++;
-        const res = cache[exSymbol(r[2], r[8])];
+        const res = cache[exSymbol(r[RC.tk], r[RC.ccy])];
         if(res && typeof res.avg === 'number'){
           r[ti] = res.avg; updated++; changed = true;
           if(typeof res.recent === 'number') r[tri] = res.recent;

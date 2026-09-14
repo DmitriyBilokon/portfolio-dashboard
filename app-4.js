@@ -138,12 +138,12 @@ async function cycleMonAiRun(tk){
   _cycBusy=TK;renderPF3();
   try{
     const d=DATA[v3Key];let row=null;
-    if(d&&Array.isArray(d.rows))row=d.rows.find(r=>cycKey(r[2])===TK);
+    if(d&&Array.isArray(d.rows))row=d.rows.find(r=>cycKey(r[RC.tk])===TK);
     const F=pf3FundData();
     const fundamentals=F?{pe:F.pe,ps:F.ps,revenueYoY:F.revenueYoY,netMarginPct:(typeof F.netIncome==='number'&&F.revenue>0)?Math.round(F.netIncome/F.revenue*100):null,debtToEquity:F.debtToEquity}:null;
     const stat=CYCLE_MONITORS[TK];
     const metricsHint=stat?[...stat.tiers.flatMap(t=>t.rows),...(stat.risk?stat.risk.rows:[])].map(r=>r.l[0]):null;
-    const body={mode:'thesis',ticker:TK,name:row?String(row[1]||TK):TK,sector:row?String(row[4]||''):'',type:row?String(row[5]||''):'',price:row?parseFloat(row[7])||null:null,ccy:row?String(row[8]||'USD'):'USD',fundamentals,metricsHint};
+    const body={mode:'thesis',ticker:TK,name:row?String(row[RC.name]||TK):TK,sector:row?String(row[RC.sector]||''):'',type:row?String(row[RC.type]||''):'',price:row?parseFloat(row[RC.price])||null:null,ccy:row?String(row[RC.ccy]||'USD'):'USD',fundamentals,metricsHint};
     const r=await fetch(PRICE_PROXY+'?action=cyclemon',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(body)});
     const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
     if(j&&j.cyclemon){

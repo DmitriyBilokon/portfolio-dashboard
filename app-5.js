@@ -71,30 +71,30 @@ function pfTradeAddRecord(){
   let ccyIn=String((g('pfTrCcy')&&g('pfTrCcy').value)||'').trim().toUpperCase();
   if(!tk||!(qty>0)||!(price>0)){toast(RT('Укажите тикер, количество и цену','Enter ticker, qty and price'),true);return;}
   const d=pf3D();
-  let ri=(d.rows||[]).findIndex(r=>String(r[2]||'').trim().toUpperCase()===tk);
+  let ri=(d.rows||[]).findIndex(r=>String(r[RC.tk]||'').trim().toUpperCase()===tk);
   if(ri<0){
     if(act==='sell'){toast(RT('Нет позиции для продажи — сначала внесите покупку','No position to sell — add a buy first'),true);return;}
     // создать минимальную позицию (метрики/сектор дозаполнятся при обновлении цен)
     const row=new Array(d.headers.length).fill('');
-    row[0]=d.rows.length+1;row[1]=tk;row[2]=tk;row[3]='';row[4]='';row[5]='';
-    row[6]=0;row[7]=price;row[8]=ccyIn||'USD';row[9]=0;row[10]=0;row[11]=0;row[12]=0;row[13]=0;
+    row[RC.n]=d.rows.length+1;row[RC.name]=tk;row[RC.tk]=tk;row[RC.country]='';row[RC.sector]='';row[RC.type]='';
+    row[RC.qty]=0;row[RC.price]=price;row[RC.ccy]=ccyIn||'USD';row[RC.buy]=0;row[RC.day]=0;row[RC.pl]=0;row[RC.plPct]=0;row[RC.value]=0;
     d.rows.push(row);ri=d.rows.length-1;
   }
-  const r=d.rows[ri],ccy=r[8]||ccyIn||'USD';
-  const curQty=parseFloat(r[6])||0,avg=parseFloat(r[9])||0;
+  const r=d.rows[ri],ccy=r[RC.ccy]||ccyIn||'USD';
+  const curQty=parseFloat(r[RC.qty])||0,avg=parseFloat(r[RC.buy])||0;
   let plNative=null,tq=qty;
   if(act==='sell'){
     tq=Math.min(qty,curQty);
     if(!(tq>0)){toast(RT('Нет позиции для продажи','No position to sell'),true);return;}
     plNative=Math.round((price-avg)*tq*100)/100;
-    r[6]=Math.round((curQty-tq)*1e6)/1e6;   // средняя не меняется
+    r[RC.qty]=Math.round((curQty-tq)*1e6)/1e6;   // средняя не меняется
   }else{
     const nq=curQty+qty;
-    r[9]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя
-    r[6]=nq;
-    if(!(parseFloat(r[7])>0))r[7]=price;   // дать цену, пока не обновили живую
+    r[RC.buy]=Math.round((avg*curQty+price*qty)/nq*100)/100;   // новая средняя
+    r[RC.qty]=nq;
+    if(!(parseFloat(r[RC.price])>0))r[RC.price]=price;   // дать цену, пока не обновили живую
   }
-  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[1]||tk),ccy,act,qty:tq,price,plNative,date});
+  PF_TRADES.push({id:'tr'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(r[RC.name]||tk),ccy,act,qty:tq,price,plNative,date});
   recalcPF(ri,v3Key);scheduleSave();renderPF3();
   toast((act==='sell'?'🔴 '+RT('Продажа внесена','Sell recorded'):'🟢 '+RT('Покупка внесена','Buy recorded'))+` · ${pf3Fmt(tq)} × ${pf3Fmt(price,2)} ${ccy}`+(plNative!=null?` · P&L ${plNative>=0?'+':''}${pf3Money(d,plNative*(FX[ccy]||1))}`:'')+' · '+RT('кэш не изменён','cash unchanged'));
 }
@@ -217,7 +217,7 @@ function planCurPrice(tk){
   const keys=Object.keys(DATA||{});
   for(const k of keys){
     const d=DATA[k]; if(!d||!d.rows||!(d.v3==='1'||k===PF3_KEY||k===AIP_KEY))continue;
-    for(const r of d.rows){ if(planTkKey(r[2])===tk){ const p=parseFloat(r[7]); if(isFinite(p)&&p>0)return p; } }
+    for(const r of d.rows){ if(planTkKey(r[RC.tk])===tk){ const p=parseFloat(r[RC.price]); if(isFinite(p)&&p>0)return p; } }
   }
   return null;
 }
@@ -328,7 +328,7 @@ const planTkKey=tk=>String(tk||'').trim().toUpperCase().replace(/[\s_-]+/g,'-');
 // Строка бумаги: сначала во вкладке правила, затем в любой v3-вкладке (валюта/имя для правил из совета AI).
 function planRowFor(tk,tab){
   const k=planTkKey(tk);if(!k)return null;
-  const find=d=>d&&Array.isArray(d.rows)?d.rows.find(r=>planTkKey(r[2])===k):null;
+  const find=d=>d&&Array.isArray(d.rows)?d.rows.find(r=>planTkKey(r[RC.tk])===k):null;
   let r=find(DATA[tab]);if(r)return r;
   for(const key of Object.keys(DATA||{})){const d=DATA[key];if(d&&(d.v3==='1'||key===PF3_KEY)&&(r=find(d)))return r;}
   return null;
@@ -382,7 +382,7 @@ function planParseLevelV1(text, act){
 function planFixAiRule(r){
   if(!r||!r.fromAi||r.done||r.status==='open')return false;
   let ch=false;
-  const row=planRowFor(r.tk,r.tab||PF3_KEY),ccy=row&&row[8]?String(row[8]).toUpperCase():'';
+  const row=planRowFor(r.tk,r.tab||PF3_KEY),ccy=row&&row[RC.ccy]?String(row[RC.ccy]).toUpperCase():'';
   if(ccy&&ccy!==String(r.ccy||'').toUpperCase()){r.ccy=ccy;ch=true;}
   if((r.act==='buy'||r.act==='sell')&&r.note){
     const lv=parseFloat(r.level)||0,old=planParseLevelV1(r.note,r.act);
@@ -422,11 +422,11 @@ function planImportFromAiRun(){
     const level=planParseLevel(a.details||'',act);
     const row=planRowFor(tk,v3Key);
     let ccy='USD';
-    if(row&&row[8])ccy=String(row[8]).toUpperCase();
+    if(row&&row[RC.ccy])ccy=String(row[RC.ccy]).toUpperCase();
     else if(/€|eur/i.test(a.details||''))ccy='EUR';
     else if(/£|gbp/i.test(a.details||''))ccy='GBP';
     const amount=typeof a.amountSEK==='number'&&a.amountSEK>0?a.amountSEK:0;
-    PLAN_RULES.push(planRuleNorm({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[1])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
+    PLAN_RULES.push(planRuleNorm({id:'pl'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(a.name||(row&&row[RC.name])||tk),ccy,act,level:level||0,amount,qty:0,deadline:'',note:String(a.details||'').trim(),hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
     added++;
   });
   // 👁 Лист ожидания (приоритет 4) — отдельным типом «watch».
@@ -434,9 +434,9 @@ function planImportFromAiRun(){
     const tk=String(w&&w.ticker||'').trim().toUpperCase(); if(!tk)return;
     if((PLAN_RULES||[]).some(r=>!r.done&&(r.tab||PF3_KEY)===v3Key&&r.tk===tk&&r.act==='watch'))return;   // дедуп
     const row=planRowFor(tk,v3Key);
-    const ccy=row&&row[8]?String(row[8]).toUpperCase():'USD';
+    const ccy=row&&row[RC.ccy]?String(row[RC.ccy]).toUpperCase():'USD';
     const note=[w.condition?RT('Условие','When')+': '+w.condition:'',w.rationale||''].filter(Boolean).join(' · ');
-    PLAN_RULES.push(planRuleNorm({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[1])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
+    PLAN_RULES.push(planRuleNorm({id:'plw'+Date.now()+'_'+i+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name:String(w.name||(row&&row[RC.name])||tk),ccy,act:'watch',level:0,amount:0,qty:0,deadline:'',note,hitAt:0,done:false,fromAi:1,ver,createdAt:Date.now()}));
     added++;
   });
   if(added){planAskNotify(true);scheduleSave();renderPF3();toast('📥 '+RT('Перенесено из совета AI','Imported from AI advice')+` (v${ver}): ${added}. `+RT('Проверьте уровни и кол-во ✏','Check levels & qty ✏'));}
@@ -478,7 +478,7 @@ function planSave(id){
 function planRulesHTML(){
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const d=pf3D();
-  const tkOpts=((d&&d.rows)||[]).map(r=>`<option value="${r[2]}">${esc(r[1]||'')}</option>`).join('');
+  const tkOpts=((d&&d.rows)||[]).map(r=>`<option value="${r[RC.tk]}">${esc(r[RC.name]||'')}</option>`).join('');
   const mine=(PLAN_RULES||[]).filter(r=>(r.tab||PF3_KEY)===v3Key).map(r=>({r,st:planStatus(r)}));
   mine.sort((a,b)=>{
     if(!!a.r.done!==!!b.r.done)return a.r.done?1:-1;
@@ -587,8 +587,8 @@ function planAdd(){
   if(!(level>0)&&!deadline){toast(RT('Задайте уровень цены или дедлайн','Set a price level or a deadline'),true);return;}
   if(!planLevelsOk({act,side,level,stop,target}))return;
   const d=pf3D(); let name=tk;
-  const row=((d&&d.rows)||[]).find(r=>String(r[2]||'').trim().toUpperCase()===tk);
-  if(row){ name=String(row[1]||tk); if(row[8])ccy=String(row[8]).toUpperCase(); }
+  const row=((d&&d.rows)||[]).find(r=>String(r[RC.tk]||'').trim().toUpperCase()===tk);
+  if(row){ name=String(row[RC.name]||tk); if(row[RC.ccy])ccy=String(row[RC.ccy]).toUpperCase(); }
   PLAN_RULES.push(planRuleNorm({id:'pl'+Date.now()+'_'+Math.floor(Math.random()*1e4),tab:v3Key,tk,name,ccy,act,side,level:level>0?level:0,stop,target,qty:qty>0?qty:0,amount:amount>0?amount:0,deadline,note,hitAt:0,done:false,createdAt:Date.now()}));
   planAskNotify(true);   // тихо запросить разрешение на push при первом правиле
   scheduleSave();renderPF3();
@@ -599,7 +599,7 @@ function planDone(id,v){ const r=(PLAN_RULES||[]).find(x=>x.id===id); if(!r)retu
 
 // ── 📍 Слой данных редизайна (S3): позиция, план сделки v2, бумага ─────────────
 // Чистые функции без DOM (покрыты тестами): их читают экраны desk (S6) и cron bookcheck
-// (S8). Позиция = строка портфеля (qty r[6], средняя r[9] — как раньше, налог не
+// (S8). Позиция = строка портфеля (qty r[RC.qty], средняя r[RC.buy] — как раньше, налог не
 // меняется) + POS_META[tab][TK] (сторона/стоп/цель). Функции-мутаторы не сохраняют —
 // вызывающий сам зовёт scheduleSave().
 const _pnum=v=>{const x=parseFloat(v);return isFinite(x)&&x>0?x:null;};
@@ -774,21 +774,21 @@ function deskWatchRemove(key){
 function pfEquitySEK(tab){
   const d=DATA[tab];if(!d||!Array.isArray(d.rows))return 0;
   let s=0;
-  d.rows.forEach(r=>{const q=parseFloat(r[6])||0,px=parseFloat(r[7])||0,fx=FX[String(r[8]||'SEK')]||1;if(!(q>0&&px>0))return;
-    const m=posMetaGet(tab,r[2]),avg=parseFloat(r[9])||px;
+  d.rows.forEach(r=>{const q=parseFloat(r[RC.qty])||0,px=parseFloat(r[RC.price])||0,fx=FX[String(r[RC.ccy]||'SEK')]||1;if(!(q>0&&px>0))return;
+    const m=posMetaGet(tab,r[RC.tk]),avg=parseFloat(r[RC.buy])||px;
     s+=m&&m.side==='short'?(avg-px)*q*fx:q*px*fx;});
   return s+(parseFloat(d.cashFree)||0)*pf3BaseFx(d);
 }
 // Книга позиций портфеля: строки с qty>0 + мета + расчёт по текущей цене. Без меты — лонг
-// без стопа (как сейчас). Вход = средняя цена r[9] (genomsnittsmetoden), иначе текущая.
+// без стопа (как сейчас). Вход = средняя цена r[RC.buy] (genomsnittsmetoden), иначе текущая.
 function bookPositions(tab){
   const d=DATA[tab];if(!d||!Array.isArray(d.rows))return [];
   const out=[];
   d.rows.forEach(r=>{
-    const qty=parseFloat(r[6])||0,tk=posTk(r[2]);if(!(qty>0)||!tk)return;
-    const ccy=String(r[8]||'SEK').toUpperCase(),fx=FX[ccy]||1,meta=posMetaGet(tab,tk);
-    const m=meta||posMetaNorm({}),entry=_pnum(r[9])||_pnum(r[7]);
-    out.push(Object.assign({tab,tk,sym:exSymbol(tk,ccy),name:String(r[1]||tk),ccy,qty,entry,hasMeta:!!meta},m,{calc:posCalc(Object.assign({},m,{qty,entry}),r[7],fx)}));
+    const qty=parseFloat(r[RC.qty])||0,tk=posTk(r[RC.tk]);if(!(qty>0)||!tk)return;
+    const ccy=String(r[RC.ccy]||'SEK').toUpperCase(),fx=FX[ccy]||1,meta=posMetaGet(tab,tk);
+    const m=meta||posMetaNorm({}),entry=_pnum(r[RC.buy])||_pnum(r[RC.price]);
+    out.push(Object.assign({tab,tk,sym:exSymbol(tk,ccy),name:String(r[RC.name]||tk),ccy,qty,entry,hasMeta:!!meta},m,{calc:posCalc(Object.assign({},m,{qty,entry}),r[RC.price],fx)}));
   });
   return out;
 }
@@ -837,15 +837,15 @@ function pxMarkLive(sym,price,at){ if(sym&&price>0)PX_LIVE[sym]={at:at||Date.now
 // Адаптер строки v3-вкладки → бумага. Ключ — биржевой символ + валюта: одна бумага в
 // нескольких вкладках = одна запись (дедуп в deskUniverse).
 function secFromRow(d,r,tab,now){
-  const tk=posTk(r&&r[2]);if(!tk)return null;
-  const h=(d&&d.headers)||[],ccy=String(r[8]||'USD').trim().toUpperCase(),sym=exSymbol(tk,ccy);
-  const {s50,s100,s200}=smaIdx({headers:h}),day=parseFloat(r[10]);
-  const lv=PX_LIVE[sym],live=!!(lv&&(now||Date.now())-lv.at<=PX_FRESH_MS),qty=parseFloat(r[6])||0;
-  return {key:sym+'|'+ccy,sym,tk,name:String(r[1]||tk),ccy,sector:String(r[4]||''),type:String(r[5]||''),
-    price:live?lv.price:_pnum(r[7]),day:isFinite(day)?day:null,live,pxAt:lv?lv.at:0,
+  const tk=posTk(r&&r[RC.tk]);if(!tk)return null;
+  const ccy=String(r[RC.ccy]||'USD').trim().toUpperCase(),sym=exSymbol(tk,ccy);
+  const {s50,s100,s200}=smaIdx(d),day=parseFloat(r[RC.day]);
+  const lv=PX_LIVE[sym],live=!!(lv&&(now||Date.now())-lv.at<=PX_FRESH_MS),qty=parseFloat(r[RC.qty])||0;
+  return {key:sym+'|'+ccy,sym,tk,name:String(r[RC.name]||tk),ccy,sector:String(r[RC.sector]||''),type:String(r[RC.type]||''),
+    price:live?lv.price:_pnum(r[RC.price]),day:isFinite(day)?day:null,live,pxAt:lv?lv.at:0,
     sma50:_pnum(r[s50]),sma100:_pnum(r[s100]),sma200:_pnum(r[s200]),
-    sup:_pnum(r[h.indexOf('Поддержка')]),res:_pnum(r[h.indexOf('Сопротивление')]),
-    tabs:[tab],held:(pf3MyPort(tab)&&qty>0)?[{tab,qty,avg:_pnum(r[9])}]:[]};
+    sup:_pnum(r[colOf(d,'sup')]),res:_pnum(r[colOf(d,'res')]),
+    tabs:[tab],held:(pf3MyPort(tab)&&qty>0)?[{tab,qty,avg:_pnum(r[RC.buy])}]:[]};
 }
 // Вселенная скринера: все разрешённые v3-вкладки (портфели, индексы, свои), без AI-портфеля. held —
 // позиции во всех моих портфелях; поля цены/уровней берутся из первой строки с ценой.
@@ -876,9 +876,9 @@ const sigHistKey=sym=>sym+':2y';
 // таргету — порт прежнего pf3Criterion 1:1 (тест «phase parity»). Без цены/SMA50/SMA200 — «—» (не «Боковик»), как было.
 // Потребители: AI-снапшоты (фаза позиций и marketContext), AI-прогноз, cash-drag.
 function sigRowPhase(d,r){
-  const {s50,s100,s200}=smaIdx(d),g=i=>i>=0?(parseFloat(r[i])||0):0,p=parseFloat(r[7])||0;
+  const {s50,s100,s200}=smaIdx(d),g=i=>i>=0?(parseFloat(r[i])||0):0,p=parseFloat(r[RC.price])||0;
   if(!(p>0)||!(g(s50)>0)||!(g(s200)>0))return {key:'flat',label:'—',rank:3};
-  return SIG.phase(p,parseFloat(r[10])||0,g(s50),g(s100),g(s200),g(d.headers.indexOf('Поддержка')),pf3EffUpside(d,r));
+  return SIG.phase(p,parseFloat(r[RC.day])||0,g(s50),g(s100),g(s200),g(colOf(d,'sup')),pf3EffUpside(d,r));
 }
 // ── Адаптеры SIG для AI (S7b-3, plans/s7b-map.md §5) — вместо вердикта старой «Рекомендации» ──
 // Снимок строки только для чтения (мемо SIGNALS не пишется): риск — как у deskItems (deskRiskKr), чтобы попасть
@@ -887,7 +887,7 @@ function sigRowRead(d,r){try{return sigSnapRow(d,r,typeof deskRiskKr==='function
 // Снимок бумаги строки: из deskItems (тот же, что на экране «Решения»; строка-источник — первая с ценой; мемо), иначе —
 // снимок самой строки. sigRowVerdict — его вердикт.
 function sigRowSnap(d,r){
-  try{const tk=posTk(r&&r[2]),ccy=String(r[8]||'USD').trim().toUpperCase(),it=tk&&typeof deskSecOf==='function'?deskSecOf(exSymbol(tk,ccy)+'|'+ccy):null;
+  try{const tk=posTk(r&&r[RC.tk]),ccy=String(r[RC.ccy]||'USD').trim().toUpperCase(),it=tk&&typeof deskSecOf==='function'?deskSecOf(exSymbol(tk,ccy)+'|'+ccy):null;
     if(it&&it.s)return it.s;}catch(e){}
   return sigRowRead(d,r);
 }
@@ -901,11 +901,11 @@ const SIG_AI_LEGEND=`recoVerdict — вердикт «Решения» Trade Des
 // % от SMA50, % от SMA200, P/E, в этом портфеле 1|0]. verdictOf — для тестов (по умолчанию sigRowVerdict).
 function sigRecoMap(portKey,verdictOf){
   const vOf=verdictOf||sigRowVerdict,seen=new Set(),out={};
-  const portTks=new Set(((DATA[portKey||PF3_KEY]&&DATA[portKey||PF3_KEY].rows)||[]).map(r=>String(r[2]||'').trim().toUpperCase()));
+  const portTks=new Set(((DATA[portKey||PF3_KEY]&&DATA[portKey||PF3_KEY].rows)||[]).map(r=>String(r[RC.tk]||'').trim().toUpperCase()));
   v3Tabs().forEach(k=>{const d=DATA[k];if(!d||!Array.isArray(d.rows))return;
-    const {s50,s200}=smaIdx(d),peC=d.headers.indexOf('P/E');
-    d.rows.forEach((r,i)=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
-      const price=parseFloat(r[7])||0;if(!(price>0))return;recalcPF(i,k);seen.add(tk);
+    const {s50,s200}=smaIdx(d),peC=colOf(d,'pe');
+    d.rows.forEach((r,i)=>{const tk=String(r[RC.tk]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;
+      const price=parseFloat(r[RC.price])||0;if(!(price>0))return;recalcPF(i,k);seen.add(tk);
       const num=c=>{const x=c>=0?parseFloat(r[c]):NaN;return isFinite(x)?x:null};
       const D=c=>{const x=num(c);return(x&&x>0)?Math.round((price/x-1)*1000)/10:null};
       const up=pf3EffUpside(d,r);
@@ -929,16 +929,16 @@ function sigRiskKr(tab){
 // Входы snapshot() из строки вкладки. stale-target — свежий «Таргет 3м» НИЖЕ «Аналит. таргета» более чем на
 // CFG.staleTgPct (калибровка Q6; строже TG_STALE_PCT=10 %, по которому pf3EffTarget берёт свежий).
 function sigOpts(d,r,riskKr,now){
-  const ccy=String(r[8]||'USD').trim().toUpperCase(),sym=exSymbol(r[2],ccy),t=pf3EffTarget(d,r),so=(DESK&&DESK.shortOk)||{};
+  const ccy=String(r[RC.ccy]||'USD').trim().toUpperCase(),sym=exSymbol(r[RC.tk],ccy),t=pf3EffTarget(d,r),so=(DESK&&DESK.shortOk)||{};
   return {riskKr:riskKr>0?riskKr:5000,fx:FX[ccy]||1,upTg:pf3EffUpside(d,r),
     staleTarget:!!(t.main>0&&t.recent>0&&t.recent<t.main&&(t.main-t.recent)/t.main*100>SIG.CFG.staleTgPct),
-    earningsDays:sigEarnDays(sym,now),shortOk:!!(so[sym]||so[posTk(r[2])])};
+    earningsDays:sigEarnDays(sym,now),shortOk:!!(so[sym]||so[posTk(r[RC.tk])])};
 }
 // Снимок v2 для строки или null (свечей ещё нет). Мемо по (время загрузки свечей + входы): повторные
 // рендеры не пересчитывают (solo#3), а смена таргета/календаря/курса — пересчитывает.
 function sigSnapRow(d,r,riskKr,now,readOnly){
-  if(typeof SIG==='undefined'||!d||!r||!posTk(r[2]))return null;
-  const sym=exSymbol(r[2],r[8]),hc=_histCache[sigHistKey(sym)];
+  if(typeof SIG==='undefined'||!d||!r||!posTk(r[RC.tk]))return null;
+  const sym=exSymbol(r[RC.tk],r[RC.ccy]),hc=_histCache[sigHistKey(sym)];
   if(!hc||!hc.j)return null;
   const o=sigOpts(d,r,riskKr,now),k=hc.t+'|'+JSON.stringify(o),m=SIGNALS[sym];
   if(m&&m.k===k)return m.s;
@@ -985,19 +985,19 @@ function sigSortVal(s){
 // ОДНОЙ вкладки. Чанками через fetchQuotes (app.js); при полном отказе прокси —
 // 0 обновлено, без ошибки.
 async function pf3FetchPrices(d,key){
-  const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+  const syms=[...new Set(d.rows.map(r=>exSymbol(r[RC.tk],r[RC.ccy])).filter(Boolean))];
   let prices={}; try{ prices=await fetchQuotes(syms); }catch(e){ prices={}; }
   const {s50,s100,s200}=smaIdx(d);
-  const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
+  const supI=colEnsure(d,'sup'),resI=colEnsure(d,'res');
   let updated=0;
   d.rows.forEach((r,i)=>{
-    const q=prices[exSymbol(r[2],r[8])];
+    const q=prices[exSymbol(r[RC.tk],r[RC.ccy])];
     if(!(q&&typeof q.price==='number'))return;
-    r[7]=q.price;pxMarkLive(exSymbol(r[2],r[8]),q.price);
-    if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
+    r[RC.price]=q.price;pxMarkLive(exSymbol(r[RC.tk],r[RC.ccy]),q.price);
+    if(typeof q.pct==='number')r[RC.day]=Math.round(q.pct*100)/100;
     // SMA (дневные) — в SMA_TF (E3: не пишется в снапшот, режим 3Г с S7b-3 не используется), в колонки —
     // всегда дневные: от них считаются фаза (sigRowPhase) и AI-снапшоты.
-    const tk=String(r[2]||'');
+    const tk=String(r[RC.tk]||'');
     SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null]};
     const set=SMA_TF[tk].d;
     if(s50>=0&&set[0]!=null)r[s50]=set[0];
@@ -1012,7 +1012,7 @@ async function pf3FetchPrices(d,key){
     // раз (myStartLive); базы, посчитанные по устаревшему сид-блобу до этого
     // флага, перефиксируются здесь же.
     if(key===PF3_KEY&&AI_PORT&&AI_PORT.myStartLive!=='1'){
-      let eq=0;d.rows.forEach(r=>{eq+=parseFloat(r[13])||0});eq+=parseFloat(d.cashFree)||0;
+      let eq=0;d.rows.forEach(r=>{eq+=parseFloat(r[RC.value])||0});eq+=parseFloat(d.cashFree)||0;
       if(eq>0){AI_PORT.myStartEquity=Math.round(eq);AI_PORT.myStartLive='1';}
     }
     scheduleSave();
@@ -1027,7 +1027,7 @@ let _cardPxAt={};
 // tab — вкладка строки (desk): фиксируется до await, иначе recalcPF пересчитал бы строку по индексу в той вкладке,
 // что выбрана к моменту ответа (v3Key меняется при переходе к другой бумаге).
 async function pf3RefreshCardPrice(d,r,tab){
-  const sym=exSymbol(r[2],r[8]),key=tab||v3Key;if(!sym)return;
+  const sym=exSymbol(r[RC.tk],r[RC.ccy]),key=tab||v3Key;if(!sym)return;
   if(_cardPxAt[sym]&&Date.now()-_cardPxAt[sym]<45000)return;   // ~45с: «% за день» обновляется живо на открытой карточке
   _cardPxAt[sym]=Date.now();
   try{
@@ -1036,10 +1036,10 @@ async function pf3RefreshCardPrice(d,r,tab){
     if(!(q&&typeof q.price==='number')){_cardPxAt[sym]=0;return;}
     const i=d.rows.indexOf(r);if(i<0)return;
     const {s50,s100,s200}=smaIdx(d);
-    const supI=ensurePFCol(d,'Поддержка'),resI=ensurePFCol(d,'Сопротивление');
-    r[7]=q.price;pxMarkLive(sym,q.price);
-    if(typeof q.pct==='number')r[10]=Math.round(q.pct*100)/100;
-    const tk=String(r[2]||'');
+    const supI=colEnsure(d,'sup'),resI=colEnsure(d,'res');
+    r[RC.price]=q.price;pxMarkLive(sym,q.price);
+    if(typeof q.pct==='number')r[RC.day]=Math.round(q.pct*100)/100;
+    const tk=String(r[RC.tk]||'');
     CARD_VOL[tk]={vol:typeof q.vol==='number'?q.vol:null,avgVol:typeof q.avgVol==='number'?q.avgVol:null,day:typeof q.pct==='number'?q.pct:null,at:Date.now()};   // объём торгов + дневное движение (лайв)
     SMA_TF[tk]={mode:'1Y',d:[q.sma50??null,q.sma100??null,q.sma200??null]};   // в колонки — дневные (S7b-3)
     const set=SMA_TF[tk].d;
@@ -1079,7 +1079,7 @@ async function cardPPLoad(){
     const j=await fetch(PRICE_PROXY+'?prepost='+encodeURIComponent(sym)).then(r=>r.json()).catch(()=>null);
     if(j&&typeof j==='object'){CARD_PP[sym]={...j,at:Date.now()};const el=document.getElementById('pf3PrePost');if(el&&pf3Sel===tk)el.innerHTML=cardPPInner(sym);}
     // Освежаем и обычную котировку (цена + «% за день») — иначе дневной % «замерзает».
-    const d=pf3D(),r=d&&Array.isArray(d.rows)&&d.rows.find(x=>String(x[2]||'')===tk);
+    const d=pf3D(),r=d&&Array.isArray(d.rows)&&d.rows.find(x=>String(x[RC.tk]||'')===tk);
     if(r)pf3RefreshCardPrice(d,r);
   }catch(e){}
   _cardPPLoading=false;
@@ -1134,7 +1134,7 @@ async function pfSumPPLoad(){
   if(document.hidden||_pfPPLoading)return;
   _pfPPLoading=true;
   try{
-    const syms=[...new Set(d.rows.map(r=>(parseFloat(r[6])||0)>0?exSymbol(r[2],r[8]):null).filter(Boolean))];
+    const syms=[...new Set(d.rows.map(r=>(parseFloat(r[RC.qty])||0)>0?exSymbol(r[RC.tk],r[RC.ccy]):null).filter(Boolean))];
     if(syms.length){
       // Чанками по 40 (лимит ?prepost= воркера, 1 подзапрос/символ); чанк с {error} (413 и т.п.) пропускаем.
       // ВАЖНО: на ОДИН символ воркер отдаёт объект бумаги, а не карту {sym:{…}} — нормализуем
@@ -1156,9 +1156,9 @@ function pfSumPPInner(d){
   if(!d||!Array.isArray(d.rows))return'';
   let deltaSEK=0,totalSEK=0,pre=0,post=0;
   d.rows.forEach(r=>{
-    const qty=parseFloat(r[6])||0;if(!(qty>0))return;
-    totalSEK+=parseFloat(r[13])||0;
-    const pp=PF_PP[exSymbol(r[2],r[8])];if(!pp)return;
+    const qty=parseFloat(r[RC.qty])||0;if(!(qty>0))return;
+    totalSEK+=parseFloat(r[RC.value])||0;
+    const pp=PF_PP[exSymbol(r[RC.tk],r[RC.ccy])];if(!pp)return;
     const reg=pp.regular;if(!(reg>0))return;
     const st=String(pp.state||'').toUpperCase();
     let o=null,usedPre=false;
@@ -1166,7 +1166,7 @@ function pfSumPPInner(d){
     else if(st.indexOf('POST')>=0){o=pp.post;}
     else if(st==='CLOSED'){o=pp.post||pp.pre;usedPre=!pp.post;}   // CLOSED мог взять пре-маркет
     if(!o||!(o.price>0))return;
-    const fx=FX[r[8]||'USD']||1;
+    const fx=FX[r[RC.ccy]||'USD']||1;
     deltaSEK+=qty*(o.price-reg)*fx;
     if(usedPre)pre++;else post++;   // метку считаем по реально использованной котировке
   });
@@ -1184,8 +1184,8 @@ let _tgEndpointDown=false;   // worker без ?targets отвечает не-JSO
 async function pf3RefreshTargets(d){
   if(_tgEndpointDown)return;
   if(d.targetsAt&&Date.now()-d.targetsAt<24*3600*1000)return;
-  const tgC=ensurePFCol(d,'Аналит. таргет');
-  const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+  const tgC=colEnsure(d,'tg');
+  const syms=[...new Set(d.rows.map(r=>exSymbol(r[RC.tk],r[RC.ccy])).filter(Boolean))];
   const chunks=[];
   // По 20: воркер делает 2 подзапроса на тикер (Yahoo + FMP), лимит Cloudflare — 50/запрос.
   for(let i=0;i<syms.length;i+=20)chunks.push(syms.slice(i,i+20).join(','));
@@ -1193,13 +1193,13 @@ async function pf3RefreshTargets(d){
   const good=parts.filter(p=>p&&typeof p==='object'&&!p.error);
   if(!good.length){_tgEndpointDown=true;return;}
   const tg=Object.assign({},...good);
-  const tgrC=ensurePFCol(d,'Таргет 3м');
-  const peC=ensurePFCol(d,'P/E'),psC=ensurePFCol(d,'P/S'),dyC=ensurePFCol(d,'Дивид. %');
-  const beC=ensurePFCol(d,'Beta'),roC=ensurePFCol(d,'ROE'),deC=ensurePFCol(d,'D/E'),rgC=ensurePFCol(d,'Рост выручки'),poC=ensurePFCol(d,'Payout');
-  const rvC=ensurePFCol(d,'Выручка TTM'),cpC=ensurePFCol(d,'Кап-я');
+  const tgrC=colEnsure(d,'tg3');
+  const peC=colEnsure(d,'pe'),psC=colEnsure(d,'ps'),dyC=colEnsure(d,'dy');
+  const beC=colEnsure(d,'beta'),roC=colEnsure(d,'roe'),deC=colEnsure(d,'de'),rgC=colEnsure(d,'revg'),poC=colEnsure(d,'payout');
+  const rvC=colEnsure(d,'rev'),cpC=colEnsure(d,'cap');
   let n=0;
   d.rows.forEach(r=>{
-    const q=tg[exSymbol(r[2],r[8])];
+    const q=tg[exSymbol(r[RC.tk],r[RC.ccy])];
     if(!q)return;
     if(typeof q.avg==='number'&&q.avg>0)r[tgC]=q.avg;
     if(typeof q.recent==='number'&&q.recent>0)r[tgrC]=q.recent;
@@ -1217,7 +1217,7 @@ async function pf3RefreshTargets(d){
   });
   if(n){
     // Свежие метрики → пересчитать типы по скорингу (методологии MSCI/S&P).
-    d.rows.forEach(r=>{const t=pf3DeriveType(String(r[2]||'').trim().toUpperCase(),r[4],r[5],d,r);if(t&&r[5]!==t)r[5]=t});
+    d.rows.forEach(r=>{const t=pf3DeriveType(String(r[RC.tk]||'').trim().toUpperCase(),r[RC.sector],r[RC.type],d,r);if(t&&r[RC.type]!==t)r[RC.type]=t});
     d.targetsAt=Date.now();scheduleSave();
   }
 }

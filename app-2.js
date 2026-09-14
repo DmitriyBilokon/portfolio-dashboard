@@ -5,12 +5,12 @@ function pf3HealthTab(){
   const free=(parseFloat(d.cashFree)||0)*fxB,lev=(v3Key===PF3_KEY?(parseFloat(d.leverage)||0):0)*fxB;
   const rows=d.rows.map((r,i)=>{
     recalcPF(i,v3Key);
-    const price=parseFloat(r[7])||0,sma=s200>=0?parseFloat(r[s200]):NaN;
+    const price=parseFloat(r[RC.price])||0,sma=s200>=0?parseFloat(r[s200]):NaN;
     return{
-      name:String(r[1]||r[2]||''),
-      val:parseFloat(r[13])||0,profit:parseFloat(r[11])||0,
-      sec:(r[4]&&r[4]!=='—')?String(r[4]):'Прочее',
-      ccy:r[8]||'USD',
+      name:String(r[RC.name]||r[RC.tk]||''),
+      val:parseFloat(r[RC.value])||0,profit:parseFloat(r[RC.pl])||0,
+      sec:(r[RC.sector]&&r[RC.sector]!=='—')?String(r[RC.sector]):'Прочее',
+      ccy:r[RC.ccy]||'USD',
       above:(isFinite(sma)&&sma>0&&price>0)?price>sma:null,
     };
   }).filter(x=>x.val>0);
@@ -113,7 +113,7 @@ async function pf3LoadCalendar(){
   const key=v3Key;   // портфель запуска: пока грузится, пользователь может переключить портфель (desk — в шапке)
   try{
     const d=DATA[key];
-    const syms=[...new Set(d.rows.map(r=>exSymbol(r[2],r[8])).filter(Boolean))];
+    const syms=[...new Set(d.rows.map(r=>exSymbol(r[RC.tk],r[RC.ccy])).filter(Boolean))];
     // Чанки (лимит подзапросов Cloudflare) загружаются параллельно.
     const chunks=[];
     for(let i=0;i<syms.length;i+=40)chunks.push(syms.slice(i,i+40).join(','));
@@ -134,12 +134,12 @@ function pf3CalendarHTML(){
   const ev={},add=(date,tk,ico,t)=>{if(date)(ev[date]=ev[date]||[]).push({tk,ico,t})};
   const dv=[];let annualDiv=0;
   d.rows.forEach(r=>{
-    const tk=String(r[2]||''),c=C[exSymbol(r[2],r[8])]||{};
-    const ccy=r[8]||'USD',qty=parseFloat(r[6])||0;
+    const tk=String(r[RC.tk]||''),c=C[exSymbol(r[RC.tk],r[RC.ccy])]||{};
+    const ccy=r[RC.ccy]||'USD',qty=parseFloat(r[RC.qty])||0;
     add(c.earnings,tk,'📊',T('отчёт'));add(c.exDiv,tk,'🪙',T('экс-дата'));add(c.payDate,tk,'💰',T('выплата'));
     if(typeof c.divRate==='number'&&c.divRate>0){
       const annual=qty*c.divRate*(FX[ccy]||1);annualDiv+=annual;
-      dv.push({tk,name:r[1]||tk,rate:c.divRate,ccy,yld:typeof c.divYield==='number'?c.divYield*100:null,exDiv:c.exDiv,pay:c.payDate,annual});
+      dv.push({tk,name:r[RC.name]||tk,rate:c.divRate,ccy,yld:typeof c.divYield==='number'?c.divYield*100:null,exDiv:c.exDiv,pay:c.payDate,annual});
     }
   });
   dv.sort((a,b)=>(a.exDiv||'9999')<(b.exDiv||'9999')?-1:1);
@@ -175,7 +175,7 @@ function pf3CalendarHTML(){
 }
 let pf3CalOff=0;   // смещение месяца календаря от текущего
 function pf3CalNav(k){pf3CalOff+=k;renderPF3()}
-const pf3SelIdx=()=>{const d=pf3D(),i=d.rows.findIndex(r=>String(r[2]||'')===pf3Sel);return i>=0?i:0};
+const pf3SelIdx=()=>{const d=pf3D(),i=d.rows.findIndex(r=>String(r[RC.tk]||'')===pf3Sel);return i>=0?i:0};
 
 // ── 🎯 Эффективный таргет и апсайд (фаза sigRowPhase, AI-снапшоты, скринер) ──
 // % расхождения, при котором основной «Аналит. таргет» считаем устаревшим.
@@ -184,15 +184,14 @@ const TG_STALE_PCT=10;
 // он устарел — расходится со свежим срезом «Таргет 3м» на ≥ TG_STALE_PCT% —
 // берём свежий квартальный/месячный.
 function pf3EffTarget(d,r){
-  const h=d.headers;
-  const ti=h.findIndex(x=>/аналит/i.test(x)), ri=h.findIndex(x=>/таргет 3м/i.test(x));
+  const ti=colOf(d,'tg'), ri=colOf(d,'tg3');
   const main=ti>=0?(parseFloat(r[ti])||0):0;
   const recent=ri>=0?(parseFloat(r[ri])||0):0;
   const stale=main>0&&recent>0&&Math.abs(recent-main)/main*100>=TG_STALE_PCT;
   return { target: stale?recent:(main||recent), main, recent, stale };
 }
 function pf3EffUpside(d,r){
-  const price=parseFloat(r[7])||0, t=pf3EffTarget(d,r).target;
+  const price=parseFloat(r[RC.price])||0, t=pf3EffTarget(d,r).target;
   return (t>0&&price>0)?(t/price-1)*100:null;
 }
 
@@ -220,9 +219,9 @@ function pf3FcastAiHTML(d){
     const HK=['h3','h69','h12'],HL=['3 '+RT('мес','m'),RT('6–9 мес','6–9m'),RT('12+ мес','12m+')];
     const byTk={};fa.stocks.forEach(s=>{byTk[String(s.ticker||'').toUpperCase()]=s});
     const rows=[];
-    d.rows.forEach((r,i)=>{const qty=parseFloat(r[6])||0;if(!(qty>0))return;recalcPF(i,v3Key);const valSEK=parseFloat(r[13])||0;const s=byTk[String(r[2]||'').toUpperCase()]||{};
+    d.rows.forEach((r,i)=>{const qty=parseFloat(r[RC.qty])||0;if(!(qty>0))return;recalcPF(i,v3Key);const valSEK=parseFloat(r[RC.value])||0;const s=byTk[String(r[RC.tk]||'').toUpperCase()]||{};
       const cells=HK.map(k=>{const pct=parseFloat(s[k]),has=isFinite(pct);return{v:valSEK*(1+(has?pct:0)/100),pct:has?pct:0,has}});
-      rows.push({name:String(r[1]||r[2]),tk:String(r[2]),valSEK,cells,title:String(s.note||'')});});
+      rows.push({name:String(r[RC.name]||r[RC.tk]),tk:String(r[RC.tk]),valSEK,cells,title:String(s.note||'')});});
     rows.sort((a,b)=>b.valSEK-a.valSEK);
     body=`${fa.summary?`<div class="dash-headline">${pf3Md(fa.summary)}</div>`:''}${pf3FcTable(d,rows,HL)}`;
   }
@@ -235,7 +234,7 @@ async function pf3FcastAiRun(){
     await pf3RefreshTab(key);
     await pf3LoadAllFundamentals(key).catch(()=>{});   // 🏅 фундаментал всех позиций → betyg как в карточке
     const d=DATA[key],num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
-    const positions=d.rows.filter(r=>(parseFloat(r[6])||0)>0).map(r=>{const m=pf3TypeMetrics(d,r);const full=(typeof pf3BetygRow==='function')?pf3BetygRow(r,r[4]):null;const b=(!full&&typeof pf3RowBetyg==='function')?pf3RowBetyg({roe:m.roe,revg:m.revg,pe:m.pe,ps:m.ps,sec:r[4],r}):null;return{ticker:r[2],name:r[1],sector:r[4],ccy:r[8]||'USD',qty:num(r[6]),price:num(r[7]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,betyg:full?{score100:full.score100,grade:full.grade}:(b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null),phase:sigRowPhase(d,r).label}});
+    const positions=d.rows.filter(r=>(parseFloat(r[RC.qty])||0)>0).map(r=>{const m=pf3TypeMetrics(d,r);const full=(typeof pf3BetygRow==='function')?pf3BetygRow(r,r[RC.sector]):null;const b=(!full&&typeof pf3RowBetyg==='function')?pf3RowBetyg({roe:m.roe,revg:m.revg,pe:m.pe,ps:m.ps,sec:r[RC.sector],r}):null;return{ticker:r[RC.tk],name:r[RC.name],sector:r[RC.sector],ccy:r[RC.ccy]||'USD',qty:num(r[RC.qty]),price:num(r[RC.price]),analystTarget:pf3EffTarget(d,r).target||null,upsidePct:pf3EffUpside(d,r),pe:m.pe,roe:m.roe,revGrowth:m.revg,betyg:full?{score100:full.score100,grade:full.grade}:(b!=null?{score100:Math.round(b*10),grade:(pf3Grade(b)||{}).g||null}:null),phase:sigRowPhase(d,r).label}});
     const snap={portfolioName:TAB_LABEL(key),baseCurrency:pf3Base(d),horizons:['3 мес','6-9 мес','12+ мес'],positions,playbook:aiPlaybookEnsure()};
     const r=await fetch(PRICE_PROXY+'?action=forecast',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await sbToken()},body:JSON.stringify(snap)});
     const bodyText=await r.text();let j=null;try{j=JSON.parse(bodyText)}catch(_){}
@@ -251,7 +250,7 @@ async function pf3FcastAiRun(){
 function pf3RowBetyg(o){
   const prof=o.roe>0?(o.roe>=20?10:o.roe>=15?9:o.roe>=10?7:o.roe>=5?5:4):(o.roe<0?1:null);
   const grow=(typeof o.revg==='number'&&o.revg!==0)?(o.revg>=20?10:o.revg>=10?8:o.revg>=4?6:o.revg>0?5:o.revg>-10?3:1):null;
-  const val=(typeof pf3ValScore==='function')?pf3ValScore({pe:o.pe,ps:o.ps},String((o.r&&o.r[2])||'').toUpperCase(),o.sec,(typeof pf3FinSec==='function'&&pf3FinSec(o.sec))):null;
+  const val=(typeof pf3ValScore==='function')?pf3ValScore({pe:o.pe,ps:o.ps},String((o.r&&o.r[RC.tk])||'').toUpperCase(),o.sec,(typeof pf3FinSec==='function'&&pf3FinSec(o.sec))):null;
   const W={prof:0.4,grow:0.3,val:0.3};let sw=0,wsum=0;
   [['prof',prof],['grow',grow],['val',val]].forEach(([k,v])=>{if(v!=null){sw+=v*W[k];wsum+=W[k];}});
   return wsum?sw/wsum:null;
@@ -329,11 +328,11 @@ const GICS_MAP=[
   ['Информационные технологии',/technolog|semicond|software|hardware|\bchip|silicon|it services|electronic|comput|\bsaas\b|\bcloud\b|cyber|\btech\b|полупровод|софт|технолог|программн|облач|кибер|аппарат|вычислит|ai.?(infra|network|server|servers|analytics)|ии.?инфра/i],
 ];
 function gicsOf(s){const t=String(s||'').trim();if(!t||/^n\/?a$/i.test(t))return GICS_OTHER;for(const[g,re]of GICS_MAP)if(re.test(t))return g;return GICS_OTHER;}
-// Распределение портфеля по 11 GICS по рыночной стоимости (r[13]) + HHI, топ,
+// Распределение портфеля по 11 GICS по рыночной стоимости (r[RC.value]) + HHI, топ,
 // флаги концентрации и список отсутствующих секторов.
 function pf3Diversification(d){
   const by={};let total=0;
-  (d.rows||[]).forEach((r,i)=>{recalcPF(i,v3Key);const val=parseFloat(r[13])||0;if(!(val>0))return;const g=gicsOf(r[4]);(by[g]=by[g]||{sum:0,n:0});by[g].sum+=val;by[g].n++;total+=val;});
+  (d.rows||[]).forEach((r,i)=>{recalcPF(i,v3Key);const val=parseFloat(r[RC.value])||0;if(!(val>0))return;const g=gicsOf(r[RC.sector]);(by[g]=by[g]||{sum:0,n:0});by[g].sum+=val;by[g].n++;total+=val;});
   const sectors=Object.keys(by).map(g=>({gics:g,sum:Math.round(by[g].sum),n:by[g].n,pct:total>0?by[g].sum/total*100:0})).sort((a,b)=>b.pct-a.pct);
   const hhi=sectors.reduce((a,s)=>a+Math.pow(s.pct/100,2),0);
   const missing=GICS_ALL.filter(g=>!by[g]);
@@ -373,7 +372,7 @@ function pf3Add(e){
   const ccy=document.getElementById('pf3AddCcy').value;
   if(!t||(port&&(!(sh>0)||!(buy>0)))){toast(port?'Заполните тикер, кол-во и цену покупки':'Укажите тикер',true);return}
   const d=pf3D();
-  if(d.rows.some(r=>String(r[2]||'').trim().toUpperCase()===t)){toast(t+' уже в списке',true);return}
+  if(d.rows.some(r=>String(r[RC.tk]||'').trim().toUpperCase()===t)){toast(t+' уже в списке',true);return}
   const flag={USD:'🇺🇸',EUR:'🇪🇺',SEK:'🇸🇪',NOK:'🇳🇴',DKK:'🇩🇰',GBP:'🇬🇧'}[ccy]||'';
   const row=[d.rows.length+1,PF3_NAMES[t]||t,t,flag,'—','Акция',sh||0,buy||0,ccy,buy||0,0,0,0,0,'—','—','','','',0,0,'⚪ Держать'];
   while(row.length<d.headers.length)row.push('');
@@ -404,18 +403,18 @@ function pf3Add(e){
 const PF3_SECTOR_RU={'Technology':'Технологии','Healthcare':'Здравоохранение','Financial Services':'Финансы','Consumer Cyclical':'Потребительский','Consumer Defensive':'Потребительские товары','Industrials':'Промышленность','Energy':'Энергетика','Utilities':'Коммунальные услуги','Real Estate':'Недвижимость','Communication Services':'Коммуникации','Basic Materials':'Материалы'};
 async function pf3FillProfile(tk){
   try{
-    const d=pf3D(),r=d.rows.find(x=>String(x[2]||'').trim().toUpperCase()===tk);
+    const d=pf3D(),r=d.rows.find(x=>String(x[RC.tk]||'').trim().toUpperCase()===tk);
     if(!r)return;
-    const p=await(await fetch(PRICE_PROXY+'?profile='+encodeURIComponent(exSymbol(r[2],r[8])))).json();
+    const p=await(await fetch(PRICE_PROXY+'?profile='+encodeURIComponent(exSymbol(r[RC.tk],r[RC.ccy])))).json();
     if(!p||typeof p!=='object')return;
     let ch=false;
-    if(p.name&&(!r[1]||String(r[1]).trim().toUpperCase()===tk)){r[1]=p.name;ch=true;}
-    if(p.sector&&(!r[4]||r[4]==='—')){r[4]=PF3_SECTOR_RU[p.sector]||p.sector;ch=true;}
+    if(p.name&&(!r[RC.name]||String(r[RC.name]).trim().toUpperCase()===tk)){r[RC.name]=p.name;ch=true;}
+    if(p.sector&&(!r[RC.sector]||r[RC.sector]==='—')){r[RC.sector]=PF3_SECTOR_RU[p.sector]||p.sector;ch=true;}
     // Instrument type: ETF/fund by Yahoo quoteType, REIT→Дивидендная by industry, else by sector.
     const typ=p.type==='ETF'?'ETF':p.type==='MUTUALFUND'?'Фонд'
       :/reit/i.test(p.industry||'')?'Дивидендная'
-      :pf3DeriveType(tk,String(p.sector||r[4]||''),'');
-    if(r[5]!==typ){r[5]=typ;ch=true;}
+      :pf3DeriveType(tk,String(p.sector||r[RC.sector]||''),'');
+    if(r[RC.type]!==typ){r[RC.type]=typ;ch=true;}
     if(ch){scheduleSave();if(isV3())renderPF3();}
   }catch(e){}
 }
@@ -423,11 +422,11 @@ async function pf3FillProfile(tk){
 // Удалить бумагу из текущей v3-вкладки.
 function pf3Delete(tk,ev){
   if(ev)ev.stopPropagation();
-  const d=pf3D(),i=d.rows.findIndex(r=>String(r[2]||'')===tk);
+  const d=pf3D(),i=d.rows.findIndex(r=>String(r[RC.tk]||'')===tk);
   if(i<0)return;
   if(!confirm(T('Удалить')+' '+tk+' ('+TAB_LABEL(v3Key)+')?'))return;
   d.rows.splice(i,1);
-  d.rows.forEach((r,j)=>r[0]=j+1);
+  d.rows.forEach((r,j)=>r[RC.n]=j+1);
   if(pf3Sel===tk)pf3Sel=null;
   scheduleSave();
   init();
@@ -495,14 +494,14 @@ function pfpSeriesFromPos(pos,histBy){
 }
 function pfpPortSeries(key,histBy){
   const d=DATA[key];if(!d)return null;
-  const pos=d.rows.map((r,i)=>{recalcPF(i,key);return{sym:exSymbol(r[2],r[8]),w:parseFloat(r[13])||0}}).filter(x=>x.sym&&x.w>0);
+  const pos=d.rows.map((r,i)=>{recalcPF(i,key);return{sym:exSymbol(r[RC.tk],r[RC.ccy]),w:parseFloat(r[RC.value])||0}}).filter(x=>x.sym&&x.w>0);
   return pfpSeriesFromPos(pos,histBy);
 }
 // 📊 Сводная линия «Все портфели»: позиции ВСЕХ моих портфелей слиты в один набор,
-// взвешены текущей стоимостью (в SEK через r[13]) — единая доходность всех портфелей.
+// взвешены текущей стоимостью (в SEK через r[RC.value]) — единая доходность всех портфелей.
 function pfpCombinedPos(){
   const pos=[];
-  pfpPorts().forEach(p=>{if(p.ai)return;const d=DATA[p.key];if(!d)return;d.rows.forEach((r,i)=>{recalcPF(i,p.key);const sym=exSymbol(r[2],r[8]),w=parseFloat(r[13])||0;if(sym&&w>0)pos.push({sym,w});});});
+  pfpPorts().forEach(p=>{if(p.ai)return;const d=DATA[p.key];if(!d)return;d.rows.forEach((r,i)=>{recalcPF(i,p.key);const sym=exSymbol(r[RC.tk],r[RC.ccy]),w=parseFloat(r[RC.value])||0;if(sym&&w>0)pos.push({sym,w});});});
   return pos;
 }
 async function pfPerfLoad(force){
@@ -511,7 +510,7 @@ async function pfPerfLoad(force){
   try{
     const ports=pfpPorts();
     const symSet=new Set();
-    ports.forEach(p=>{if(p.ai||!DATA[p.key])return;DATA[p.key].rows.forEach((r,i)=>{recalcPF(i,p.key);const s=exSymbol(r[2],r[8]);if(s&&(parseFloat(r[13])||0)>0)symSet.add(s)})});
+    ports.forEach(p=>{if(p.ai||!DATA[p.key])return;DATA[p.key].rows.forEach((r,i)=>{recalcPF(i,p.key);const s=exSymbol(r[RC.tk],r[RC.ccy]);if(s&&(parseFloat(r[RC.value])||0)>0)symSet.add(s)})});
     PFP_BENCH.forEach(b=>symSet.add(b[0]));
     const syms=[...symSet];
     const res=await Promise.all(syms.map(x=>fetch(PRICE_PROXY+'?history='+encodeURIComponent(x)+'&range=3y').then(r=>r.json()).catch(()=>null)));
@@ -637,13 +636,13 @@ function pfCorr(aS,bS,from){
 }
 // Концентрация: топ-5 вес и «эффективное число бумаг» (1/HHI).
 function pfConcentration(rows){
-  const ws=rows.map(o=>parseFloat((o.r||o)[13])||0).filter(v=>v>0);
+  const ws=rows.map(o=>parseFloat((o.r||o)[RC.value])||0).filter(v=>v>0);
   const tot=ws.reduce((a,b)=>a+b,0);if(!(tot>0))return null;
   const sh=ws.map(w=>w/tot).sort((a,b)=>b-a);
   const hhi=sh.reduce((a,w)=>a+w*w,0);
   return{top5:sh.slice(0,5).reduce((a,b)=>a+b,0)*100,effN:hhi>0?1/hhi:0,n:ws.length};
 }
-function pfWinRate(rows){const pl=rows.map(o=>parseFloat((o.r||o)[11])).filter(v=>isFinite(v));return pl.length?pl.filter(v=>v>0).length/pl.length*100:null;}
+function pfWinRate(rows){const pl=rows.map(o=>parseFloat((o.r||o)[RC.pl])).filter(v=>isFinite(v));return pl.length?pl.filter(v=>v>0).length/pl.length*100:null;}
 function pfInfoRatio(ps,is,from){
   const iso=from.toISOString().slice(0,10),pm={},im={};
   ps.filter(x=>x.d>=iso).forEach(x=>pm[x.d]=x.v);is.filter(x=>x.d>=iso).forEach(x=>im[x.d]=x.v);
@@ -653,7 +652,7 @@ function pfInfoRatio(ps,is,from){
   return sd>0?(m/sd)*Math.sqrt(252):null;
 }
 function pfRealRows(){const out=[];pfpPorts().forEach(p=>{if(p.ai)return;const d=DATA[p.key];if(!d)return;d.rows.forEach((r,i)=>{recalcPF(i,p.key);out.push({r,port:p.name});});});return out;}
-function pfDayPctOf(rows){let v=0,s=0;rows.forEach(o=>{const r=o.r||o,val=parseFloat(r[13])||0,dp=parseFloat(r[10]);if(val>0&&isFinite(dp)){v+=val*dp;s+=val;}});return s>0?v/s:null;}
+function pfDayPctOf(rows){let v=0,s=0;rows.forEach(o=>{const r=o.r||o,val=parseFloat(r[RC.value])||0,dp=parseFloat(r[RC.day]);if(val>0&&isFinite(dp)){v+=val*dp;s+=val;}});return s>0?v/s:null;}
 function pfDeepCmpHTML(){
   const D=pfCmpData();if(!D)return'';const H=pfPerf.hist;
   const cls=v=>v>=0?'pf3-up':'pf3-down';
@@ -682,21 +681,21 @@ function pfDeepCmpHTML(){
   // 6) Окна
   const winRows=ents.map(e=>`<tr><td class="bp-name">${e.name}</td><td>${pc(dayOf(e),2)}</td><td>${pc(pfPerfPct(H.ports[e.key],pfPerfFrom('fri')),2)}</td><td><b>${pc(e.ret,2)}</b></td></tr>`).join('');
   // 5) Вклад в доходность (по прибыли SEK с покупки ≈ с создания)
-  const withPL=realRows.map(o=>({tk:String(o.r[2]||''),name:String(o.r[1]||o.r[2]||''),port:o.port,pl:parseFloat(o.r[11])||0,plp:parseFloat(o.r[12])})).filter(x=>x.tk);
+  const withPL=realRows.map(o=>({tk:String(o.r[RC.tk]||''),name:String(o.r[RC.name]||o.r[RC.tk]||''),port:o.port,pl:parseFloat(o.r[RC.pl])||0,plp:parseFloat(o.r[RC.plPct])})).filter(x=>x.tk);
   const win=withPL.slice().sort((a,b)=>b.pl-a.pl).slice(0,5),los=withPL.slice().sort((a,b)=>a.pl-b.pl).slice(0,5).filter(x=>x.pl<0);
   const contribRow=x=>`<div class="pfcmp-row"><span class="pfcmp-name">${x.name} <span class="bp-tk">${x.tk}</span> <small>${x.port}</small></span><span class="pfcmp-v ${cls(x.pl)}">${x.pl>=0?'+':''}${pf3Fmt(x.pl)} kr${isFinite(x.plp)?` · ${x.plp>=0?'+':''}${x.plp.toFixed(1)}%`:''}</span></div>`;
   // 3) Перекрытие портфелей
-  const byTk={};realRows.forEach(o=>{const tk=String(o.r[2]||'').toUpperCase();if(!tk)return;const val=parseFloat(o.r[13])||0;(byTk[tk]=byTk[tk]||{tk,name:String(o.r[1]||tk),ports:new Set(),val:0});byTk[tk].ports.add(o.port);byTk[tk].val+=val;});
+  const byTk={};realRows.forEach(o=>{const tk=String(o.r[RC.tk]||'').toUpperCase();if(!tk)return;const val=parseFloat(o.r[RC.value])||0;(byTk[tk]=byTk[tk]||{tk,name:String(o.r[RC.name]||tk),ports:new Set(),val:0});byTk[tk].ports.add(o.port);byTk[tk].val+=val;});
   const overlap=Object.values(byTk).filter(x=>x.ports.size>=2).sort((a,b)=>b.ports.size-a.ports.size||b.val-a.val).slice(0,12);
   const ovRow=x=>`<div class="pfcmp-row"><span class="pfcmp-name">${x.name} <span class="bp-tk">${x.tk}</span></span><span class="pfcmp-acells">${[...x.ports].map(p=>`<span class="pfcmp-acell">${p}</span>`).join('')}</span><span class="pfcmp-v">${pf3Fmt(x.val)} kr</span></div>`;
   // 4) Сектора: портфели (по стоимости) vs индексы (по числу бумаг — aiBenchmarks)
-  const psec={};let pt=0;realRows.forEach(o=>{const s=String(o.r[4]||'').trim(),val=parseFloat(o.r[13])||0;if(s&&s!=='—'&&val>0){psec[s]=(psec[s]||0)+val;pt+=val;}});
+  const psec={};let pt=0;realRows.forEach(o=>{const s=String(o.r[RC.sector]||'').trim(),val=parseFloat(o.r[RC.value])||0;if(s&&s!=='—'&&val>0){psec[s]=(psec[s]||0)+val;pt+=val;}});
   const pSecTop=Object.entries(psec).map(([s,v])=>({s,pct:pt?v/pt*100:0})).sort((a,b)=>b.pct-a.pct).slice(0,8);
   const bm=(typeof aiBenchmarks==='function')?aiBenchmarks():[];
   const secCol=(title,arr)=>`<div class="pfcmp-seccol"><div class="pfcmp-sech">${title}</div>${arr.map(x=>`<div class="pfcmp-secrow"><span>${x.s||x.sector}</span><b>${(x.pct).toFixed(1)}%</b></div>`).join('')||'<div class="pf3-empty">—</div>'}</div>`;
   const secCols=secCol(RT('Портфели (по стоимости)','Portfolios (by value)'),pSecTop)+bm.slice(0,2).map(b=>secCol(b.index+RT(' (по числу)',' (by count)'),b.sectors)).join('');
   // 7) Валютная структура
-  const cur={};let ct=0;realRows.forEach(o=>{const c=String(o.r[8]||'').toUpperCase(),val=parseFloat(o.r[13])||0;if(c&&val>0){cur[c]=(cur[c]||0)+val;ct+=val;}});
+  const cur={};let ct=0;realRows.forEach(o=>{const c=String(o.r[RC.ccy]||'').toUpperCase(),val=parseFloat(o.r[RC.value])||0;if(c&&val>0){cur[c]=(cur[c]||0)+val;ct+=val;}});
   const curArr=Object.entries(cur).map(([c,v])=>({c,pct:ct?v/ct*100:0})).sort((a,b)=>b.pct-a.pct);
   const curRow=curArr.map(x=>`<span class="pfcmp-idx">${x.c} <b>${x.pct.toFixed(0)}%</b></span>`).join(' ');
   const det=(title,body,open)=>`<details class="pfcmp-det"${open?' open':''}><summary>${title}</summary><div class="pfcmp-detbody">${body}</div></details>`;

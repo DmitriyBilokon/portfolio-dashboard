@@ -2,6 +2,10 @@
 // Общие для JSC-раннера tests/run-app.js (читает через rd() + eval) и node-стенда tests/ledger-copy.js (vm).
 // ES5, без зависимостей от раннера; ALL (сид данных) задаёт сам раннер.
 var noop = function(){};
+// В JSC osascript у console нет error/warn (rowSchemaCheck в migrateState зовёт console.error на урезанных фикстурах).
+if(typeof console === 'undefined') globalThis.console = { log:noop };
+if(typeof console.error !== 'function') console.error = noop;
+if(typeof console.warn !== 'function') console.warn = noop;
 var classListStub = { add:noop, remove:noop, toggle:noop, contains:function(){return false;} };
 function mkEl(){ return {
   addEventListener:noop, removeEventListener:noop, appendChild:noop, removeChild:noop, remove:noop,

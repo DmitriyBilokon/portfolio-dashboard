@@ -15,7 +15,8 @@
 //   I1 факты     — по каждой вкладке tk/qty/buy/ccy/price строк + cashFree; pfTrades, posMeta, planRules, desk, deskWatch,
 //                  aiPort, aiPlaybook, news, cycleOvr — равны между ref и HEAD (кроме путей --expect-drop).
 //   I2 идемпот.  — snapshot(apply(snapshot(apply(copy)))) === snapshot(apply(copy)) в HEAD.
-//   I3 контракт  — headers[0..15] каждой вкладки с rows = заголовкам Портфеля 3.0 (для E2; только отчёт).
+//   I3 контракт  — headers[0..15] каждой вкладки с rows = заголовкам Портфеля 3.0 (для E2; только отчёт); с E2 — и rowSchemaBad
+//                  кода HEAD (контракт RC: PF_HEAD + имена Портфеля 2.0 — то, что migrateState проверяет в браузере).
 //   I4 размер    — длина JSON (знаки и байты UTF-8) всего/по ключам/по полям вкладок, запас до 1024 КБ (только отчёт).
 //   I5 AI-перенос (--ai-out, E5 plans/ai-reports-e5.md §7) — в HEAD после applyRemoteState: aiLedgerExtract вернул ровно
 //                  все AI-записи копии (независимый подсчёт по видам и вкладкам, каждая data глубоко равна исходной, bad
@@ -155,7 +156,8 @@ line(`Скрипты: ${fl}`);
   const notAdded = expectAdd.filter(p => !matchPaths(H, p).length);
   const inRef = expectAdd.filter(p => matchPaths(R, p).length), noneInRef = expectDrop.filter(p => !matchPaths(R, p).length);
   const ok = !d.length && !stillThere.length && !notAdded.length && !inRef.length;
-  line(`\nI0 снапшот ref → HEAD: ${ok ? '✔ равны' : (loose ? '⚠ расходятся (--loose)' : '✘ расходятся')}` +
+  const same = headS1 === refS1;   // E2: формат не менялся → снапшот идентичен байт-в-байт
+  line(`\nI0 снапшот ref → HEAD: ${ok ? '✔ равны' + (same ? ' (байт-в-байт)' : '') : (loose ? '⚠ расходятся (--loose)' : '✘ расходятся')}` +
        (expectDrop.length ? `  (ожидаемо удалены: ${expectDrop.join(', ')})` : '') + (expectAdd.length ? `  (ожидаемо добавлены: ${expectAdd.join(', ')})` : ''));
   d.forEach(x => line('   ' + x));
   stillThere.forEach(x => line('   ✘ ожидали удаление, но есть в HEAD: ' + x));
@@ -197,6 +199,9 @@ line(`Скрипты: ${fl}`);
     line(`\nI3 контракт строки headers[0..15] = «${PF3_KEY}»: ${viol.length ? '⚠ нарушителей ' + viol.length : '✔ все вкладки'}`);
     viol.forEach(x => line('   ' + x));
   }
+  // E2: тот же вопрос кодом HEAD — rowSchemaOk (PF_HEAD + имена Портфеля 2.0), что проверяет migrateState в браузере.
+  const rs = JSON.parse(V_HEAD.run('JSON.stringify(typeof rowSchemaBad==="function"?rowSchemaBad(DATA):null)'));
+  if (rs) line(`   контракт RC (rowSchemaOk HEAD, PF_HEAD + синонимы): ${rs.length ? '⚠ нарушители: ' + rs.join(', ') : '✔ все вкладки'}`);
 }
 // I4
 {

@@ -537,3 +537,31 @@ grp('AI retry helpers', function(){
 grp('worker build', function(){
   __ok('WORKER_BUILD bumped', WORKER_BUILD !== '2026-06-30subreq-split');
 });
+
+// ── E2: контракт строки v3-вкладки — копия клиента (plans/ledger-model-e.md §4.E2) ──
+grp('row contract (E2, worker)', function(){
+  parityRun('worker', RC, COLN, COLN_RE, colOf);
+  __ok('E2 W контракт заморожен', Object.isFrozen(RC)&&Object.isFrozen(COLN)&&Object.isFrozen(COLN_RE));
+  __ok('E2 W TARGET_COL/TARGET_RECENT_COL удалены (→ COLN.tg/tg3)', typeof TARGET_COL==='undefined'&&typeof TARGET_RECENT_COL==='undefined');
+  // aipUniverse на раскладке S&P 500 («Реком. скоринг» не на общем месте) читает колонки по именам
+  var h=PARITY_HEADS[1].headers, row=new Array(h.length).fill('');
+  row[RC.tk]='AAPL';row[RC.ccy]='USD';row[RC.sector]='Tech';row[RC.type]='Качественная';row[RC.price]=100;row[RC.day]=1.5;
+  row[16]=90;row[18]=80;row[23]=95;row[24]=110;row[22]=120;row[26]=30;row[29]='buy';row[30]=1.2;row[31]=25;row[33]=12;
+  var u=aipUniverse({data:{'S&P 500':{v3:'1',headers:h,rows:[row]}}});
+  __eq('E2 W aipUniverse по colOf (S&P 500)', u[0], ['AAPL','USD','Tech','Качественная',100,1.5,11.1,25,5.3,-9.1,20,30,1.2,25,12,'buy']);
+});
+grp('row contract scanners (E2, worker)', function(){
+  var src=rd('telegram-notify.js'),lines=src.split('\n'),rowIdx=[],look=[],re=[],ids=[],m;
+  var names=Object.keys(COLN).map(function(k){return COLN[k];});
+  lines.forEach(function(ln,n){
+    var at='telegram-notify.js:'+(n+1),rx;
+    if(/\b(?:r|row|r0)\[(?:1[0-5]|[0-9])\]|\bnum\(\s*r\s*,\s*\d+\s*\)/.test(ln))rowIdx.push(at);
+    rx=/\.(?:indexOf|findIndex|lastIndexOf|includes)\(\s*(['"])(.*?)\1/g;while((m=rx.exec(ln)))if(names.indexOf(m[2])>=0)look.push(at+' '+m[2]);
+    if(/\/sma\.\?(?:50|100|200)|\/аналит\/|\/таргет 3м\//i.test(ln)&&!/^const COLN_RE =/.test(ln))re.push(at);
+    rx=/\bcolOf\([^()]*?,\s*'([^']*)'\)/g;while((m=rx.exec(ln)))if(!COLN[m[1]])ids.push(at+' '+m[1]);
+  });
+  __eq('E2 W сканер: нет r[N]/row[N]/r0[N]/num(r, N) (0–15)', rowIdx, []);
+  __eq('E2 W сканер: нет поиска колонки по русскому имени', look, []);
+  __eq('E2 W сканер: матчеры SMA/таргетов — только COLN_RE', re, []);
+  __eq('E2 W сканер: литеральные id в colOf — ключи COLN', ids, []);
+});

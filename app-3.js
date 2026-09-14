@@ -6,7 +6,7 @@ function aipFindSrcRow(tk){
   const U=String(tk).toUpperCase();
   for(const key of v3Tabs()){
     const d=DATA[key];if(!d)continue;
-    const r=(d.rows||[]).find(r=>String(r[2]||'').trim().toUpperCase()===U);
+    const r=(d.rows||[]).find(r=>String(r[RC.tk]||'').trim().toUpperCase()===U);
     if(r)return{r,d};
   }
   return null;
@@ -19,34 +19,34 @@ function aipSyncTab(){
   d.cashFree=Math.round(AI_PORT.cashSEK||0);
   const pos=AI_PORT.positions||[];
   const liveTk=new Set(pos.map(p=>String(p.ticker).toUpperCase()));
-  d.rows=d.rows.filter(r=>liveTk.has(String(r[2]||'').trim().toUpperCase()));
+  d.rows=d.rows.filter(r=>liveTk.has(String(r[RC.tk]||'').trim().toUpperCase()));
   pos.forEach(p=>{
     const U=String(p.ticker).toUpperCase();
-    let r=d.rows.find(r=>String(r[2]||'').trim().toUpperCase()===U);
+    let r=d.rows.find(r=>String(r[RC.tk]||'').trim().toUpperCase()===U);
     if(!r){
       r=new Array(d.headers.length).fill('');
       const src=aipFindSrcRow(U);
       if(src)d.headers.forEach((h,i)=>{const j=src.d.headers.indexOf(h);if(j>=0&&src.r[j]!=='')r[i]=src.r[j]});
-      r[2]=p.ticker;
-      if(!r[3])r[3]=AIP_FLAGS[p.ccy]||'';
+      r[RC.tk]=p.ticker;
+      if(!r[RC.country])r[RC.country]=AIP_FLAGS[p.ccy]||'';
       d.rows.push(r);
     }
     while(r.length<d.headers.length)r.push('');
-    r[1]=p.name||p.ticker;
-    if(p.sector&&(!r[4]||r[4]==='—'))r[4]=p.sector;
-    if(p.type&&(!r[5]||r[5]==='—'))r[5]=p.type;
-    r[6]=p.qty;r[8]=p.ccy;r[9]=p.avgBuy;
-    if(!(parseFloat(r[7])>0)&&p.lastPrice)r[7]=p.lastPrice;
+    r[RC.name]=p.name||p.ticker;
+    if(p.sector&&(!r[RC.sector]||r[RC.sector]==='—'))r[RC.sector]=p.sector;
+    if(p.type&&(!r[RC.type]||r[RC.type]==='—'))r[RC.type]=p.type;
+    r[RC.qty]=p.qty;r[RC.ccy]=p.ccy;r[RC.buy]=p.avgBuy;
+    if(!(parseFloat(r[RC.price])>0)&&p.lastPrice)r[RC.price]=p.lastPrice;
   });
-  d.rows.forEach((r,i)=>{r[0]=i+1;recalcPF(i,AIP_KEY)});
+  d.rows.forEach((r,i)=>{r[RC.n]=i+1;recalcPF(i,AIP_KEY)});
 }
 // Живую цену позиции ищем в строках вкладок (обновляются сайтом), иначе —
 // lastPrice из последнего цикла worker'а.
 function aipLivePrice(p){
   for(const key of v3Tabs()){
     const d=DATA[key];if(!d)continue;
-    const r=(d.rows||[]).find(r=>String(r[2]||'').trim().toUpperCase()===String(p.ticker).toUpperCase());
-    if(r&&parseFloat(r[7])>0)return parseFloat(r[7]);
+    const r=(d.rows||[]).find(r=>String(r[RC.tk]||'').trim().toUpperCase()===String(p.ticker).toUpperCase());
+    if(r&&parseFloat(r[RC.price])>0)return parseFloat(r[RC.price]);
   }
   return p.lastPrice||p.avgBuy||0;
 }
@@ -163,7 +163,7 @@ function aipManageHTML(){
   const ret=ap.startCapital>0?(equity/ap.startCapital-1)*100:0;
   // «Я vs AI»: мой портфель с момента старта AI
   const d=DATA[PF3_KEY];let myEq=0;
-  if(d){d.rows.forEach(r=>{myEq+=parseFloat(r[13])||0});myEq+=parseFloat(d.cashFree)||0;}
+  if(d){d.rows.forEach(r=>{myEq+=parseFloat(r[RC.value])||0});myEq+=parseFloat(d.cashFree)||0;}
   const myRet=ap.myStartEquity>0?(myEq/ap.myStartEquity-1)*100:null;
   const dd=aipMaxDD(ap.equityHistory);
   const closed=(ap.trades||[]).filter(t=>t.action==='sell'&&typeof t.plSEK==='number');
@@ -484,7 +484,7 @@ function newsAgoLbl(ms){ if(!(ms>0))return ''; const d=Math.floor((Date.now()-ms
 async function pf3PullHoldingsNews(key){
   const d=DATA[key]; if(!d||!Array.isArray(d.rows))return;
   const seen=new Set(),jobs=[];
-  d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase(),ccy=r[8]||'USD';if(!tk||seen.has(tk))return;if(!((parseFloat(r[6])||0)>0))return;seen.add(tk);jobs.push([tk,ccy]);});
+  d.rows.forEach(r=>{const tk=String(r[RC.tk]||'').trim().toUpperCase(),ccy=r[RC.ccy]||'USD';if(!tk||seen.has(tk))return;if(!((parseFloat(r[RC.qty])||0)>0))return;seen.add(tk);jobs.push([tk,ccy]);});
   for(const it of jobs.slice(0,20)){
     const cur=NEWS_LIVE[it[0]];
     if(cur&&cur.at&&Date.now()-cur.at<10*60000)continue;   // свежее (≤10 мин) уже есть
@@ -500,7 +500,7 @@ async function pf3PullHoldingsNews(key){
 function pf3LiveNewsForAi(key){
   const d=DATA[key]; if(!d||!Array.isArray(d.rows))return null;
   const out={},seen=new Set();
-  d.rows.forEach(r=>{const tk=String(r[2]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;if(!((parseFloat(r[6])||0)>0))return;seen.add(tk);
+  d.rows.forEach(r=>{const tk=String(r[RC.tk]||'').trim().toUpperCase();if(!tk||seen.has(tk))return;if(!((parseFloat(r[RC.qty])||0)>0))return;seen.add(tk);
     const n=NEWS_LIVE[tk];if(!n||!n.items||!n.items.length)return;
     out[tk]={sent:n.sent,headlines:n.items.slice(0,4).map(it=>({t:it.title,pol:it.pol||0,ageDays:it.time>0?Math.floor((Date.now()-it.time)/864e5):null}))};
   });
@@ -510,7 +510,7 @@ function pf3LiveNewsForAi(key){
 // карточка: TG_FULL (агрегация A.1) → квартальный срез pf3EffTarget → eff (если не
 // stale). Устаревшим (не используется) считается ТОЛЬКО all-time (eff.main).
 function scnFreshTarget(d,r){
-  const tk=String(r[2]||'').toUpperCase(), tgf=TG_FULL[tk];
+  const tk=String(r[RC.tk]||'').toUpperCase(), tgf=TG_FULL[tk];
   // Yahoo-источник (src:'yahoo') — живой консенсус, свежий без даты; FMP — по lastDate ≤ N.
   if(tgf&&tgf.consensus>0&&(tgf.src==='yahoo'||(tgf.lastDate&&((Date.now()-Date.parse(tgf.lastDate))/864e5<=SCENARIO_CFG.freshDays))))
     return {consensus:tgf.consensus,high:tgf.high||0,fresh:true,staleConsensus:0};
@@ -521,10 +521,10 @@ function scnFreshTarget(d,r){
 }
 // Панель «Сценарии» (двухгоризонтная) в карточке акции.
 function pf3ScenarioHTML(d,r){
-  const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
+  const tk=String(r[RC.tk]||'').toUpperCase(), ccy=r[RC.ccy]||'USD', price=parseFloat(r[RC.price])||0;
   if(!(price>0))return '';
   const sm=smaIdx(d), sma50=sm.s50>=0?parseFloat(r[sm.s50]):0;
-  const supC=ensurePFCol(d,'Поддержка'),resC=ensurePFCol(d,'Сопротивление');
+  const supC=colEnsure(d,'sup'),resC=colEnsure(d,'res');
   const support=supC>=0?parseFloat(r[supC]):0, resistance=resC>=0?parseFloat(r[resC]):0;
   // Свежий консенсус — тот же, что в карточке (TG_FULL → квартальный срез pf3EffTarget).
   const ft=scnFreshTarget(d,r), fresh=ft.fresh, consensus=ft.consensus, high=ft.high, staleConsensus=ft.staleConsensus;
@@ -638,7 +638,7 @@ function valWhyLines(v,c,eps){
 }
 // 🎯 A.1 Панель агрегированных аналитических таргетов в карточке.
 function targetsBlockHTML(d,r){
-  const tk=String(r[2]||'').toUpperCase(), ccy=r[8]||'USD', price=parseFloat(r[7])||0;
+  const tk=String(r[RC.tk]||'').toUpperCase(), ccy=r[RC.ccy]||'USD', price=parseFloat(r[RC.price])||0;
   const t=TG_FULL[tk];
   if(!t||(t.consensus==null&&!(t.changes&&t.changes.length)))return '';
   const stale=t.lastDate?((Date.now()-Date.parse(t.lastDate))/864e5>30):false;
@@ -661,7 +661,7 @@ function targetsBlockHTML(d,r){
 }
 // Панель Valuation Check в карточке акции.
 function valHTML(d,r){
-  const tk=String(r[2]||'').trim().toUpperCase();
+  const tk=String(r[RC.tk]||'').trim().toUpperCase();
   const v=VAL[tk];
   const hd=`<div class="pf3-panel-hd"><span>📐 ${RT('Оценка — мультипликаторы','Valuation — multiples')} ${infoBtn('valuation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at):''}</span></div>`;
   if(!v||!(v.pe||v.fwdPe||v.ps||v.evEbitda))

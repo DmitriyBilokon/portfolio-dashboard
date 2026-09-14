@@ -24,8 +24,16 @@
 //                  уже без AI-полей; к --expect-drop добавляются stockAiLog и data.*.aiHistory/aiReport/analysis/analysisHistory.
 // Выход 0 — I0 (если не --loose), I1, I2 зелёные; 1 — иначе; 2 — ошибка запуска.
 // --bundle: вместо копии — снапшот встроенного data.js после migrateState()+init() в HEAD (самопроверка стенда).
+// --merge-sim (E4, §4.E4): вместо I0–I5 — сквозные сценарии трёхстороннего слияния tests/run-sync-sim.js (два клиента HEAD,
+//   фейковый Supabase с триггером rev, воркер, офлайн, потерянный ответ) на копии как исходной строке облака.
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm'), { execFileSync } = require('child_process');
+if (process.argv.includes('--merge-sim')) {
+  const cp = process.argv.slice(2).find(x => !x.startsWith('--'));
+  if (!cp) { console.error('usage: node tests/ledger-copy.js <copy.json> --merge-sim'); process.exit(2); }
+  require('./run-sync-sim.js').main({ copy: cp }).then(code => process.exit(code), e => { console.error(e); process.exit(2); });
+  return;
+}
 
 const ROOT = path.resolve(__dirname, '..');
 const RT_LIMIT = 1024 * 1024;   // Supabase Postgres Changes: больше — payload без больших полей

@@ -305,17 +305,25 @@ grp('syncCommitted', function(){
   __ok('empty rows → false', syncCommitted([],6)===false);
   __ok('null → false', syncCommitted(null,6)===false);
   __ok('undefined → false', syncCommitted(undefined,6)===false);
+  // E4: другой писатель стартовал с того же rev и записал rev+1 раньше — триггер вернул OLD с НАШИМ rev: решает wid
+  __ok('E4: rev match + own wid → true', syncCommitted([{rev:6,wid:'w1'}],6,'w1')===true);
+  __ok('E4: same rev, other writer wid → false (was a false commit before E4)', syncCommitted([{rev:6,wid:'w0'}],6,'w1')===false);
+  __ok('E4: same rev, no wid in row (worker/old client wrote) → false', syncCommitted([{rev:6,wid:null}],6,'w1')===false&&syncCommitted([{rev:6}],6,'w1')===false);
+  __ok('E4: nested data.wid', syncCommitted([{data:{rev:6,wid:'w1'}}],6,'w1')===true);
+  __ok('E4: syncWid unique', syncWid()!==syncWid()&&/^[0-9a-z]{10,}$/.test(syncWid()));
 });
 
 // 🔄 Очередь push/realtime (plans/sync-push-timer.md): дедуп по rev, отложенный снапшот, один push в полёте.
 // Раннер: setTimeout заглушки возвращает 0 (pushTimer ложный) — для «таймер стоит» подменяем на 7.
 grp('sync queue', function(){
   var S={t:pushTimer,b:pushBusy,a:pushAgain,r:remotePending,rev:stateRev,u:currentUser,st:globalThis.setTimeout,
-         apply:applyRemoteState,toast:toast,from:sb.from,init:init,mig:migrateState};
+         apply:applyRemoteState,toast:toast,from:sb.from,init:init,mig:migrateState,base:SYNC_BASE,un:SYNC_UNACKED};
   var timers=0,applied=[],toasts=0,froms=0;
   function armTimer(){ globalThis.setTimeout=function(){ timers++; return 7; }; }
-  function stubApply(){ applyRemoteState=function(s){ applied.push(s); }; }
+  function stubApply(){ applyRemoteState=function(s){ applied.push(s); SYNC_BASE=null; }; }
   toast=function(){ toasts++; }; sb.from=function(){ froms++; return S.from.apply(sb,arguments); };
+  // Механика очереди — без базы слияния (как до E4: облако побеждает, тост при dirty); слияние — группы 'sync merge … (E4)'.
+  SYNC_BASE=null; SYNC_UNACKED=[];
   try{
     // 1) чистое решение
     __eq('decision rev==stateRev → skip', syncRemoteDecision(5,5,false), 'skip');
@@ -370,18 +378,19 @@ grp('sync queue', function(){
     // 7) syncSettle(false) с отложенным новее и pushAgain: применён с тостом, таймер НЕ поставлен (D5)
     applyRemoteState=S.apply; init=function(){}; migrateState=function(){};
     var snap=JSON.parse(JSON.stringify(snapshotState())); snap.rev=7;
-    armTimer(); timers=0; toasts=0; stateRev=5; pushAgain=true; remotePending=snap; pushTimer=null; pushBusy=false;
+    armTimer(); timers=0; toasts=0; stateRev=5; pushAgain=true; remotePending=snap; pushTimer=null; pushBusy=false; SYNC_BASE=null;
     syncSettle(false);
     __ok('settle rejected + pending newer → applied (stateRev=7) with toast', stateRev===7 && toasts===1 && remotePending===null);
     __ok('settle: applyRemoteState reset pushAgain, no timer (D5)', pushAgain===false && timers===0 && pushTimer===null);
     globalThis.setTimeout=S.st;
     // 8) syncReset
-    pushTimer=7; pushBusy=true; pushAgain=true; remotePending={rev:9}; remoteStale=true;
+    pushTimer=7; pushBusy=true; pushAgain=true; remotePending={rev:9}; remoteStale=true; SYNC_BASE='{}'; SYNC_UNACKED=[{rev:9,wid:'w9'}];
     syncReset();
     __ok('syncReset clears all five', pushTimer===null && pushBusy===false && pushAgain===false && remotePending===null && remoteStale===false);
+    __ok('E4: syncReset drops merge base and unacked pushes', SYNC_BASE===null && SYNC_UNACKED.length===0);
   }finally{
     globalThis.setTimeout=S.st; applyRemoteState=S.apply; toast=S.toast; sb.from=S.from; init=S.init; migrateState=S.mig;
-    pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; stateRev=S.rev; currentUser=S.u;
+    pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; stateRev=S.rev; currentUser=S.u; SYNC_BASE=S.base; SYNC_UNACKED=S.un;
   }
 });
 
@@ -466,6 +475,417 @@ grp('sync signal (E0)', function(){
     VAL=S.V; INSIDER=S.I; AI_RECO=S.A; TG_FULL=S.T; document.visibilityState=S.vs;
     pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; remoteStale=S.st; stateRev=S.rev; currentUser=S.u;
     syncReady=S.rdy; syncResumeAt=S.at; _sharedAt=null;
+  }
+});
+
+// 🔀 E4 (plans/ledger-model-e.md §4.E4): трёхстороннее слияние при конфликте. syncMerge3 — чистая; фикстура — маленький
+// снапшот той же формы, что снапшот приложения (строки по контракту RC, хвост COLN, нормализованные план/мета/идеи).
+var E4P3='🚀 Портфель 3.0', E4N='Nasdaq 100';
+function e4C(x){ return JSON.parse(JSON.stringify(x)); }
+function e4U(a){ return (a||[]).map(function(p){ return p.join('|'); }); }
+function e4Strip(s){ var o=e4C(s); delete o.rev; delete o.cv; return syncCanon(o); }
+var E4H=PF_HEAD.slice().concat([COLN.s50,COLN.s100,COLN.s200,'Целевая','Цель %','Действие',COLN.sup,COLN.res,COLN.tg,COLN.pe]);
+function e4Row(n,name,tk,qty,price,buy){
+  var r=[]; for(var i=0;i<E4H.length;i++)r.push('');
+  r[RC.n]=n; r[RC.name]=name; r[RC.tk]=tk; r[RC.country]='🇺🇸'; r[RC.sector]='Tech'; r[RC.type]='Рост'; r[RC.qty]=qty; r[RC.price]=price;
+  r[RC.ccy]='USD'; r[RC.buy]=buy; r[RC.day]=0.5; r[RC.pl]=0; r[RC.plPct]=0; r[RC.value]=0; r[RC.xdag]='—'; r[RC.pay]='—';
+  r[16]=price*0.9; r[17]=price*0.85; r[18]=price*0.8; r[21]='⚪ Держать'; r[22]=price*0.88; r[23]=price*1.2; r[24]=price*1.3; r[25]=25;
+  return r;
+}
+function e4Snap(){
+  return { cv:'old', rev:10, schemaV:3, theme:'dark', fx:{SEK:1,USD:9,EUR:11},
+    data:(function(){ var d={};
+      d[E4P3]={headers:E4H.slice(),rows:[e4Row(1,'Micron','MU',10,100,90),e4Row(2,'Apple','AAPL',5,200,150),e4Row(3,'NVIDIA','NVDA',3,120,100)],subtitle:'Портфель 3.0',cashFree:10000,leverage:0,targetsAt:1000};
+      d[E4N]={headers:E4H.slice(),rows:[e4Row(1,'Tesla','TSLA',0,250,0),e4Row(2,'Alphabet','GOOG',0,170,0)],v3:'1',subtitle:'Nasdaq 100',targetsAt:1000};
+      d[AIP_KEY]={headers:E4H.slice(),rows:[e4Row(1,'Micron','MU',7,100,95)],v3:'1',aip:'1',cashFree:5000};
+      return d; })(),
+    pfTrades:[{id:'t1',tab:E4P3,tk:'MU',act:'buy',qty:10,price:90,ccy:'USD',date:'2026-09-01'},{id:'t2',tab:E4P3,tk:'AAPL',act:'buy',qty:5,price:150,ccy:'USD',date:'2026-09-02'}],
+    planRules:[planRuleNorm({id:'pl1700000000000',tab:E4P3,tk:'NVDA',act:'buy',level:110,qty:2,done:false,hitAt:0}),planRuleNorm({id:'pl1700000000001',tab:E4P3,tk:'AAPL',act:'sell',level:230,done:false,hitAt:0})],
+    posMeta:(function(){ var p={}; p[E4P3]={MU:posMetaNorm({side:'long',stop:85,target:130}),AAPL:posMetaNorm({side:'long',stop:180})}; return p; })(),
+    desk:deskNorm({riskPct:1,riskCapPct:6}),
+    deskWatch:deskWatchNorm({items:[{key:'TSLA|USD',tk:'TSLA',name:'Tesla',buyLo:200,buyHi:220,createdAt:1,updatedAt:1},{key:'GOOG|USD',tk:'GOOG',name:'Alphabet',buyLo:150,buyHi:160,createdAt:2,updatedAt:2}]}),
+    aiPort:{startedAt:1,strategy:'s',intervalMin:60,enabled:true,cashSEK:300000,positions:[{ticker:'MU',qty:7}],trades:[]},
+    aiPortBak:{startedAt:1,cashSEK:300000},
+    aiSpend:{usd:1.5,runs:3,in:100,out:50,searches:2},
+    aiChat:[], aiPlaybook:['a','b'], aiPlaybookSeedV:3, news:'', newsImpact:{}, aiInclChat:false, cycleOvr:{} };
+}
+function e4R(s,t,tk){ var d=s.data[t]; if(!d)return null; for(var i=0;i<d.rows.length;i++)if(syncRowKey(d.rows[i])===tk)return d.rows[i]; return null; }
+function e4Keys(s,t){ return s.data[t].rows.map(syncRowKey); }
+
+grp('sync merge (E4): units', function(){
+  var b,l,r,m;
+  function M(o){ m=syncMerge3(b,l,r,o); return m; }
+  function reset(){ b=e4Snap(); l=e4C(b); r=e4C(b); delete l.rev; l.cv='new'; }
+  // 1) строки: разные строки — обе правки; одна строка по-разному — облако + конфликт
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('rows: disjoint hard edits both kept', [e4R(m.snap,E4P3,'MU')[RC.qty],e4R(m.snap,E4P3,'AAPL')[RC.qty]], [12,6]);
+  __eq('rows: disjoint → no conflicts, local unit = MU row', [m.conflicts,e4U(m.localUnits)], [[],['data|'+E4P3+'|row|MU']]);
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'MU')[RC.qty]=15; M();
+  __eq('rows: same row both → cloud + conflict', [e4R(m.snap,E4P3,'MU')[RC.qty],e4U(m.conflicts),m.localUnits.length], [15,['data|'+E4P3+'|row|MU'],0]);
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'MU')[RC.qty]=12; M();
+  __eq('rows: same row, same edit → no conflict', [e4R(m.snap,E4P3,'MU')[RC.qty],m.conflicts.length], [12,0]);
+  // 2) мягкие колонки: цены/SMA/таргеты — молча, облако при двойной правке; своя позиция + облачные цены
+  reset(); e4R(l,E4P3,'MU')[RC.price]=101; e4R(r,E4P3,'MU')[RC.price]=102; M();
+  __eq('soft: both change price → cloud, no conflict', [e4R(m.snap,E4P3,'MU')[RC.price],m.conflicts.length], [102,0]);
+  reset(); var lm=e4R(l,E4P3,'MU'); lm[RC.qty]=12; lm[RC.price]=101; lm[RC.value]=12345; var rm=e4R(r,E4P3,'MU'); rm[RC.price]=102; rm[16]=77; rm[RC.type]='Циклическая'; M();
+  var mm=e4R(m.snap,E4P3,'MU');
+  __eq('soft: local qty + cloud price/SMA/type, no conflict', [mm[RC.qty],mm[RC.price],mm[16],mm[RC.type],m.conflicts.length], [12,102,77,'Циклическая',0]);
+  reset(); e4R(l,E4P3,'MU')[RC.price]=101; e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('soft: local-only price survives (local unit)', [e4R(m.snap,E4P3,'MU')[RC.price],e4U(m.localUnits)], [101,['data|'+E4P3+'|row|MU']]);
+  var softIdx=[]; syncSoftCols(E4H).forEach(function(i){ softIdx.push(i); }); softIdx.sort(function(a,c){return a-c;});
+  __eq('soft columns: #,type,price,day,P&L,%,value + COLN tail; not «Целевая/Цель %/Действие»', softIdx, [RC.n,RC.type,RC.price,RC.day,RC.pl,RC.plPct,RC.value,16,17,18,22,23,24,25]);
+  // 3) удаление/добавление строк
+  reset(); l.data[E4P3].rows=l.data[E4P3].rows.filter(function(x){ return syncRowKey(x)!=='NVDA'; }); e4R(r,E4P3,'NVDA')[RC.price]=130; M();
+  __eq('delete vs cloud price-only → deleted, no conflict', [e4Keys(m.snap,E4P3),m.conflicts.length], [['MU','AAPL'],0]);
+  reset(); l.data[E4P3].rows=l.data[E4P3].rows.filter(function(x){ return syncRowKey(x)!=='NVDA'; }); e4R(r,E4P3,'NVDA')[RC.qty]=9; M();
+  __eq('delete vs cloud qty edit → kept (cloud) + conflict', [e4Keys(m.snap,E4P3),e4U(m.conflicts)], [['MU','AAPL','NVDA'],['data|'+E4P3+'|row|NVDA']]);
+  reset(); var ts=e4Row(4,'Tesla','TSLA',1,250,250); l.data[E4P3].rows.push(ts); r.data[E4P3].rows.push(e4Row(4,'Alphabet','GOOG',2,170,170)); M();
+  __eq('adds: cloud order, own new row at the end', e4Keys(m.snap,E4P3), ['MU','AAPL','NVDA','GOOG','TSLA']);
+  reset(); l.data[E4P3].rows.push(e4Row(4,'Tesla','TSLA',1,250,250)); var t2=e4Row(9,'Tesla','TSLA',1,251,250); r.data[E4P3].rows.push(t2); M();
+  __eq('both add same ticker (price differs) → one row, cloud, no conflict', [e4Keys(m.snap,E4P3),e4R(m.snap,E4P3,'TSLA')[RC.price],m.conflicts.length], [['MU','AAPL','NVDA','TSLA'],251,0]);
+  reset(); l.data[E4P3].rows.reverse(); e4R(r,E4P3,'MU')[RC.price]=99; M();
+  __eq('cloud kept its order → own order', e4Keys(m.snap,E4P3), ['NVDA','AAPL','MU']);
+  // 4) разные заголовки: сторона дописала только мягкие колонки (colEnsure) → строки выравниваются '' и сливаются построчно;
+  //    иначе (твёрдая/переименованная колонка) — сетка целиком, сравнение без мягких колонок
+  function addPS(s){ s.data[E4P3].headers.push(COLN.ps); s.data[E4P3].rows.forEach(function(x){ x.push(12.5); }); }
+  reset(); addPS(l); e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('align: own soft column + cloud qty → row mode, own column kept', [m.snap.data[E4P3].headers.length,e4R(m.snap,E4P3,'AAPL')[RC.qty],e4R(m.snap,E4P3,'AAPL')[E4H.length],m.conflicts.length], [E4H.length+1,6,12.5,0]);
+  reset(); addPS(l); e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('align: own column + own MU edit + cloud AAPL edit → both, no conflict (ревью п.7)', [e4R(m.snap,E4P3,'MU')[RC.qty],e4R(m.snap,E4P3,'AAPL')[RC.qty],m.conflicts.length], [12,6,0]);
+  reset(); addPS(r); e4R(l,E4P3,'MU')[RC.qty]=12; M();
+  __eq('align: cloud added the column, own MU edit → cloud headers + own edit', [m.snap.data[E4P3].headers.length,e4R(m.snap,E4P3,'MU')[RC.qty],e4R(m.snap,E4P3,'MU')[E4H.length],m.conflicts.length], [E4H.length+1,12,12.5,0]);
+  reset(); addPS(l); M();
+  __eq('align: only own column → own grid, row units local', [m.snap.data[E4P3].headers.length,e4U(m.localUnits).length,m.conflicts.length], [E4H.length+1,3,0]);
+  reset(); addPS(b); l=e4C(b); r=e4C(b); delete l.rev; [l,r].forEach(function(x){ x.data[E4P3].headers.pop(); x.data[E4P3].rows.forEach(function(y){ y.pop(); }); }); e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('align: base longer by a soft column, both sides dropped it → sides win, row mode', [m.snap.data[E4P3].headers.length,e4R(m.snap,E4P3,'AAPL')[RC.qty],e4R(m.snap,E4P3,'AAPL').length,m.conflicts.length], [E4H.length,6,E4H.length,0]);
+  reset(); l.data[E4P3].rows.forEach(function(x){ x.push('мусор'); }); e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('cells beyond headers are not compared → cloud edit, no conflict', [e4R(m.snap,E4P3,'AAPL')[RC.qty],m.conflicts.length], [6,0]);
+  reset(); l.data[E4P3].headers.push('Заметка'); l.data[E4P3].rows.forEach(function(x){ x.push('n'); }); l.pfTrades.push({id:'tr1757844000300_1',tab:E4P3,tk:'NVDA',act:'buy',qty:1,price:120,date:'2026-09-14'}); e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('notes: grid conflict + own new trade in that tab → trade note', [e4U(m.conflicts),m.notes], [['data|'+E4P3+'|grid'],[['trade',E4P3,'NVDA']]]);
+  reset(); l.data[E4P3].headers.push('Заметка'); l.data[E4P3].rows.forEach(function(x){ x.push('n'); }); e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('grid: own hard column + cloud edit → cloud grid + conflict', [m.snap.data[E4P3].headers.length,e4U(m.conflicts)], [E4H.length,['data|'+E4P3+'|grid']]);
+  reset(); l.data[E4P3].headers[19]='Целевая доля'; e4R(r,E4P3,'AAPL')[RC.qty]=6; M();
+  __eq('grid: renamed header → not aligned (grid unit)', e4U(m.conflicts), ['data|'+E4P3+'|grid']);
+  // 5) поля вкладки: кэш — счётчик; targetsAt — мягкое; разные поля — обе правки
+  reset(); l.data[E4P3].cashFree=9500; r.data[E4P3].cashFree=9800; M();
+  __eq('cashFree: both → cloud + own delta', [m.snap.data[E4P3].cashFree,m.conflicts.length], [9300,0]);
+  M({additive:false});
+  __eq('cashFree: additive off → cloud + conflict', [m.snap.data[E4P3].cashFree,e4U(m.conflicts)], [9800,['data|'+E4P3+'|f|cashFree']]);
+  reset(); l.data[E4P3].cashFree=9700; r.data[E4P3].cashFree=9700; M();
+  __eq('cashFree: same value both → not added twice (ревью п.2)', [m.snap.data[E4P3].cashFree,m.localUnits.length], [9700,0]);
+  l.pfTrades.push({id:'tr1757844000800_l',tab:E4P3,tk:'MU',act:'buy',qty:3,price:100,date:'2026-09-14'});
+  r.pfTrades.push({id:'tr1757844000900_r',tab:E4P3,tk:'AAPL',act:'buy',qty:1,price:300,date:'2026-09-14'}); M();
+  __eq('cashFree: same value both + own new trades on both sides in the tab → two trades, added (ревью-2 п.4)', [m.snap.data[E4P3].cashFree,m.conflicts.length], [9400,0]);
+  reset(); l.data[E4P3].cashFree=9700; r.data[E4P3].cashFree=9700; l.pfTrades.push({id:'tr1757844000800_l',tab:E4P3,tk:'MU',act:'buy',qty:3,price:100,date:'2026-09-14'}); r.pfTrades.push(e4C(l.pfTrades[l.pfTrades.length-1])); M();
+  __eq('cashFree: same value + the same new trade on both → one edit, not added', m.snap.data[E4P3].cashFree, 9700);
+  reset(); l.data[E4P3].cashFree=9500; r.data[E4P3].cashFree=9800; l.pfTrades.push({id:'tr1757844000800_l',tab:E4P3,tk:'MU',act:'buy',qty:5,price:100,date:'2026-09-14'}); M({additive:false});
+  __eq('notes: cash conflict + own new trade in the tab → trade note (ревью-2 п.3)', [e4U(m.conflicts),m.notes], [['data|'+E4P3+'|f|cashFree'],[['trade',E4P3,'MU']]]);
+  reset(); l.data[E4P3].cashFree=9500; M();
+  __eq('cashFree: own only → own', [m.snap.data[E4P3].cashFree,e4U(m.localUnits)], [9500,['data|'+E4P3+'|f|cashFree']]);
+  reset(); l.data[E4P3].cashFree=''; r.data[E4P3].cashFree=9800; M();
+  __eq('cashFree: not a number on one side → plain unit', [m.snap.data[E4P3].cashFree,e4U(m.conflicts)], [9800,['data|'+E4P3+'|f|cashFree']]);
+  reset(); l.data[E4P3].targetsAt=2000; r.data[E4P3].targetsAt=3000; l.data[E4P3].title='Мой'; r.data[E4P3].leverage=5000; M();
+  __eq('fields: targetsAt soft → cloud; title own + leverage cloud', [m.snap.data[E4P3].targetsAt,m.snap.data[E4P3].title,m.snap.data[E4P3].leverage,m.conflicts.length], [3000,'Мой',5000,0]);
+  // 6) вкладки целиком: добавить/удалить; AI-портфель — мягкая
+  reset(); l.data.Quantum={headers:E4H.slice(),rows:[e4Row(1,'IonQ','IONQ',0,40,0)],v3:'1'}; r.data.Gold={headers:E4H.slice(),rows:[],v3:'1'}; M();
+  __eq('tabs: own and cloud new tabs both, cloud order first', Object.keys(m.snap.data), [E4P3,E4N,AIP_KEY,'Gold','Quantum']);
+  reset(); delete l.data[E4N]; e4R(r,E4N,'TSLA')[RC.price]=260; r.data[E4N].targetsAt=5; M();
+  __eq('tab deleted vs cloud soft edits → deleted, no conflict', [E4N in m.snap.data,m.conflicts.length], [false,0]);
+  reset(); delete l.data[E4N]; e4R(r,E4N,'TSLA')[RC.name]='Tesla Inc'; M();
+  __eq('tab deleted vs cloud hard edit → kept + conflict', [E4N in m.snap.data,e4U(m.conflicts)], [true,['data|'+E4N]]);
+  reset(); e4R(l,AIP_KEY,'MU')[RC.qty]=8; e4R(r,AIP_KEY,'MU')[RC.qty]=9; M();
+  __eq('AI portfolio tab: derived → cloud, no conflict', [e4R(m.snap,AIP_KEY,'MU')[RC.qty],m.conflicts.length], [9,0]);
+  // 7) сделки — по id, порядок облака, новые свои в конце
+  reset(); l.pfTrades.push({id:'t3',tk:'NVDA',act:'buy',qty:1,price:120,date:'2026-09-10'}); r.pfTrades.push({id:'t4',tk:'MU',act:'sell',qty:1,price:110,date:'2026-09-10'}); M();
+  __eq('trades: both adds, cloud first', m.snap.pfTrades.map(function(x){ return x.id; }), ['t1','t2','t4','t3']);
+  reset(); l.pfTrades.shift(); r.pfTrades.push({id:'t4',tk:'MU',act:'sell',qty:1,price:110,date:'2026-09-10'}); M();
+  __eq('trades: own delete + cloud add', [m.snap.pfTrades.map(function(x){ return x.id; }),m.conflicts.length], [['t2','t4'],0]);
+  reset(); l.pfTrades[1].price=151; r.pfTrades[1].price=152; M();
+  __eq('trades: same record both → cloud + conflict', [m.snap.pfTrades[1].price,e4U(m.conflicts)], [152,['pfTrades|t2']]);
+  reset(); b.pfTrades.push({tk:'X',qty:1}); l=e4C(b); r=e4C(b); l.pfTrades[2].qty=2; M();
+  __eq('trades without id: own edit = delete+add → own version', [m.snap.pfTrades.length,m.snap.pfTrades[2].qty], [3,2]);
+  reset(); l.pfTrades.push({id:'tr1757844000300_1',tk:'MU',act:'sell',qty:1,price:110,date:'2026-09-14'});
+  r.pfTrades.push({id:'tr1757844000100_2',tk:'MU',act:'buy',qty:2,price:100,date:'2026-09-14'},{id:'tr1757844000500_3',tk:'MU',act:'buy',qty:1,price:105,date:'2026-09-14'}); M();
+  __eq('trades: new on both sides → after old ones, by creation time from id (ревью п.6)', m.snap.pfTrades.map(function(x){ return x.id; }), ['t1','t2','tr1757844000100_2','tr1757844000300_1','tr1757844000500_3']);
+  reset(); l.pfTrades.push({id:'tr1757844000300_1',tk:'MU'}); r.pfTrades.push({id:'t4',tk:'MU'}); M();
+  __eq('trades: id without time → order as is (cloud first)', m.snap.pfTrades.map(function(x){ return x.id; }), ['t1','t2','t4','tr1757844000300_1']);
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; l.pfTrades.push({id:'tr1757844000300_1',tab:E4P3,tk:'mu',act:'buy',qty:2,price:100,date:'2026-09-14'}); e4R(r,E4P3,'MU')[RC.qty]=15; M();
+  __eq('notes: row conflict + own new trade on that stock → trade note (ревью п.5)', [m.notes,m.snap.pfTrades.length], [[['trade',E4P3,'MU']],3]);
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'MU')[RC.qty]=15; M();
+  __eq('notes: row conflict without own trade → none', m.notes, []);
+  // 8) план: hitAt — мягкое; нормализация — не правка
+  reset(); l.planRules[0].level=105; r.planRules[0].hitAt=777; M();
+  __eq('plan: own level + cloud hitAt, no conflict', [m.snap.planRules[0].level,m.snap.planRules[0].hitAt,m.conflicts.length], [105,777,0]);
+  reset(); l.planRules[0].level=105; r.planRules[0].level=107; M();
+  __eq('plan: same rule both → cloud + conflict', [m.snap.planRules[0].level,e4U(m.conflicts)], [107,['planRules|pl1700000000000']]);
+  reset(); b.planRules=[{id:'pl1700000000000',tab:E4P3,tk:'NVDA',act:'buy',level:110,qty:2,done:false,hitAt:0}]; l=e4C(b); l.planRules=l.planRules.map(planRuleNorm); r=e4C(b); r.planRules[0].level=108; M();
+  __eq('plan: base not normalized, local only normalized → cloud edit, no conflict', [m.snap.planRules[0].level,m.conflicts.length], [108,0]);
+  // 9) posMeta — вкладка/тикер
+  reset(); l.posMeta[E4P3].MU.stop=90; r.posMeta[E4P3].AAPL.stop=190; M();
+  __eq('posMeta: different tickers → both', [m.snap.posMeta[E4P3].MU.stop,m.snap.posMeta[E4P3].AAPL.stop,m.conflicts.length], [90,190,0]);
+  reset(); l.posMeta[E4P3].MU.stop=90; r.posMeta[E4P3].MU.stop=95; M();
+  __eq('posMeta: same ticker both → cloud + conflict', [m.snap.posMeta[E4P3].MU.stop,e4U(m.conflicts)], [95,['posMeta|'+E4P3+'|MU']]);
+  reset(); delete l.posMeta[E4P3].MU; M();
+  __eq('posMeta: own delete', Object.keys(m.snap.posMeta[E4P3]), ['AAPL']);
+  reset(); delete r.posMeta; M();
+  __eq('posMeta missing in cloud (old client) → cloud «did not change» → own kept', [!!(m.snap.posMeta&&m.snap.posMeta[E4P3]&&m.snap.posMeta[E4P3].MU),m.conflicts.length], [true,0]);
+  // 10) список покупок: идеи по key, порядок — мягкий
+  reset(); l.deskWatch.items[0].buyNote='вход у SMA'; l.deskWatch.items[0].updatedAt=5; r.deskWatch.items[1].buyLo=140; r.deskWatch.items[1].updatedAt=6; M();
+  var W=function(s,k){ return s.deskWatch.items.filter(function(x){ return x.key===k; })[0]; };
+  __eq('watch: different ideas → both', [W(m.snap,'TSLA|USD').buyNote,W(m.snap,'GOOG|USD').buyLo,m.conflicts.length], ['вход у SMA',140,0]);
+  reset(); l.deskWatch.items[0].order=2; l.deskWatch.items[1].order=1; r.deskWatch.items[1].buyLo=140; M();
+  __eq('watch: own reorder + cloud edit → no conflict', [W(m.snap,'GOOG|USD').buyLo,W(m.snap,'GOOG|USD').order,m.conflicts.length], [140,1,0]);
+  reset(); l.deskWatch.items[0].buyNote='A'; r.deskWatch.items[0].buyNote='B'; M();
+  __eq('watch: same idea both → cloud + conflict', [W(m.snap,'TSLA|USD').buyNote,e4U(m.conflicts)], ['B',['deskWatch|items|TSLA|USD']]);
+  // 11) aiPort вне слияния: торговое — облака, свои изменённые настройки — свои
+  reset(); r.aiPort.cashSEK=290000; r.aiPort.positions=[{ticker:'MU',qty:9}]; l.aiPort.strategy='new'; M();
+  __eq('aiPort: cloud trading + own changed setting, never a conflict', [m.snap.aiPort.cashSEK,m.snap.aiPort.positions[0].qty,m.snap.aiPort.strategy,m.conflicts.length,e4U(m.localUnits)], [290000,9,'new',0,['aiPort']]);
+  reset(); r.aiPort.intervalMin=30; l.aiPort.cashSEK=1; M();
+  __eq('aiPort: cloud setting change not reverted by stale own; own trading ignored', [m.snap.aiPort.intervalMin,m.snap.aiPort.cashSEK,m.localUnits.length], [30,300000,0]);
+  reset(); r.aiPort={}; l.aiPort.strategy='x'; M();
+  __eq('aiPort: cloud without portfolio → own', m.snap.aiPort.strategy, 'x');
+  // 12) счётчики AI-расходов, fx — мягкое, schemaV — max
+  reset(); l.aiSpend.runs=4; l.aiSpend.usd=1.7; r.aiSpend.runs=5; r.aiSpend.usd=2; M();
+  __eq('aiSpend: counters add up', [m.snap.aiSpend.runs,m.snap.aiSpend.usd,m.conflicts.length], [6,2.2,0]);
+  M({additive:false});
+  __eq('aiSpend: additive off → cloud + conflict per field', [m.snap.aiSpend.runs,e4U(m.conflicts).sort()], [5,['aiSpend|runs','aiSpend|usd']]);
+  reset(); l.aiSpend.runs=5; r.aiSpend.runs=5; M();
+  __eq('aiSpend: same increment on both devices → both runs count (ревью-2 п.4)', [b.aiSpend.runs,m.snap.aiSpend.runs,m.conflicts.length], [3,7,0]);
+  reset(); l.fx.USD=9.1; r.fx.USD=9.2; M();
+  __eq('fx: soft → cloud, no conflict', [m.snap.fx.USD,m.conflicts.length], [9.2,0]);
+  reset(); l.fx.USD=9.1; M();
+  __eq('fx: own only → own', m.snap.fx.USD, 9.1);
+  reset(); l.schemaV=3; r.schemaV=4; M(); var sv1=m.snap.schemaV; b.schemaV=2; l.schemaV=3; r.schemaV=2; M();
+  __eq('schemaV: max', [sv1,m.snap.schemaV,e4U(m.localUnits)], [4,3,['schemaV']]);
+  // 13) desk по полям; прочие ключи — целиком; ключ, которого клиент не пишет, — как у облака
+  reset(); l.desk.tg=false; r.desk.riskPct=2; M();
+  __eq('desk: per field → both', [m.snap.desk.tg,m.snap.desk.riskPct,m.conflicts.length], [false,2,0]);
+  reset(); l.theme='light'; r.theme='sepia'; l.news='x'; M();
+  __eq('generic: theme both → cloud + conflict; news own', [m.snap.theme,m.snap.news,e4U(m.conflicts)], ['sepia','x',['theme']]);
+  reset(); r.val={MU:{pe:1}}; b.val={MU:{pe:0}}; M();
+  __eq('unknown key → as cloud, no conflict', [m.snap.val.MU.pe,m.conflicts.length,m.localUnits.length], [1,0,0]);
+  reset(); b.stockAiLog=[{ticker:'MU',ts:'2026-09-01T00:00:00Z'}]; r.stockAiLog=e4C(b.stockAiLog); l=e4C(b); delete l.rev; delete l.stockAiLog; M();
+  __eq('optional stockAiLog: own strip (absent) → absent', 'stockAiLog' in m.snap, false);
+  reset(); M();
+  __eq('rev = cloud, cv = own', [m.snap.rev,m.snap.cv], [10,'new']);
+  // 14) чистота: входы не мутируются
+  reset(); e4R(l,E4P3,'MU')[RC.qty]=12; r.pfTrades.push({id:'t9'}); var cb=syncCanon(b),cl=syncCanon(l),cr=syncCanon(r); M(); e4R(m.snap,E4P3,'MU')[RC.qty]=99; m.snap.pfTrades.length=0;
+  __ok('pure: inputs untouched, result detached', syncCanon(b)===cb&&syncCanon(l)===cl&&syncCanon(r)===cr);
+  // 15) подписи тоста
+  reset(); l.pfTrades[1].price=151; r.pfTrades[1].price=152; e4R(l,E4P3,'MU')[RC.qty]=12; e4R(r,E4P3,'MU')[RC.qty]=15; l.posMeta[E4P3].MU.stop=90; r.posMeta[E4P3].MU.stop=95; l.data[E4P3].leverage=1; r.data[E4P3].leverage=2; M();
+  var txt=syncConflictText(m.conflicts,m.snap);
+  __ok('toast text: tab · ticker, trade ticker, stop/target, +N', /· MU/.test(txt)&&/\+1$/.test(txt)&&txt.split(', ').length===3, txt);
+  __eq('unit labels', [syncUnitLabel(['pfTrades','t2'],m.snap),syncUnitLabel(['posMeta',E4P3,'MU']),syncUnitLabel(['deskWatch','items','TSLA|USD']),syncUnitLabel(['theme'])],
+    [RT('Сделка','Trade')+' AAPL',RT('Стоп/цель','Stop/target')+' MU',RT('Список покупок','Shopping list')+' TSLA',RT('Тема','Theme')]);
+});
+
+// Свойства на детерминированном ГПСЧ: случайные правки единиц (строки, поля вкладки, сделки, план, мета, идеи, desk, новости,
+// тема, AI-расходы, fx, настройки/торговля aiPort, добавления строк и сделок).
+function e4Rng(seed){ return function(){ seed=(seed+0x6D2B79F5)|0; var t=Math.imul(seed^(seed>>>15),1|seed); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function e4Targets(b){
+  var T=[];
+  [E4P3,E4N].forEach(function(t){ b.data[t].rows.forEach(function(r){ T.push({k:'row',t:t,key:syncRowKey(r)}); }); });
+  T.push({k:'cash'},{k:'title'},{k:'lev'},{k:'tgtAt'});
+  b.pfTrades.forEach(function(x){ T.push({k:'trade',id:x.id}); });
+  b.planRules.forEach(function(x){ T.push({k:'plan',id:x.id}); });
+  Object.keys(b.posMeta[E4P3]).forEach(function(k){ T.push({k:'meta',key:k}); });
+  b.deskWatch.items.forEach(function(x){ T.push({k:'watch',key:x.key}); });
+  T.push({k:'deskRisk'},{k:'deskTg'},{k:'news'},{k:'theme'},{k:'spend'},{k:'fx'},{k:'cycle'},{k:'aiSet'});
+  return T;
+}
+// Правка цели: значения фиксируются при генерации — одну и ту же правку можно применить к разным копиям.
+function e4Op(tg,R,side){
+  var n=function(a,c){ return a+Math.floor(R()*(c-a+1)); }, v=R(), q=n(1,99), px=n(100,9999)/10, s1=side+n(1,9999);
+  switch(tg.k){
+    case 'row': return v<0.25?function(s){ var x=e4R(s,tg.t,tg.key); if(x)x[RC.qty]=q; }
+      :v<0.5?function(s){ var x=e4R(s,tg.t,tg.key); if(x){ x[RC.price]=px; x[RC.value]=q*px; } }
+      :v<0.8?function(s){ var x=e4R(s,tg.t,tg.key); if(x){ x[RC.qty]=q; x[RC.buy]=px; x[16]=px-1; } }
+      :function(s){ var d=s.data[tg.t]; d.rows=d.rows.filter(function(x){ return syncRowKey(x)!==tg.key; }); };
+    case 'cash': return function(s){ s.data[E4P3].cashFree=q*100+1; };
+    case 'title': return function(s){ s.data[E4P3].title=s1; };
+    case 'lev': return function(s){ s.data[E4P3].leverage=q; };
+    case 'tgtAt': return function(s){ s.data[E4N].targetsAt=q; };
+    case 'trade': return v<0.7?function(s){ s.pfTrades.forEach(function(x){ if(x.id===tg.id)x.price=px; }); }:function(s){ s.pfTrades=s.pfTrades.filter(function(x){ return x.id!==tg.id; }); };
+    case 'plan': return v<0.4?function(s){ s.planRules.forEach(function(x){ if(x.id===tg.id)x.level=px; }); }
+      :v<0.8?function(s){ s.planRules.forEach(function(x){ if(x.id===tg.id)x.hitAt=q; }); }:function(s){ s.planRules=s.planRules.filter(function(x){ return x.id!==tg.id; }); };
+    case 'meta': return v<0.7?function(s){ var p=s.posMeta[E4P3]; if(p&&p[tg.key])p[tg.key].stop=px; }:function(s){ posMetaDelIn(s.posMeta,E4P3,tg.key); };
+    case 'watch': return function(s){ s.deskWatch=deskWatchNorm({v:1,lists:s.deskWatch.lists,items:s.deskWatch.items.map(function(x){ return x.key===tg.key?Object.assign({},x,{buyNote:s1,updatedAt:q}):x; })}); };
+    case 'deskRisk': return function(s){ s.desk.riskPct=1+q%5; };
+    case 'deskTg': return function(s){ s.desk.tg=!s.desk.tg; };
+    case 'news': return function(s){ s.news=s1; };
+    case 'theme': return function(s){ s.theme=v<0.5?'light':'sepia'; };
+    case 'spend': return function(s){ s.aiSpend.runs+=q; s.aiSpend.usd=Math.round((s.aiSpend.usd+px/100)*100)/100; };
+    case 'fx': return function(s){ s.fx.USD=px/100; };
+    case 'cycle': return function(s){ s.cycleOvr[s1]={x:q}; };
+    case 'aiSet': return function(s){ s.aiPort.strategy=s1; };
+  }
+  return function(){};
+}
+function posMetaDelIn(pm,tab,k){ var t=pm&&pm[tab]; if(!t)return; delete t[k]; if(!Object.keys(t).length)delete pm[tab]; }
+function e4Adds(R,side){
+  var ops=[],na=Math.floor(R()*3),nt=Math.floor(R()*3),i;
+  for(i=0;i<na;i++)(function(tk,q,px){ ops.push(function(s){ s.data[E4P3].rows.push(e4Row(90+q,tk,tk,q,px,px)); }); })(side+'A'+i,i+1,50+i);
+  for(i=0;i<nt;i++)(function(id,q){ ops.push(function(s){ s.pfTrades.push({id:id,tab:E4P3,tk:'MU',act:'buy',qty:q,price:100,ccy:'USD',date:'2026-09-10'}); }); })('t'+side+i,i+1);
+  if(side==='R'&&R()<0.5)ops.push(function(s){ s.aiPort.cashSEK-=1000; s.aiPort.trades=(s.aiPort.trades||[]).concat([{id:'a'+s.aiPort.cashSEK}]); });   // воркер: торговля
+  return ops;
+}
+function e4Apply(s,ops){ ops.forEach(function(f){ f(s); }); return s; }
+function e4Shuffle(a,R){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(R()*(i+1)),t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+
+grp('sync merge (E4): properties', function(){
+  var fails={disjoint:0,xx:0,bbr:0,blb:0,idem:0,rmr:0,conf:0}, first={}, runs=200;
+  function bad(k,seed,why){ fails[k]++; if(!first[k])first[k]='seed '+seed+(why?': '+why:''); }
+  for(var seed=1;seed<=runs;seed++){
+    var R=e4Rng(seed), b=e4Snap(), T=e4Shuffle(e4Targets(b),R);
+    var nl=Math.floor(R()*6), nr=Math.floor(R()*6);
+    var opsL=T.slice(0,nl).map(function(t){ return e4Op(t,R,'L'); }).concat(e4Adds(R,'L'));
+    var opsR=T.slice(nl,nl+nr).map(function(t){ return e4Op(t,R,'R'); }).concat(e4Adds(R,'R'));
+    // правки непересекающихся единиц → обе в результате, конфликтов нет
+    var l=e4Apply(e4C(b),opsL), r=e4Apply(e4C(b),opsR); delete l.rev; r.rev=11;
+    var m=syncMerge3(b,l,r), exp=e4Apply(e4Apply(e4C(b),opsR),opsL);
+    if(e4Strip(m.snap)!==e4Strip(exp))bad('disjoint',seed,diffKeys(m.snap,exp));
+    if(m.conflicts.length)bad('conf',seed,e4U(m.conflicts).join(','));
+    // тождества: merge(b,x,x)=x (счётчики как единицы; со сложением — всё то же, кроме AI-расходов: одинаковые приращения с двух
+    // устройств — два прогона), merge(b,b,r)=r, merge(b,l,b)=l
+    var R2=e4Rng(seed*7919), opsX=e4Shuffle(e4Targets(b),R2).slice(0,1+Math.floor(R2()*8)).map(function(t){ return e4Op(t,R2,'X'); }).concat(e4Adds(R2,'X'));
+    var x=e4Apply(e4C(b),opsX), mx=syncMerge3(b,x,x,{additive:false}), mxa=syncMerge3(b,x,x);
+    if(e4Strip(mx.snap)!==e4Strip(x)||mx.conflicts.length)bad('xx',seed,diffKeys(mx.snap,x));
+    var xa=e4C(x); Object.keys(xa.aiSpend).forEach(function(k){ var d=xa.aiSpend[k]-(b.aiSpend[k]||0); if(d)xa.aiSpend[k]=Math.round((xa.aiSpend[k]+d)*1e6)/1e6; });
+    if(e4Strip(mxa.snap)!==e4Strip(xa)||mxa.conflicts.length)bad('xx',seed,'additive: '+diffKeys(mxa.snap,xa));
+    var xr=e4C(x); xr.rev=12; var mb=syncMerge3(b,e4C(b),xr);
+    if(e4Strip(mb.snap)!==e4Strip(xr)||mb.conflicts.length||mb.localUnits.length)bad('bbr',seed,diffKeys(mb.snap,xr)+' local '+e4U(mb.localUnits).join(','));
+    var xl=e4C(x); xl.aiPort=Object.assign({},b.aiPort,{strategy:x.aiPort.strategy}); var ml=syncMerge3(b,xl,e4C(b));
+    if(e4Strip(ml.snap)!==e4Strip(xl)||ml.conflicts.length)bad('blb',seed,diffKeys(ml.snap,xl));
+    // пересекающиеся правки: повторное слияние идемпотентно; после применения (база = облако) слитое не меняется
+    var L2=e4Apply(e4C(b),T.slice(0,nl+2).map(function(t){ return e4Op(t,R,'L'); })), R3=e4Apply(e4C(b),T.slice(1,nl+nr+1).map(function(t){ return e4Op(t,R,'R'); }));
+    R3.rev=13; delete L2.rev;
+    var m1=syncMerge3(b,L2,R3,{additive:false}), m2=syncMerge3(b,L2,m1.snap,{additive:false});
+    if(e4Strip(m2.snap)!==e4Strip(m1.snap))bad('idem',seed,diffKeys(m2.snap,m1.snap));
+    var ma=syncMerge3(b,L2,R3), mr=syncMerge3(R3,ma.snap,R3);
+    if(e4Strip(mr.snap)!==e4Strip(ma.snap)||mr.conflicts.length)bad('rmr',seed,diffKeys(mr.snap,ma.snap));
+  }
+  function diffKeys(a,c){ var A=JSON.parse(e4Strip(a)),C=JSON.parse(e4Strip(c)),o=[]; Object.keys(Object.assign({},A,C)).forEach(function(k){ if(syncCanon(A[k])!==syncCanon(C[k]))o.push(k); }); return o.join(','); }
+  __eq('disjoint unit edits → both in result ('+runs+' runs)', [fails.disjoint,first.disjoint||''], [0,'']);
+  __eq('disjoint unit edits → no conflicts', [fails.conf,first.conf||''], [0,'']);
+  __eq('merge(b,x,x) = x (AI spend: both increments count)', [fails.xx,first.xx||''], [0,'']);
+  __eq('merge(b,b,r) = r, nothing local', [fails.bbr,first.bbr||''], [0,'']);
+  __eq('merge(b,l,b) = l', [fails.blb,first.blb||''], [0,'']);
+  __eq('re-merge idempotent: merge(b,l,merge(b,l,r)) = merge(b,l,r)', [fails.idem,first.idem||''], [0,'']);
+  __eq('after apply: merge(r,m,r) = m (counters on)', [fails.rmr,first.rmr||''], [0,'']);
+});
+
+// Применение слияния к состоянию приложения: база, rev, push, тосты, эхо своего push, запасной путь.
+grp('sync merge apply (E4)', function(){
+  var S={base:SYNC_BASE,un:SYNC_UNACKED,rev:stateRev,t:pushTimer,b:pushBusy,a:pushAgain,r:remotePending,u:currentUser,st:globalThis.setTimeout,
+         toast:toast,init:init,mig:migrateState,m3:syncMerge3,snap:snapshotState()};
+  var toasts=[],timers=0;
+  toast=function(m){ toasts.push(String(m)); }; init=function(){}; migrateState=function(){};
+  globalThis.setTimeout=function(){ timers++; return 7; };
+  function load(){ var b=e4Snap(); applyRemoteState(e4C(b)); pushTimer=null; pushBusy=false; pushAgain=false; toasts=[]; timers=0; SYNC_UNACKED=[]; return b; }
+  try{
+    var b=load();
+    __eq('applyRemoteState sets merge base = incoming, rev', [syncCanon(syncBaseGet()),stateRev], [syncCanon(b),10]);
+    // своя правка + чужая правка другой строки → слитое применено, rev облака, база = облако, push поставлен, без тоста
+    DATA[E4P3].rows[0][RC.qty]=12;   // без recalcPF: стоимость пересчитает слияние (syncRecalcRows)
+    var r=e4C(b); r.rev=11; e4R(r,E4P3,'AAPL')[RC.qty]=6;
+    __eq('merge path', syncApplyRemote(r,false), 'merge');
+    __eq('merged state: own MU + cloud AAPL, rev 11, push armed, no toast', [e4R({data:DATA},E4P3,'MU')[RC.qty],e4R({data:DATA},E4P3,'AAPL')[RC.qty],stateRev,timers,toasts.length], [12,6,11,1,0]);
+    __eq('base after merge = cloud snapshot', syncCanon(syncBaseGet()), syncCanon(r));
+    __approx('derived value recalculated after merge (12 × 100 × 9)', e4R({data:DATA},E4P3,'MU')[RC.value], 10800);
+    // своих правок нет → обычное применение, без push
+    b=load(); r=e4C(b); r.rev=11; r.news='облако';
+    __eq('clean local → plain apply, no push', [syncApplyRemote(r,false),NEWS_TEXT,timers,toasts.length], ['apply','облако',0,0]);
+    // одна и та же позиция → облако + тост с разделом
+    b=load(); DATA[E4P3].rows[0][RC.qty]=12; r=e4C(b); r.rev=11; e4R(r,E4P3,'MU')[RC.qty]=15;
+    __eq('conflict only → plain apply of cloud', [syncApplyRemote(r,false),e4R({data:DATA},E4P3,'MU')[RC.qty],timers], ['apply',15,0]);
+    __ok('conflict toast names the position', toasts.length===1&&/MU/.test(toasts[0])&&/облака|cloud/.test(toasts[0]), toasts.join(' | '));
+    // эхо push с неизвестным исходом: тот же rev и наш wid — наш коммит, база = он, счётчик не удваивается (ревью E4 п.1)
+    b=load(); DATA[E4P3].cashFree=9700; var own=e4C(snapshotState()); own.rev=11; own.wid='wA'; SYNC_UNACKED=[{rev:11,wid:'wA'}];
+    __eq('unacked echo (rev + wid) → own commit, no double count', [syncApplyRemote(e4C(own),false),DATA[E4P3].cashFree,SYNC_UNACKED.length,timers,toasts.length], ['apply',9700,0,0,0]);
+    // тот же rev, облако правил и кэш — наш коммит всё равно узнан; своя новая правка поверх — дельта от НАШЕЙ записи
+    b=load(); DATA[E4P3].cashFree=9700; own=e4C(snapshotState()); own.rev=11; own.wid='wA'; SYNC_UNACKED=[{rev:11,wid:'wA'}]; DATA[E4P3].cashFree=9650;
+    syncApplyRemote(e4C(own),false);
+    __eq('own commit recognised + later own edit → 9650 (not 9350)', DATA[E4P3].cashFree, 9650);
+    // второй push тем же rev (эхо первого ещё не пришло) не стирает память о первом: первый прошёл — узнаётся по wid
+    b=load(); DATA[E4P3].cashFree=9700; own=e4C(snapshotState()); own.rev=11; own.wid='w1'; SYNC_UNACKED=[{rev:11,wid:'w1'},{rev:11,wid:'w2'}];
+    DATA[E4P3].cashFree=9650; syncApplyRemote(e4C(own),false);
+    __eq('two pushes with the same rev: the committed one is recognised', [DATA[E4P3].cashFree,SYNC_UNACKED.length], [9650,0]);
+    // воркер записал поверх нашей записи с неизвестным исходом (writeRow копирует wid): база = наша отправленная запись,
+    // своя следующая правка кэша не теряется и не складывается дважды
+    b=load(); DATA[E4P3].cashFree=9700; own=e4C(snapshotState()); own.rev=11; own.wid='wA'; SYNC_UNACKED=[{rev:11,wid:'wA',json:JSON.stringify(own)}];
+    DATA[E4P3].cashFree=9650; r=e4C(own); r.rev=12; r.aiPort.cashSEK=290000;
+    syncApplyRemote(r,false);
+    __eq('worker on top of our unacked commit (same wid, higher rev) → own delta kept once, worker change applied', [DATA[E4P3].cashFree,AI_PORT.cashSEK,SYNC_UNACKED.length,toasts.length], [9650,290000,0,0]);
+    // облако ушло дальше записи с неизвестным исходом → счётчики этого слияния не складываются (конфликт, облако)
+    b=load(); DATA[E4P3].cashFree=9700; SYNC_UNACKED=[{rev:11,wid:'wA'}]; r=e4C(b); r.rev=12; r.wid='wZ'; r.data[E4P3].cashFree=9600;
+    syncApplyRemote(r,false);
+    __eq('unknown outcome + cloud further → no additive (cloud cash), entry pruned', [DATA[E4P3].cashFree,SYNC_UNACKED.length], [9600,0]);
+    // своя запись без JSON (память: JSON только у последних SYNC_UNACKED_JSON) и воркер поверх — базы нет, счётчики не складываются
+    b=load(); DATA[E4P3].cashFree=9700; own=e4C(snapshotState()); own.rev=11; own.wid='wA'; SYNC_UNACKED=[{rev:11,wid:'wA',json:null}];
+    r=e4C(own); r.rev=12; __eq('own unacked commit without JSON under the worker → no additive', syncAckResolve(r), {additive:false});
+    b=load(); SYNC_UNACKED=[{rev:13,wid:'wF'}]; r=e4C(b); r.rev=12; syncMergeApply(r,false);
+    __eq('entry newer than the snapshot (push in flight / stale read) is kept', SYNC_UNACKED, [{rev:13,wid:'wF'}]);
+    b=load(); SYNC_UNACKED=[{rev:11,wid:'wA'}]; r=e4C(b); r.rev=11; r.wid='wB';
+    syncApplyRemote(r,false);
+    __eq('same rev, other wid → not ours, entry pruned', SYNC_UNACKED.length, 0);
+    __eq('syncAckResolve without entries → additive', syncAckResolve({rev:5}), {additive:true});
+    // счётчик при известном исходе: облако + своя дельта
+    b=load(); DATA[E4P3].cashFree=9700; r=e4C(b); r.rev=11; r.data[E4P3].cashFree=9900;
+    syncApplyRemote(r,false);
+    __eq('known outcome → cash = cloud + own delta', DATA[E4P3].cashFree, 9600);
+    // базы нет → как до E4
+    b=load(); SYNC_BASE=null; DATA[E4P3].rows[0][RC.qty]=12; r=e4C(b); r.rev=11;
+    __eq('no base → cloud wins, toast only when dirty', [syncApplyRemote(r,true),e4R({data:DATA},E4P3,'MU')[RC.qty],toasts.length], ['apply',10,1]);
+    // слияние упало → облако побеждает с тостом
+    b=load(); DATA[E4P3].rows[0][RC.qty]=12; r=e4C(b); r.rev=11; syncMerge3=function(){ throw new Error('boom'); };
+    __eq('merge throws → cloud + toast', [syncApplyRemote(r,false),e4R({data:DATA},E4P3,'MU')[RC.qty],toasts.length], ['apply',10,1]);
+    syncMerge3=S.m3;
+    // отложенный снапшот после push идёт тем же слиянием
+    b=load(); DATA[E4P3].rows[0][RC.qty]=12; r=e4C(b); r.rev=11; e4R(r,E4P3,'AAPL')[RC.qty]=6; remotePending=r;
+    __eq('syncFlushRemote merges pending', [syncFlushRemote(true),e4R({data:DATA},E4P3,'MU')[RC.qty],e4R({data:DATA},E4P3,'AAPL')[RC.qty],toasts.length], [true,12,6,0]);
+    // syncOnRemote (синк свободен) — тоже слиянием
+    b=load(); DATA[E4P3].rows[0][RC.qty]=12; r=e4C(b); r.rev=11; e4R(r,E4P3,'AAPL')[RC.qty]=6; currentUser={id:'u'};
+    __eq('syncOnRemote apply → merge keeps own edit', [syncOnRemote(r),e4R({data:DATA},E4P3,'MU')[RC.qty]], ['apply',12]);
+    // тост с отметкой сделки
+    b=load(); DATA[E4P3].rows[0][RC.qty]=12; PF_TRADES.push({id:'tr1757844000300_1',tab:E4P3,tk:'MU',act:'buy',qty:2,price:100,date:'2026-09-14'});
+    r=e4C(b); r.rev=11; e4R(r,E4P3,'MU')[RC.qty]=15; syncApplyRemote(r,false);
+    __ok('toast: own trade on a conflicted position → «check the position»', toasts.length===1&&/MU/.test(toasts[0])&&/сверьте|check the position/.test(toasts[0]), toasts.join(' | '));
+    // есть что отправить (ревью п.4): свой снапшот ≠ базе или запись с неизвестным исходом; догон ставит push
+    b=load();
+    __eq('syncUnsaved: clean after apply', syncUnsaved(), false);
+    DATA[E4P3].rows[1][RC.qty]=7;
+    __eq('syncUnsaved: own edit', syncUnsaved(), true);
+    b=load(); SYNC_UNACKED=[{rev:11,wid:'wA'}];
+    __eq('syncUnsaved: unacked push', syncUnsaved(), true);
+    b=load(); SYNC_BASE=JSON.stringify(Object.assign(syncBaseGet(),{smaTf:{MU:{d:1}},val:{MU:{pe:9}},wid:'wX',rev:99}));
+    __eq('syncUnsaved: keys this client does not write (old client smaTf/val, wid) do not count (ревью-2 п.6)', syncUnsaved(), false);
+    // быстрый путь: своих правок нет — слияние не вызывается (ревью-2 п.7)
+    b=load(); var m3calls=0; syncMerge3=function(){ m3calls++; return S.m3.apply(null,arguments); }; r=e4C(b); r.rev=11; r.news='облако';
+    syncApplyRemote(r,false); var clean=m3calls; DATA[E4P3].rows[1][RC.qty]=7; r=e4C(r); r.rev=12; syncApplyRemote(r,false);
+    __eq('fast path: clean → no merge; own edit → merge', [clean,m3calls,NEWS_TEXT,DATA[E4P3].rows[1][RC.qty]], [0,1,'облако',7]);
+    syncMerge3=S.m3;
+    var nv=navigator.onLine; navigator.onLine=false; var off=syncOffline(); navigator.onLine=true; var on=syncOffline(); delete navigator.onLine; var un=syncOffline(); if(nv!==undefined)navigator.onLine=nv;
+    __eq('syncOffline: only navigator.onLine===false', [off,on,un], [true,false,false]);
+    var so={sig:syncOnSignal,arl:aiRepLoad,ars:aiRepSweep,rdy:syncReady,at:syncResumeAt,vs:document.visibilityState};
+    syncOnSignal=function(){ return {then:function(){}}; }; aiRepLoad=function(){}; aiRepSweep=function(){};
+    try{
+      currentUser={id:'u'}; syncReady=true; document.visibilityState='visible';
+      b=load(); DATA[E4P3].rows[1][RC.qty]=7; timers=0; syncResumeAt=0;
+      syncResumeCheck();
+      __ok('resume (online/visible) with unsaved edit → push scheduled even if the cloud did not change', timers>=1&&pushTimer===7);
+      b=load(); timers=0; syncResumeAt=0; syncResumeCheck();
+      __eq('resume with nothing unsaved → no push', [timers,pushTimer], [0,null]);
+    }finally{ syncOnSignal=so.sig; aiRepLoad=so.arl; aiRepSweep=so.ars; syncReady=so.rdy; syncResumeAt=so.at; document.visibilityState=so.vs; }
+    // регресс: снапшот облака применяют только через слияние (или запасной путь pushStateRun)
+    var cur='?',who={};
+    rd('app.js').split('\n').forEach(function(ln){ var f=/^(?:async )?function (\w+)/.exec(ln); if(f)cur=f[1]; if(/^\s*\/\//.test(ln))return;
+      for(var i=ln.indexOf('applyRemoteState(');i>=0;i=ln.indexOf('applyRemoteState(',i+1))who[cur]=(who[cur]||0)+1; });
+    __eq('applyRemoteState called only by syncMergeApply / pushStateRun (fallback)', Object.keys(who).sort(), ['applyRemoteState','pushStateRun','syncMergeApply']);
+    __eq('no direct applyRemoteState in other client files', ['app-2.js','app-3.js','app-4.js','app-5.js','desk.js'].filter(function(f){ return /[^.\w]applyRemoteState\(/.test(rd(f)); }), []);
+  }finally{
+    toast=S.toast; init=S.init; migrateState=S.mig; syncMerge3=S.m3; globalThis.setTimeout=S.st;
+    applyRemoteState(S.snap);
+    SYNC_BASE=S.base; SYNC_UNACKED=S.un; stateRev=S.rev; pushTimer=S.t; pushBusy=S.b; pushAgain=S.a; remotePending=S.r; currentUser=S.u;
   }
 });
 

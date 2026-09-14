@@ -19,6 +19,11 @@ let pushBusy=false;        // push в полёте (между началом pu
 let pushAgain=false;       // во время полёта были правки — после завершения schedulePush()
 let remotePending=null;    // отложенный входящий снапшот (последний), пока синк занят
 let remoteStale=false;     // сигнал «облако изменилось» без данных пришёл, пока синк занят — сверить rev в syncSettle (E0)
+// E4 (трёхстороннее слияние): база — JSON снапшота, последний раз совпадавшего с облаком (applyRemoteState по входящему s до
+// миграций; push после коммита — ровно отправленное). SYNC_UNACKED — [{rev,wid}] наших записей с неизвестным исходом (в полёте
+// или ответ не дошёл): снапшот облака с тем же rev и нашим wid — наш коммит, не чужая правка (syncAckResolve); пока в облаке
+// может быть наша запись, которой нет в базе, счётчики не складываются (дельта могла уже войти в облако).
+let SYNC_BASE=null, SYNC_UNACKED=[];
 // Версия клиента в снапшоте (блок E, plans/ledger-model-e.md R6): ?v= собственного <script src="app.js?v=…">
 // (его штампует pre-commit хук по хэшу app.js). Снапшот без cv записал клиент до E0; applyRemoteState cv не читает.
 const CLIENT_BUILD=(()=>{ try{ const s=document.currentScript||document.querySelector('script[src^="app.js?"]'); const m=s&&/[?&]v=([0-9a-z]+)/.exec(s.getAttribute('src')||''); return m?m[1]:'dev'; }catch(e){ return 'dev'; } })();
@@ -38,6 +43,9 @@ function snapshotState(){
   if(AI_LEGACY_STOCK.length)o.stockAiLog=AI_LEGACY_STOCK;
   return o;
 }
+// Ключи снапшота, которых может не быть (нет = пусто). Остальные snapshotState пишет всегда — их отсутствие в облаке значит
+// «писатель их не знает» (старый клиент), и слияние (E4) считает, что облако их не меняло.
+const SYNC_OPT_KEYS=['stockAiLog'];
 // Call after any edit: debounce-push to the cloud.
 // syncReady: НЕ пушим, пока облако не прочитано первым pullState — иначе ранние
 // миграции/рендеры на старте (init до pullState) могли затереть облако пустыми
@@ -46,8 +54,10 @@ function snapshotState(){
 // полёта лишь поднимает pushAgain — после завершения (syncSettle) ставится новый таймер. Пока синк занят
 // (syncBusy), входящий realtime-снапшот не отбрасывается, а откладывается в remotePending и применяется
 // после завершения push, если по rev всё ещё новее. Единственный признак «облако новее» — rev
-// (syncRemoteDecision); часы клиента (updated_at) не используются. Политика конфликта: облако побеждает,
-// несохранённые локальные правки теряются с тостом. Слияние по полям — блок E plans/audit-followup.md.
+// (syncRemoteDecision); часы клиента (updated_at) не используются. Конфликт (E4): входящий снапшот при
+// несохранённых правках и отказ триггера push сливаются трёхсторонне (syncMerge3: база SYNC_BASE, свой снапшот,
+// облако) — правки разных единиц не теряются, тост — только если одну единицу меняли обе стороны (в ней —
+// облако). Нет базы или SYNC_MERGE_TRIES слияний подряд не хватило — прежнее «облако побеждает» с тостом.
 let syncReady=false;
 let stateRev=0;   // монотонная ревизия состояния: БД-триггер отклоняет запись с НЕ растущим rev (защита от затирания устаревшим клиентом)
 function scheduleSave(){ if(currentUser && !applyingRemote && syncReady) schedulePush(); }
@@ -72,7 +82,7 @@ function syncRemoteDecision(rev, stateRev, busy){
 function syncOnRemote(s){   // из обработчика realtime; возвращает решение
   const d=syncRemoteDecision(s&&s.rev, stateRev, syncBusy());
   if(d==='defer') remotePending=s;
-  else if(d==='apply') applyRemoteState(s);
+  else if(d==='apply') syncApplyRemote(s,false);   // E4: несохранённые правки (например, после неудачного push) — слиянием
   return d;
 }
 function syncSettle(ok){    // после каждого push (ok ⇔ коммит)
@@ -87,11 +97,10 @@ function syncFlushRemote(dirty){   // true ⇔ применили отложен
   if(syncBusy()) return false;     // ветка повтора поставила таймер — ждём дальше
   remotePending=null;
   if(typeof s.rev==='number' && s.rev<=stateRev) return false;   // устарел (pullState/коммит уже обогнали)
-  if(dirty) syncConflictToast();
-  applyRemoteState(s); return true;
+  syncApplyRemote(s,dirty); return true;   // E4: слияние с несохранёнными правками; dirty — тост, только если базы нет
 }
 function syncConflictToast(){ toast(RT('⚠ Конфликт синхронизации: в облаке новее — данные перечитаны, повторите последнюю правку','⚠ Sync conflict: cloud is newer — state reloaded, redo your last edit'), true); }
-function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; remoteStale=false; aiRepReset(); }
+function syncReset(){ clearTimeout(pushTimer); pushTimer=null; pushBusy=false; pushAgain=false; remotePending=null; remoteStale=false; SYNC_BASE=null; SYNC_UNACKED=[]; aiRepReset(); }
 
 // ── Realtime как сигнал + догон после сна (E0, plans/ledger-model-e.md §4.E0 п.5–6) ──
 // У Supabase Postgres Changes лимит 1024 КБ: строка больше приходит без `data` (только поля ≤ 64 байт), а после
@@ -135,6 +144,9 @@ function syncResumeDue(now, last){ return !(last>0) || now<last || now-last>=SYN
 let syncResumeAt=0, syncResumeOn=false;
 function syncResumeCheck(){
   if(!currentUser||!syncReady||document.visibilityState==='hidden') return false;
+  // E4: правка, не ушедшая офлайн (push упал — повтора нет), или запись с неизвестным исходом — отправить снова: облако могло не
+  // меняться, и сверка rev ниже её не поднимет. Отказ триггера сольётся, эхо своей записи узнается по wid.
+  if(!syncBusy()&&syncUnsaved()) schedulePush();
   const now=Date.now(); if(!syncResumeDue(now, syncResumeAt)) return false;
   syncResumeAt=now; syncOnSignal(); aiRepLoad(); aiRepSweep(); return true;   // E5: список AI-отчётов (пропущенный realtime, очередь) и повтор переноса
 }
@@ -144,65 +156,423 @@ function syncResumeInit(){   // один раз за жизнь страницы
   window.addEventListener('online', ()=>syncResumeCheck());
 }
 
+// ── Трёхстороннее слияние при конфликте (E4, plans/ledger-model-e.md §4.E4, итоги §10) ──
+// syncMerge3(база, свой снапшот, облако) — чистая. По единице: менял только клиент → клиент; только облако → облако; оба
+// одинаково → облако; оба по-разному → облако + единица в conflicts (тост). Единицы: ключ снапшота; data → вкладка: поле
+// вкладки (кэш, название…) и строка по тикеру (разные заголовки — сетка целиком); posMeta → вкладка/тикер; pfTrades,
+// planRules — записи по id; deskWatch — идеи по key и списки; desk, aiSpend — поля. МЯГКИЕ поля обновляют оба устройства сами
+// (цена/день/SMA/уровни/таргеты/мультипликаторы и производные P&L/стоимость/тип/# строки, targetsAt, fx, hitAt правил плана,
+// порядок/updatedAt идей, вкладка AI-портфеля): сливаются молча (оба поменяли → облако) и конфликтом не бывают. Кэш вкладки и
+// AI-расходы — счётчики: облако + своя дельта от базы (opts.additive=false — исход нашего push неизвестен, дельта могла уже
+// войти в облако → обычная единица). aiPort — вне слияния: торговое состояние облака, настройки, которые менял клиент, —
+// клиента (правило push). rev — облака (следующий push = rev+1), cv — свой; ключ, которого этот клиент не пишет, — как у облака.
+// → {snap, conflicts, localUnits}: единица — путь-массив (['data',вкладка,'row',тикер]); localUnits — взятые у клиента
+// (непуст → слитое надо отправить). Входы не мутируются.
+const SYNC_MERGE_TRIES=3;   // слияний на один push: дальше — прежнее «облако побеждает»
+const SYNC_RETRY_MS=5000;   // повтор push, когда не прочитан серверный aiPort (fail-closed)
+// Браузер точно без сети (navigator.onLine=false достоверно только в эту сторону) — запрос не уйдёт.
+const syncOffline=()=>typeof navigator!=='undefined'&&!!navigator&&navigator.onLine===false;
+const SYNC_TAB_SOFT=['targetsAt','pfAnalysisAt'];   // мягкие поля вкладки
+const AIPORT_CLIENT_KEYS=['strategy','intervalMin','commissionPct','minTradeSEK','enabled','startCapital','startedAt','myStartEquity','myStartLive'];   // настройки AI-портфеля — за клиентом
+const syncObj=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
+const syncClone=x=>x===undefined?undefined:JSON.parse(JSON.stringify(x));
+// Равенство по содержимому: JSON с сортировкой ключей (jsonb облака отдаёт ключи в своём порядке). undefined → undefined.
+const syncCanon=v=>JSON.stringify(v,(k,x)=>syncObj(x)?Object.keys(x).sort().reduce((o,kk)=>{o[kk]=x[kk];return o;},{}):x);
+function syncKeys(...xs){ const s=new Set(); xs.forEach(x=>{ if(syncObj(x))Object.keys(x).forEach(k=>s.add(k)); }); return [...s]; }
+function syncNote(ctx,path,res){ if(res.conflict)ctx.conflicts.push(path); if(res.local)ctx.localUnits.push(path); return res.v; }
+// Мягкое значение: своё — только если своё поменялось, а облако нет; иначе облако (молча).
+function syncSoftPick(b,l,r){ const cl=syncCanon(l),cr=syncCanon(r); return cl!==cr&&cr===syncCanon(b)?{v:l,conflict:false,local:true}:{v:r,conflict:false,local:false}; }
+// Одна единица. b/l/r — значение стороны или undefined (нет); hard — проекция для сравнения (null — всё значение); soft — ключи
+// или индексы мягких полей: сливаются поштучно syncSoftPick, сторона без записи своего мнения о них не имеет. → {v,conflict,local}
+function syncRec(b,l,r,hard,soft){
+  const hb=syncCanon(hard?hard(b):b),hl=syncCanon(hard?hard(l):l),hr=syncCanon(hard?hard(r):r);
+  const lc=hl!==hb,rc=hr!==hb,useL=lc&&!rc,w=useL?l:r,res={v:w,conflict:lc&&rc&&hl!==hr,local:useL};
+  if(!soft||!soft.length)return hard&&!lc&&!rc?syncSoftPick(b,l,r):res;   // целиком: твёрдое не менялось — мягкое молча
+  if(w===undefined||w===null||typeof w!=='object')return res;
+  const v=Array.isArray(w)?w.slice():Object.assign({},w),g=(x,k)=>x&&typeof x==='object'?x[k]:undefined;
+  soft.forEach(k=>{
+    const vb=g(b,k),p=syncSoftPick(vb,l===undefined?vb:g(l,k),r===undefined?vb:g(r,k));
+    if(p.local)res.local=true;
+    if(p.v===undefined){ if(!Array.isArray(v))delete v[k]; }
+    else{ if(Array.isArray(v))while(v.length<k)v.push(''); v[k]=p.v; }
+  });
+  res.v=v; return res;
+}
+// Счётчик: оба поменяли → облако + своя дельта. Одинаковое значение с обеих сторон складывается, только если eqAdd (это две
+// независимые правки: у обеих сторон свои новые сделки во вкладке; AI-расходы только растут) — иначе это одно и то же абсолютное
+// значение (ручной ввод кэша, восстановление из бэкапа). Своё эхо сюда не попадает — его отсекает SYNC_UNACKED (additive=false).
+// Не конечные числа → null (обычная единица).
+function syncAdd(b,l,r,eqAdd){
+  const n=x=>typeof x==='number'&&isFinite(x);
+  if(!n(b)||!n(l)||!n(r))return null;
+  if(l===b||(l===r&&!eqAdd))return {v:r,conflict:false,local:false};
+  if(r===b)return {v:l,conflict:false,local:true};
+  return {v:Math.round((r+l-b)*1e6)/1e6,conflict:false,local:true};
+}
+// Порядок списка: облако не меняло свою последовательность ключей → свой порядок, иначе порядок облака; ключи другой стороны,
+// которых нет в первой, — в конце (новые свои — после облачных). keep(k) — ключ остался после слияния.
+function syncOrder(kb,kl,kr,keep){
+  const same=kr.length===kb.length&&kr.every((k,i)=>k===kb[i]),out=[],seen=new Set();
+  (same?[kl,kr]:[kr,kl]).forEach(ks=>ks.forEach(k=>{ if(!seen.has(k)&&keep(k)){ seen.add(k); out.push(k); } }));
+  return out;
+}
+const syncIdKey=x=>syncObj(x)&&(typeof x.id==='number'||(typeof x.id==='string'&&x.id))?String(x.id):'~'+syncCanon(x);
+// Список записей по ключу: каждая запись — единица path+[ключ]. Не массив или дубли ключей у любой стороны — список целиком.
+function syncIdSet(b,l,r,ctx,path,keyOf,hard,soft){
+  const ix=a=>{ if(a===undefined)return {m:new Map(),ks:[]}; if(!Array.isArray(a))return null; const m=new Map(),ks=[];
+    for(const x of a){ const k=keyOf(x); if(m.has(k))return null; m.set(k,x); ks.push(k); } return {m,ks}; };
+  const B=ix(b),L=ix(l),R=ix(r);
+  if(!B||!L||!R||l===undefined||r===undefined)return syncNote(ctx,path,syncRec(b,l,r,hard?a=>Array.isArray(a)?a.map(hard):a:null,null));
+  const res=new Map();
+  new Set([...R.ks,...L.ks,...B.ks]).forEach(k=>res.set(k,syncNote(ctx,path.concat(k),syncRec(B.m.get(k),L.m.get(k),R.m.get(k),hard,soft))));
+  return syncOrder(B.ks,L.ks,R.ks,k=>res.get(k)!==undefined).map(k=>res.get(k));
+}
+// Строки вкладки: ключ — тикер (как posTk). Мягкие колонки: #, тип, цена, день, P&L, %, стоимость (RC) и хвост из COLN
+// (SMA, уровни, таргеты, мультипликаторы, скоринг) — их пишут обновления котировок/таргетов на каждом устройстве.
+const syncRowKey=r=>Array.isArray(r)?String(r[RC.tk]==null?'':r[RC.tk]).trim().toUpperCase():'~'+syncCanon(r);
+function syncSoftCols(h){
+  if(!rowSchemaOk({headers:h}))return new Set();   // вкладка вне контракта RC — индексы ничего не значат: всё твёрдое
+  const s=new Set([RC.n,RC.type,RC.price,RC.day,RC.pl,RC.plPct,RC.value]),names=Object.values(COLN),res=Object.values(COLN_RE);
+  (Array.isArray(h)?h:[]).forEach((x,i)=>{ if(i>=PF_HEAD.length&&(names.includes(x)||res.some(re=>re.test(String(x)))))s.add(i); });
+  return s;
+}
+// Твёрдая часть строки; ячейки за пределами заголовков (n) никакой колонке не принадлежат — в сравнении не участвуют.
+const syncRowHard=(r,soft,n)=>Array.isArray(r)?(n!=null?r.slice(0,n):r).map((v,i)=>soft.has(i)?null:v):r;
+// Вкладка/сетка без мягкого (для сравнения целиком): без мягких полей вкладки, заголовки и строки без мягких колонок.
+function syncGridHard(t){
+  if(!syncObj(t))return t;
+  const o={},h=Array.isArray(t.headers)?t.headers:null,soft=syncSoftCols(h);
+  Object.keys(t).forEach(k=>{ if(!SYNC_TAB_SOFT.includes(k))o[k]=t[k]; });
+  if(h){ o.headers=h.filter((_,i)=>!soft.has(i)); if(Array.isArray(t.rows))o.rows=t.rows.map(r=>Array.isArray(r)?r.filter((_,i)=>!soft.has(i)):r); }
+  return o;
+}
+// Построчное слияние: общие заголовки H — более длинные у сторон (контракт RC); заголовки каждой стороны и базы совпадают с H на
+// общей части, а расхождение по длине — только мягкие колонки в хвосте (так дописывает colEnsure: таргеты, уровни,
+// мультипликаторы): строки короче дополняются '' до H, строки базы длиннее — обрезаются до H. Строки — массивы с уникальными
+// тикерами. → {H, rows:[b,l,r]} или null (сетка целиком).
+function syncGridAlign(b,l,r){
+  const hs=[b,l,r].map(x=>x.headers);
+  if(!hs.every(Array.isArray))return null;
+  const H=hs[1].length>hs[2].length?hs[1]:hs[2];
+  if(!rowSchemaOk({headers:H}))return null;
+  const soft=syncSoftCols(H);
+  const fits=h=>{ const extra=h.length>H.length?syncSoftCols(h):null;
+    for(let i=0;i<Math.max(h.length,H.length);i++){
+      if(i<h.length&&i<H.length){ if(h[i]!==H[i])return false; }
+      else if(!(i<H.length?soft:extra).has(i))return false;
+    }
+    return true; };
+  if(!hs.every(fits))return null;
+  const rows=[b,l,r].map((x,j)=>{
+    if(!Array.isArray(x.rows))return null;
+    const s=new Set(),n=hs[j].length;
+    for(const row of x.rows){ if(!Array.isArray(row))return null; const k=syncRowKey(row); if(s.has(k))return null; s.add(k); }
+    if(n===H.length)return x.rows;
+    return x.rows.map(row=>n<H.length?(row.length<H.length?row.concat(new Array(H.length-row.length).fill('')):row):row.slice(0,H.length));
+  });
+  return rows.every(Boolean)?{H,rows}:null;
+}
+function syncTab(t,b,l,r,ctx){
+  const P=['data',t];
+  if(t===AIP_KEY||[b,l,r].some(x=>syncObj(x)&&x.aip==='1'))return syncNote(ctx,P,syncSoftPick(b,l,r));   // производная вкладка AI-портфеля
+  if(!syncObj(b)||!syncObj(l)||!syncObj(r))return syncNote(ctx,P,syncRec(b,l,r,syncGridHard,null));   // вкладку добавили/удалили
+  const out={};
+  syncKeys(r,l,b).forEach(f=>{
+    if(f==='headers'||f==='rows')return;
+    const res=SYNC_TAB_SOFT.includes(f)?syncSoftPick(b[f],l[f],r[f]):(f==='cashFree'&&ctx.additive&&syncAdd(b[f],l[f],r[f],ctx.bothTraded.has(t)))||syncRec(b[f],l[f],r[f],null,null);
+    const v=syncNote(ctx,P.concat('f',f),res); if(v!==undefined)out[f]=v;
+  });
+  const G=syncGridAlign(b,l,r);
+  if(G){
+    const soft=syncSoftCols(G.H);
+    out.headers=G.H;
+    out.rows=syncIdSet(G.rows[0],G.rows[1],G.rows[2],ctx,P.concat('row'),syncRowKey,x=>syncRowHard(x,soft,G.H.length),[...soft]);
+  }else{
+    const g=x=>{ const o={}; if('headers' in x)o.headers=x.headers; if('rows' in x)o.rows=x.rows; return o; };
+    const v=syncNote(ctx,P.concat('grid'),syncRec(g(b),g(l),g(r),syncGridHard,null));
+    if(v&&v.headers!==undefined)out.headers=v.headers;
+    if(v&&v.rows!==undefined)out.rows=v.rows;
+  }
+  return out;
+}
+function syncData(b,l,r,ctx){
+  if(!syncObj(l)||!syncObj(r)||(b!==undefined&&!syncObj(b)))return syncNote(ctx,['data'],syncRec(b,l,r,null,null));
+  const B=b||{},res=new Map(),out={};
+  syncKeys(r,l,B).forEach(t=>res.set(t,syncTab(t,B[t],l[t],r[t],ctx)));
+  syncOrder(Object.keys(B),Object.keys(l),Object.keys(r),t=>res.get(t)!==undefined).forEach(t=>{ out[t]=res.get(t); });
+  return out;
+}
+function syncPosMeta(b,l,r,ctx){
+  const P=['posMeta'];
+  if(!syncObj(l)||!syncObj(r)||(b!==undefined&&!syncObj(b)))return syncNote(ctx,P,syncRec(b,l,r,null,null));
+  const out={};
+  syncKeys(r,l,b).forEach(t=>{
+    const bt=b&&b[t],lt=l[t],rt=r[t];
+    if([bt,lt,rt].some(x=>x!==undefined&&!syncObj(x))){ const v=syncNote(ctx,P.concat(t),syncRec(bt,lt,rt,null,null)); if(v!==undefined)out[t]=v; return; }
+    const o={};
+    syncKeys(rt,lt,bt).forEach(k=>{ const v=syncNote(ctx,P.concat(t,k),syncRec(bt&&bt[k],lt&&lt[k],rt&&rt[k],null,null)); if(v!==undefined)o[k]=v; });
+    if(Object.keys(o).length)out[t]=o;   // опустевшая вкладка уходит (как posMetaDel)
+  });
+  return out;
+}
+function syncWatch(b,l,r,ctx){
+  const P=['deskWatch'];
+  if(!syncObj(l)||!syncObj(r)||(b!==undefined&&!syncObj(b)))return syncNote(ctx,P,syncRec(b,l,r,null,null));
+  const nb=b===undefined?undefined:deskWatchNorm(b),nl=deskWatchNorm(l),nr=deskWatchNorm(r),soft=['order','updatedAt'];
+  const hard=x=>{ if(!syncObj(x))return x; const o=Object.assign({},x); soft.forEach(k=>{ delete o[k]; }); return o; };
+  const lists=syncNote(ctx,P.concat('lists'),syncRec(nb&&nb.lists,nl.lists,nr.lists,null,null));
+  const items=syncIdSet(nb&&nb.items,nl.items,nr.items,ctx,P.concat('items'),x=>syncObj(x)&&x.key?String(x.key):'~'+syncCanon(x),hard,soft);
+  return {v:1,lists:lists===undefined?nr.lists:lists,items};
+}
+// Объект по полям (desk, aiSpend): каждое поле — своя единица; pick(k,b,l,r) — особое правило поля или null.
+function syncFields(b,l,r,ctx,path,pick){
+  if(!syncObj(l)||!syncObj(r)||(b!==undefined&&!syncObj(b)))return syncNote(ctx,path,syncRec(b,l,r,null,null));
+  const out={};
+  syncKeys(r,l,b).forEach(k=>{ const vb=b&&b[k],res=(pick&&pick(vb,l[k],r[k]))||syncRec(vb,l[k],r[k],null,null);
+    const v=syncNote(ctx,path.concat(k),res); if(v!==undefined)out[k]=v; });
+  return out;
+}
+// aiPort (как правило push): торговое состояние — облака; настройки AIPORT_CLIENT_KEYS — свои, если клиент их менял.
+// В облаке нет портфеля (нет startedAt) — остаётся свой. Конфликтов не бывает.
+function syncAiPort(b,l,r){
+  if(!syncObj(r)||!r.startedAt)return {v:l===undefined?r:l,conflict:false,local:syncCanon(l)!==syncCanon(r)};
+  const v=Object.assign({},r);
+  if(syncObj(l))AIPORT_CLIENT_KEYS.forEach(k=>{ if(l[k]!==undefined&&syncCanon(l[k])!==syncCanon(syncObj(b)?b[k]:undefined))v[k]=l[k]; });
+  return {v,conflict:false,local:syncCanon(v)!==syncCanon(r)};
+}
+const syncPlanHard=x=>{ if(!syncObj(x))return x; const o=planRuleNorm(syncClone(x)); delete o.hitAt; return o; };   // правило в нормальной форме, без hitAt
+// Новые сделки есть у обеих сторон → их внутридневной порядок неизвестен (журнал и K4-лоты сортируют по дате, затем по индексу):
+// новые — после прежних, по времени создания из id ('tr<мс>_…', устойчиво). Id без времени — порядок как есть.
+const syncTradeTs=t=>{ const m=/^tr(\d{12,})/.exec(String(t&&t.id||'')); return m?+m[1]:NaN; };
+function syncTradeOrder(v,b,l,r){
+  if(!Array.isArray(v)||!Array.isArray(l)||!Array.isArray(r))return v;
+  const ks=a=>new Set((Array.isArray(a)?a:[]).map(syncIdKey)),kb=ks(b),kl=ks(l),kr=ks(r),isNew=t=>!kb.has(syncIdKey(t));
+  if(![...kl].some(k=>!kb.has(k)&&!kr.has(k))||![...kr].some(k=>!kb.has(k)&&!kl.has(k)))return v;   // новые только с одной стороны
+  const nw=v.filter(isNew);
+  if(nw.some(t=>!isFinite(syncTradeTs(t))))return v;
+  return v.filter(t=>!isNew(t)).concat(nw.map((t,i)=>[syncTradeTs(t),i,t]).sort((x,y)=>x[0]-y[0]||x[1]-y[1]).map(x=>x[2]));
+}
+function syncMergeKey(k,b,l,r,ctx){
+  const P=[k];
+  switch(k){
+    case 'data':return syncData(b,l,r,ctx);
+    case 'pfTrades':return syncTradeOrder(syncIdSet(b,l,r,ctx,P,syncIdKey,null,null),b,l,r);
+    case 'planRules':return syncIdSet(b,l,r,ctx,P,syncIdKey,syncPlanHard,['hitAt']);
+    case 'posMeta':return syncPosMeta(b,l,r,ctx);
+    case 'deskWatch':return syncWatch(b,l,r,ctx);
+    case 'desk':return syncFields(b,l,r,ctx,P,null);
+    case 'aiSpend':return syncFields(b,l,r,ctx,P,ctx.additive?(vb,vl,vr)=>{ const z=vb===undefined?0:vb; return syncAdd(z,vl===undefined?z:vl,vr===undefined?z:vr,true); }:null);
+    case 'aiPort':return syncNote(ctx,P,syncAiPort(b,l,r));
+    case 'schemaV':{ const n=x=>typeof x==='number'&&isFinite(x); return syncNote(ctx,P,n(l)&&(!n(r)||l>r)?{v:l,conflict:false,local:true}:{v:r,conflict:false,local:false}); }
+    case 'fx':return syncNote(ctx,P,syncSoftPick(b,l,r));
+    default:return syncNote(ctx,P,syncRec(b,l,r,null,null));
+  }
+}
+function syncMerge3(base,local,remote,opts){
+  const B=syncObj(base)?syncClone(base):{},L=syncObj(local)?syncClone(local):{},R=syncObj(remote)?syncClone(remote):{};
+  // Вкладки, где у обеих сторон свои новые сделки (нет в базе и у другой стороны): равные изменения кэша там — две сделки.
+  const bk=new Set((Array.isArray(B.pfTrades)?B.pfTrades:[]).map(syncIdKey)),tkOf=t=>String(t.tk==null?'':t.tk).trim().toUpperCase();
+  const newTabs=(x,y)=>{ const ky=new Set((Array.isArray(y)?y:[]).map(syncIdKey)),s=new Set();
+    (Array.isArray(x)?x:[]).forEach(t=>{ const k=syncIdKey(t); if(syncObj(t)&&!bk.has(k)&&!ky.has(k))s.add(t.tab||PF3_KEY); }); return s; };
+  const nr=newTabs(R.pfTrades,L.pfTrades);
+  const ctx={conflicts:[],localUnits:[],additive:!(opts&&opts.additive===false),bothTraded:new Set([...newTabs(L.pfTrades,R.pfTrades)].filter(t=>nr.has(t)))};
+  const known=new Set(Object.keys(L).concat(SYNC_OPT_KEYS)),out={};
+  syncKeys(R,L,B).forEach(k=>{
+    if(k==='rev'||k==='cv')return;
+    if(!known.has(k)){ if(k in R)out[k]=R[k]; return; }   // ключ, которого этот клиент не пишет (старый/будущий) — как у облака
+    const r=(k in R)||SYNC_OPT_KEYS.includes(k)?R[k]:B[k];   // обязательного ключа нет в облаке — писатель его не знает: «не менял»
+    const v=syncMergeKey(k,B[k],L[k],r,ctx);
+    if(v!==undefined)out[k]=v;
+  });
+  if(L.cv!==undefined)out.cv=L.cv;
+  if(R.rev!==undefined)out.rev=R.rev;
+  // Сделка — это строка, кэш, журнал и мета разом; при конфликте строки (или всей сетки/вкладки, или кэша вкладки) её версия —
+  // облака, а своя новая сделка остаётся в журнале (строка/кэш — если не конфликтовали) — отметка для тоста «сверьте позицию».
+  const notes=[];
+  const mineNew=(Array.isArray(L.pfTrades)?L.pfTrades:[]).filter(t=>t&&!bk.has(syncIdKey(t)));
+  ctx.conflicts.forEach(u=>{
+    if(u[0]!=='data'||u.length<2)return;
+    const hit=mineNew.filter(t=>(t.tab||PF3_KEY)===u[1]&&(u[2]==='row'?tkOf(t)===u[3]:u.length===2||u[2]==='grid'||(u[2]==='f'&&u[3]==='cashFree')));
+    [...new Set(hit.map(tkOf))].forEach(tk=>{ if(!notes.some(n=>n[1]===u[1]&&n[2]===tk))notes.push(['trade',u[1],tk]); });
+  });
+  return {snap:out,conflicts:ctx.conflicts,localUnits:ctx.localUnits,notes};
+}
+// Разделы конфликтов для тоста: «вкладка · тикер», «Сделка MU», «План MU», «Стоп/цель MU», «Список покупок», настройки…
+function syncUnitLabel(u,snap){
+  const k=u[0],tab=t=>{ try{ return TAB_LABEL(t); }catch(e){ return t; } };
+  if(k==='data'){
+    if(u.length<2)return RT('Портфели','Portfolios');
+    const f=({cashFree:RT('кэш','cash'),leverage:RT('плечо','leverage'),title:RT('название','name'),subtitle:RT('название','name'),baseCcy:RT('валюта','currency'),fcastAI:RT('AI-прогноз','AI forecast')})[u[3]]||u[3];
+    return tab(u[1])+(u[2]==='row'?' · '+u[3]:u[2]==='f'?' · '+f:'');
+  }
+  const rec=key=>u[1]!=null&&((snap&&Array.isArray(snap[key]))?snap[key]:[]).find(x=>x&&String(x.id)===String(u[1]));
+  if(k==='pfTrades'){ const t=rec('pfTrades'); return RT('Сделка','Trade')+(t&&t.tk?' '+t.tk:''); }
+  if(k==='planRules'){ const t=rec('planRules'); return RT('План','Plan')+(t&&t.tk?' '+t.tk:''); }
+  if(k==='posMeta')return RT('Стоп/цель','Stop/target')+(u[2]?' '+u[2]:'');
+  if(k==='deskWatch')return RT('Список покупок','Shopping list')+(u[1]==='items'&&u[2]?' '+String(u[2]).split('|')[0]:'');
+  return ({desk:RT('Настройки Trade Desk','Trade Desk settings'),theme:RT('Тема','Theme'),aiChat:RT('AI-чат','AI chat'),aiInclChat:RT('AI-чат','AI chat'),
+    aiPlaybook:RT('Плейбук','Playbook'),aiPlaybookSeedV:RT('Плейбук','Playbook'),news:RT('Новости','News'),newsImpact:RT('Новости','News'),
+    cycleOvr:RT('Тезис-монитор','Thesis monitor'),stockAiLog:RT('AI-разборы','AI analyses'),aiPortBak:RT('AI-портфель','AI portfolio')})[k]||k;
+}
+function syncConflictText(conflicts,snap){
+  const L=[]; (conflicts||[]).forEach(u=>{ const s=syncUnitLabel(u,snap); if(s&&!L.includes(s))L.push(s); });
+  return L.slice(0,3).join(', ')+(L.length>3?' +'+(L.length-3):'');
+}
+function syncMergeToast(conflicts,snap,notes){
+  const tr=[...new Set((notes||[]).filter(n=>n[0]==='trade').map(n=>n[2]))].join(', ');
+  toast(RT('⚠ Одновременная правка: ','⚠ Concurrent edit: ')+syncConflictText(conflicts,snap)+RT(' — оставлена версия облака',' — kept the cloud version')+
+    (tr?RT(`; ваша сделка по ${tr} осталась в журнале — сверьте позицию и кэш`,`; your ${tr} trade stays in the journal — check the position and cash`):''),true);
+}
+function syncBaseSet(s){ try{ SYNC_BASE=s&&typeof s==='object'?JSON.stringify(s):null; }catch(e){ SYNC_BASE=null; } }
+function syncBaseGet(){ try{ return SYNC_BASE?JSON.parse(SYNC_BASE):null; }catch(e){ return null; } }
+// Наши записи с неизвестным исходом против снапшота облака s (перед его применением). У s наш wid: тот же rev — это наш коммит,
+// база = s; rev больше — поверх нашего коммита писал только воркер (writeRow копирует строку вместе с wid; клиенты ставят свой,
+// старые — без wid), база = наш отправленный JSON: своя дельта уже в облаке, чужие правки — от неё. Иначе запись с rev меньше, чем
+// у s, — неизвестно, вошла ли она: это слияние без сложения счётчиков; тот же rev, чужой wid — наша не прошла. После применения
+// s записи с rev ≤ s.rev не нужны (база — облако); с rev больше (s старее их, push в полёте) — остаются. → {additive}
+// JSON отправленного храним только у последних SYNC_UNACKED_JSON записей (память): своя запись без JSON под воркером — базы нет,
+// счётчики этого слияния не складываются.
+const SYNC_UNACKED_JSON=2;
+function syncAckResolve(s){
+  const nr=s&&typeof s.rev==='number'?s.rev:null;
+  if(nr==null||!SYNC_UNACKED.length)return {additive:true};
+  const own=s.wid!=null?SYNC_UNACKED.find(u=>u.wid===s.wid&&u.rev<=nr):null;
+  let lost=false;
+  if(own){ if(own.rev===nr)syncBaseSet(s); else if(own.json)SYNC_BASE=own.json; else lost=true; }
+  // Прочие записи с rev < s.rev при найденной своей не могли пройти (её позиция в истории занята); без своей — неизвестно.
+  const additive=!lost&&!SYNC_UNACKED.some(u=>u!==own&&u.rev<nr&&!(own&&u.rev<=own.rev));
+  SYNC_UNACKED=SYNC_UNACKED.filter(u=>u.rev>nr);
+  return {additive};
+}
+// Снапшот облака с учётом несохранённых правок. Базы нет — как до E4 (облако побеждает, тост при dirty). Иначе syncMerge3:
+// своего не осталось — applyRemoteState(s) (тост, если своё проиграло); осталось — слитое (база — облако, rev облака).
+// → 'apply' | 'merge' (слитое надо отправить — вызывающий).
+function syncMergeApply(s,dirty){
+  const {additive}=syncAckResolve(s);
+  const b=syncBaseGet();
+  if(!b){ if(dirty)syncConflictToast(); applyRemoteState(s); return 'apply'; }
+  if(syncDiffers(b)===false){ applyRemoteState(s); return 'apply'; }   // своих правок нет: merge(b,b,s)=s — без слияния
+  let m;
+  try{ m=syncMerge3(b,snapshotState(),s,{additive}); }
+  catch(e){ console.error('E4: слияние не удалось — облако побеждает',e); syncConflictToast(); applyRemoteState(s); return 'apply'; }
+  if(m.conflicts.length)console.warn('E4: одновременная правка — оставлена версия облака',m.conflicts);
+  if(!m.localUnits.length){ applyRemoteState(s); if(m.conflicts.length)syncMergeToast(m.conflicts,s,m.notes); return 'apply'; }
+  applyRemoteState(m.snap,s,true);
+  if(m.conflicts.length)syncMergeToast(m.conflicts,m.snap,m.notes);
+  return 'merge';
+}
+function syncApplyRemote(s,dirty){ const d=syncMergeApply(s,dirty); if(d==='merge')schedulePush(); return d; }
+// Свой снапшот отличается от базы b — по ключам, которые пишет этот клиент (как в syncMerge3: чужие ключи старого клиента —
+// smaTf/val/wid — и транспорт rev/cv не в счёт). null — сравнить не удалось.
+function syncDiffers(b){
+  try{
+    const l=snapshotState(),ks=[...new Set(Object.keys(l).concat(SYNC_OPT_KEYS))].filter(k=>k!=='rev'&&k!=='cv'&&k!=='wid');
+    const pick=x=>{ const o={}; ks.forEach(k=>{ if(x&&x[k]!==undefined)o[k]=x[k]; }); return syncCanon(o); };
+    return pick(l)!==pick(b);
+  }catch(e){ return null; }
+}
+// Есть что отправить: запись с неизвестным исходом или свой снапшот не равен базе.
+function syncUnsaved(){
+  if(SYNC_UNACKED.length)return true;
+  const b=syncBaseGet(); return !!b&&syncDiffers(b)===true;
+}
+// После слияния: производные колонки строк (P&L, %, стоимость) — по слитым кол-ву/средней/цене.
+function syncRecalcRows(){
+  Object.keys(DATA||{}).forEach(k=>{ const d=DATA[k]; if(d&&Array.isArray(d.rows)&&rowSchemaOk(d))d.rows.forEach((r,i)=>{ if(Array.isArray(r))recalcPF(i,k); }); });
+}
+
 // Тело push. true ⇔ коммит (stateRev=snap.rev); false — отклонено/ошибка/отложено.
 async function pushStateRun(){
   if(!currentUser) return false;
-  // 🤖 aiPort: торговым состоянием (позиции/кэш/журнал) владеет worker. Перед
-  // записью берём его СЕРВЕРНУЮ копию — наша могла отстать, если realtime-канал
-  // спал (сон ноутбука, фоновая вкладка), и тогда push стирал сделки AI.
-  // За клиентом остаются только настройки.
-  let aiPortReadOk=false;
-  try{
-    const { data:rw } = await sb.from('ledger_state').select('aiPort:data->aiPort').eq('user_id',currentUser.id).maybeSingle();
-    aiPortReadOk=true;   // чтение прошло (даже если на сервере пусто)
-    const srv = rw && rw.aiPort;
-    if(srv && typeof srv==='object' && srv.startedAt){
-      const mine = AI_PORT || {};
-      AI_PORT = { ...srv };
-      ['strategy','intervalMin','commissionPct','minTradeSEK','enabled','startCapital','startedAt','myStartEquity','myStartLive']
-        .forEach(k=>{ if(mine[k]!==undefined) AI_PORT[k]=mine[k]; });
+  const uid=currentUser.id, mine=()=>!!currentUser&&currentUser.id===uid;   // вышли/сменили аккаунт во время запроса — выход
+  // E4: сети нет — запрос не уйдёт: не отправляем и не заводим запись «исход неизвестен» (иначе после выхода в сеть счётчики
+  // не сложатся, а офлайн — повтор каждые 800 мс). Отправит догон: syncResumeCheck на online/возврат на вкладку.
+  if(syncOffline()){ console.warn('Sync push skipped: offline'); return false; }
+  for(let merges=0;;){
+    // 🤖 aiPort: торговым состоянием (позиции/кэш/журнал) владеет worker. Перед
+    // записью берём его СЕРВЕРНУЮ копию — наша могла отстать, если realtime-канал
+    // спал (сон ноутбука, фоновая вкладка), и тогда push стирал сделки AI.
+    // За клиентом остаются только настройки.
+    let aiPortReadOk=false;
+    try{
+      const { data:rw, error:e0 } = await sb.from('ledger_state').select('aiPort:data->aiPort').eq('user_id',uid).maybeSingle();
+      if(e0) throw e0;   // supabase-js не бросает, а возвращает ошибку — без этой строки «fail-closed» не срабатывал
+      aiPortReadOk=true;   // чтение прошло (даже если на сервере пусто)
+      const srv = rw && rw.aiPort;
+      if(srv && typeof srv==='object' && srv.startedAt){
+        const own = AI_PORT || {};
+        AI_PORT = { ...srv };
+        AIPORT_CLIENT_KEYS.forEach(k=>{ if(own[k]!==undefined) AI_PORT[k]=own[k]; });
+      }
+    }catch(e){ aiPortReadOk=false; }
+    if(!mine()) return false;
+    // 🛡 fail-closed: не смогли перечитать серверный aiPort — НЕ перезаписываем торговое состояние
+    // воркера устаревшей копией (это и затирало сделки). Отложим пуш и попробуем снова (не чаще SYNC_RETRY_MS).
+    if(!aiPortReadOk && AI_PORT && AI_PORT.startedAt){ clearTimeout(pushTimer); pushTimer=setTimeout(pushFire, SYNC_RETRY_MS); return false; }
+    // 🛡 Защита истории сделок: перед записью перечитываем облако. Если наша
+    // PF_TRADES пуста, а в облаке журнал есть — НЕ затираем (адаптируем облачную),
+    // чтобы устаревшая вкладка/гонка не стёрла сделки. Та же логика, что для aiPort.
+    try{
+      if(!Array.isArray(PF_TRADES)||!PF_TRADES.length){
+        const { data:rt } = await sb.from('ledger_state').select('pfTrades:data->pfTrades').eq('user_id',uid).maybeSingle();
+        if(mine() && rt && Array.isArray(rt.pfTrades) && rt.pfTrades.length){ PF_TRADES=rt.pfTrades; }
+      }
+    }catch(e){}
+    if(!mine()) return false;
+    const snap=snapshotState();
+    snap.rev=(stateRev||0)+1;    // растущая ревизия — БД-триггер отклонит устаревшую запись
+    snap.wid=syncWid();          // E4: id этой записи — отказ триггера при равном rev другого писателя иначе неотличим от коммита
+    const sent=JSON.stringify(snap);   // E4: база после коммита — ровно отправленное (правки во время запроса меняют глобалы)
+    SYNC_UNACKED.push({rev:snap.rev,wid:snap.wid,json:sent});   // исход неизвестен, пока сервер не ответил строкой
+    SYNC_UNACKED.slice(0,-SYNC_UNACKED_JSON).forEach(u=>{ u.json=null; });   // память: JSON — только у последних
+    // updated_at — только метка времени для админ-экранов/воркера; эхо своего push отсекается по rev.
+    // Тело — копия отправленного (snap ссылается на живые глобалы, supabase-js сериализует его позже, при отправке).
+    const { data:ret, error, status } = await sb.from('ledger_state')
+      .upsert({ user_id:uid, data:JSON.parse(sent), updated_at:new Date().toISOString() }).select('rev:data->rev,wid:data->>wid');
+    if(error){
+      // 4xx — запрос дошёл, транзакция не прошла: записи в облаке точно нет. Сеть (status 0) и 5xx — исход неизвестен, запись остаётся.
+      if(status>=400&&status<500) SYNC_UNACKED=SYNC_UNACKED.filter(u=>u.wid!==snap.wid);
+      console.warn('Sync push failed', error); return false;
     }
-  }catch(e){ aiPortReadOk=false; }
-  // 🛡 fail-closed: не смогли перечитать серверный aiPort — НЕ перезаписываем торговое состояние
-  // воркера устаревшей копией (это и затирало сделки). Отложим пуш и попробуем снова.
-  if(!aiPortReadOk && AI_PORT && AI_PORT.startedAt){ schedulePush(); return false; }
-  // 🛡 Защита истории сделок: перед записью перечитываем облако. Если наша
-  // PF_TRADES пуста, а в облаке журнал есть — НЕ затираем (адаптируем облачную),
-  // чтобы устаревшая вкладка/гонка не стёрла сделки. Та же логика, что для aiPort.
-  try{
-    if(!Array.isArray(PF_TRADES)||!PF_TRADES.length){
-      const { data:rt } = await sb.from('ledger_state').select('pfTrades:data->pfTrades').eq('user_id',currentUser.id).maybeSingle();
-      if(rt && Array.isArray(rt.pfTrades) && rt.pfTrades.length){ PF_TRADES=rt.pfTrades; }
+    // Сервер вернул строку — исход этого push известен (наш rev и wid = коммит, иначе триггер вернул OLD). Пустой ответ — неизвестен.
+    if(Array.isArray(ret)?ret.length>0:!!ret) SYNC_UNACKED=SYNC_UNACKED.filter(u=>u.wid!==snap.wid);
+    if(!mine()) return false;
+    if(syncCommitted(ret, snap.rev, snap.wid)){
+      SYNC_UNACKED=SYNC_UNACKED.filter(u=>u.rev>snap.rev);   // rev snap.rev — наш: другие записи с rev ≤ него не прошли
+      if(snap.rev>stateRev){ stateRev=snap.rev; SYNC_BASE=sent; }   // приняли — rev и база слияния (не откатывать, если облако уже новее)
+      pfBackupSave();
+      return true;
     }
-  }catch(e){}
-  const snap=snapshotState();
-  snap.rev=(stateRev||0)+1;    // растущая ревизия — БД-триггер отклонит устаревшую запись
-  // updated_at — только метка времени для админ-экранов/воркера; эхо своего push отсекается по rev.
-  const { data:ret, error } = await sb.from('ledger_state')
-    .upsert({ user_id:currentUser.id, data:snap, updated_at:new Date().toISOString() }).select('data->rev');
-  if(error){ console.warn('Sync push failed', error); return false; }
-  // Триггер молчит: при rev-конфликте (в облаке уже rev ≥ нашего — другая вкладка/воркер
-  // успели записать) он делает `return OLD` без ошибки, строка остаётся со старым rev.
-  // Проверяем по вернувшейся строке. Отклонили → перечитываем облако (pullState →
-  // applyRemoteState берёт stateRev из облака, следующий push пройдёт). Теряются
-  // локальные правки после последнего успешного push — об этом и говорит тост.
-  if(!syncCommitted(ret, snap.rev)){
+    // Триггер молчит: при rev-конфликте (в облаке уже rev ≥ нашего — другая вкладка/воркер
+    // успели записать) он делает `return OLD` без ошибки, строка остаётся со старым rev.
+    // E4: читаем облако и сливаем с несохранёнными правками (syncMerge3) → push слитого, до SYNC_MERGE_TRIES раз;
+    // дальше — прежнее «облако побеждает» (правки после последнего успешного push теряются, о чём и говорит тост).
     console.warn('Sync push rejected (rev conflict)', ret);
-    syncConflictToast();
-    await pullState();
-    return false;
+    let row=null;
+    try{ const { data, error:e2 } = await sb.from('ledger_state').select('data').eq('user_id',uid).maybeSingle(); if(e2) throw e2; row=data; }
+    catch(e){ console.warn('Sync: облако не прочитано после отказа', e); return false; }
+    if(!mine()) return false;
+    const cloud=row&&row.data&&typeof row.data==='object'&&Object.keys(row.data).length?row.data:null;
+    if(!cloud) return false;
+    if(merges>=SYNC_MERGE_TRIES){ syncConflictToast(); syncAckResolve(cloud); applyRemoteState(cloud); return false; }
+    merges++;
+    if(syncMergeApply(cloud,true)!=='merge') return false;   // своих правок не осталось (или нет базы) — облако применено
   }
-  stateRev=snap.rev; pfBackupSave();   // приняли — запоминаем rev + локальный бэкап
-  return true;
 }
-// Детект коммита по вернувшейся строке (.select('data->rev')): БД-триггер при
-// rev-конфликте делает `return OLD` без ошибки — строка остаётся со СТАРЫМ rev.
-// Коммит прошёл ⇔ rev вернувшейся строки равен тому, что мы записали.
-function syncCommitted(rows, expectedRev){
+// Детект коммита по вернувшейся строке (.select('rev:data->rev,wid:data->>wid')): БД-триггер при
+// rev-конфликте делает `return OLD` без ошибки — строка остаётся прежней. Прежний rev может РАВНЯТЬСЯ нашему:
+// другой писатель (устройство, воркер) стартовал с того же rev и записал тот же rev+1 раньше. Поэтому коммит ⇔
+// rev вернувшейся строки наш И её wid — id нашей записи (E4; без wid — прежняя проверка только по rev).
+function syncCommitted(rows, expectedRev, wid){
   const row = Array.isArray(rows) ? rows[0] : rows;
   const rev = row && (row.rev !== undefined ? row.rev : (row.data && row.data.rev));
-  return Number(rev) === expectedRev;
+  if(Number(rev) !== expectedRev) return false;
+  if(wid === undefined) return true;
+  const w = row && (row.wid !== undefined ? row.wid : (row.data && row.data.wid));
+  return w === wid;
 }
+// id записи push: уникален на устройство и момент; хранится в строке (data.wid), applyRemoteState его не читает.
+const syncWid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,10);
 // 🛡 Локальный бэкап (localStorage) журнала сделок и позиций семейных портфелей —
 // переживает обнуление облака устаревшим клиентом. Сохраняем только непустое.
 function pfBackupKey(){ return currentUser?('dash_bak_'+currentUser.id):null; }
@@ -251,7 +621,9 @@ async function pullState(){
   const { data, error } = await sb.from('ledger_state').select('data').eq('user_id',currentUser.id).maybeSingle();
   if(error){ console.warn('Sync pull failed', error); return; }
   syncReady=true;   // облако прочитано — с этого момента локальные правки можно безопасно пушить
-  if(data && data.data && Object.keys(data.data).length) applyRemoteState(data.data);
+  // Первое чтение (базы нет) — как раньше. Повторное (кнопки AI-портфеля) — как входящий снапшот (E4): не новее по rev —
+  // пропустить, синк занят — отложить до конца push (иначе коммит в полёте откатил бы rev/базу), иначе — слиянием.
+  if(data && data.data && Object.keys(data.data).length){ if(SYNC_BASE) syncOnRemote(data.data); else syncApplyRemote(data.data,false); }
   else pushState();   // first login: seed the cloud with the bundled data
   // Общие данные оценки/инсайдеров/AI-реко/таргетов (админ собрал → все видят). С E1 их нет в личном снапшоте —
   // первый экран (init в applyRemoteState) рисуется без них, поэтому после загрузки — перерисовка.
@@ -710,7 +1082,10 @@ function aiRepPartialNote(e,kind,key){
     :`<div class="pf3-empty">⏳ ${RT('Загружаю отчёт…','Loading the report…')}</div>`;
 }
 // ── /AI-отчёты (E5) ──
-function applyRemoteState(s){
+// base — снапшот облака для базы слияния (E4; по умолчанию сам s): для слитого — облако, с которым сливали. merged — применяется
+// слитое: производные колонки строк пересчитываются.
+function applyRemoteState(s,base,merged){
+  syncBaseSet(base||s);   // E4: до миграций и правок — глобалы ниже становятся объектами s и дальше мутируют
   pushAgain=false;   // D5: состояние заменено целиком — правок «в полёте» больше нет (иначе ушёл бы пустой push rev+1)
   applyingRemote=true;
   if(s.data) DATA=s.data;
@@ -744,6 +1119,7 @@ function applyRemoteState(s){
   if(typeof s.rev==='number') stateRev=s.rev;   // приняли облачную ревизию → наш след. push = rev+1
   if(s.theme) applyTheme(s.theme);
   applyingRemote=false;
+  if(merged) syncRecalcRows();   // E4: кол-во/средняя могли прийти с одной стороны, цена — с другой
   // 🛡 Если облако пришло с пустым журналом сделок, а локальный бэкап его помнит —
   // значит состояние затёрли (устаревшая вкладка/гонка). Восстанавливаем и пушим.
   if(pfBackupRestore()){

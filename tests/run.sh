@@ -13,14 +13,16 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 1507, worker 264,
-# worker-async 50) — защита от случайно урезанного/не подхваченного файла кейсов.
+# Минимум кейсов на сьют (второе число маркера N/N; сейчас app 1623, worker 264,
+# worker-async 50, sync-sim 223) — защита от случайно урезанного/не подхваченного файла кейсов.
 # Поднимать вместе с кейсами. S7b-3: 1290 → 1250 — удалены кейсы удалённых функций (−86), добавлены новые (+46).
 # E0: 1250 → 1320 (+40 кейсов sync signal). E5a: 1350 → 1430 (app 1465: группа ai reports (E5)).
 # E2: app 1430 → 1490 (1507: row contract + сканеры), worker 195 → 250 (264: паритет + сканер).
-MIN_CASES_app=1490
+# E4: app 1490 → 1560 (+ группы sync merge (E4)), новый сьют sync-sim (node, сквозная симуляция синка) — порог 100.
+MIN_CASES_app=1560
 MIN_CASES_worker=250
 MIN_CASES_worker_async=30
+MIN_CASES_sync_sim=100
 TIMEOUT=90   # сек на сьют; по истечении perl alarm убивает раннер → rc 142
 
 fail=0
@@ -60,27 +62,31 @@ for suite in app worker; do
   if grep -q "execution error" <<<"$out"; then bad "крэш JXA (execution error)"; fi
 done
 
-# Асинхронный сьют воркера (блок A: моки fetch, повторы/таймауты/max_tokens, сквозной
-# цикл AI-портфеля) — под node: JSC в osascript не крутит промисы. Без node — провал,
-# а не тихий пропуск (pre-commit на этой машине node имеет).
-suite=worker-async
-if command -v node >/dev/null 2>&1; then
-  out=$(perl -e "alarm $TIMEOUT; exec @ARGV or exit 127" node tests/run-worker-async.js 2>&1)
+# Асинхронные сьюты под node (JSC в osascript не крутит промисы). Без node — провал,
+# а не тихий пропуск (pre-commit на этой машине node имеет):
+#   worker-async — воркер (блок A: моки fetch, повторы/таймауты/max_tokens, сквозной цикл AI-портфеля);
+#   sync-sim     — синк клиента (E4: два клиента с настоящим кодом сайта + фейковый Supabase с триггером rev,
+#                  realtime, воркер, офлайн, потерянный ответ; сценарии трёхстороннего слияния).
+for suite in worker-async sync-sim; do
+  case "$suite" in
+    worker-async) js=tests/run-worker-async.js; mk=WORKER-ASYNC; min=$MIN_CASES_worker_async;;
+    sync-sim)     js=tests/run-sync-sim.js;     mk=SYNC-SIM;     min=$MIN_CASES_sync_sim;;
+  esac
+  if ! command -v node >/dev/null 2>&1; then bad "нет node — сьют не запущен"; continue; fi
+  out=$(perl -e "alarm $TIMEOUT; exec @ARGV or exit 127" node "$js" 2>&1)
   rc=$?
   echo "$out"
   echo
   if [ "$rc" -ne 0 ]; then bad "код возврата $rc"; fi
-  marker=$(grep -E '^WORKER-ASYNC TESTS: [0-9]+/[0-9]+ passed' <<<"$out" | head -1)
+  marker=$(grep -E "^$mk TESTS: [0-9]+/[0-9]+ passed" <<<"$out" | head -1)
   if [ -z "$marker" ]; then
-    bad "нет маркера «WORKER-ASYNC TESTS: N/N passed»"
+    bad "нет маркера «$mk TESTS: N/N passed»"
   else
-    total=$(sed -E 's#^WORKER-ASYNC TESTS: [0-9]+/([0-9]+) passed.*#\1#' <<<"$marker")
-    if [ "$total" -lt "$MIN_CASES_worker_async" ]; then bad "кейсов $total < порога $MIN_CASES_worker_async"; fi
+    total=$(sed -E "s#^$mk TESTS: [0-9]+/([0-9]+) passed.*#\1#" <<<"$marker")
+    if [ "$total" -lt "$min" ]; then bad "кейсов $total < порога $min"; fi
   fi
   if grep -q "FAILED" <<<"$out"; then bad "есть FAILED"; fi
-else
-  bad "нет node — асинхронный сьют воркера не запущен"
-fi
+done
 
 if [ "$fail" -eq 0 ]; then
   echo "✅ ALL TESTS PASSED"

@@ -357,9 +357,11 @@ const AI_REP_RETRY_MS=3000, AI_REP_READY_MS=5000;
 const AI_REP_BATCH_N=50, AI_REP_BATCH_BYTES=512*1024, AI_REP_MAX_BYTES=200*1024, AI_OUTBOX_MAX=2*1024*1024;
 const AI_SUM_LEN=1200;   // = left(…, 1200) в ai_reports_meta
 // Push ledger после переноса — не сразу и вразброс: два открытых устройства переносят одно и то же и иначе конфликтуют
-// по rev (проигравший получил бы тост «повторите правку»). Пришло облако/свой push раньше — не пушим (там уже чисто или
-// перенос повторится на новом снапшоте).
+// по rev (проигравший получил бы тост «повторите правку»). Пришло облако раньше — не пушим (там уже чисто или перенос
+// повторится на новом снапшоте). Свой push за это время отмену НЕ даёт: его снапшот мог быть снят до удаления.
 const AI_STRIP_PUSH_MS=1500, AI_STRIP_JITTER_MS=8000;
+// Перенос упал (сеть, таблицы ещё нет) — повтор сам, с паузами; дальше — при следующем снапшоте облака/догоне/входе.
+const AI_SWEEP_RETRY_MS=[60e3,300e3,900e3];
 // Метки времени сравниваются только в мс: PostgREST отдаёт «…714+00:00», клиент пишет «…714Z» (микросекунды — отбросить).
 function aiRowMs(at){ if(at==null||at==='')return null; const t=Date.parse(String(at).replace(/(\.\d{3})\d+/,'$1')); return isFinite(t)?t:null; }
 function aiRowKey(kind,key,at){ const ms=aiRowMs(at); return ms==null||!key?null:kind+'|'+key+'|'+ms; }
@@ -497,7 +499,7 @@ function aiRepUid(uid){
   if(AI_REP.uid===uid)return;
   AI_REP={uid,rows:[],ready:false,err:false}; _aiRepFail={}; _aiRepLive={}; _aiSweepRej=new Set();
 }
-function aiRepReset(){ AI_REP={uid:null,rows:[],ready:false,err:false}; AI_LEGACY_STOCK=[]; _aiRepFail={}; _aiRepLive={}; _aiSweepRej=new Set(); }
+function aiRepReset(){ AI_REP={uid:null,rows:[],ready:false,err:false}; AI_LEGACY_STOCK=[]; _aiRepFail={}; _aiRepLive={}; _aiSweepRej=new Set(); _aiSweepFails=0; }
 const aiRepMine=uid=>!!currentUser&&currentUser.id===uid&&AI_REP.uid===uid;
 const stockAiLog=()=>aiRepList(AI_REP.rows,'stock').map(aiEntry);
 function aiRepSig(rows){ return (rows||[]).map(r=>aiRowK(r)+'#'+(r.id||'')+(r.data!=null?'+':'')).sort().join('|'); }
@@ -650,11 +652,18 @@ async function aiRepDel(row){
 // подтверждённой вставки её пачки (дубль = уже в таблице, тоже подтверждение). Ошибка — ничего не удаляется, повтор
 // при следующем applyRemoteState/догоне. Один перенос в полёте; новый повод во время переноса — ещё один проход.
 let _aiSweepRun=null,_aiSweepAgain=false,_aiSweepRej=new Set(),_aiApplyGen=0;   // _aiSweepRej — отклонённые сервером (сессия)
+let _aiSweepFails=0,_aiSweepRetryT=null;
 function aiRepSweep(){
   if(!SYNC_ENABLED||!sb||!currentUser||!syncReady)return Promise.resolve('off');
   if(_aiSweepRun){ _aiSweepAgain=true; return _aiSweepRun; }
   _aiSweepRun=aiRepSweepRun().catch(e=>{ console.warn('AI sweep failed',e); return 'err'; })
-    .then(r=>{ _aiSweepRun=null; if(_aiSweepAgain){ _aiSweepAgain=false; aiRepSweep(); } return r; });
+    .then(r=>{
+      _aiSweepRun=null;
+      if(r==='err'){ const ms=AI_SWEEP_RETRY_MS[_aiSweepFails++]; if(ms&&!_aiSweepRetryT)_aiSweepRetryT=setTimeout(()=>{ _aiSweepRetryT=null; aiRepSweep(); },ms); }
+      else if(r==='ok'||r==='none')_aiSweepFails=0;
+      if(_aiSweepAgain){ _aiSweepAgain=false; aiRepSweep(); }
+      return r;
+    });
   return _aiSweepRun;
 }
 async function aiRepSweepRun(){
@@ -679,8 +688,8 @@ async function aiRepSweepRun(){
   return 'ok';
 }
 function aiStripSave(){
-  const g=_aiApplyGen,rev=stateRev;
-  setTimeout(()=>{ if(g===_aiApplyGen&&rev===stateRev)scheduleSave(); },AI_STRIP_PUSH_MS+Math.random()*AI_STRIP_JITTER_MS);
+  const g=_aiApplyGen;
+  setTimeout(()=>{ if(g===_aiApplyGen)scheduleSave(); },AI_STRIP_PUSH_MS+Math.random()*AI_STRIP_JITTER_MS);
 }
 function aiRepOnRealtime(p){
   if(!currentUser||AI_REP.uid!==currentUser.id)return 'off';

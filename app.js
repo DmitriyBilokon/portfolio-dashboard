@@ -1072,13 +1072,13 @@ function aiRepOnRealtime(p){
 // Статус списка для пустых разделов: грузится / не загрузился (↻) / '' (загружен или без облака).
 function aiRepStateNote(){
   if(!SYNC_ENABLED||!currentUser||AI_REP.ready)return '';
-  return AI_REP.err?`<div class="pf3-empty">⚠ ${RT('AI-отчёты не загрузились','AI reports failed to load')} — <button class="pf3-btn pf3-btn-sm" onclick="aiRepRetry()">↻ ${RT('Повторить','Retry')}</button></div>`
+  return AI_REP.err?`<div class="pf3-empty">⚠ ${RT('AI-отчёты не загрузились','AI reports failed to load')} — <button class="pf3-btn pf3-btn-sm" data-click="aiRepRetry">↻ ${RT('Повторить','Retry')}</button></div>`
     :`<div class="pf3-empty">⏳ ${RT('Загружаю AI-отчёты…','Loading AI reports…')}</div>`;
 }
 // Заглушка вместо текста строки без data: грузится или не загрузилась (↻ по виду/ключу).
 function aiRepPartialNote(e,kind,key){
   const r=e&&aiRepList(AI_REP.rows,kind,key).find(x=>aiRowMs(x.at)===aiRowMs(kind==='stock'?e.ts:e.at));
-  return aiRepFailed(r)?`<div class="pf3-empty">⚠ ${RT('Текст отчёта не загрузился','The report text failed to load')} — <button class="pf3-btn pf3-btn-sm" onclick="aiRepRetry('${kind}',${escHtml(JSON.stringify(key))})">↻ ${RT('Повторить','Retry')}</button></div>`
+  return aiRepFailed(r)?`<div class="pf3-empty">⚠ ${RT('Текст отчёта не загрузился','The report text failed to load')} — <button class="pf3-btn pf3-btn-sm" data-click="aiRepRetry"${uiA(String(kind),key)}>↻ ${RT('Повторить','Retry')}</button></div>`
     :`<div class="pf3-empty">⏳ ${RT('Загружаю отчёт…','Loading the report…')}</div>`;
 }
 // ── /AI-отчёты (E5) ──
@@ -1213,7 +1213,7 @@ function onbShow(){const ov=document.getElementById('onbOverlay');if(!ov)return;
 function maybeOnboard(){let seen;try{seen=localStorage.getItem('dash_onboarded')}catch(e){}if(!seen)onbShow();}
 function onbHTML(){
   const row=(ic,ru,en)=>`<div class="onb-row"><span class="onb-ic">${ic}</span><span>${RT(ru,en)}</span></div>`;
-  return `<button class="faq-close" onclick="onbDone()" aria-label="${RT('Закрыть','Close')}">✕</button>
+  return `<button class="faq-close" data-click="onbDone" aria-label="${RT('Закрыть','Close')}">✕</button>
     <h2>👋 ${RT('Добро пожаловать','Welcome')}</h2>
     <div class="faq-sub">${RT('Trade Desk: что купить/продать/сократить сегодня, план лонг/шорт с входом, стопом и целью, риск по позиции.','Trade Desk: what to buy, sell or trim today, a long/short plan with entry, stop and target, per-position risk.')}</div>
     <div class="onb-list">
@@ -1224,7 +1224,7 @@ function onbHTML(){
       ${row('📖','«📖 Словарь» (⋯ или клавиша «?») объясняет каждый термин и число — с формулой и примером.','“📖 Glossary” (⋯ or the “?” key) explains every term and number — with the formula and a worked example.')}
     </div>
     <div class="onb-note">${RT('Справочная аналитика, не индивидуальная инвестиционная рекомендация.','Reference analytics, not individual investment advice.')}</div>
-    <button class="primary onb-ok" onclick="onbDone()">${RT('Понятно, начать','Got it, start')}</button>`;
+    <button class="primary onb-ok" data-click="onbDone">${RT('Понятно, начать','Got it, start')}</button>`;
 }
 async function boot(){
   initTheme();
@@ -1249,6 +1249,45 @@ let PF_TRADES=[];
 // Экранирование внешних строк (Yahoo, e-mail чужих аккаунтов) для innerHTML и атрибутов; ссылки — только http(s) (аудит security-rbac#6).
 const escHtml=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const safeUrl=u=>/^https?:\/\//i.test(String(u||''))?String(u):'';
+// ── Обработчики разметки без inline on*= (блок B: CSP без 'unsafe-inline' в script-src) ──
+// data-click|change|input|submit|error="имя" + data-args (uiA): "$val"/"$chk"/"$el"/"$ev" → value/checked/элемент/событие.
+// data-self — клик только по самому элементу (фон оверлея), data-ui-stop — клик не всплывает выше (data-stop занят desk: цена стопа).
+// Имя — только из UI_ACTS: внедрённая разметка не вызовет произвольную глобальную функцию.
+const UI_EVENTS=['click','change','input','submit','error'];
+const UI_ACTS=new Set(['skipToMain','toggleFaq','toggleSettings','togglePrompts','onbDone','handleLogin','logoErr','deskOpenTk','deskGlossFromFaq',
+  'aiRepRetry','renderSettings','setUserRole','setOverride','setGrant','secInfo','aiRecoRun','aiRecoToggle','stkToggle','stkDelete','stockAiToggle','stockAiRun',
+  'aiPlaybookReset','aiPlaybookAiRun','aiPlaybookDel','aiPlaybookAdd','newsSetText','newsAnalyzeFree','newsAnalyzePaid','newsClear','pf3AiRun','aiToggleInclChat',
+  'aiChatClear','aiChatSend','cashDragSet','pf3GoList','fxScnSet',
+  'pf3CalNav','pf3FcastAiRun','pfPerfSetColor','pfPerfToggle','pfPerfRange','pfPerfRefresh','pf3Add','pf3SetNum',
+  'aipSaveSettings','aipRunNow','aipResetRemote','valSetPeMode','cycleMonAiRun','cycManualSet','cycEditToggle','cycReset',
+  'pfTradeDel','pfTradeAddRecord','pfImportTradesCSV','pfTaxSetMethod','pfTaxExportCSV','planSave','planCancelEdit','planEdit','planOpen','planDone','planDel',
+  'planAskNotify','planImportFromAi','planAdd','deskExecSubmit','deskWatchSubmit']);
+const uiA=(...a)=>` data-args="${escHtml(JSON.stringify(a))}"`;
+function uiArgs(el,ev){
+  let a=[];try{a=JSON.parse(el.getAttribute('data-args')||'[]');}catch(e){}
+  return (Array.isArray(a)?a:[]).map(x=>x==='$val'?el.value:x==='$chk'?el.checked:x==='$el'?el:x==='$ev'?ev:x);
+}
+function uiRun(el,ev){
+  const type=ev.type,name=el.getAttribute('data-'+type);
+  if(type==='click'&&el.hasAttribute('data-self')&&ev.target!==el)return;
+  const fn=UI_ACTS.has(name)?globalThis[name]:null;
+  if(typeof fn!=='function'){console.error('UI: неизвестное действие',name);return;}
+  if(type==='submit'||(type==='click'&&el.tagName==='A'))ev.preventDefault();
+  fn.apply(null,uiArgs(el,ev));
+}
+// Захват на document лишь «заряжает» разовый слушатель на найденных элементах: функция выполняется, когда событие дойдёт
+// до элемента — там же, где раньше inline-атрибут (после захвата #desk и подсказок desk-gloss, до всплытия к #desk).
+// Событие, остановленное раньше, оставляет слушатель — следующее событие его снимет (e!==ev).
+function uiArm(ev){
+  const t=ev.target,type=ev.type;if(!t||!t.closest)return;
+  const arm=(el,fn)=>{const h=e=>{el.removeEventListener(type,h);if(e===ev)fn(e);};el.addEventListener(type,h);};
+  for(let el=t.closest('[data-'+type+']');el;el=el.parentElement&&el.parentElement.closest('[data-'+type+']'))arm(el,e=>uiRun(el,e));
+  if(type==='click'){const st=t.closest('[data-ui-stop]');if(st)arm(st,e=>e.stopPropagation());}
+}
+if(typeof document!=='undefined'&&document.addEventListener)UI_EVENTS.forEach(t=>document.addEventListener(t,uiArm,true));
+function skipToMain(){const m=document.getElementById('dkMain');if(m)m.focus();}
+// Логотип бумаги: FMP → запасной Parqet (data-alt) → убрать картинку.
+function logoErr(img){if(img.dataset.alt&&!img.dataset.f){img.dataset.f='1';img.src=img.dataset.alt;}else img.remove();}
 let PLAN_RULES=[];   // 🎯 правила-триггеры плана действий (уровень/дедлайн → уведомление)
 // 📍 Мета позиции (слой данных редизайна, S3): POS_META[tab][TK] = {side:'long'|'short', stop0, stop,
 // target, riskKr, opened, planId}. qty и средняя цена остаются в строке r[RC.qty]/r[RC.buy] (налог pfTaxLots их
@@ -1315,7 +1354,6 @@ function newsAnalyzeFree(){
 // Платная кнопка: прогон AI Proto со вставленной сводкой как контекстом (userNews).
 function newsAnalyzePaid(){ scheduleSave(); if(typeof pf3AiRun==='function')pf3AiRun(); }
 function newsImpactHTML(){
-  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const ents=Object.keys(NEWS_IMPACT||{}).map(tk=>({tk,...NEWS_IMPACT[tk]}));
   if(!ents.length)return '';
   const bull=ents.filter(e=>e.impact==='bull').sort((a,b)=>b.score-a.score);
@@ -1323,11 +1361,11 @@ function newsImpactHTML(){
   const neu=ents.filter(e=>e.impact==='neutral');
   const row=e=>{
     const ico=e.impact==='bull'?'📈':e.impact==='bear'?'📉':'⚪', cls=e.impact==='bull'?'pf3-up':e.impact==='bear'?'pf3-down':'val-mid';
-    const snip=(e.hits&&e.hits[0])?esc(e.hits[0].sent):'';
+    const snip=(e.hits&&e.hits[0])?escHtml(e.hits[0].sent):'';
     const reco=e.impact==='bull'?RT('позитив — держать/докупать у уровня','positive — hold/add at a level'):e.impact==='bear'?RT('негатив — проверить риск/сокращение','negative — check risk/trim'):RT('упоминается, тон нейтральный','mentioned, neutral tone');
-    return`<div class="news-row" onclick="deskOpenTk('${e.tk}')">
+    return`<div class="news-row" data-click="deskOpenTk"${uiA(String(e.tk))}>
       <span class="news-imp ${cls}">${ico} ${e.score>0?'+':''}${e.score}</span>
-      <div class="news-main"><b>${esc(e.name||e.tk)}</b> <span class="news-tk">${e.tk}</span> <span class="news-reco">${reco}</span>${snip?`<div class="news-snip">«${snip}»</div>`:''}</div>
+      <div class="news-main"><b>${escHtml(e.name||e.tk)}</b> <span class="news-tk">${escHtml(e.tk)}</span> <span class="news-reco">${reco}</span>${snip?`<div class="news-snip">«${snip}»</div>`:''}</div>
     </div>`;
   };
   const grp=(h,arr)=>arr.length?`<div class="news-grp"><div class="news-grp-h">${h} (${arr.length})</div>${arr.map(row).join('')}</div>`:'';
@@ -1981,7 +2019,7 @@ function applyTheme(t){
 function faqHTML(){
   const row=(k,v,ven)=>`<div class="faq-row"><span class="faq-k">${k}</span><span class="faq-v">${ven!=null?RT(v,ven):v}</span></div>`;
   const sec=(title,body,open)=>`<details class="faq-sec"${open?' open':''}><summary>${title}</summary><div class="faq-body">${body}</div></details>`;
-  return`<button class="faq-close" onclick="toggleFaq()">✕</button>
+  return`<button class="faq-close" data-click="toggleFaq">✕</button>
   <h2>${T('❓ Справка')}</h2>
   <div class="faq-sub">${RT('Нажмите на раздел, чтобы развернуть его. За значением каждого термина и числа — «📖 Словарь».','Tap a section to expand it. For what a term or number means — the “📖 Glossary”.')}</div>
 
@@ -1996,7 +2034,7 @@ function faqHTML(){
 
   ${sec(RT('📖 Словарь Trade Desk','📖 Trade Desk glossary'),
     row('<b>Что это</b>','Что значит каждый термин и число Trade Desk (R, R/R, ATR, фазы, флаги, «Что если?», зона, риск 1–5, статьи «Компании»…): формула, пример и как использовать, плюс сквозной пример одной сделки.','What every Trade Desk term and number means (R, R/R, ATR, phases, flags, “What if?”, zone, risk 1–5, the “Company” metrics…): the formula, an example and how to use it, plus one worked trade end-to-end.')
-   +row('<b>Как открыть</b>','⋯ → «📖 Словарь», клавиша «?», или ⓘ рядом с заголовком раздела/KPI. <button class="btn" onclick="deskGlossFromFaq()">📖 '+RT('Открыть словарь','Open glossary')+'</button>','⋯ → “📖 Glossary”, the “?” key, or the ⓘ next to a section/KPI heading. <button class="btn" onclick="deskGlossFromFaq()">📖 '+RT('Открыть словарь','Open glossary')+'</button>'))}
+   +row('<b>Как открыть</b>','⋯ → «📖 Словарь», клавиша «?», или ⓘ рядом с заголовком раздела/KPI. <button class="btn" data-click="deskGlossFromFaq">📖 '+RT('Открыть словарь','Open glossary')+'</button>','⋯ → “📖 Glossary”, the “?” key, or the ⓘ next to a section/KPI heading. <button class="btn" data-click="deskGlossFromFaq">📖 '+RT('Открыть словарь','Open glossary')+'</button>'))}
 
   ${sec(RT('📨 Telegram: стопы и лимиты','📨 Telegram: stops & limits'),
     infoP('Открытая страница уведомляет о сработавшем плане сама. При закрытой — сервер по расписанию (в часы бирж, каждые 10–20 минут) проверяет стоп и цель позиций и лимиты плана и пишет в Telegram: пробит стоп, достигнута цель, сработал лимит, «сетап сломан» (цена ушла за стоп до входа). Одно условие приходит один раз; повторно — только если цена отошла от уровня на 0.3·ATR и вернулась. Выключить: ⋯ → «📨 Telegram-алерты».','With the page open, a triggered plan notifies you right there. Closed, the server checks position stops/targets and plan limits on a schedule (during exchange hours, every 10–20 min) and posts to Telegram: stop hit, target reached, limit triggered, “setup broken” (price passed the pre-entry stop). Each condition fires once; it repeats only after price moves 0.3·ATR away from the level and back. Turn off: ⋯ → “📨 Telegram alerts”.'))}
@@ -2022,21 +2060,21 @@ function togglePrompts(){
 }
 async function renderPrompts(){
   const card=document.getElementById('prmCard');if(!card)return;
-  card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2><div class="faq-sub">${RT('Загрузка…','Loading…')}</div>`;
+  card.innerHTML=`<button class="faq-close" data-click="togglePrompts">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2><div class="faq-sub">${RT('Загрузка…','Loading…')}</div>`;
   try{
     const r=await fetch(PRICE_PROXY+'?action=prompts',{headers:{'Authorization':'Bearer '+await sbToken()}});
     const list=await r.json();
     if(!Array.isArray(list))throw new Error(list&&list.error||'нет данных');
-    card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button>
+    card.innerHTML=`<button class="faq-close" data-click="togglePrompts">✕</button>
       <h2>📜 ${RT('AI-промпты','AI prompts')}</h2>
       <div class="faq-sub">${RT('Системные промпты worker\'а — что именно получает и делает Claude в каждом режиме','The worker\'s system prompts — exactly what Claude receives and does in each mode')}</div>
-      ${list.map(p=>`<details class="faq-sec"><summary>${p.name}</summary><div class="faq-body">
-        <div class="prm-about">${p.about||''}</div>
-        <pre class="prm-pre">${String(p.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>
+      ${list.map(p=>`<details class="faq-sec"><summary>${escHtml(p.name)}</summary><div class="faq-body">
+        <div class="prm-about">${escHtml(p.about||'')}</div>
+        <pre class="prm-pre">${escHtml(p.text||'')}</pre>
       </div></details>`).join('')}`;
   }catch(e){
-    card.innerHTML=`<button class="faq-close" onclick="togglePrompts()">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2>
-      <div class="set-err">${RT('Не удалось загрузить промпты','Failed to load prompts')}: ${e.message||e}<br>${RT('Нужен редеплой worker (эндпоинт ?action=prompts)','Worker redeploy needed (?action=prompts endpoint)')}</div>`;
+    card.innerHTML=`<button class="faq-close" data-click="togglePrompts">✕</button><h2>📜 ${RT('AI-промпты','AI prompts')}</h2>
+      <div class="set-err">${RT('Не удалось загрузить промпты','Failed to load prompts')}: ${escHtml(e.message||e)}<br>${RT('Нужен редеплой worker (эндпоинт ?action=prompts)','Worker redeploy needed (?action=prompts endpoint)')}</div>`;
   }
 }
 
@@ -2046,7 +2084,7 @@ function toggleSettings(){
   if(!o)return;
   if(!o.classList.contains('hidden')){o.classList.add('hidden');return;}
   o.classList.remove('hidden');
-  document.getElementById('setCard').innerHTML='<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2><div class="faq-sub">Загрузка…</div>';
+  document.getElementById('setCard').innerHTML='<button class="faq-close" data-click="toggleSettings">✕</button><h2>⚙️ Настройки доступа</h2><div class="faq-sub">Загрузка…</div>';
   renderSettings();
 }
 async function renderSettings(){
@@ -2057,8 +2095,8 @@ async function renderSettings(){
     if(error)throw error;
     users=data||[];
   }catch(e){
-    card.innerHTML=`<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2>
-      <div class="set-err">Не удалось загрузить пользователей: ${e.message||e}<br><br>
+    card.innerHTML=`<button class="faq-close" data-click="toggleSettings">✕</button><h2>⚙️ Настройки доступа</h2>
+      <div class="set-err">Не удалось загрузить пользователей: ${escHtml(e.message||e)}<br><br>
       Скорее всего, таблица доступа ещё не создана — выполните содержимое файла
       <code>supabase-access.sql</code> в Supabase → SQL Editor (один раз).</div>`;
     return;
@@ -2073,14 +2111,14 @@ async function renderSettings(){
     const rid=adm?'admin':(u.role_id||'default');
     const ov=(u.overrides&&typeof u.overrides==='object')?u.overrides:{};
     // выбор роли (раздел 2)
-    const roleSel=`<select class="set-rolesel" onchange="setUserRole('${u.user_id}',this.value)">${['default','admin','owner','editor','analyst','viewer','custom'].map(r=>`<option value="${r}"${rid===r?' selected':''}>${RBAC_ROLE_LABELS[r]}</option>`).join('')}</select>`;
+    const roleSel=`<select class="set-rolesel" data-change="setUserRole"${uiA(String(u.user_id),'$val')}>${['default','admin','owner','editor','analyst','viewer','custom'].map(r=>`<option value="${r}"${rid===r?' selected':''}>${RBAC_ROLE_LABELS[r]}</option>`).join('')}</select>`;
     // матрица переопределений (раздел 5.2) — для не-админов
-    const ovEditor=adm?'<span class="set-all">полный доступ (Admin)</span>':RBAC_PERMS.map(g=>`<div class="set-pg"><div class="set-pg-h">${g.g}</div>${g.items.map(([p,l])=>{const cur=ov[p]||'inherit';const def=rbacResolve(rid,{},p);return`<label class="set-perm"><span>${l}</span><select onchange="setOverride('${u.user_id}','${p}',this.value)"><option value="inherit"${cur==='inherit'?' selected':''}>${RT('по роли','by role')} (${def?'✓':'✕'})</option><option value="allow"${cur==='allow'?' selected':''}>${RT('Разрешить','Allow')}</option><option value="deny"${cur==='deny'?' selected':''}>${RT('Запретить','Deny')}</option></select></label>`}).join('')}</div>`).join('');
+    const ovEditor=adm?'<span class="set-all">полный доступ (Admin)</span>':RBAC_PERMS.map(g=>`<div class="set-pg"><div class="set-pg-h">${g.g}</div>${g.items.map(([p,l])=>{const cur=ov[p]||'inherit';const def=rbacResolve(rid,{},p);return`<label class="set-perm"><span>${l}</span><select data-change="setOverride"${uiA(String(u.user_id),String(p),'$val')}><option value="inherit"${cur==='inherit'?' selected':''}>${RT('по роли','by role')} (${def?'✓':'✕'})</option><option value="allow"${cur==='allow'?' selected':''}>${RT('Разрешить','Allow')}</option><option value="deny"${cur==='deny'?' selected':''}>${RT('Запретить','Deny')}</option></select></label>`}).join('')}</div>`).join('');
     // предпросмотр видимых под-вкладок
     const prevTabs=RBAC_PERMS[0].items.filter(([p])=>adm||rbacResolve(rid,ov,p)).map(([,l])=>l).join(' · ')||RT('нет','none');
     // портфельный доступ (раздел 4) — существующие галочки вкладок
     const grants=adm?'<span class="set-all">все портфели/вкладки</span>'
-      :tabs.map(t=>`<label class="set-tab"><input type="checkbox"${(u.tabs||[]).includes(t)?' checked':''} onchange="setGrant('${u.user_id}','${t.replace(/'/g,"\\'")}',this.checked)"><span>${META[t]||''} ${t}</span></label>`).join('');
+      :tabs.map(t=>`<label class="set-tab"><input type="checkbox"${(u.tabs||[]).includes(t)?' checked':''} data-change="setGrant"${uiA(String(u.user_id),t,'$chk')}><span>${escHtml(META[t]||'')} ${escHtml(t)}</span></label>`).join('');
     return`<div class="set-user">
       <div class="set-user-hd"><b>${escHtml(u.email||u.user_id)}</b>${roleSel}${seen}</div>
       <div class="set-preview">👁 ${RT('Видит вкладки','Sees tabs')}: ${prevTabs}</div>
@@ -2088,8 +2126,8 @@ async function renderSettings(){
       <details class="set-tabs-d"><summary>💼 ${RT('Доступ к портфелям/вкладкам','Portfolio/tab access')}</summary><div class="set-tabs">${grants}</div></details>
     </div>`;
   }).join('');
-  card.innerHTML=`<button class="faq-close" onclick="toggleSettings()">✕</button><h2>⚙️ Настройки доступа</h2>
-    <div class="faq-sub">Доступ к вкладкам и активность · 🟢 = на сайте сейчас · <a href="#" onclick="renderSettings();return false">обновить</a></div>
+  card.innerHTML=`<button class="faq-close" data-click="toggleSettings">✕</button><h2>⚙️ Настройки доступа</h2>
+    <div class="faq-sub">Доступ к вкладкам и активность · 🟢 = на сайте сейчас · <a href="#" data-click="renderSettings">обновить</a></div>
     ${rows||'<div class="set-err">Других пользователей пока нет — они появятся здесь после первого входа.</div>'}
     <div class="set-note">Изменения доступа применяются у пользователя после обновления страницы. Каждый видит свою копию данных вкладки.</div>`;
 }
@@ -2140,20 +2178,19 @@ function toggleFaq(){
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape')['faqOverlay','setOverlay','prmOverlay'].forEach(id=>document.getElementById(id)?.classList.add('hidden'))});
 
-// ♿ A11y интерактив. Многие кликабельные элементы — это <div>/<span>/<th> с onclick,
+// ♿ A11y интерактив. Многие кликабельные элементы — это <div>/<span>/<th> с data-click,
 // которые без role/tabindex не доступны с клавиатуры. Здесь, без правки сотен шаблонов:
 //  1) MutationObserver проставляет role="button"+tabindex="0" свежесгенерированным
-//     onclick-элементам (кроме нативных, contenteditable, подложек оверлеев и
+//     data-click-элементам (кроме нативных, contenteditable, подложек оверлеев и
 //     контейнеров с собственными кнопками внутри);
 //  2) глобальный keydown активирует их по Enter/Space;
 //  3) модалки получают focus-trap, фокус на открытии и возврат фокуса на закрытии.
 const A11Y_NATIVE='button,a,input,select,textarea';
 function a11yEnhance(root){
   if(!root||!root.querySelectorAll)return;
-  root.querySelectorAll('[onclick]:not(button):not(a):not(input):not(select):not(textarea)').forEach(el=>{
+  root.querySelectorAll('[data-click]:not(button):not(a):not(input):not(select):not(textarea)').forEach(el=>{
     if(el.hasAttribute('tabindex')||el.isContentEditable)return;
-    const oc=el.getAttribute('onclick')||'';
-    if(/===this/.test(oc))return;                       // подложка оверлея (закрытие по клику на себя) — не кнопка
+    if(el.hasAttribute('data-self'))return;             // подложка оверлея (закрытие по клику на себя) — не кнопка
     if(el.querySelector(A11Y_NATIVE))return;            // контейнер со своими контролами — не делаем его кнопкой целиком
     el.setAttribute('tabindex','0');
     if(!el.hasAttribute('role'))el.setAttribute('role','button');
@@ -2169,7 +2206,7 @@ function a11yInit(){
     if(e.key!=='Enter'&&e.key!==' ')return;
     const el=e.target;if(!el||el.isContentEditable)return;
     if((el.tagName==='BUTTON'||el.tagName==='A'||el.tagName==='INPUT'||el.tagName==='SELECT'||el.tagName==='TEXTAREA'))return;
-    if(el.getAttribute&&el.getAttribute('role')==='button'&&el.hasAttribute('onclick')){e.preventDefault();el.click();}
+    if(el.getAttribute&&el.getAttribute('role')==='button'&&el.hasAttribute('data-click')){e.preventDefault();el.click();}
   });
   // Focus-trap по Tab внутри открытой модалки.
   const openCard=()=>{const ov=document.querySelector('.faq-overlay:not(.hidden),.auth-overlay:not(.hidden)');return ov?ov.querySelector('.faq-card,.auth-card'):null;};
@@ -2196,7 +2233,7 @@ if(document.readyState!=='loading')a11yInit();else document.addEventListener('DO
 
 // ── ❗ Справка по секциям: «!» в заголовке → модалка с описанием всех значений/аббревиатур ──
 // Один реестр SEC_INFO + общий рендер. infoBtn(key) вставляется в pf3-panel-hd.
-function infoBtn(key){return `<span class="dash-info-btn" onclick="event.stopPropagation();secInfo('${key}')" title="${RT('Что это? Описание значений и аббревиатур','What is this? Field & abbreviation guide')}">!</span>`;}
+function infoBtn(key){return `<span class="dash-info-btn" data-click="secInfo"${uiA(String(key))} data-ui-stop title="${RT('Что это? Описание значений и аббревиатур','What is this? Field & abbreviation guide')}">!</span>`;}
 function infoRows(rows){return `<dl class="info-gloss">${rows.map(x=>`<dt>${x[0]}</dt><dd>${RT(x[1],x[2])}</dd>`).join('')}</dl>`;}
 function infoP(ru,en){return `<p>${RT(ru,en)}</p>`;}
 function infoNote(ru,en){return `<p class="pf3-asof">${RT(ru,en)}</p>`;}
@@ -2302,7 +2339,7 @@ const SEC_INFO={
     ['Alpha','доходность сверх индекса с поправкой на риск.','return above the index, risk-adjusted.'],
   ])+infoNote(INFO_DISCLAIM[0],INFO_DISCLAIM[1])},
 };
-function secInfo(key){const o=document.getElementById('faqOverlay');if(!o)return;const e=SEC_INFO[key];if(!e)return;document.getElementById('faqCard').innerHTML=`<button class="faq-close" onclick="toggleFaq()">✕</button><h2>${RT(e.t[0],e.t[1])}</h2><div class="faq-body">${e.b()}</div>`;o.classList.remove('hidden');}
+function secInfo(key){const o=document.getElementById('faqOverlay');if(!o)return;const e=SEC_INFO[key];if(!e)return;document.getElementById('faqCard').innerHTML=`<button class="faq-close" data-click="toggleFaq">✕</button><h2>${RT(e.t[0],e.t[1])}</h2><div class="faq-body">${e.b()}</div>`;o.classList.remove('hidden');}
 
 function toggleTheme(){
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -2917,33 +2954,32 @@ function aiRecoHTML(d,r){
   const loading=_aiRecoLoading===tk;
   const v=AI_RECO[tk];
   const canRun=can('action.run_ai');   // кнопку запуска видит только тот, кому можно тратить AI; результат — по view.ai_reco
-  const btn=canRun?`<button class="pf3-btn pf3-btn-sm" onclick="aiRecoRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`:'';
+  const btn=canRun?`<button class="pf3-btn pf3-btn-sm" data-click="aiRecoRun"${uiA('$ev')}${loading?' disabled':''}>${loading?'⏳…':'🔄 '+RT('AI-Рекомендация','AI recommendation')+(v?' · '+RT('обновить','refresh'):'')}</button>`:'';
   const hd=`<div class="pf3-panel-hd"><span>🔄 ${RT('AI-Рекомендация','AI recommendation')}</span><span class="pf3-asof">${v&&v.at?RT('обновлено','updated')+' '+pf3DtRu(v.at)+(v.cost?' · '+costUsd(v.cost):''):''}</span>${btn}</div>`;
   let body;
   if(loading)body=`<div class="stkai-load">⏳ ${RT('Анализирую: техника, фундаментал, новости и мировой контекст… (до минуты)','Analysing: technicals, fundamentals, news and global context… (up to a minute)')}</div>`;
   else if(v){
-    const E=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const M=AI_RECO_META[v.verdict]||['❔',v.verdict||'—','wait'];
-    const entry=(v.entryLow!=null||v.entryHigh!=null)?`<span class="airk-bit">${RT('вход','entry')} ${[v.entryLow,v.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${v.ccy||''}</span>`:'';
-    const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>E(String(x))).join(' · ')}</div>`:'';
+    const M=AI_RECO_META[v.verdict]||['❔',escHtml(v.verdict||'—'),'wait'];
+    const entry=(v.entryLow!=null||v.entryHigh!=null)?`<span class="airk-bit">${RT('вход','entry')} ${[v.entryLow,v.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${escHtml(v.ccy||'')}</span>`:'';
+    const risks=(v.keyRisks&&v.keyRisks.length)?`<div class="airk-risks">⚠️ ${v.keyRisks.map(x=>escHtml(x)).join(' · ')}</div>`:'';
     const open=!!_aiRecoOpen[tk];
     body=`${aiStaleBadge(v.sigAt,sigRowVerdict(d,r))}<div class="airk-head">
         <span class="airk-verdict xr-${M[2]}">${M[0]} ${M[1]}</span>
-        ${v.confidence?`<span class="airk-conf">${RT('увер.','conf.')} ${v.confidence}</span>`:''}
+        ${v.confidence?`<span class="airk-conf">${RT('увер.','conf.')} ${escHtml(v.confidence)}</span>`:''}
         ${entry}
       </div>
-      ${v.headline?`<div class="airk-headline">${E(String(v.headline))}</div>`:''}
-      ${(()=>{const H=v.horizons;if(!H)return'';const cc=v.ccy||'';
+      ${v.headline?`<div class="airk-headline">${escHtml(v.headline)}</div>`:''}
+      ${(()=>{const H=v.horizons;if(!H)return'';const cc=escHtml(v.ccy||'');
         const HZ=[['now','⏱ '+RT('Сейчас','Now')],['mid','📅 6–9 '+RT('мес','mo')],['long','🚀 '+RT('Лонг','Long')]];
         const cells=HZ.map(([k,lbl])=>{const o=H[k];if(!o||typeof o!=='object')return'';
-          const m=AI_RECO_META[o.verdict]||['❔',o.verdict||'—','wait'];
+          const m=AI_RECO_META[o.verdict]||['❔',escHtml(o.verdict||'—'),'wait'];
           const tgt=(o.target!=null&&isFinite(o.target))?`${RT('таргет','tgt')} ${pf3Fmt(o.target,2)} ${cc}${(o.upside!=null&&isFinite(o.upside))?` <span class="${o.upside>=0?'pf3-up':'pf3-down'}">${o.upside>=0?'+':''}${(+o.upside).toFixed(0)}%</span>`:''}`:'';
           const ent=(o.entryLow!=null||o.entryHigh!=null)?`${RT('вход','entry')} ${[o.entryLow,o.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')} ${cc}`:'';
-          return`<div class="airk-hz-it"><div class="airk-hz-l">${lbl}</div><div class="airk-hz-v"><span class="pf3-sig xr-${m[2]}">${m[0]} ${m[1]}</span></div>${tgt||ent?`<div class="airk-hz-x">${[tgt,ent].filter(Boolean).join(' · ')}</div>`:''}${o.note?`<div class="airk-hz-n">${E(String(o.note))}</div>`:''}</div>`;
+          return`<div class="airk-hz-it"><div class="airk-hz-l">${lbl}</div><div class="airk-hz-v"><span class="pf3-sig xr-${m[2]}">${m[0]} ${m[1]}</span></div>${tgt||ent?`<div class="airk-hz-x">${[tgt,ent].filter(Boolean).join(' · ')}</div>`:''}${o.note?`<div class="airk-hz-n">${escHtml(o.note)}</div>`:''}</div>`;
         }).filter(Boolean).join('');
         return cells?`<div class="airk-hz">${cells}</div>`:'';})()}
       ${risks}
-      <button class="stkai-toggle" onclick="aiRecoToggle('${tk}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
+      <button class="stkai-toggle" data-click="aiRecoToggle"${uiA(String(tk))}>${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>
       ${open?`<div class="pf3-ai-report">${pf3Md(v.text)}</div>`:''}`;
   }else body=`<div class="pf3-empty">${canRun?RT('Нажмите «🔄 AI-Рекомендация» — Claude взвесит технику, фундаментал, оценку, свежие новости и мировую ситуацию и даст единый вердикт. Детерминированный скоринг «Рекомендация» выше остаётся как есть.','Press «🔄 AI recommendation» — Claude weighs technicals, fundamentals, valuation, fresh news and the global picture into one verdict. The deterministic «Рекомендация» score above stays as is.'):RT('AI-Рекомендация по этой бумаге ещё не сформирована.','No AI recommendation for this stock yet.')}</div>`;
   return`<section class="pf3-panel">${hd}${body}</section>`;
@@ -3060,20 +3096,20 @@ function stkLogHTML(){
       mark=`<span class="stk-mark">${dlt>=0?'+':''}${dlt.toFixed(1)}% ${RT('с разбора','since')}</span>`;
     }
     const bits=[];const D=e.data||{};
-    if(D.sizePct!=null)bits.push(`${RT('размер','size')} ${D.sizePct}%`);
-    if(D.targetPrice!=null)bits.push(`${RT('цель','target')} ${pf3Fmt(D.targetPrice,2)}${D.upsidePct!=null?` (+${D.upsidePct}%)`:''}`);
-    if(e.horizon)bits.push(`${RT('горизонт','horizon')} ${e.horizon}`);
+    if(D.sizePct!=null)bits.push(`${RT('размер','size')} ${escHtml(D.sizePct)}%`);
+    if(D.targetPrice!=null)bits.push(`${RT('цель','target')} ${pf3Fmt(D.targetPrice,2)}${D.upsidePct!=null?` (+${escHtml(D.upsidePct)}%)`:''}`);
+    if(e.horizon)bits.push(`${RT('горизонт','horizon')} ${escHtml(e.horizon)}`);
     const open=!!_stkOpen[e.ts];
     return `<div class="stk-row">
-      <div class="stk-head" onclick="stkToggle('${e.ts}')">
+      <div class="stk-head" data-click="stkToggle"${uiA(String(e.ts))}>
         ${logoHTML(e.ticker,e.ccy,'pf3-row-logo')}
-        <div class="stk-id"><b>${e.name||e.ticker}</b><span>${e.ticker} · ${pf3DtRu(e.ts)}</span></div>
+        <div class="stk-id"><b>${escHtml(e.name||e.ticker)}</b><span>${escHtml(e.ticker)} · ${pf3DtRu(e.ts)}</span></div>
         <span class="stkai-verdict v-${v[2]}" style="margin:0;font-size:12px;padding:3px 9px">${v[0]} ${v[1]}</span>
-        <span class="stk-px">${e.price!=null?pf3Fmt(e.price,2)+' '+(e.ccy||''):''}${mark}</span>
+        <span class="stk-px">${e.price!=null?pf3Fmt(e.price,2)+' '+escHtml(e.ccy||''):''}${mark}</span>
         <span class="stk-exp">${open?'▾':'▸'}</span>
       </div>
       ${bits.length?`<div class="stkai-bits" style="padding:0 4px 6px">${bits.map(b=>`<span>${b}</span>`).join('')}</div>`:''}
-      ${open?`${e._partial?aiRepPartialNote(e,'stock',aiStockKey(e.ticker)):`<div class="pf3-ai-report stk-body">${pf3Md(e.text||'')}</div>`}<div style="text-align:right"><button class="pf3-btn pf3-btn-sm btn-del" onclick="stkDelete('${e.ts}')">🗑 ${RT('Удалить','Delete')}</button></div>`:''}
+      ${open?`${e._partial?aiRepPartialNote(e,'stock',aiStockKey(e.ticker)):`<div class="pf3-ai-report stk-body">${pf3Md(e.text||'')}</div>`}<div style="text-align:right"><button class="pf3-btn pf3-btn-sm btn-del" data-click="stkDelete"${uiA(String(e.ts))}>🗑 ${RT('Удалить','Delete')}</button></div>`:''}
     </div>`;
   }).join('');
   return `<section class="pf3-panel">
@@ -3099,11 +3135,11 @@ function stockAiHTML(d,r){
   if(data&&VB[data.verdict]){
     const v=VB[data.verdict];
     const bits=[];
-    if(data.sizePct!=null)bits.push(`${RT('размер','size')} ${data.sizePct}%${data.sizeSEK!=null?' ≈'+pf3Fmt(data.sizeSEK)+' kr':''}`);
+    if(data.sizePct!=null)bits.push(`${RT('размер','size')} ${escHtml(data.sizePct)}%${data.sizeSEK!=null?' ≈'+pf3Fmt(data.sizeSEK)+' kr':''}`);
     if(data.entryLow!=null||data.entryHigh!=null)bits.push(`${RT('вход','entry')} ${[data.entryLow,data.entryHigh].filter(x=>x!=null).map(x=>pf3Fmt(x,2)).join('–')}`);
-    if(data.targetPrice!=null)bits.push(`${RT('цель','target')} ${pf3Fmt(data.targetPrice,2)}${data.upsidePct!=null?` (+${data.upsidePct}%)`:''}`);
-    if(data.horizon)bits.push(`${RT('горизонт','horizon')} ${data.horizon}`);
-    head=`<div class="stkai-verdict v-${data.verdict}">${v[0]} ${v[1]}${data.confidence?` · ${RT('увер.','conf.')} ${data.confidence}`:''}</div>
+    if(data.targetPrice!=null)bits.push(`${RT('цель','target')} ${pf3Fmt(data.targetPrice,2)}${data.upsidePct!=null?` (+${escHtml(data.upsidePct)}%)`:''}`);
+    if(data.horizon)bits.push(`${RT('горизонт','horizon')} ${escHtml(data.horizon)}`);
+    head=`<div class="stkai-verdict v-${escHtml(data.verdict)}">${v[0]} ${v[1]}${data.confidence?` · ${RT('увер.','conf.')} ${escHtml(data.confidence)}`:''}</div>
       <div class="stkai-bits">${bits.map(b=>`<span>${b}</span>`).join('')}</div>`;
   }
   const open=!!_stkCardOpen[sym];
@@ -3111,22 +3147,21 @@ function stockAiHTML(d,r){
     ? `<div class="stkai-load">⏳ ${RT('Анализирую: цены, фундаментал, веб-поиск новостей… (до минуты)','Analysing: prices, fundamentals, web news search… (up to a minute)')}</div>`
     : partial ? aiStaleBadge(sigAt,sigRowVerdict(d,r))+head+aiRepPartialNote(saved,'stock',sym.trim())
     : text
-      ? aiStaleBadge(sigAt,sigRowVerdict(d,r))+head+`<button class="stkai-toggle" onclick="stockAiToggle('${sym}')">${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
+      ? aiStaleBadge(sigAt,sigRowVerdict(d,r))+head+`<button class="stkai-toggle" data-click="stockAiToggle"${uiA(String(sym))}>${open?'▾ '+RT('Скрыть разбор','Hide analysis'):'▸ '+RT('Показать разбор','Show analysis')}</button>${open?`<div class="pf3-ai-report">${pf3Md(text)}</div>${at?`<div class="pf3-ai-note">${RT('анализ от','analysis from')} ${pf3DtRu(at)}${cost?' · '+costLine(cost):''} · ${RT('сохранён в обучающую базу','saved to the learning log')}</div>`:''}`:''}`
       : aiRepStateNote()||`<div class="pf3-empty">${RT('Нажмите «🤖 AI-анализ» — Claude соберёт цены, уровни, фундаментал и свежие новости по компании и даст рекомендацию.','Press «🤖 AI-анализ» — Claude gathers prices, levels, fundamentals and fresh company news, then gives a recommendation.')}</div>`;
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>🔬 ${RT('AI-анализ акции','AI stock analysis')}</span>
-      <button class="pf3-btn pf3-btn-sm" onclick="stockAiRun(event)"${loading?' disabled':''}>${loading?'⏳…':'🤖 '+RT('AI-анализ','AI analysis')+(text?' · '+RT('обновить','refresh'):'')}</button></div>
+      <button class="pf3-btn pf3-btn-sm" data-click="stockAiRun"${uiA('$ev')}${loading?' disabled':''}>${loading?'⏳…':'🤖 '+RT('AI-анализ','AI analysis')+(text?' · '+RT('обновить','refresh'):'')}</button></div>
     ${body}
   </section>`;
 }
 
 // Minimal markdown → HTML for the report (headings, bold, bullet/numbered lists).
 function pf3Md(t){
-  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const fmt=s=>s.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
   let html='',inList=false;
   const closeList=()=>{if(inList){html+='</ul>';inList=false}};
-  esc(String(t)).split('\n').forEach(line=>{
+  escHtml(t).split('\n').forEach(line=>{
     const l=line.trim();
     if(/^#{1,4}\s/.test(l)){closeList();html+='<h4 class="pf3-ai-h">'+fmt(l.replace(/^#+\s*/,''))+'</h4>';return}
     if(/^([-•*]|\d+[.)])\s/.test(l)){if(!inList){html+='<ul class="pf3-ai-ul">';inList=true}html+='<li>'+fmt(l.replace(/^([-•*]|\d+[.)])\s*/,''))+'</li>';return}
@@ -3187,12 +3222,11 @@ function aiChatScroll(){const b=document.getElementById('aiChatBox');if(b)b.scro
 
 function pf3PlaybookHTML(){
   aiPlaybookEnsure();
-  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   return`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${RT('📚 Инвест-плейбук — методичка «как обгонять индекс»','📚 Investing playbook — how to beat the index')} ${infoBtn('playbook')}</span><span class="pf3-asof"><a href="#" onclick="aiPlaybookReset();return false">${RT('сбросить к стандарту','reset to default')}</a></span>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="aiPbBtn" onclick="aiPlaybookAiRun()"${_aiPbBusy?' disabled':''}>${_aiPbBusy?'⏳ '+RT('Ищу практики…','Searching…'):'✨ '+RT('Подтянуть практики (AI)','Pull practices (AI)')}</button>`:''}</div>
+    <div class="pf3-panel-hd"><span>${RT('📚 Инвест-плейбук — методичка «как обгонять индекс»','📚 Investing playbook — how to beat the index')} ${infoBtn('playbook')}</span><span class="pf3-asof"><a href="#" data-click="aiPlaybookReset">${RT('сбросить к стандарту','reset to default')}</a></span>${isAdmin()?`<button class="pf3-btn pf3-btn-sm" id="aiPbBtn" data-click="aiPlaybookAiRun"${_aiPbBusy?' disabled':''}>${_aiPbBusy?'⏳ '+RT('Ищу практики…','Searching…'):'✨ '+RT('Подтянуть практики (AI)','Pull practices (AI)')}</button>`:''}</div>
     <div class="pf3-ai-note">${RT('Передаётся во все анализы AI Proto как стратегические принципы. Редактируйте под себя.','Sent to every AI Proto analysis as strategic principles. Edit to your taste.')}</div>
-    ${AI_PLAYBOOK.map((p,i)=>`<div class="ai-pref"><span>• ${esc(p)}</span><button class="pf3-del" onclick="aiPlaybookDel(${i})" title="${RT('Удалить принцип','Remove principle')}">🗑</button></div>`).join('')||`<div class="pf3-empty">${RT('Плейбук пуст','Playbook is empty')}</div>`}
-    <form class="ai-chat-form" onsubmit="event.preventDefault();aiPlaybookAdd()">
+    ${AI_PLAYBOOK.map((p,i)=>`<div class="ai-pref"><span>• ${escHtml(p)}</span><button class="pf3-del" data-click="aiPlaybookDel"${uiA(i)} title="${RT('Удалить принцип','Remove principle')}">🗑</button></div>`).join('')||`<div class="pf3-empty">${RT('Плейбук пуст','Playbook is empty')}</div>`}
+    <form class="ai-chat-form" data-submit="aiPlaybookAdd">
       <input id="aiPbInp" placeholder="${RT('Добавить принцип…','Add a principle…')}" autocomplete="off">
       <button class="pf3-btn" type="submit">${RT('➕ Добавить','➕ Add')}</button>
     </form>
@@ -3220,11 +3254,11 @@ function pf3AiHTML(){
   const newsHas=Object.keys(NEWS_IMPACT||{}).length;
   let h=`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📰 ${RT('Новости → влияние (без токенов)','News → impact (no tokens)')} ${infoBtn('news')}</span><span class="pf3-asof">${RT('вставьте сводку — оцените влияние на все акции','paste a summary — score the impact on all stocks')}</span></div>
-    <textarea id="newsInp" class="news-inp" placeholder="${RT('Вставьте сводку последних мировых новостей…','Paste a summary of recent world news…')}" oninput="newsSetText(this.value)">${(NEWS_TEXT||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea>
+    <textarea id="newsInp" class="news-inp" placeholder="${RT('Вставьте сводку последних мировых новостей…','Paste a summary of recent world news…')}" data-input="newsSetText"${uiA('$val')}>${(NEWS_TEXT||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea>
     <div class="pf3-ai-bar">
-      <button class="pf3-btn" onclick="newsAnalyzeFree()">🔎 ${RT('Проанализировать (бесплатно)','Analyze (free)')}</button>
-      <button class="pf3-btn sim-buy" onclick="newsAnalyzePaid()" ${pf3Ai.loading?'disabled':''}>✨ ${RT('Углубить AI-анализом (платно)','Deepen with AI (paid)')}</button>
-      ${newsHas?`<a href="#" class="pf3-ai-note" onclick="newsClear();return false">${RT('очистить','clear')}</a>`:''}
+      <button class="pf3-btn" data-click="newsAnalyzeFree">🔎 ${RT('Проанализировать (бесплатно)','Analyze (free)')}</button>
+      <button class="pf3-btn sim-buy" data-click="newsAnalyzePaid" ${pf3Ai.loading?'disabled':''}>✨ ${RT('Углубить AI-анализом (платно)','Deepen with AI (paid)')}</button>
+      ${newsHas?`<a href="#" class="pf3-ai-note" data-click="newsClear">${RT('очистить','clear')}</a>`:''}
     </div>
     ${newsImpactHTML()}
     <div class="pf3-ai-note">${RT('Бесплатно: сопоставляет текст с акциями по тикеру/названию и оценивает тональность по словарю — без AI-токенов. «Платно» отправляет сводку в AI Proto как контекст. Справочно, не рекомендация.','Free: matches text to stocks by ticker/name and scores sentiment by lexicon — no AI tokens. «Paid» sends the summary to AI Proto as context. Reference, not advice.')}</div>
@@ -3232,8 +3266,8 @@ function pf3AiHTML(){
   <section class="pf3-panel">
     <div class="pf3-panel-hd"><span>${T('🤖 AI Proto — обучается, анализирует портфель и обгоняет индексы')}</span><span class="pf3-asof">${last&&last.at?'обновлено '+pf3DtRu(last.at)+(last.cost?' · '+costLine(last.cost):''):''}</span></div>
     <div class="pf3-ai-bar">
-      <button class="pf3-btn" onclick="pf3AiRun()" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?T('⏳ Анализирую… (30–60 сек)'):T('🔮 Проанализировать портфель')}</button>
-      <label class="pf3-incl-chat" title="${RT('Передать последние сообщения из чата с AI Proto в следующий анализ портфеля — AI учтёт ваши пожелания и идеи из переписки.','Pass the latest AI Proto chat messages into the next portfolio analysis — the AI will factor in your wishes and ideas from the conversation.')}"><input type="checkbox" ${AI_INCL_CHAT?'checked':''} onchange="aiToggleInclChat()"> 💬 ${RT('Учесть чат','Include chat')}${AI_CHAT.length?` (${AI_CHAT.length})`:''}</label>
+      <button class="pf3-btn" data-click="pf3AiRun" ${pf3Ai.loading?'disabled':''}>${pf3Ai.loading?T('⏳ Анализирую… (30–60 сек)'):T('🔮 Проанализировать портфель')}</button>
+      <label class="pf3-incl-chat" title="${RT('Передать последние сообщения из чата с AI Proto в следующий анализ портфеля — AI учтёт ваши пожелания и идеи из переписки.','Pass the latest AI Proto chat messages into the next portfolio analysis — the AI will factor in your wishes and ideas from the conversation.')}"><input type="checkbox" ${AI_INCL_CHAT?'checked':''} data-change="aiToggleInclChat"> 💬 ${RT('Учесть чат','Include chat')}${AI_CHAT.length?` (${AI_CHAT.length})`:''}</label>
       <span class="pf3-ai-note">${v3Key===PF3_KEY?RT('Claude получит состав портфеля, живые цены, уровни SMA/поддержки, таргеты аналитиков и кэш — и вернёт отчёт с рекомендациями и план ребалансировки (вкладка «⚖️ Предложение»). Включите «💬 Учесть чат», чтобы добавить в анализ комментарии из переписки.','Claude gets your holdings, live prices, SMA/support levels, analyst targets and cash — and returns a report with recommendations plus a rebalancing plan (the ⚖️ Proposal tab). Toggle «💬 Include chat» to add your conversation comments to the analysis.'):RT(`Claude получит все ${pf3D().rows.length} акций вкладки с живыми ценами, уровнями, фазами и таргетами — и выделит самые актуальные с рекомендациями. Включите «💬 Учесть чат», чтобы добавить комментарии из переписки.`,`Claude gets all ${pf3D().rows.length} stocks of this tab with live prices, levels, phases and targets — and highlights the most relevant ones. Toggle «💬 Include chat» to add your conversation comments.`)}</span>
     </div>
     ${last&&last._partial?aiRepPartialNote(last,'proto',v3Key):last&&last.text?`<div class="pf3-ai-report">${pf3Md(last.text)}</div>`:(pf3Ai.loading?'':aiRepStateNote()||'<div class="pf3-empty">Отчёта ещё нет — нажмите «Проанализировать портфель»</div>')}
@@ -3245,9 +3279,9 @@ function pf3AiHTML(){
     ?`<div class="ai-msg user">${m.content.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
     :`<div class="ai-msg bot">${pf3Md(m.content)}</div>`).join('');
   h+=`<section class="pf3-panel">
-    <div class="pf3-panel-hd"><span>${T('💬 Чат с AI Proto')}</span><span class="pf3-asof">${AI_CHAT.length?`<a href="#" onclick="aiChatClear();return false">${T('очистить')}</a>`:RT('видит портфель и цены · автономный','sees your portfolio and prices · autonomous')}</span></div>
+    <div class="pf3-panel-hd"><span>${T('💬 Чат с AI Proto')}</span><span class="pf3-asof">${AI_CHAT.length?`<a href="#" data-click="aiChatClear">${T('очистить')}</a>`:RT('видит портфель и цены · автономный','sees your portfolio and prices · autonomous')}</span></div>
     <div class="ai-chat-box" id="aiChatBox">${msgs||'<div class="pf3-empty">Спросите что угодно о портфеле и рынке: «Стоит ли докупать Micron?», «Куда вложить 20 000 kr?». Скажите ассистенту свои правила — он запомнит их и будет учитывать в анализах.</div>'}${aiChatBusy?'<div class="ai-msg bot ai-typing">⏳ AI Proto думает…</div>':''}</div>
-    <form class="ai-chat-form" onsubmit="event.preventDefault();aiChatSend()">
+    <form class="ai-chat-form" data-submit="aiChatSend">
       <input id="aiChatInp" placeholder="${T('Ваш вопрос или указание ассистенту…')}" autocomplete="off" ${aiChatBusy?'disabled':''}>
       <button class="pf3-btn sim-buy" type="submit" ${aiChatBusy?'disabled':''}>${T('Отправить')}</button>
     </form>
@@ -3284,8 +3318,8 @@ function pf3PropHTML(){
     const cls=/куп/i.test(a.action)?'buy':/прода|сократ/i.test(a.action)?'sell':'hold';
     h+=`<div class="pf3-prop-row">
       <span class="pf3-prop-n">${i+1}</span>
-      <span class="pf3-prop-act ${cls}">${a.action||''}</span>
-      <div class="pf3-prop-info"><b>${a.name||''} <span class="pf3-cal-tk">${a.ticker||''}</span></b><span>${a.details||''}</span></div>
+      <span class="pf3-prop-act ${cls}">${escHtml(a.action||'')}</span>
+      <div class="pf3-prop-info"><b>${escHtml(a.name||'')} <span class="pf3-cal-tk">${escHtml(a.ticker||'')}</span></b><span>${escHtml(a.details||'')}</span></div>
       <span class="pf3-prop-amt">${typeof a.amountSEK==='number'&&a.amountSEK>0?'≈'+pf3Fmt(a.amountSEK)+' kr':''}</span>
     </div>`;
   });
@@ -3294,7 +3328,7 @@ function pf3PropHTML(){
     h+=`<div class="pf3-prop-wl-h">👁 ${RT('Лист ожидания','Watchlist')} <span class="pf3-asof">${RT('приоритет 4 · на подтверждении','priority 4 · awaiting confirmation')}</span></div>`;
     wl.forEach(w=>{h+=`<div class="pf3-prop-row pf3-prop-wl">
       <span class="pf3-prop-act hold">👁</span>
-      <div class="pf3-prop-info"><b>${w.name||''} <span class="pf3-cal-tk">${w.ticker||''}</span></b><span>${w.condition?`<b>${RT('Условие','When')}:</b> ${w.condition}. `:''}${w.rationale||''}</span></div>
+      <div class="pf3-prop-info"><b>${escHtml(w.name||'')} <span class="pf3-cal-tk">${escHtml(w.ticker||'')}</span></b><span>${w.condition?`<b>${RT('Условие','When')}:</b> ${escHtml(w.condition)}. `:''}${escHtml(w.rationale||'')}</span></div>
     </div>`;});
   }
   h+='</section>';
@@ -3318,8 +3352,8 @@ function pf3AnalysisHTML(){
     const cls=/куп/i.test(a.action)?'buy':/прода|сократ/i.test(a.action)?'sell':'hold';
     h+=`<div class="pf3-prop-row">
       <span class="pf3-prop-n">${i+1}</span>
-      <span class="pf3-prop-act ${cls}">${a.action||''}</span>
-      <div class="pf3-prop-info"><b>${a.name||''} <span class="pf3-cal-tk">${a.ticker||''}</span></b><span>${a.details||''}</span></div>
+      <span class="pf3-prop-act ${cls}">${escHtml(a.action||'')}</span>
+      <div class="pf3-prop-info"><b>${escHtml(a.name||'')} <span class="pf3-cal-tk">${escHtml(a.ticker||'')}</span></b><span>${escHtml(a.details||'')}</span></div>
       <span class="pf3-prop-amt">${typeof a.amountSEK==='number'&&a.amountSEK>0?'≈'+pf3Fmt(a.amountSEK)+' kr':''}</span>
     </div>`;
   });
@@ -3444,8 +3478,8 @@ function cashDragHTML(d,rows){
   d.rows.forEach(r=>{const q=parseFloat(r[RC.qty])||0;if(!(q>0))return;ohN++;try{if(sigRowPhase(d,r).key==='heat')oh++;}catch(e){}});
   const overheat=ohN>0&&oh/ohN>=0.5;
   const PERIODS=[['day',RT('день','day')],['month',RT('месяц','month')],['ytd','YTD'],['1y',RT('1 год','1Y')]];
-  const segP=`<span class="pf3-hz-seg">${PERIODS.map(([k,l])=>`<button class="pf3-hz-b${period===k?' on':''}" onclick="cashDragSet('period','${k}')">${l}</button>`).join('')}</span>`;
-  const segB=`<span class="pf3-hz-seg">${[['^OMX','OMX'],['^NDX','NDX']].map(([k,l])=>`<button class="pf3-hz-b${bench===k?' on':''}" onclick="cashDragSet('bench','${k}')">${l}</button>`).join('')}</span>`;
+  const segP=`<span class="pf3-hz-seg">${PERIODS.map(([k,l])=>`<button class="pf3-hz-b${period===k?' on':''}" data-click="cashDragSet"${uiA('period',String(k))}>${l}</button>`).join('')}</span>`;
+  const segB=`<span class="pf3-hz-seg">${[['^OMX','OMX'],['^NDX','NDX']].map(([k,l])=>`<button class="pf3-hz-b${bench===k?' on':''}" data-click="cashDragSet"${uiA('bench',String(k))}>${l}</button>`).join('')}</span>`;
   const dragTxt=m.dragPct==null?'—':`${m.dragPct>=0?'+':''}${m.dragPct.toFixed(2)}%`;
   const dragCls=m.dragPct==null?'':m.dragPct>=0?'pf3-up':'pf3-down';
   const hint=m.status==='ok'
@@ -3455,7 +3489,7 @@ function cashDragHTML(d,rows){
     ? `<div class="cd-counter">${m.counterKr>=0?RT('Недополучено на избытке','Forgone on excess'):RT('Сэкономлено на избытке','Saved on excess')} ≈ <b>${pf3Fmt(Math.abs(m.counterKr),0)} ${unit}</b> ${RT('за','over')} ${({day:RT('день','day'),month:RT('месяц','month'),ytd:'YTD','1y':RT('1 год','1Y')})[period]}</div>`:'';
   // Вклад кэша в доходность по всем периодам (день/мес/YTD/год) — мини-ряд.
   const perRow=PERIODS.map(([k,l])=>{const br=idxReturnPct(bench,k);const dg=br==null?null:-(m.cashPct/100)*br;return`<div class="cd-pp"><span class="cd-pp-l">${l}</span><b class="${dg==null?'cd-dim':dg>=0?'pf3-up':'pf3-down'}">${dg==null?'…':(dg>=0?'+':'')+dg.toFixed(1)+'%'}</b></div>`;}).join('');
-  const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" onclick="pf3GoList()">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
+  const buyBtn=m.status!=='ok'?` <button class="pf3-btn pf3-btn-sm" data-click="pf3GoList">→ ${RT('к сигналам докупки','to buy signals')}</button>`:'';
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>💵 ${RT('Cash-drag — отставание из-за кэша','Cash drag — lag from holding cash')} ${infoBtn('cashdrag')}</span><span class="pf3-asof">${segP} ${segB}</span></div>
     <div class="cd-grid">
@@ -3490,7 +3524,7 @@ function fxHedgeHTML(d,rows,equity){
   const unit=pf3BaseUnit(d), m=fxScenarioModel(rows,equity,fxScn);
   if(!(m.foreign>0))return '';
   const verdict=m.foreignPctOfStocks>=80?{c:'cd-high',l:RT('высокий','high')}:m.foreignPctOfStocks>=60?{c:'cd-warn',l:RT('умеренный','moderate')}:{c:'cd-ok',l:RT('низкий','low')};
-  const seg=`<span class="pf3-hz-seg">${[5,10,15].map(v=>`<button class="pf3-hz-b${fxScn===v?' on':''}" onclick="fxScnSet(${v})">+${v}%</button>`).join('')}</span>`;
+  const seg=`<span class="pf3-hz-seg">${[5,10,15].map(v=>`<button class="pf3-hz-b${fxScn===v?' on':''}" data-click="fxScnSet"${uiA(v)}>+${v}%</button>`).join('')}</span>`;
   const ccyRows=m.ccyList.slice(0,5).map(x=>`<div class="fx-row"><span class="fx-c">${x.c}</span><span class="cd-dim">${x.pct.toFixed(0)}% ${RT('акций','of stocks')}</span><b class="pf3-down">${pf3Fmt(x.impact,0)} ${unit}</b></div>`).join('');
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>💱 ${RT('Валютный риск и хедж','Currency risk & hedge')} ${infoBtn('fxhedge')}</span><span class="pf3-asof">${RT('SEK крепнет','SEK strengthens')} ${seg}</span></div>

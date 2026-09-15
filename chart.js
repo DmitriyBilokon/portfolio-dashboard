@@ -285,7 +285,6 @@
       } }; } }];
     }
   }
-  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   function fmtN(v, d) { return v == null || !isFinite(v) ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }); }
   function fmtVol(v) { return v >= 1e9 ? (v / 1e9).toFixed(2) + tr(' млрд', 'B') : v >= 1e6 ? (v / 1e6).toFixed(1) + tr(' млн', 'M') : v >= 1e3 ? (v / 1e3).toFixed(0) + tr(' тыс', 'K') : String(v); }
 
@@ -369,7 +368,7 @@
     // Легенда: бар i (глобальный индекс свечей) и логический индекс линии прибыли ei (по умолчанию — тот же бар).
     const paintLegend = (i, ei) => {
       const b = bars[i], d = i > 0 ? (b.c / bars[i - 1].c - 1) * 100 : 0, ex = eOk ? chartEarnAt(EM, ei == null ? i - off : ei) : null;
-      legend.innerHTML = key(T.ink, b.d, `${fmtN(b.c, 2)}${o.ccy ? ' ' + esc(o.ccy) : ''} (${d >= 0 ? '+' : ''}${d.toFixed(2)}%)`) + key(T.sma50, 'SMA 50', fmtN(ind.s50[i], M.dec)) + key(T.sma100, 'SMA 100', fmtN(ind.s100[i], M.dec)) + key(T.sma200, 'SMA 200', fmtN(ind.s200[i], M.dec)) + (eOk ? key(T.earn, esc(eLbl), ex ? fmtN(ex.value, M.dec) : '—') : '') + key(T.rsi, 'RSI 14', fmtN(ind.rsi[i], 0)) + (M.hasVol ? key(T.volUp, tr('Объём', 'Volume'), fmtVol(b.v)) : '');
+      legend.innerHTML = key(T.ink, b.d, `${fmtN(b.c, 2)}${o.ccy ? ' ' + escHtml(o.ccy) : ''} (${d >= 0 ? '+' : ''}${d.toFixed(2)}%)`) + key(T.sma50, 'SMA 50', fmtN(ind.s50[i], M.dec)) + key(T.sma100, 'SMA 100', fmtN(ind.s100[i], M.dec)) + key(T.sma200, 'SMA 200', fmtN(ind.s200[i], M.dec)) + (eOk ? key(T.earn, escHtml(eLbl), ex ? fmtN(ex.value, M.dec) : '—') : '') + key(T.rsi, 'RSI 14', fmtN(ind.rsi[i], 0)) + (M.hasVol ? key(T.volUp, tr('Объём', 'Volume'), fmtVol(b.v)) : '');
     };
     // Строки тултипа по линии прибыли: значение на баре и год, к которому идёт отрезок (EPS × P/E, аналитики).
     const earnTip = ei => {
@@ -388,10 +387,10 @@
         const j = eOk ? EM.future.findIndex(s => s.time === param.time) : -1, et = j >= 0 ? earnTip(M.view.length + j) : '';
         if (j >= 0) paintLegend(bars.length - 1, M.view.length + j);
         if (!et) { tip.hidden = true; return; }
-        tip.innerHTML = `<div class="sc-tip-d">${esc(param.time)}</div>${et}`; tip.hidden = false; place(param, wrap.clientWidth); return;
+        tip.innerHTML = `<div class="sc-tip-d">${escHtml(param.time)}</div>${et}`; tip.hidden = false; place(param, wrap.clientWidth); return;
       }
       const gi = off + k, b = bars[gi], ch = (b.c / b.o - 1) * 100; paintLegend(gi);
-      const ev = (byTime[b.d] || []).map(m => { const l = m.label || m.text; return `<div class="sc-tip-e">${esc(l)}${m.why && m.why !== l ? ' — ' + esc(String(m.why).slice(0, 80)) : ''}</div>`; }).join('');
+      const ev = (byTime[b.d] || []).map(m => { const l = m.label || m.text; return `<div class="sc-tip-e">${escHtml(l)}${m.why && m.why !== l ? ' — ' + escHtml(String(m.why).slice(0, 80)) : ''}</div>`; }).join('');
       tip.innerHTML = `<div class="sc-tip-d">${b.d}</div><div class="sc-tip-r"><b>${fmtN(b.c, 2)}</b><span>${tr('закр.', 'close')}</span></div><div class="sc-tip-r"><b>${fmtN(b.o, 2)}</b><span>${tr('откр.', 'open')}</span></div><div class="sc-tip-r"><b>${fmtN(b.h, 2)} / ${fmtN(b.l, 2)}</b><span>max / min</span></div><div class="sc-tip-r"><b class="${ch >= 0 ? 'up' : 'dn'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</b><span>${tr('день', 'day')}</span></div>${M.hasVol ? `<div class="sc-tip-r"><b>${fmtVol(b.v)}</b><span>${tr('объём', 'vol')}</span></div>` : ''}${ind.rsi[gi] != null ? `<div class="sc-tip-r"><b>${ind.rsi[gi].toFixed(0)}</b><span>RSI</span></div>` : ''}${earnTip(k)}${ev}`;
       tip.hidden = false; place(param, wrap.clientWidth);
     });

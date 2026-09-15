@@ -174,8 +174,8 @@ function aipManageHTML(){
   const trRows=(ap.trades||[]).slice(-30).reverse().map(t=>`
     <div class="aip-trade">
       <span class="pf3-sig ${t.action==='buy'?'xr-buy':'xr-sell'}">${t.action==='buy'?'🟢 '+RT('Покупка','Buy'):'🔴 '+RT('Продажа','Sell')}</span>
-      <b>${t.name||t.ticker}</b> <small>${t.qty} × ${pf3Fmt(t.price,2)} ${t.ccy} ≈ ${pf3Fmt(t.amountSEK)} kr${typeof t.plSEK==='number'?` · <span class="${cls(t.plSEK)}">P&L ${t.plSEK>0?'+':''}${pf3Fmt(t.plSEK)} kr</span>`:''}</small>
-      <div class="aip-trade-why">${t.trigger?`<span class="aip-trig">⚡ ${t.trigger}</span> `:''}${t.reason||''}</div>
+      <b>${escHtml(t.name||t.ticker)}</b> <small>${t.qty} × ${pf3Fmt(t.price,2)} ${escHtml(t.ccy)} ≈ ${pf3Fmt(t.amountSEK)} kr${typeof t.plSEK==='number'?` · <span class="${cls(t.plSEK)}">P&L ${t.plSEK>0?'+':''}${pf3Fmt(t.plSEK)} kr</span>`:''}</small>
+      <div class="aip-trade-why">${t.trigger?`<span class="aip-trig">⚡ ${escHtml(t.trigger)}</span> `:''}${escHtml(t.reason||'')}</div>
       <small class="aip-trade-ts">${new Date(t.ts).toLocaleString(LANG==='en'?'en-GB':'ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>
     </div>`).join('');
   return`
@@ -204,9 +204,9 @@ function aipManageHTML(){
         <select id="aipInterval">${[30,60,120].map(v=>`<option value="${v}"${(ap.intervalMin||60)==v?' selected':''}>${v} ${RT('мин','min')}</option>`).join('')}</select>
       </label>
       <label><input type="checkbox" id="aipEnabled"${ap.enabled!==false?' checked':''}> ${RT('AI торгует','AI trading on')}</label>
-      <button class="pf3-btn" onclick="aipSaveSettings()">💾 ${RT('Сохранить','Save')}</button>
-      <button class="pf3-btn" onclick="aipRunNow(event)">▶ ${RT('Запустить цикл сейчас','Run cycle now')}</button>
-      <button class="pf3-btn btn-del" onclick="aipResetRemote(event)">♻️ ${RT('Обнулить портфель','Reset portfolio')}</button>
+      <button class="pf3-btn" data-click="aipSaveSettings">💾 ${RT('Сохранить','Save')}</button>
+      <button class="pf3-btn" data-click="aipRunNow"${uiA('$ev')}>▶ ${RT('Запустить цикл сейчас','Run cycle now')}</button>
+      <button class="pf3-btn btn-del" data-click="aipResetRemote"${uiA('$ev')}>♻️ ${RT('Обнулить портфель','Reset portfolio')}</button>
     </div>
     <div class="pf3-reco-note">${RT('Старт: 300 000 kr · комиссия 0% · мин. сделка 5 000 kr · вселенная — все вкладки сайта · сделки только в часы торгов соответствующей биржи (США 9:30–16:00 ET, Стокгольм 9:00–17:25 и т.д.) · решения принимает Claude в worker-кроне, даже когда сайт закрыт.','Start: 300,000 kr · 0% commission · min trade 5,000 kr · universe — every tab on the site · trades only during each exchange\'s market hours (US 9:30–16:00 ET, Stockholm 9:00–17:25 etc.) · decisions are made by Claude in the worker cron, even with the site closed.')}</div>
   </section>`;
@@ -614,8 +614,8 @@ function valPeerTableHTML(tk){
       const cls=self&&ext[i].min!=null?(x===ext[i].min?'pf3-up':x===ext[i].max?'pf3-down':''):'';
       return`<td class="${cls}">${valFmt(x)}</td>`;
     }).join('');
-    return`<tr class="${self?'val-peer-self':''}" onclick="deskOpenTk('${e.tk}')">
-      <td class="val-l">${self?'▸ ':''}${e.tk}</td>${cells}</tr>`;
+    return`<tr class="${self?'val-peer-self':''}" data-click="deskOpenTk"${uiA(String(e.tk))}>
+      <td class="val-l">${self?'▸ ':''}${escHtml(e.tk)}</td>${cells}</tr>`;
   }).join('');
   return`<details class="val-peers"><summary class="ins-summary">👥 ${RT('Сравнение с пирами','Peer comparison')} · ${useInd?RT('по индустрии','by industry'):RT('по сектору','by sector')} (${group.length})<span class="ins-chevron">▾</span></summary>
     <table class="val-tbl val-peer-tbl"><thead><tr><th class="val-l">${RT('Пир','Peer')}</th>${cols.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
@@ -670,7 +670,7 @@ function valHTML(d,r){
   const c=valCmp(v,secMed,valPeMode);
   const eps=valEpsTrend(v.pe,v.fwdPe);   // EPS-тренд по forward vs trailing
   const epsLbl={down:'EPS ↓',up:'EPS ↑',flat:'EPS ='};
-  const peToggle=(v.pe>0&&v.fwdPe>0)?`<span class="val-toggle">${[['fwd','Fwd'],['ttm','TTM']].map(([m,l])=>`<button class="val-tg-b${valPeMode===m?' on':''}" onclick="valSetPeMode('${m}')">${l}</button>`).join('')}</span>`:'';
+  const peToggle=(v.pe>0&&v.fwdPe>0)?`<span class="val-toggle">${[['fwd','Fwd'],['ttm','TTM']].map(([m,l])=>`<button class="val-tg-b${valPeMode===m?' on':''}" data-click="valSetPeMode"${uiA(String(m))}>${l}</button>`).join('')}</span>`:'';
   const rowsHTML=c.dims.map(dm=>{
     if(!(dm.cur>0))return'';
     const isPe=dm.k==='pe';

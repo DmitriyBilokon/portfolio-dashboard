@@ -24,14 +24,14 @@ function pfTradesHTML(filterTk){
     const plSEK=t.plSEK;
     if(plSEK!=null){realizedSEK+=plSEK;hasSell=true;}
     const cls=plSEK==null?'':plSEK>=0?'pf3-up':'pf3-down';
-    const feeTxt=t.feeNative?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeNative,1)} ${t.ccy}`:(typeof t.feeSEK==='number'&&t.feeSEK?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeSEK,0)} kr`:'');
-    const sub=fk?(t.date+feeTxt+(t.note?' · '+t.note:'')):`${t.tk} · ${t.date}${feeTxt}${isAi?(t.note?' · '+t.note:''):` · <span class="sim-port">💼 ${pfPortShort(t.tab)}</span>`}`;
+    const feeTxt=t.feeNative?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeNative,1)} ${escHtml(t.ccy)}`:(typeof t.feeSEK==='number'&&t.feeSEK?` · ${RT('комис.','fee')} ${pf3Fmt(t.feeSEK,0)} kr`:'');
+    const sub=fk?(escHtml(t.date)+feeTxt+(t.note?' · '+escHtml(t.note):'')):`${escHtml(t.tk)} · ${escHtml(t.date)}${feeTxt}${isAi?(t.note?' · '+escHtml(t.note):''):` · <span class="sim-port">💼 ${escHtml(pfPortShort(t.tab))}</span>`}`;
     return`<div class="sim-trow tr-row">
       <span class="tr-act ${t.act}">${t.act==='sell'?'🔴 '+RT('Продажа','Sell'):'🟢 '+RT('Покупка','Buy')}</span>
-      <span class="pf3-row-name">${fk?'':`<b>${t.name||t.tk}</b>`}<span>${sub}</span></span>
-      <span class="tr-qty">${pf3Fmt(t.qty)} × ${pf3Fmt(t.price,2)} ${t.ccy}</span>
+      <span class="pf3-row-name">${fk?'':`<b>${escHtml(t.name||t.tk)}</b>`}<span>${sub}</span></span>
+      <span class="tr-qty">${pf3Fmt(t.qty)} × ${pf3Fmt(t.price,2)} ${escHtml(t.ccy)}</span>
       <span class="tr-pl ${cls}">${plSEK!=null?(plSEK>=0?'+':'')+pf3Money(d,plSEK):'—'}</span>
-      ${isAi?'':`<button class="pf3-del" onclick="pfTradeDel('${t.id}')" title="${RT('Удалить запись','Delete record')}">🗑</button>`}
+      ${isAi?'':`<button class="pf3-del" data-click="pfTradeDel"${uiA(String(t.id))} title="${RT('Удалить запись','Delete record')}">🗑</button>`}
     </div>`;
   }).join('');
   const tot=hasSell?`<span class="pf3-asof">${RT('Реализованный P&L','Realized P&L')}: <b class="${realizedSEK>=0?'pf3-up':'pf3-down'}">${realizedSEK>=0?'+':''}${pf3Money(d,realizedSEK)}</b></span>`:'';
@@ -47,11 +47,11 @@ function pfTradesHTML(filterTk){
         <input id="pfTrRp" type="number" step="any" min="0" placeholder="${RT('Цена','Price')}">
         <input id="pfTrCcy" placeholder="${RT('Валюта','Ccy')}" value="USD" style="width:64px;text-transform:uppercase">
         <input id="pfTrRd" type="date" value="${new Date().toISOString().slice(0,10)}">
-        <button class="pf3-btn" onclick="pfTradeAddRecord()">${RT('Внести','Add')}</button>
+        <button class="pf3-btn" data-click="pfTradeAddRecord">${RT('Внести','Add')}</button>
       </div>
       <div class="pf3-reco-note">${RT('Обновляет количество и среднюю по тикеру (создаёт позицию, если её нет) и пишет в журнал. Свободный кэш НЕ меняется. Вводите сделки по порядку: сначала покупки, потом продажи. P&L по продаже считается от средней автоматически. Валюта берётся из существующей позиции, если она есть.','Updates qty and average by ticker (creates the position if missing) and writes the journal. Free cash is NOT changed. Enter trades in order: buys first, then sells. Sell P&L is computed from the average automatically. Currency comes from the existing position if present.')}</div>
     </details>`:'';
-  const importBtn=(!fk&&!isAi&&pf3MyPort(v3Key)&&can('action.edit_trades'))?`<label class="pf3-btn pf3-btn-sm tr-import" title="${RT('Импорт сделок из CSV (date, action, ticker, qty, price, ccy, fee)','Import trades from CSV (date, action, ticker, qty, price, ccy, fee)')}">📥 ${RT('Импорт CSV','Import CSV')}<input type="file" accept=".csv,text/csv" style="display:none" onchange="pfImportTradesCSV(this)"></label>`:'';
+  const importBtn=(!fk&&!isAi&&pf3MyPort(v3Key)&&can('action.edit_trades'))?`<label class="pf3-btn pf3-btn-sm tr-import" title="${RT('Импорт сделок из CSV (date, action, ticker, qty, price, ccy, fee)','Import trades from CSV (date, action, ticker, qty, price, ccy, fee)')}">📥 ${RT('Импорт CSV','Import CSV')}<input type="file" accept=".csv,text/csv" style="display:none" data-change="pfImportTradesCSV"${uiA('$el')}></label>`:'';
   return`<section class="pf3-panel">
     <div class="pf3-panel-hd"><span>📜 ${RT('История сделок','Trade history')}${fk?'':' — '+TAB_LABEL(v3Key)}</span><span class="tr-hd-r">${tot}${importBtn}</span></div>
     ${mine.length?`<div class="sim-list">${rows}</div>`:`<div class="pf3-empty">${isAi?RT('AI-портфель ещё не совершал сделок — он торгует автономно по стратегии.','The AI portfolio has not traded yet — it trades autonomously by its strategy.'):RT('Сделок пока нет. Купите или продайте в блоке «💸 Сделка» в карточке акции.','No trades yet. Buy or sell in the «💸 Trade» box on a stock card.')}</div>`}
@@ -183,7 +183,7 @@ function pfTaxSetMethod(m){_taxMethod=m==='fifo'?'fifo':'avg';renderPF3();}
 function pfTaxHTML(){
   const d=pf3D();
   const recs=pfTaxLots(pfTaxTrades(),_taxMethod);
-  const hd=`<div class="pf3-panel-hd"><span>🧾 ${RT('Налоговый отчёт','Tax report')} ${infoBtn('tax')}</span><span class="pf3-tf"><button class="pf3-tfbtn${_taxMethod==='avg'?' on':''}" onclick="pfTaxSetMethod('avg')">${RT('Средняя','Average')}</button><button class="pf3-tfbtn${_taxMethod==='fifo'?' on':''}" onclick="pfTaxSetMethod('fifo')">FIFO</button></span></div>`;
+  const hd=`<div class="pf3-panel-hd"><span>🧾 ${RT('Налоговый отчёт','Tax report')} ${infoBtn('tax')}</span><span class="pf3-tf"><button class="pf3-tfbtn${_taxMethod==='avg'?' on':''}" data-click="pfTaxSetMethod"${uiA('avg')}>${RT('Средняя','Average')}</button><button class="pf3-tfbtn${_taxMethod==='fifo'?' on':''}" data-click="pfTaxSetMethod"${uiA('fifo')}>FIFO</button></span></div>`;
   if(!recs.length)return`<section class="pf3-panel tax">${hd}<div class="pf3-empty">${RT('В журнале этого портфеля нет продаж. Импортируйте CSV во вкладке «Сделки» или внесите продажи в карточке акции.','No sells in the journal of this portfolio. Import a CSV in «Trades» or add sells from a stock card.')}</div></section>`;
   const years={};recs.forEach(r=>{(years[r.year]=years[r.year]||[]).push(r);});
   const yrKeys=Object.keys(years).sort((a,b)=>a<b?1:-1);
@@ -196,7 +196,7 @@ function pfTaxHTML(){
     return`<div class="tax-year"><div class="tax-year-hd"><b>${y}</b> · ${ccyLines} · <span class="${ySEK>=0?'pf3-up':'pf3-down'}">≈${ySEK>=0?'+':''}${pf3Money(d,ySEK)}</span> <span class="pf3-asof">(${list.length} ${RT('прод.','sales')})</span></div><div class="tax-rows">${rowsH}</div></div>`;
   }).join('');
   return`<section class="pf3-panel tax">${hd}
-    <div class="tax-tot"><span>${RT('Итого реализованный результат','Total realized result')}: </span><b class="${totSEK>=0?'pf3-up':'pf3-down'}">${totSEK>=0?'+':''}${pf3Money(d,totSEK)}</b> <button class="pf3-btn pf3-btn-sm" onclick="pfTaxExportCSV()">📥 CSV</button></div>
+    <div class="tax-tot"><span>${RT('Итого реализованный результат','Total realized result')}: </span><b class="${totSEK>=0?'pf3-up':'pf3-down'}">${totSEK>=0?'+':''}${pf3Money(d,totSEK)}</b> <button class="pf3-btn pf3-btn-sm" data-click="pfTaxExportCSV">📥 CSV</button></div>
     ${blocks}
     <p class="pf3-asof tax-note">${RT('«Средняя» = genomsnittsmetoden (корректно для шведской декларации K4); FIFO — для сверки. Суммы в kr — по ТЕКУЩЕМУ курсу (не на дату сделки): это оценка, не готовая K4. Комиссия покупки входит в себестоимость, комиссия продажи уменьшает выручку.','«Average» = genomsnittsmetoden (correct for the Swedish K4); FIFO is for cross-check. kr amounts use the CURRENT FX (not the trade-date rate): an estimate, not a filing-ready K4. Buy fees add to cost basis, sell fees reduce proceeds.')} ${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}</p>
   </section>`;
@@ -476,9 +476,8 @@ function planSave(id){
   toast('🎯 '+RT('Правило обновлено','Rule updated'));
 }
 function planRulesHTML(){
-  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const d=pf3D();
-  const tkOpts=((d&&d.rows)||[]).map(r=>`<option value="${r[RC.tk]}">${esc(r[RC.name]||'')}</option>`).join('');
+  const tkOpts=((d&&d.rows)||[]).map(r=>`<option value="${escHtml(r[RC.tk])}">${escHtml(r[RC.name]||'')}</option>`).join('');
   const mine=(PLAN_RULES||[]).filter(r=>(r.tab||PF3_KEY)===v3Key).map(r=>({r,st:planStatus(r)}));
   mine.sort((a,b)=>{
     if(!!a.r.done!==!!b.r.done)return a.r.done?1:-1;
@@ -490,17 +489,17 @@ function planRulesHTML(){
   const editRow=r=>`<div class="plan-row plan-edit">
       <div class="plan-add-form plan-edit-form">
         <select id="planE_act"><option value="buy"${planUiAct(r)==='buy'?' selected':''}>🟢 ${RT('Купить','Buy')}</option><option value="sell"${planUiAct(r)==='sell'?' selected':''}>🔴 ${RT('Сократить','Trim')}</option><option value="short"${planUiAct(r)==='short'?' selected':''}>🔻 ${RT('Шорт','Short')}</option><option value="cover"${planUiAct(r)==='cover'?' selected':''}>🔺 ${RT('Откупить шорт','Cover short')}</option></select>
-        <input id="planE_tk" value="${esc(r.tk||'')}" list="planTkList" style="text-transform:uppercase;width:92px">
+        <input id="planE_tk" value="${escHtml(r.tk||'')}" list="planTkList" style="text-transform:uppercase;width:92px">
         <input id="planE_lvl" type="number" step="any" min="0" value="${r.level||''}" placeholder="${RT('Уровень','Level')}">
-        <input id="planE_ccy" value="${esc(r.ccy||'USD')}" style="width:58px;text-transform:uppercase">
+        <input id="planE_ccy" value="${escHtml(r.ccy||'USD')}" style="width:58px;text-transform:uppercase">
         <input id="planE_stop" type="number" step="any" min="0" value="${r.stop||''}" placeholder="${RT('Стоп','Stop')}" title="${RT('Стоп-лосс: лонг — ниже входа, шорт — выше','Stop-loss: long below entry, short above')}">
         <input id="planE_tgt" type="number" step="any" min="0" value="${r.target||''}" placeholder="${RT('Цель','Target')}">
         <input id="planE_qty" type="number" step="any" min="0" value="${r.qty||''}" placeholder="${RT('Кол-во, шт','Qty, sh')}">
         <input id="planE_amt" type="number" step="any" min="0" value="${r.amount||''}" placeholder="${RT('Сумма, kr','Amount, kr')}">
-        <input id="planE_dl" type="date" value="${r.deadline||''}" title="${RT('Дедлайн','Deadline')}">
-        <input id="planE_note" value="${esc(r.note||'')}" placeholder="${RT('Заметка','Note')}" style="flex:1;min-width:140px">
-        <button class="pf3-btn" onclick="planSave('${r.id}')">${RT('Сохранить','Save')}</button>
-        <button class="pf3-btn pf3-btn-sm" onclick="planCancelEdit()">${RT('Отмена','Cancel')}</button>
+        <input id="planE_dl" type="date" value="${escHtml(r.deadline||'')}" title="${RT('Дедлайн','Deadline')}">
+        <input id="planE_note" value="${escHtml(r.note||'')}" placeholder="${RT('Заметка','Note')}" style="flex:1;min-width:140px">
+        <button class="pf3-btn" data-click="planSave"${uiA(String(r.id))}>${RT('Сохранить','Save')}</button>
+        <button class="pf3-btn pf3-btn-sm" data-click="planCancelEdit">${RT('Отмена','Cancel')}</button>
       </div>
     </div>`;
   const rows=mine.map(({r,st})=>{
@@ -517,8 +516,8 @@ function planRulesHTML(){
     else badge=`<span class="plan-badge plan-wait">⏳ ${RT('Ждём','Waiting')}</span>`;
     const bits=[];
     if(st.hasLvl){
-      bits.push(`${RT('уровень','level')} ${r.act==='sell'?'≥':'≤'} ${pf3Fmt(st.lvl,2)} ${r.ccy||''}`);
-      if(st.price>0)bits.push(`${RT('сейчас','now')} ${pf3Fmt(st.price,2)} ${r.ccy||''}`);
+      bits.push(`${RT('уровень','level')} ${r.act==='sell'?'≥':'≤'} ${pf3Fmt(st.lvl,2)} ${escHtml(r.ccy||'')}`);
+      if(st.price>0)bits.push(`${RT('сейчас','now')} ${pf3Fmt(st.price,2)} ${escHtml(r.ccy||'')}`);
       if(!st.ready&&st.gapPct!=null)bits.push(`${st.gapPct>=0?'+':''}${pf3Fmt(st.gapPct,1)}% ${RT('до уровня','to level')}`);
     }
     if(st.stop>0)bits.push(`${RT('стоп','stop')} ${pf3Fmt(st.stop,2)}`);
@@ -527,26 +526,26 @@ function planRulesHTML(){
     if(rr!=null&&!st.open)bits.push(`R/R ${pf3Fmt(rr,1)}`);
     if(r.deadline){
       const dl=st.dleft;
-      bits.push(`📅 ${r.deadline}${dl!=null?` (${dl<0?RT('просрочен','past'):dl===0?RT('сегодня','today'):dl+RT(' дн','d')})`:''}`);
+      bits.push(`📅 ${escHtml(r.deadline)}${dl!=null?` (${dl<0?RT('просрочен','past'):dl===0?RT('сегодня','today'):dl+RT(' дн','d')})`:''}`);
     }
     const qb=planQtyBit(r, st.price>0?st.price:st.lvl);
     if(qb)bits.push(qb);
     return`<div class="plan-row${st.ready&&!r.done?' is-ready':''}${r.done?' is-done':''}">
-      <span class="plan-act ${r.act}">${planActIcon(r.act,r.side)} ${planActLabel(r.act,r.side)}</span>
-      <span class="plan-main"><b>${esc(r.name||r.tk)}</b> <span class="plan-tk">${esc(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}${r.ver?' · v'+r.ver:''}">🤖${r.ver?' v'+r.ver:''}</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${esc(r.note)}</span>`:''}</span>
+      <span class="plan-act ${escHtml(r.act)}">${planActIcon(r.act,r.side)} ${planActLabel(r.act,r.side)}</span>
+      <span class="plan-main"><b>${escHtml(r.name||r.tk)}</b> <span class="plan-tk">${escHtml(r.tk)}</span> ${badge}${r.fromAi?`<span class="plan-src" title="${RT('Перенесено из совета AI','From AI advice')}${r.ver?' · v'+r.ver:''}">🤖${r.ver?' v'+r.ver:''}</span>`:''}<span class="plan-sub">${bits.join(' · ')}</span>${r.note?`<span class="plan-note">${escHtml(r.note)}</span>`:''}</span>
       ${can('action.edit_plan')?`<span class="plan-btns">
-        <button class="pf3-del" onclick="planEdit('${r.id}')" title="${RT('Редактировать','Edit')}">✏</button>
-        ${(!r.done&&!st.open&&planIsEntry(r)&&r.act!=='watch'&&r.stop>0)?`<button class="pf3-del" onclick="planOpen('${r.id}')" title="${RT('Позиция открыта по плану — следить за стопом и целью','Position opened — watch stop & target')}">📍</button>`:''}
-        ${r.done?`<button class="pf3-del" onclick="planDone('${r.id}',0)" title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" onclick="planDone('${r.id}',1)" title="${RT('Отметить исполненным','Mark done')}">✓</button>`}
-        <button class="pf3-del" onclick="planDel('${r.id}')" title="${RT('Удалить','Delete')}">🗑</button>
+        <button class="pf3-del" data-click="planEdit"${uiA(String(r.id))} title="${RT('Редактировать','Edit')}">✏</button>
+        ${(!r.done&&!st.open&&planIsEntry(r)&&r.act!=='watch'&&r.stop>0)?`<button class="pf3-del" data-click="planOpen"${uiA(String(r.id))} title="${RT('Позиция открыта по плану — следить за стопом и целью','Position opened — watch stop & target')}">📍</button>`:''}
+        ${r.done?`<button class="pf3-del" data-click="planDone"${uiA(String(r.id),0)} title="${RT('Вернуть в активные','Reactivate')}">↩</button>`:`<button class="plan-ok" data-click="planDone"${uiA(String(r.id),1)} title="${RT('Отметить исполненным','Mark done')}">✓</button>`}
+        <button class="pf3-del" data-click="planDel"${uiA(String(r.id))} title="${RT('Удалить','Delete')}">🗑</button>
       </span>`:''}
     </div>`;
   }).join('');
   const canNotify=typeof Notification!=='undefined';
   const notifBtn=(canNotify&&Notification.permission!=='granted')
-    ?`<button class="pf3-btn pf3-btn-sm" onclick="planAskNotify()">🔔 ${RT('Вкл. уведомления','Enable alerts')}</button>`:'';
+    ?`<button class="pf3-btn pf3-btn-sm" data-click="planAskNotify">🔔 ${RT('Вкл. уведомления','Enable alerts')}</button>`:'';
   const hasProp=(()=>{const H=pf3AiHist();return aiProtoActs(H[0])>0;})();   // E5: из meta.nAct — текст не нужен
-  const importBtn=(can('action.edit_plan')&&hasProp)?`<button class="pf3-btn pf3-btn-sm" onclick="planImportFromAi()">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
+  const importBtn=(can('action.edit_plan')&&hasProp)?`<button class="pf3-btn pf3-btn-sm" data-click="planImportFromAi">📥 ${RT('Из совета AI','From AI advice')}</button>`:'';
   const addForm=`
     <datalist id="planTkList">${tkOpts}</datalist>
     <details class="plan-add"${mine.length?'':' open'}>
@@ -562,7 +561,7 @@ function planRulesHTML(){
         <input id="planAmt" type="number" step="any" min="0" placeholder="${RT('или сумма, kr','or amount, kr')}">
         <input id="planDl" type="date" title="${RT('Дедлайн (необязательно)','Deadline (optional)')}">
         <input id="planNote" placeholder="${RT('Заметка / условие','Note / condition')}" style="flex:1;min-width:160px">
-        <button class="pf3-btn" onclick="planAdd()">${RT('Добавить','Add')}</button>
+        <button class="pf3-btn" data-click="planAdd">${RT('Добавить','Add')}</button>
       </div>
       <div class="pf3-reco-note">${RT('Уровень: для покупки сработает, когда цена опустится ДО уровня (≤); для продажи — когда поднимется ДО уровня (≥). Кол-во указывайте в штуках (акции покупаются поштучно). Если указать сумму в kr — покажу, сколько целых акций на неё влезает по цене. Дедлайн без уровня сработает по дате.','Level: a buy triggers when price drops TO the level (≤); a sell when it rises TO the level (≥). Enter quantity in shares (stocks are bought per share). If you enter a kr amount, I show how many whole shares it covers at price. A deadline without a level triggers by date.')} ${RT('Стоп и цель необязательны: со стопом покажу размер по риску (1 % капитала) и R/R, а после «📍 Открыта» буду следить за стопом и целью. Шорт: вход — когда цена поднимется до уровня, стоп выше, цель ниже.','Stop and target are optional: with a stop I show risk-based size (1% of equity) and R/R; after «📍 Opened» I watch the stop and target. Short: entry when price rises to the level, stop above, target below.')}</div>
     </details>`;

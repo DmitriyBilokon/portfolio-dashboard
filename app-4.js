@@ -77,35 +77,35 @@ function cycResolve(model,ovr,der,row){
 }
 function cycleMonitorHTML(tk){
   const TK=cycKey(tk),ovr=CYCLE_OVR[TK]||{},model=cycMonModel(tk),der=cycleDerive(tk),edit=(_cycEdit===TK)&&isAdmin(),busy=_cycBusy===TK;
-  const rt=p=>Array.isArray(p)?RT(p[0],p[1]):String(p==null?'':p);
+  const rt=p=>escHtml(Array.isArray(p)?RT(p[0],p[1]):p);
   // Нет ни AI, ни сида: для админа — кнопка «сгенерировать тезис-монитор», иначе скрыто.
   if(!model){
     if(!isAdmin())return'';
     return`<section class="pf3-panel cyc"><div class="pf3-panel-hd"><span>🧭 ${RT('Тезис-монитор','Thesis monitor')} ${infoBtn('cycle')}</span></div>
       <p class="pf3-asof">${RT('AI соберёт специфичные для этой бумаги сигнальные метрики (Tier 1/2 + структурный риск) со свежими данными из web_search и порогами.','AI will assemble stock-specific signal metrics (Tier 1/2 + structural risk) with fresh web_search data and thresholds.')}</p>
-      <button class="pf3-btn pf3-btn-sm" onclick="cycleMonAiRun('${TK}')"${busy?' disabled':''}>${busy?'⏳ '+RT('Собираю','Building')+'…':'✨ '+RT('Сгенерировать (AI)','Generate (AI)')}</button></section>`;
+      <button class="pf3-btn pf3-btn-sm" data-click="cycleMonAiRun"${uiA(String(TK))}${busy?' disabled':''}>${busy?'⏳ '+RT('Собираю','Building')+'…':'✨ '+RT('Сгенерировать (AI)','Generate (AI)')}</button></section>`;
   }
   const KOPT=[['ok','🟢'],['warn','🟡'],['alert','🔴']];
   const rowHTML=row=>{
     const c=cycResolve(model,ovr,der,row);
     if(edit){
       const sel=KOPT.map(([k,e])=>`<option value="${k}"${k===c.k?' selected':''}>${e}</option>`).join('');
-      return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v"><select class="cyc-edit-k" onchange="cycManualSet('${TK}','${row.id}','k',this.value)">${sel}</select> <input class="cyc-edit-v" value="${String(rt(c.v)).replace(/"/g,'&quot;')}" onchange="cycManualSet('${TK}','${row.id}','v',this.value)"></td></tr>`;
+      return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v"><select class="cyc-edit-k" data-change="cycManualSet"${uiA(String(TK),String(row.id),'k','$val')}>${sel}</select> <input class="cyc-edit-v" value="${rt(c.v)}" data-change="cycManualSet"${uiA(String(TK),String(row.id),'v','$val')}></td></tr>`;
     }
-    const mark=CYC_SRC_MARK[c.src]?`<span class="cyc-src" title="${RT('источник','source')}: ${c.src}">${CYC_SRC_MARK[c.src]}</span>`:'';
-    return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v">${mark}<span class="cyc-s cyc-s-${c.k}">${rt(c.v)}</span></td></tr>`;
+    const mark=CYC_SRC_MARK[c.src]?`<span class="cyc-src" title="${RT('источник','source')}: ${escHtml(c.src)}">${CYC_SRC_MARK[c.src]}</span>`:'';
+    return`<tr><td class="cyc-l">${rt(row.label)}</td><td class="cyc-v">${mark}<span class="cyc-s cyc-s-${escHtml(c.k)}">${rt(c.v)}</span></td></tr>`;
   };
-  const card=t=>`<div class="cyc-card"><div class="cyc-card-hd"><span class="cyc-card-t">${rt(t.title)}</span>${t.badge?`<span class="cyc-badge cyc-b-${t.badgeKind||'warn'}">${rt(t.badge)}</span>`:''}</div><table class="cyc-tbl">${(t.rows||[]).map(rowHTML).join('')}</table></div>`;
+  const card=t=>`<div class="cyc-card"><div class="cyc-card-hd"><span class="cyc-card-t">${rt(t.title)}</span>${t.badge?`<span class="cyc-badge cyc-b-${escHtml(t.badgeKind||'warn')}">${rt(t.badge)}</span>`:''}</div><table class="cyc-tbl">${(t.rows||[]).map(rowHTML).join('')}</table></div>`;
   const pos=Math.max(0,Math.min(100,(ovr.manual&&typeof ovr.manual.phasePos==='number')?ovr.manual.phasePos:model.phasePos));
-  const phase=`<div class="cyc-phase"><div class="cyc-phase-l">${RT('Где бумага в своём цикле','Where the stock is in its cycle')}${edit?` <input type="number" min="0" max="100" class="cyc-edit-pos" value="${pos}" onchange="cycManualSet('${TK}','','phasePos',this.value)">`:''}</div>
+  const phase=`<div class="cyc-phase"><div class="cyc-phase-l">${RT('Где бумага в своём цикле','Where the stock is in its cycle')}${edit?` <input type="number" min="0" max="100" class="cyc-edit-pos" value="${pos}" data-change="cycManualSet"${uiA(String(TK),'','phasePos','$val')}>`:''}</div>
     <div class="cyc-gauge"><div class="cyc-needle" style="left:${pos}%"></div></div>
     <div class="cyc-scale">${model.phaseLabels.map((x,i)=>`<span${i===model.phaseLabels.length-1?' class="cyc-now"':''}>${rt(x)}</span>`).join('')}</div></div>`;
   const tiers=model.tiers.map(card).join('');
   const asof=model.src==='ai'?`✨ ${RT('обновлено','updated')} ${pf3DtRu(model.at)}${model.cost?' · '+costLine(model.cost):''}`:`${RT('данные на','data as of')} ${rt(model.asOf)}`;
   const actions=isAdmin()?`<span class="cyc-actions">
-    <button class="pf3-btn pf3-btn-sm" onclick="cycleMonAiRun('${TK}')"${busy?' disabled':''}>${busy?'⏳ '+RT('Обновляю','Updating')+'…':(model.src==='ai'?'🔄 '+RT('Обновить (AI)','Refresh (AI)'):'✨ '+RT('Обновить (AI)','Update (AI)'))}</button>
-    <button class="pf3-btn pf3-btn-sm" onclick="cycEditToggle('${TK}')">${edit?'✓ '+RT('Готово','Done'):'✏️ '+RT('Правка','Edit')}</button>
-    ${(ovr.ai||ovr.manual)?`<button class="pf3-btn pf3-btn-sm" onclick="cycReset('${TK}')" title="${RT('Сбросить','Reset')}">↺</button>`:''}
+    <button class="pf3-btn pf3-btn-sm" data-click="cycleMonAiRun"${uiA(String(TK))}${busy?' disabled':''}>${busy?'⏳ '+RT('Обновляю','Updating')+'…':(model.src==='ai'?'🔄 '+RT('Обновить (AI)','Refresh (AI)'):'✨ '+RT('Обновить (AI)','Update (AI)'))}</button>
+    <button class="pf3-btn pf3-btn-sm" data-click="cycEditToggle"${uiA(String(TK))}>${edit?'✓ '+RT('Готово','Done'):'✏️ '+RT('Правка','Edit')}</button>
+    ${(ovr.ai||ovr.manual)?`<button class="pf3-btn pf3-btn-sm" data-click="cycReset"${uiA(String(TK))} title="${RT('Сбросить','Reset')}">↺</button>`:''}
   </span>`:'';
   const note=model.legend?rt(model.legend):RT('🟢 порог не достигнут / тезис цел · 🟡 близко к порогу или структурный риск · 🔴 порог достигнут — действовать.','🟢 threshold not hit / thesis intact · 🟡 near threshold or structural risk · 🔴 threshold hit — act.');
   return`<section class="pf3-panel cyc">
@@ -114,7 +114,7 @@ function cycleMonitorHTML(tk){
     ${phase}
     ${model.summary?`<div class="cyc-summary">${pf3Md(model.summary)}</div>`:''}
     <div class="cyc-cards">${tiers}</div>
-    <p class="pf3-asof cyc-note">${note}<br>${model.sources?RT('Источники','Sources')+': '+model.sources+'. ':''}${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}${edit?'<br>✏️ '+RT('режим правки: меняйте цвет и текст; «Готово» — сохранить.','edit mode: change colour & text; «Done» to save.'):''}</p>
+    <p class="pf3-asof cyc-note">${note}<br>${model.sources?RT('Источники','Sources')+': '+escHtml(model.sources)+'. ':''}${RT(INFO_DISCLAIM[0],INFO_DISCLAIM[1])}${edit?'<br>✏️ '+RT('режим правки: меняйте цвет и текст; «Готово» — сохранить.','edit mode: change colour & text; «Done» to save.'):''}</p>
   </section>`;
 }
 // Ручная правка строки/фазы → CYCLE_OVR[tk].manual (sync). Не перерисовываем на каждый

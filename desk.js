@@ -710,10 +710,10 @@ function deskMount(){
   el.addEventListener('input',deskOnInput);
   el.addEventListener('keydown',deskOnInputKey);
   // S7b-2: черновики полей встроенных блоков классики (форма плана, записи сделки, чат AI…) — см. deskDraftRestore.
-  // Сброс — только если обработчик блока (inline onclick/onsubmit) запросил перерисовку, т.е. действие прошло; отказ с
+  // Сброс — только если обработчик блока (data-click/data-submit) запросил перерисовку, т.е. действие прошло; отказ с
   // тостом («укажите тикер») перерисовку не зовёт — черновик остаётся. Счётчик DESK_UI._rq растит deskRender.
   el.addEventListener('input',deskDraftNote);el.addEventListener('change',deskDraftNote);
-  const act='.dk-classic button,.dk-classic [type="submit"],.dk-classic a[onclick]';
+  const act='.dk-classic button,.dk-classic [type="submit"],.dk-classic a[data-click]';
   el.addEventListener('click',e=>{DESK_UI._rq0=DESK_UI._rq;},true);
   el.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest(act);if(b&&DESK_UI._rq!==DESK_UI._rq0)DESK_UI.draft={};});
   el.addEventListener('submit',e=>{DESK_UI._rq0=DESK_UI._rq;},true);
@@ -1949,7 +1949,7 @@ function deskFinHTML(it){
   if(open){
     const seg=`<div class="dk-seg" role="group" aria-label="${RT('Ряд','Series')}">${['revenue','eps','fcf'].map(m=>`<button class="${M.metric===m?'on':''}" data-a="finm" data-v="${m}" aria-pressed="${M.metric===m}">${dkFinMetric(m)}</button>`).join('')}</div>`;
     if(!fin)body=`<div class="dk-empty">${RT('Загрузка отчётности…','Loading reports…')}</div>`;
-    else if(M.state==='error')body=`<div class="dk-warn">⚠ ${RT('Провайдеры отчётности не ответили','Report providers did not respond')}${M.notes.length?' ('+M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():n).join(', ')+')':''}. <button class="dk-btn dk-sm" data-a="finre" data-k="${dkEsc(sym)}">${RT('Повторить','Retry')}</button></div>`;
+    else if(M.state==='error')body=`<div class="dk-warn">⚠ ${RT('Провайдеры отчётности не ответили','Report providers did not respond')}${M.notes.length?' ('+M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():dkEsc(n)).join(', ')+')':''}. <button class="dk-btn dk-sm" data-a="finre" data-k="${dkEsc(sym)}">${RT('Повторить','Retry')}</button></div>`;
     else if(M.state==='nodata')body=`<div class="dk-row">${seg}</div><div class="dk-empty">${!(fin.annual||[]).length?RT(`Годовой отчётности ${dkEsc(sec.tk)} у провайдеров нет (для Nordic/EU истории часто нет) — показывать нечего.`,`Providers have no annual reports for ${dkEsc(sec.tk)} (often none for Nordic/EU) — nothing to show.`):RT(`Ряда «${dkFinMetric(M.metric)}» у провайдера нет.`,`The provider has no “${dkFinMetric(M.metric)}” series.`)}</div>`;
     else{
       const rows=(fin.annual||[]).map(x=>({y:x.year,r:x.revenue,e:x.eps,f:x.fcf,k:RT('факт','actual')})).concat((fin.estimates||[]).map(x=>({y:x.year,r:x.revenue,e:x.eps,f:null,k:RT('прогноз','forecast')+(x.n?` · ${x.n}`:'')})));
@@ -1959,7 +1959,7 @@ function deskFinHTML(it){
         ${cg(M.cagrHist,RT('Исторический','Historical'))}${cg(M.cagrFcst,RT('Прогнозный','Forecast'))}
         <p>${RT('Источник','Source')}: ${M.source==='fmp'?RT('FMP (отчётность US)','FMP (US reports)'):'Yahoo'}${fin.estimates&&fin.estimates.length?RT(' · прогноз — консенсус Yahoo (earningsTrend)',' · forecast — Yahoo consensus (earningsTrend)'):''} · ${RT('получено','fetched')} ${dkEsc(String(M.fetchedAt||'').slice(0,16).replace('T',' '))} UTC · ${RT('валюта отчётности','reporting currency')} ${dkEsc(ccy||'—')}${fin.fiscalYearEnd?` · ${RT('конец фин. года','fiscal year end')} ${dkEsc(fin.fiscalYearEnd)}`:''}.</p>
         ${M.excluded.length?`<p>${RT(`Годы без значения «${dkFinMetric(M.metric)}» исключены`,`Years without “${dkFinMetric(M.metric)}” excluded`)}: ${M.excluded.join(', ')}.</p>`:''}
-        ${M.notes.length?`<p>${M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():n).join(' · ')}.</p>`:''}`;
+        ${M.notes.length?`<p>${M.notes.map(n=>DK_FIN_NOTE[n]?DK_FIN_NOTE[n]():dkEsc(n)).join(' · ')}.</p>`:''}`;
       body=`<div class="dk-row">${seg}</div>
         ${M.stale?`<div class="dk-warn">${RT(`Данные от ${String(M.fetchedAt).slice(0,10)} — устарели (> ${DESK_IDEA_CFG.fin.staleDays} дн)`,`Data from ${String(M.fetchedAt).slice(0,10)} — stale (> ${DESK_IDEA_CFG.fin.staleDays} d)`)}</div>`:''}
         <figure class="dk-fin-fig">${deskFinSvg(M,ccy,(window.innerWidth||1440)<600)}<div class="dk-fin-tip" hidden></div></figure>
@@ -2184,7 +2184,7 @@ function deskBookPosHTML(tabs,port){
   const realized=tabs.reduce((a,t)=>a+pfTotalRealizedSEK(t),0),allTime=pl+realized;
   const allCost=sum(P,p=>(p.entry||0)*p.qty*(FX[p.ccy]||1))+tabs.reduce((a,t)=>a+pfTotalRealizedCostSEK(t),0);
   const unit=d1?pf3BaseUnit(d1):'kr',free=d1?(parseFloat(d1.cashFree)||0):0,lev=one===PF3_KEY?(parseFloat(d1.leverage)||0):0;
-  const numIn=(key,v,lbl)=>`<input class="dk-inp dk-num dk-kpi-in" type="number" step="any" min="0" value="${dkEsc(v)}" onchange="pf3SetNum('${key}',this.value)" aria-label="${dkEsc(lbl)}">`;
+  const numIn=(key,v,lbl)=>`<input class="dk-inp dk-num dk-kpi-in" type="number" step="any" min="0" value="${dkEsc(v)}" data-change="pf3SetNum"${uiA(String(key),'$val')} aria-label="${dkEsc(lbl)}">`;
   const cashV=edit?`${numIn('cashFree',free,RT('Свободный кэш','Free cash'))} <small>${dkEsc(unit)}</small>`:dkKr(cash);
   // Плечо — только «Портфель 3.0» (как сводка классики): строкой в KPI «Кэш», не отдельной плиткой.
   const levL=one===PF3_KEY&&can('data.show_leverage')?`<div class="dk-kpi-sub">${RT('плечо','leverage')} ${edit?numIn('leverage',lev,RT('Кредитное плечо','Leverage'))+' '+dkEsc(unit):dkKr(lev*pf3BaseFx(d1))} · ${RT('с плечом ','with leverage ')}${dkKr(eq+lev*pf3BaseFx(d1))}</div>`:'';
@@ -2387,7 +2387,7 @@ function deskServiceHTML(){
     </tbody></table></div></div>`;
   const d=DATA[cur],port=pf3IsPort(cur),addOk=can('action.add_position')&&cur!==AIP_KEY,delOk=adm&&cur!==AIP_KEY,mine=pf3MyPort(cur);   // 🗑 строки — только админ, как в классике
   const rows=(d.rows||[]).map(r=>{const tk=String(r[RC.tk]||'');return `<tr><td><span class="dk-tk">${dkEsc(tk)}</span><span class="dk-nm">${dkEsc(String(r[RC.name]||''))}</span></td><td class="dk-note">${dkEsc(String(r[RC.sector]||''))}</td>${port?`<td class="r dk-num">${dkN(parseFloat(r[RC.qty])||0,0)}</td><td class="r dk-num">${dkPx(parseFloat(r[RC.buy])||null)} ${dkCcy(r[RC.ccy])}</td>`:`<td class="dk-note">${dkEsc(String(r[RC.ccy]||''))}</td>`}<td>${delOk?`<button type="button" class="dk-btn dk-sm" data-a="svcrm" data-v="${dkEsc(tk)}" title="${RT('Удалить из вкладки','Remove from tab')}" aria-label="${RT('Удалить','Delete')} ${dkEsc(tk)}">🗑</button>`:''}</td></tr>`;}).join('');
-  const add=addOk?`<div class="dk-classic"><form class="pf3-add dk-svc-add" onsubmit="pf3Add(event)">
+  const add=addOk?`<div class="dk-classic"><form class="pf3-add dk-svc-add" data-submit="pf3Add"${uiA('$ev')}>
       <input id="pf3AddTicker" class="dk-inp" placeholder="${T('Тикер')}" autocomplete="off" aria-label="${T('Тикер')}">
       ${mine?`<input id="pf3AddQty" class="dk-inp dk-num" type="number" step="any" min="0" placeholder="${T('Кол-во')}" aria-label="${T('Кол-во')}"><input id="pf3AddBuy" class="dk-inp dk-num" type="number" step="any" min="0" placeholder="${T('Цена покупки')}" aria-label="${T('Цена покупки')}">`:''}
       <select id="pf3AddCcy" class="dk-sel" aria-label="${RT('Валюта','Currency')}">${['USD','EUR','SEK','NOK','DKK','GBP'].map(c=>`<option${(mine?'SEK':'USD')===c?' selected':''}>${c}</option>`).join('')}</select>
@@ -2406,7 +2406,7 @@ function deskModalHTML(){
   const it=deskSecOf(x.key),ports=deskPorts(),tab=x.tab&&ports.includes(x.tab)?x.tab:(deskRiskTab()||ports[0]);
   const title=x.mode==='close'?(x.side==='short'?RT('Откупить шорт','Cover short'):RT('Продать','Sell')):(x.side==='short'?RT('Открыть шорт','Open short'):RT('Купить','Buy'));
   x.tab=tab;const cc=deskExecCap(x);
-  return `<div class="dk-overlay" data-a="execx"><form class="dk-modal" role="dialog" aria-modal="true" aria-label="${dkEsc(title)}" onsubmit="event.preventDefault();deskExecSubmit()" data-a="noop">
+  return `<div class="dk-overlay" data-a="execx"><form class="dk-modal" role="dialog" aria-modal="true" aria-label="${dkEsc(title)}" data-submit="deskExecSubmit" data-a="noop">
     <div class="dk-ph"><h2>${dkEsc(title)} · <span class="dk-tk">${dkEsc(x.tk)}</span></h2>${dkSide(x.side)}<button type="button" class="dk-btn dk-sm dk-ml" data-a="execx" aria-label="${RT('Закрыть','Close')}">✕</button></div>
     <div class="dk-form">
       <label>${RT('Портфель','Portfolio')}<select id="dkExPort" class="dk-sel" data-c="expo"${x.mode==='close'?' disabled':''}>${ports.map(k=>`<option value="${dkEsc(k)}"${k===tab?' selected':''}>${dkEsc(TAB_LABEL(k))}</option>`).join('')}</select></label>
@@ -2519,7 +2519,7 @@ function deskWatchFormHTML(){
   const it=I.byKey[w.key],R=deskRiskLevel(it&&it.s,{plan:it&&it.s&&it.s.plans.long,beta:deskBeta(it)});
   const num=(id,v,l)=>`<label>${l}<input id="${id}" class="dk-inp dk-num" type="number" step="any" min="0" value="${v!=null?v:''}"></label>`;
   const txt=(id,v,l,n,area)=>`<label class="${area?'dk-span2':''}">${l}${area?`<textarea id="${id}" class="dk-inp" rows="3" maxlength="${n}">${v}</textarea>`:`<input id="${id}" class="dk-inp" maxlength="${n}" value="${v}">`}</label>`;
-  return `<div class="dk-overlay" data-a="wx"><form class="dk-modal dk-wform" role="dialog" aria-modal="true" aria-label="${RT('Идея','Idea')} ${dkEsc(w.tk)}" onsubmit="event.preventDefault();deskWatchSubmit()" data-a="noop">
+  return `<div class="dk-overlay" data-a="wx"><form class="dk-modal dk-wform" role="dialog" aria-modal="true" aria-label="${RT('Идея','Idea')} ${dkEsc(w.tk)}" data-submit="deskWatchSubmit" data-a="noop">
     <div class="dk-ph"><h2>${RT('Идея','Idea')} · <span class="dk-tk">${dkEsc(w.tk)}</span> <span class="dk-nm">${dkEsc(w.name)}</span></h2><button type="button" class="dk-btn dk-sm dk-ml" data-a="wx" aria-label="${RT('Закрыть','Close')}">✕</button></div>
     <div class="dk-form">
       <div class="dk-span2 dk-lbl">${RT('Зона покупки','Buy zone')} · ${RT('сейчас','now')} ${dkPx(px)} ${ccy}</div>

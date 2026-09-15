@@ -1109,12 +1109,12 @@ grp('ai reports (E5)', function(){
     __ok('Analysis: partial → meta summary + loading note', /итог/.test(an) && /Загружаю отчёт/.test(an));
     __ok('stock log lists rows', /разбор/.test((function(){ _stkOpen[T(20)]=true; try{ return stkLogHTML(); }finally{ delete _stkOpen[T(20)]; } })()) && stockAiLog().length===1);
     _aiRepFail={f1:1};
-    __ok('partial note: remembered failure → ↻ retry with kind/key', /aiRepRetry\('pfa',&quot;P&quot;\)/.test(pf3AnalysisHTML()) && !/Загружаю отчёт/.test(pf3AnalysisHTML()));
+    __ok('partial note: remembered failure → ↻ retry with kind/key', /data-click="aiRepRetry" data-args="\[&quot;pfa&quot;,&quot;P&quot;\]"/.test(pf3AnalysisHTML()) && !/Загружаю отчёт/.test(pf3AnalysisHTML()));
     _aiRepFail={};
     AI_REP={uid:'A',rows:[],ready:false,err:false};
     __ok('state note: loading before list', /Загружаю AI-отчёты/.test(pf3AnalysisHTML()));
     AI_REP.err=true;
-    __ok('state note: failed list → ↻', /aiRepRetry\(\)/.test(stkLogHTML()));
+    __ok('state note: failed list → ↻', /data-click="aiRepRetry">/.test(stkLogHTML()));
     currentUser=null;
     __eq('state note: no account → empty', aiRepStateNote(), '');
     // 12b) desk: догрузка текста — один запрос на набор строк без текста; неудачные выпадают, новые — новый запрос
@@ -1650,6 +1650,37 @@ grp('bookRiskState', function(){
   DATA=_D;POS_META=_pm;DESK=_desk;FX=_fx;
 });
 
+// Блок B (plans/esc-csp-b.md): имя/тикер/сектор из Yahoo и текст модели экранируются на каждом выводе.
+grp('B: escaping on output', function(){
+  __eq('escHtml: не-строки', [escHtml(undefined),escHtml(0),escHtml(12.5),escHtml(false),escHtml('<script>x</script>')], ['','0','12.5','false','&lt;script&gt;x&lt;/script&gt;']);
+  __eq('pf3Md: не-строка и тег', [pf3Md(null).indexOf('<script')<0, pf3Md('<script>alert(1)</script> **b**')], [true,'<p>&lt;script&gt;alert(1)&lt;/script&gt; <b>b</b></p>']);
+  var X='<img src=x onerror=alert(1)>', Q='"><img src=x onerror=alert(1)>';
+  var noTag=function(h){ return typeof h==='string' && !/<img src=x/i.test(h) && !/" ?><img/.test(h); };
+  var _D=DATA,_k=v3Key,_pr=PLAN_RULES,_tr=PF_TRADES,_ni=NEWS_IMPACT,_cal=pf3Cal,_ap=AI_PORT,_role=userRole,_pe=planEditId,_co=CYCLE_OVR;
+  try{
+    var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
+    DATA={}; DATA[PF3_KEY]={headers:h,v3:'1',port:'1',cashFree:1000,rows:[[1,X,'EV'+X,'',X,'Рост',10,100,'USD',90,0],[2,'Ok','OK','','Tech','Рост',1,10,'USD',9,0]]};
+    v3Key=PF3_KEY; userRole='admin';
+    __ok('B: здоровье портфеля (топ-1, сектор)', noTag(pf3HealthTab()));
+    pf3Cal={key:PF3_KEY,loaded:Date.now(),data:{},loading:false,failed:false}; pf3Cal.data[exSymbol('EV'+X,'USD')]={earnings:'2026-09-20',divRate:1,divYield:0.01,exDiv:'2026-09-21',payDate:'2026-09-22'};
+    __ok('B: календарь и дивиденды', noTag(pf3CalendarHTML()));
+    __ok('B: таблица прогноза', noTag(pf3FcTable(DATA[PF3_KEY],[{name:X,tk:X,valSEK:1,cells:[],title:Q,mark:''}],[])));
+    PLAN_RULES=[{id:'r1',tab:PF3_KEY,tk:X,name:X,note:X,ccy:X,act:'buy',level:1,deadline:Q}]; planEditId=null;
+    __ok('B: правила плана', noTag(planRulesHTML()));
+    planEditId='r1'; PLAN_RULES[0].tk=Q; PLAN_RULES[0].note=Q;
+    __ok('B: правка правила плана (value="…")', noTag(planRulesHTML()));
+    planEditId=null;
+    PF_TRADES=[{id:'t1',tab:PF3_KEY,tk:X,name:X,note:X,ccy:X,act:'buy',qty:1,price:1,date:'2026-09-01'}];
+    __ok('B: журнал сделок', noTag(pfTradesHTML()));
+    NEWS_IMPACT={}; NEWS_IMPACT['EV']={impact:'bull',score:2,name:X,hits:[{sent:X}]};
+    __ok('B: влияние новостей', noTag(newsImpactHTML()));
+    AI_PORT={startedAt:1,trades:[{action:'buy',name:X,ticker:X,qty:1,price:1,ccy:X,amountSEK:1,trigger:X,reason:X,ts:Date.now()}],positions:[],cashSEK:0,startCapital:1};
+    __ok('B: сделки AI-портфеля', noTag(aipManageHTML()));
+    CYCLE_OVR={}; CYCLE_OVR['EVX']={ai:{at:'2026-09-01',title:X,phasePos:10,phaseLabels:[X,X,X],summary:X,sources:X,tiers:[{title:X,badge:X,badgeKind:Q,rows:[{id:'a',label:X,value:X,status:Q}]}]}};
+    __ok('B: тезис-монитор (AI)', noTag(cycleMonitorHTML('EVX')));
+  }finally{ DATA=_D;v3Key=_k;PLAN_RULES=_pr;PF_TRADES=_tr;NEWS_IMPACT=_ni;pf3Cal=_cal;AI_PORT=_ap;userRole=_role;planEditId=_pe;CYCLE_OVR=_co; }
+});
+
 grp('plan v2', function(){
   var _D=DATA,_pm=POS_META,_pr=PLAN_RULES;
   var h=['№','Компания','Тикер','Флаг','Сектор','Тип','Кол-во','Цена','Валюта','Покупка','День%'];
@@ -2074,7 +2105,8 @@ grp('S7b-3 shell', function(){
   __ok('DESK_UI has no flag fields', !('on' in DESK_UI) && !('classic' in DESK_UI));
   var html=rd('index.html');
   __ok('index.html: no classic shell ids', !/id="(tabs|subTabs|smaBanner|toolbarEl|searchBox|statsBar|contentArea|tableArea|thead|tbody|rankingArea|pf3Area|deskBtn|hubHome|langBtn|themeToggle)"/.test(html));
-  __ok('index.html: head script sets desk unconditionally (no dash_desk, no ?desk)', /classList\.add\('desk'\)/.test(html) && !/dash_desk|desk=\(|deskToggle|'ui2'/.test(html));
+  var headJs=rd('head.js');
+  __ok('head.js (синхронно в <head>): sets desk unconditionally (no dash_desk, no ?desk)', /<script src="head\.js\?v=[0-9a-z]+"><\/script>/.test(html) && html.indexOf('head.js')<html.indexOf('desk.css') && /classList\.add\('desk'\)/.test(headJs) && !/dash_desk|desk=\(|deskToggle|'ui2'/.test(html+headJs));
   __ok('index.html: skip-link → #dkMain', /class="skip-link" href="#dkMain"/.test(html));
   // S7b-4: styles.css удалён, body.v3 больше не нужен — --v3-acc/--v3-acc2 встроенных блоков теперь в html.desk (desk.css).
   __ok('index.html: no styles.css link, no body.v3', !/styles\.css/.test(html) && !/<body class="v3">/.test(html));
@@ -2171,6 +2203,11 @@ grp('SIG adapters for AI (S7b-3)', function(){
     __ok('aiRecoHTML: no badge when same', !/ai-stale/.test(aiRecoHTML(DATA.IDX,az)));
     AI_RECO={AZN:{verdict:'buy',text:'x',at:'2026-09-10T10:00:00Z',recoAt:'sell'}};
     __ok('aiRecoHTML: old record (recoAt) → no badge', !/ai-stale/.test(aiRecoHTML(DATA.IDX,az)));
+    var Xi='<img src=x onerror=alert(1)>';   // блок B: все поля ответа модели (headline, горизонты, уверенность, неизвестный вердикт) — экранированы
+    AI_RECO={AZN:{verdict:Xi,confidence:Xi,ccy:Xi,entryLow:1,headline:Xi,keyRisks:[Xi],text:Xi,at:'2026-09-10T10:00:00Z',
+      horizons:{now:{verdict:Xi,note:Xi,entryLow:1},mid:{verdict:'buy',target:2,note:Xi},long:{verdict:'wait',note:Xi}}}};
+    var rh='';try{rh=aiRecoHTML(DATA.IDX,az);}catch(e){rh='THREW '+e.message;}
+    __ok('B: aiRecoHTML — все поля модели экранированы, не падает', rh.indexOf('THREW')<0 && rh.indexOf('<img src=x')<0 && /airk-headline/.test(rh), rh.slice(0,200));
     var snap=stockAiSnapshot(DATA.IDX,az);
     __eq('stockAiSnapshot: recoVerdict = SIG, legend attached', [snap.recoVerdict,snap.recoLegend===SIG_AI_LEGEND], [v,true]);
   }finally{DATA=_D;_histCache=_hc;SIGNALS=_S;pf3Cal=_cal;DESK=_desk;DESK_UI.port=_port;POS_META=_pm;userRole=_role;AI_RECO=_reco;deskSecOf=_sec;_deskItems=null;}
@@ -3662,4 +3699,62 @@ grp('row contract scanners (E2)', function(){
   var g=[];['pf3TypeMetrics','stockAiSnapshot'].forEach(function(fn){var src=String(this[fn]||eval(fn)),m,rx=/\bg\('([^']*)'\)/g;while((m=rx.exec(src)))if(!COLN[m[1]])g.push(fn+' '+m[1]);});
   __eq('E2 сканер: g(id) в pf3TypeMetrics/stockAiSnapshot — ключи COLN', g, []);
   __ok('E2 сканер: ROW ловит все формы', ['r[2]','row[15]','it.r[8]','(o.r||o)[13]','d.rows[ri][6]','src[1]'].every(function(x){return ROW.test(x);})&&!ROW.test('r[16]')&&!ROW.test('r[RC.tk]')&&!ROW.test('x[2]'));
+});
+
+// Блок B (plans/esc-csp-b.md): обработчики — только data-click|change|input|submit|error + UI_ACTS, без inline on*= (CSP).
+grp('B: no inline handlers, UI_ACTS', function(){
+  var files=['index.html','signals.js','chart.js','app.js','app-2.js','app-3.js','app-4.js','app-5.js','desk-selection.js','desk-journal.js','desk.js','desk-gloss.js'];
+  var inl=[],used={},unk=[],nf=[],seen=0;
+  files.forEach(function(f){ rd(f).split('\n').forEach(function(ln,n){
+    if(/(^|[^\w.$-])on[a-z]+\s*=\s*["'`\\]/.test(ln))inl.push(f+':'+(n+1));
+    var rx=/data-(click|change|input|submit|error)="([^"]*)"/g,m;
+    while((m=rx.exec(ln))){seen++;used[m[2]]=1;if(!UI_ACTS.has(m[2]))unk.push(f+':'+(n+1)+' '+m[2]);}
+  });});
+  __eq('B сканер: нет inline on*= в клиенте и index.html', inl, []);
+  __eq('B сканер: data-<событие>="имя" — только из UI_ACTS', unk, []);
+  __ok('B сканер: data-<событие> найдены (регулярка жива)', seen>=80, 'найдено '+seen);
+  UI_ACTS.forEach(function(n){ if(typeof globalThis[n]!=='function')nf.push(n); });
+  __eq('B: каждое имя UI_ACTS — глобальная функция', nf, []);
+  __eq('B: в UI_ACTS нет мёртвых имён', Array.from(UI_ACTS).filter(function(n){return !used[n];}), []);
+  var idx=rd('index.html'),csp=(idx.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)||[])[1]||'',dir=function(n){return ((';'+csp).match(new RegExp(';\\s*'+n+' ([^;]*)'))||[])[1]||'';};
+  __ok('B CSP: meta есть и стоит до первого <script>/<link>', csp&&idx.indexOf('Content-Security-Policy')<idx.search(/<(script|link)\b/));
+  __ok('B CSP: script-src без unsafe-inline/unsafe-eval', dir('script-src')&&!/unsafe-(inline|eval)/.test(dir('script-src')), dir('script-src'));
+  __ok('B CSP: connect-src — Supabase https+wss, воркер, FX', ['https://fvrebkwczqmeorytujbn.supabase.co','wss://fvrebkwczqmeorytujbn.supabase.co','https://telegram-notify-abc.dmitriy-bilokon.workers.dev','https://api.frankfurter.dev','https://open.er-api.com'].every(function(h){return dir('connect-src').split(' ').indexOf(h)>=0;}), dir('connect-src'));
+  __ok('B CSP: хосты кода есть в CSP (PRICE_PROXY, SUPABASE_URL, LWC_URL)', dir('connect-src').indexOf(PRICE_PROXY)>=0&&dir('connect-src').indexOf(SUPABASE_URL)>=0&&dir('script-src').split(' ').some(function(h){return h.length>8&&LWC_URL.indexOf(h)===0;}));
+  __eq('B index.html: нет инлайн-<script> без src', (idx.match(/<script(?![^>]*\bsrc=)[^>]*>/g)||[]), []);
+  var loc=[];files.slice(1).forEach(function(f){rd(f).split('\n').forEach(function(ln,n){if(/\b(?:const|let|var)\s+(?:esc|E)\s*=\s*\(?\s*s\s*\)?\s*=>/.test(ln))loc.push(f+':'+(n+1));});});
+  __eq('B сканер: нет локальных esc/E-эскейперов (только escHtml / dkEsc)', loc, []);
+  __ok('B сканер: ловит inline', ['<b onclick="x()">','<img onerror=\\"y\\">',"<a onmouseover='z'>"].every(function(x){return /(^|[^\w.$-])on[a-z]+\s*=\s*["'`\\]/.test(x);}) && !/(^|[^\w.$-])on[a-z]+\s*=\s*["'`\\]/.test('s.onload=res;data-onx="1"'));
+});
+grp('B: uiA/uiArgs/uiRun', function(){
+  // data-stop="<цена>" у desk-кнопок стопа (pm-accept/pm-trail) — не флаг делегирования: клик должен дойти до #desk.
+  var armed=[],btn={addEventListener:function(t){armed.push(t);}},tgt={closest:function(sel){return sel==='[data-stop]'?btn:null;}};
+  uiArm({type:'click',target:tgt});
+  __eq('B: uiArm не трогает data-stop desk (цена стопа)', armed, []);
+  var ib={addEventListener:function(t){armed.push('ui-stop:'+t);}},tg2={closest:function(sel){return sel==='[data-ui-stop]'?ib:null;}};
+  uiArm({type:'click',target:tg2});
+  __eq('B: uiArm — data-ui-stop заряжает stopPropagation', armed, ['ui-stop:click']);
+  var ua=uiA('a"<\'',1,'$val'),dec=ua.replace(/^ data-args="|"$/g,'').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+  __ok('uiA: в атрибуте нет сырых " < \'', /^ data-args="[^"<>']*"$/.test(ua), ua);
+  __eq('uiA → атрибут → uiArgs: круговой путь', uiArgs({getAttribute:function(){return dec;}},{}), ['a"<\'',1,undefined]);
+  var mk=function(attrs,extra){var el={tagName:'BUTTON',value:'V',checked:true,getAttribute:function(k){return attrs.hasOwnProperty(k)?attrs[k]:null;},hasAttribute:function(k){return attrs.hasOwnProperty(k);}};for(var k in extra)el[k]=extra[k];return el;};
+  var ev={type:'click'},el=mk({'data-args':'["a",1,"$val","$chk","$el","$ev"]'});
+  var a=uiArgs(el,ev);
+  __ok('uiArgs: значения и спец-токены', a[0]==='a'&&a[1]===1&&a[2]==='V'&&a[3]===true&&a[4]===el&&a[5]===ev&&a.length===6);
+  __eq('uiArgs: битый/не массив → []', [uiArgs(mk({'data-args':'{x'}),ev),uiArgs(mk({'data-args':'{"a":1}'}),ev),uiArgs(mk({}),ev)], [[],[],[]]);
+  var calls=[],_f=globalThis.pfPerfRange;
+  globalThis.pfPerfRange=function(){calls.push([].slice.call(arguments));};
+  try{
+    var pd=0,E=function(type,target){return {type:type,target:target,preventDefault:function(){pd++;}};};
+    var b=mk({'data-click':'pfPerfRange','data-args':'["1m"]'});uiRun(b,E('click',b));
+    __eq('uiRun: зовёт функцию с аргументами', calls, [['1m']]);
+    var o=mk({'data-click':'pfPerfRange','data-self':''}),child={};uiRun(o,E('click',child));
+    __eq('uiRun: data-self — клик по вложенному не зовёт', calls.length, 1);
+    uiRun(o,E('click',o));__eq('uiRun: data-self — клик по самому зовёт', calls.length, 2);
+    var bad=mk({'data-click':'eval','data-args':'["1"]'});uiRun(bad,E('click',bad));
+    __eq('uiRun: имя вне UI_ACTS не вызывается', calls.length, 2);
+    var f=mk({'data-submit':'pfPerfRange'},{tagName:'FORM'});uiRun(f,E('submit',f));
+    var l=mk({'data-click':'pfPerfRange'},{tagName:'A'});uiRun(l,E('click',l));
+    __eq('uiRun: submit и <a> — preventDefault', [pd,calls.length], [2,4]);
+  }finally{ globalThis.pfPerfRange=_f; }
 });

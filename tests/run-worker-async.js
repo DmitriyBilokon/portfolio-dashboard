@@ -24,7 +24,7 @@ const ctx = {
   setTimeout, clearTimeout, URL, crypto: globalThis.crypto, console: quiet, Date: FakeDate,
 };
 vm.createContext(ctx);
-vm.runInContext(src + '\n;globalThis.__W = { anthropicRun, aiPortfolioRun, analyzeOnePortfolio, marketOpen, AI_NET, mod: __mod, PF3_KEY };', ctx, { filename: 'telegram-notify.js' });
+vm.runInContext(src + '\n;globalThis.__W = { anthropicRun, aiPortfolioRun, analyzeOnePortfolio, marketOpen, AI_NET, mod: __mod, PF3_KEY, writeRow };', ctx, { filename: 'telegram-notify.js' });
 const W = ctx.__W;
 W.AI_NET.baseMs = 1;   // бэкофф в тестах — миллисекунды
 
@@ -172,6 +172,26 @@ const decisions = d => JSON.stringify({ decisions: d, note: 'n' });
     const j = await runAnth([anth('part1 ', 'pause_turn'), anth('part2', 'end_turn')], baseBody());
     eq('продолжение после pause_turn', [textOf(j), anthReqs.length, j.stop_reason], ['part1 part2', 2, 'end_turn']);
     eq('второй раунд несёт ответ ассистента', anthReqs[1].messages.map(m => m.role), ['user', 'assistant']);
+  });
+
+  await grp('writeRow: коммит по rev + wid (E4 — та же дыра равного rev, что была у клиента)', async () => {
+    const env = { SUPABASE_URL: 'https://sb.test', SUPABASE_SERVICE_KEY: 's' };
+    // Обычный коммит: PATCH отдаёт (return=representation) строку с тем же rev/wid, что мы отправили.
+    let sentWid = null;
+    ctx.__fetch = async (url, init) => { const body = JSON.parse(init.body).data; sentWid = body.wid; return new Response(JSON.stringify([{ data: body }]), { status: 200 }); };
+    let committed = await W.writeRow(env, 'u1', { rev: 5, foo: 1 });
+    ok('обычный коммит: rev+wid наши → true, wid непуст', committed === true && typeof sentWid === 'string' && sentWid.length > 0, sentWid);
+    // Триггер откатил: вернулся СТАРЫЙ rev (< ожидаемого) — как и до E4.
+    ctx.__fetch = async () => new Response(JSON.stringify([{ data: { rev: 5, wid: 'wOther' } }]), { status: 200 });
+    ok('старый rev у ответа → false', (await W.writeRow(env, 'u1', { rev: 5 })) === false);
+    // E4-дыра (была до фикса, worker#7): два писателя (клиент + воркер, или два запуска воркера) стартуют с
+    // одного rev 5 и оба шлют rev 6 — другой успел раньше, триггер откатывает НАС на OLD с тем же рев 6 (чужая
+    // запись), но её wid не наш. Без wid это неотличимо от коммита — наша правка потерялась бы молча.
+    ctx.__fetch = async (url, init) => { const mine = JSON.parse(init.body).data; return new Response(JSON.stringify([{ data: { rev: mine.rev, wid: 'wOTHER-WRITER' } }]), { status: 200 }); };
+    ok('равный rev, но чужой wid (гонка) → false, не молчаливый коммит', (await W.writeRow(env, 'u1', { rev: 5 })) === false);
+    // Сеть/ошибка HTTP → false, как раньше.
+    ctx.__fetch = async () => httpErr(500);
+    ok('HTTP-ошибка → false', (await W.writeRow(env, 'u1', { rev: 5 })) === false);
   });
 
   await grp('aiPortfolioRun: сквозной', async () => {

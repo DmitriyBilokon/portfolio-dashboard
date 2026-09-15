@@ -132,7 +132,7 @@ grp('nextRev', function(){
 });
 
 grp('writeCommitted', function(){
-  // return=representation вернул строку с нашим rev → коммит прошёл
+  // return=representation вернул строку с нашим rev → коммит прошёл (старый вызов без wid — только по rev)
   __ok('rev совпал (массив) → true', writeCommitted([{data:{rev:6}}], 6));
   __ok('rev совпал (объект) → true', writeCommitted({data:{rev:6}}, 6));
   // триггер откатил: вернулся СТАРЫЙ rev → конфликт
@@ -140,6 +140,11 @@ grp('writeCommitted', function(){
   __ok('нет строки → false', !writeCommitted([], 6));
   __ok('null → false', !writeCommitted(null, 6));
   __ok('нет data → false', !writeCommitted([{}], 6));
+  // E4: рев РАВНЫЙ ожидаемому, но wid не наш — другой писатель (клиент/второй запуск воркера) с того же rev успел
+  // раньше и получил тот же rev+1: без wid это неотличимо от коммита (молчаливая потеря — та же дыра, что была у клиента).
+  __ok('rev совпал, wid наш → true', writeCommitted([{data:{rev:6,wid:'wA'}}], 6, 'wA'));
+  __ok('rev совпал, wid ЧУЖОЙ → false (гонка равного rev)', !writeCommitted([{data:{rev:6,wid:'wB'}}], 6, 'wA'));
+  __ok('rev совпал, wid отсутствует → false (старый клиент/старая запись)', !writeCommitted([{data:{rev:6}}], 6, 'wA'));
 });
 
 grp('mergeAiPortSettings', function(){

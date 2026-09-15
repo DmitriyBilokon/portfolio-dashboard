@@ -29,7 +29,7 @@
 //        (weekdays 17:30 UTC). Проверка деплоя — ?action=version (без токена);
 //        admin-роуты (?action=chart/targets/ydebug, AI) требуют Authorization: Bearer <Supabase access token>.
 
-const WORKER_BUILD = '2026-09-14e2-named-cols';   // ?action=version — проверить, что задеплоено
+const WORKER_BUILD = '2026-09-15e4-wid-commit';   // ?action=version — проверить, что задеплоено
 
 // Модель на фичу — крути тариф здесь без правки логики. Opus 4.8 на «денежных»
 // решениях (анализ/ребаланс/рекомендации), Sonnet 4.6 на болтовне и мониторинге
@@ -3094,13 +3094,20 @@ async function loadRow(env){
 }
 // rev, который запишет writeRow поверх данного снапшота (на 1 больше текущего).
 function nextRev(snap){ return (Number(snap && snap.rev) || 0) + 1; }
+// id записи воркера (E4, тот же принцип, что syncWid клиента, app.js): при равном rev у ДВУХ писателей (клиент + воркер,
+// или два запуска воркера подряд) отказ триггера возвращает OLD с тем же rev+1, что мы отправили, — без wid это
+// неотличимо от коммита. Уникален на процесс/момент, в снапшоте не читается никем, кроме writeCommitted.
+const workerWid = () => 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 // Детект коммита по вернувшейся (return=representation) строке: БД-триггер при
-// rev-конфликте делает `return OLD` и PATCH отдаёт 204/строку со СТАРЫМ rev.
-// Коммит прошёл ⇔ rev вернувшейся строки равен тому, что мы записали.
-function writeCommitted(rows, expectedRev){
+// rev-конфликте делает `return OLD` и PATCH отдаёт строку со СТАРЫМ rev (её мог только что записать
+// другой писатель тем же следующим rev — тогда её wid не наш). Коммит прошёл ⇔ rev И wid — наши
+// (expectedWid не передан — старый вызов, проверка только по rev, как до E4).
+function writeCommitted(rows, expectedRev, expectedWid){
   const row = Array.isArray(rows) ? rows[0] : rows;
   const rev = row && row.data && Number(row.data.rev);
-  return rev === expectedRev;
+  if(rev !== expectedRev) return false;
+  if(expectedWid === undefined) return true;
+  return !!row && !!row.data && row.data.wid === expectedWid;
 }
 // Слить клиентские (редактируемые на сайте) настройки aiPort из свежего снапшота
 // в наше торговое состояние. Применяется при каждом повторе RMW — настройки
@@ -3120,7 +3127,8 @@ async function writeRow(env, userId, snap){
   // Инкрементим rev — иначе БД-триггер optimistic-concurrency отклонит запись
   // воркера (rev не вырос). Так серверные изменения (AI-портфель/алерты) проходят.
   const expectedRev = nextRev(snap);
-  const data = { ...snap, rev: expectedRev };
+  const expectedWid = workerWid();   // E4: отказ триггера при равном rev другого писателя иначе неотличим от коммита
+  const data = { ...snap, rev: expectedRev, wid: expectedWid };
   try{
     const r = await fetch(`${env.SUPABASE_URL}/rest/v1/ledger_state?user_id=eq.${userId}&select=data`, {
       method: 'PATCH',
@@ -3129,7 +3137,7 @@ async function writeRow(env, userId, snap){
     });
     if(!r || !r.ok) return false;
     const rows = await r.json();
-    return writeCommitted(rows, expectedRev);
+    return writeCommitted(rows, expectedRev, expectedWid);
   }catch(e){ return false; }
 }
 // Read-modify-write ledger с повтором при rev-конфликте. applyFn(snap) накладывает
@@ -3273,7 +3281,7 @@ export default {
         return `${c} ${loc} ${marketOpen(c) ? 'ОТКРЫТ' : 'закрыт'}`;
       }).join('\n');
       const owner = String(env.OWNER_USER_ID || '').trim() ? 'owner: OWNER_USER_ID задан' : 'owner: OWNER_USER_ID НЕ ЗАДАН — cron и admin-роуты не работают';
-      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry · lse-pence · err-dedup · ai-reports\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
+      return txt(`worker-build ${WORKER_BUILD}\n${owner}\nфичи: aiport · market-hours · recoVerdict · stockai(web) · insider(US+SE) · targets · valuation · reco · dashboard · live-futures(AI) · prepost · pf-prepost · models(per-feature) · history-ohlcv · cache(mem+edge) · symbols-lite · fmp-guard · financials · bookcheck · ai-retry · lse-pence · err-dedup · ai-reports · wid-commit\nbookcheck (этот изолят): ${BOOK_LAST ? BOOK_LAST.at + ' UTC — ' + BOOK_LAST.res : 'ещё не запускался'}\n\nИзолят: кэш ${_memo.size}/${MEMO_MAX} · FMP ${FMP_STATS.day || '—'}: запросов ${FMP_STATS.calls}, из кэша ${FMP_STATS.cached}, пропущено не-US ${FMP_STATS.skipped}\n\nМодели:\n${Object.entries(MODELS).map(([k,v])=>`• ${k}: ${v}`).join('\n')}\n\nРынки сейчас:\n${mkts}`);
     }
     if(url.searchParams.get('action') === 'targets'){
       // Админ-роут: пересчёт «Аналит. таргет» в ledger владельца (FMP → Yahoo) и запись в Supabase.
